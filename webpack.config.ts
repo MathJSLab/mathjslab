@@ -38,6 +38,7 @@ export default (env: any, argv: any): webpack.Configuration => {
                 type: 'umd',
             },
             clean: true,
+            globalObject: 'globalThis',
         },
     };
 };
