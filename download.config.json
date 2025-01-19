@@ -1,4 +1,5 @@
 {
+  "dataset": "mathjslab",
   "files": [
     {
       "src": "https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/script/helper/clean-package-lock.cjs",
@@ -19,6 +20,10 @@
     {
       "src": "https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/script/helper/mkDirIfNotExist.ts",
       "dest": "script/helper/mkDirIfNotExist.ts"
+    },
+    {
+      "src": "https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/script/helper/git-commit.cjs",
+      "dest": "script/helper/git-commit.cjs"
     },
     {
       "src": "https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/images/mathjslab-logo.svg",

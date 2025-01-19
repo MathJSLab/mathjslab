@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 <svg xmlns="http://www.w3.org/2000/svg" width="630" height="630" viewBox="0 0 630 630">
   <style>
 .fillSymbol {
@@ -35,12 +35,14 @@
 }
 }
   </style>
-  <circle style="fill:none;stroke:none;stroke-opacity:1" cx="315" cy="315" r="315"/>
-  <circle class="strokePanel fillPanel" style="stroke-width:14px" cx="315" cy="315" r="288"/>
+  <circle style="fill:none;stroke:none;stroke-opacity:1" cx="315" cy="315" r="315" />
+  <circle class="strokePanel fillPanel" style="stroke-width:14px" cx="315" cy="315" r="288" />
   <text class="fillSymbol" style="font-size:378px;font-family:Symbol" x="210" y="240">p</text>
-  <text class="fillSymbol" style="font-size:79px;font-family:'Times New Roman';font-style:italic" x="198" y="432">ax+bx<tspan style="font-size:65%;baseline-shift:super">2</tspan>+cx<tspan style="font-size:65%;baseline-shift:super">3</tspan></text>
-  <path class="strokeTrace" style="stroke-width:14px;stroke-linecap:round" d="M 126,90 V 490 H 560"/>
-  <path class="strokeTrace" style="stroke-width:14px" d="M 126,441 H 176 V 490"/>
-  <circle class="fillTrace" style="stroke:none" cx="152" cy="464" r="4.1"/>
-  <path class="strokeTrace" style="stroke-width:14px;stroke-linecap:round" d="M 126,441 C 140,390 210,273 252,273 315,273 336,330 378,330 420,330 504,210 546,154"/>
+  <text class="fillSymbol" style="font-size:79px;font-family:'Times New Roman';font-style:italic" x="198" y="432">ax+bx<tspan style="font-size:65%;baseline-shift:super">2</tspan>+cx<tspan
+            style="font-size:65%;baseline-shift:super"
+        >3</tspan></text>
+  <path class="strokeTrace" style="stroke-width:14px;stroke-linecap:round" d="M 126,90 V 490 H 560" />
+  <path class="strokeTrace" style="stroke-width:14px" d="M 126,441 H 176 V 490" />
+  <circle class="fillTrace" style="stroke:none" cx="152" cy="464" r="4.1" />
+  <path class="strokeTrace" style="stroke-width:14px;stroke-linecap:round" d="M 126,441 C 140,390 210,273 252,273 315,273 336,330 378,330 420,330 504,210 546,154" />
 </svg>

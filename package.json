@@ -2,8 +2,6 @@
   "name": "mathjslab",
   "version": "1.6.2",
   "description": "MathJSLab - An interpreter with language syntax like MATLAB®/Octave, ISBN 978-65-00-82338-7.",
-  "main": "lib/mathjslab.js",
-  "types": "lib/src/lib.d.ts",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/MathJSLab/mathjslab.git"
@@ -29,6 +27,21 @@
     "url": "https://github.com/MathJSLab/mathjslab/issues"
   },
   "homepage": "https://mathjslab.com/",
+  "main": "lib/mathjslab.umd2015.js",
+  "module": "lib/mathjslab.esm2020.js",
+  "exports": {
+    ".": {
+      "require": "./lib/mathjslab.umd2015.js",
+      "import": "./lib/mathjslab.esm2020.js",
+      "default": "./lib/mathjslab.umd2020.js"
+    }
+  },
+  "browser": {
+    "fs": false,
+    "os": false,
+    "path": false
+  },
+  "types": "lib/src/lib.d.ts",
   "scripts": {
     "clean:package-lock": "node script/helper/clean-package-lock.cjs",
     "clean:build:resources": "rimraf res",
@@ -38,10 +51,10 @@
     "clean:parser": "npm run clean:parser-src && npm run clean:parser-tokens-interp",
     "clean:download-resources": "node script/helper/download-files.cjs clean && rimraf script/helper/download-files.cjs download.config.json",
     "clean": "npm run clean:build && npm run clean:parser",
-    "clean:all": "npm run clean && npm run clean:build:resources && npm run clean:package-lock",
+    "clean:all": "npm run clean && npm run clean:build:resources && npm run clean:package-lock && npm run clean:download-resources",
     "update": "npx npm-check-updates -u && npm install && npm run build:resources",
     "git:add": "git add .",
-    "git:commit": "git commit -m \"Initial Commit\"",
+    "git:commit": "node script/helper/git-commit.cjs",
     "git:push": "git push",
     "git:all": "npm run git:add && npm run git:commit && npm run git:push",
     "npm:publish": "npm publish --access public",
@@ -55,45 +68,42 @@
     "test:watch": "jest --watch",
     "tsx": "tsx --require tsconfig-paths/register",
     "download-resources": "curl -k -o ./script/helper/download-files.cjs https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/script/helper/download-files.cjs && curl -k -o ./download.config.json https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/resource/mathjslab/download.config.json && node script/helper/download-files.cjs",
-    "build:resources": "npm run tsx script/build-resources.ts",
+    "build:resources": "npm run download-resources && npm run tsx script/build-resources.ts",
     "build:parser": "set CLASSPATH=./res/antlr-complete.jar && java org.antlr.v4.Tool ./src/MathJSLabLexer.g4 ./src/MathJSLabParser.g4 -Dlanguage=TypeScript -no-visitor -no-listener -o ./src/",
-    "prebuild": "npm run build:parser",
+    "prebuild": "npm run clean && npm run build:parser",
     "build": "tsx --require tsconfig-paths/register ./node_modules/webpack/bin/webpack --mode production",
-    "do:all": "npm run clean:all && npm run update && npm run format:lint && npm run test && npm run build && npm run git:all:npm:publish"
-  },
-  "browser": {
-    "fs": false,
-    "os": false,
-    "path": false
+    "do:all": "npm run clean:all && npm run update && npm run format:lint && npm run test && npm run build && npm run git:add && npm run git:commit",
+    "original-do:all": "npm run clean:all && npm run update && npm run format:lint && npm run test && npm run build && npm run git:all:npm:publish"
   },
   "devDependencies": {
     "@types/debug": "^4.1.12",
     "@types/eslint-config-prettier": "^6.11.3",
     "@types/jest": "29.5.14",
-    "@types/node": "^22.10.1",
+    "@types/node": "^22.10.7",
     "@types/supertest": "^6.0.2",
     "@types/webpack": "^5.28.5",
-    "@typescript-eslint/eslint-plugin": "^8.16.0",
-    "@typescript-eslint/parser": "^8.16.0",
-    "eslint": "^9.16.0",
-    "eslint-config-prettier": "^9.1.0",
+    "@typescript-eslint/eslint-plugin": "^8.20.0",
+    "@typescript-eslint/parser": "^8.20.0",
+    "eslint": "^9.18.0",
+    "eslint-config-prettier": "^10.0.1",
     "eslint-plugin-import": "^2.31.0",
-    "eslint-plugin-prettier": "^5.2.1",
+    "eslint-plugin-prettier": "^5.2.3",
     "jest": "29.7.0",
-    "lint-staged": "^15.2.10",
-    "node-html-parser": "^6.1.13",
-    "prettier": "^3.4.1",
+    "lint-staged": "^15.4.1",
+    "node-html-parser": "^7.0.1",
+    "prettier": "^3.4.2",
     "rimraf": "^6.0.1",
     "ts-jest": "29.2.5",
-    "ts-loader": "^9.5.1",
+    "ts-loader": "^9.5.2",
     "tsconfig-paths": "^4.2.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2",
-    "webpack": "^5.96.1",
-    "webpack-cli": "^5.1.4"
+    "typescript": "^5.7.3",
+    "webpack": "^5.97.1",
+    "webpack-cli": "^6.0.1"
   },
   "dependencies": {
     "antlr4": "^4.13.2",
-    "decimal.js": "^10.4.3"
+    "decimal.js": "^10.4.3",
+    "globalthis": "^1.0.4"
   }
 }

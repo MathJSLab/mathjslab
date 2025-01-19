@@ -2,6 +2,10 @@
 All notable changes to this project will be documented in this file.
 This project adheres to [Semantic Versioning](http://semver.org/).
 
+## 1.7.0
+- All dependencies have been updated.
+- Now Webpack generates 3 different bundles: UMD targeting "ES2015", ESM targeting "ES2020" and UMD targeting "ES2020". The UMD targeting "ES2015" imports 'globalthis/polyfill' (imported by file 'src/lib.umd2015.ts') for compatibility ('globalthis' package added as regular dependency). The fields "main", "module" and "exports" of `package.json` file has been set to support different targets.
+
 ## 1.6.2
 - All dependencies have been updated.
 - The MathJSLab logo has been modified. It is built on the MathJSLab

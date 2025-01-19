@@ -7,7 +7,7 @@ const tsPlugin = require('@typescript-eslint/eslint-plugin');
 const tsParser = require('@typescript-eslint/parser');
 const prettierPlugin = require('eslint-plugin-prettier');
 const eslintConfigPrettier = require('eslint-config-prettier');
-const imprt = require('eslint-plugin-import');
+const importPlugin = require('eslint-plugin-import');
 
 console.log(`Running project lint (configuration: ${path.basename(__filename)}) ...`);
 
@@ -26,7 +26,7 @@ module.exports = [
             },
         },
         plugins: {
-            import: imprt,
+            import: importPlugin,
             '@typescript-eslint': tsPlugin,
             prettier: prettierPlugin,
         },
@@ -62,7 +62,7 @@ module.exports = [
             },
         },
         plugins: {
-            import: imprt,
+            import: importPlugin,
             '@typescript-eslint': tsPlugin,
             prettier: prettierPlugin,
         },
