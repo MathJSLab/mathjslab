@@ -1,11 +1,16 @@
+import path from 'node:path';
 import { ComplexDecimal } from './ComplexDecimal';
 
-describe('ComplexDecimal', () => {
-    beforeEach(async () => {});
+const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.sep}]+)\\.spec\\.([cm]?[jt]s)\$`))!;
+const unitName = __filenameMatch[1];
+const testExtension = __filenameMatch[2];
 
-    it('ComplexDecimal should be defined', () => {
+describe(`${unitName} unit test (.${testExtension} test file).`, () => {
+    jest.setTimeout(40000);
+
+    it(`${unitName} should be defined.`, () => {
         expect(ComplexDecimal).toBeDefined();
-    });
+    }, 20);
 
     it('sin(x)^2+cos(x)^2 should be equal 1 for any value of x (first cycle)', () => {
         let result: boolean = true;
@@ -20,7 +25,7 @@ describe('ComplexDecimal', () => {
         }
 
         expect(result).toBe(true);
-    }, 20000);
+    }, 10000);
 
     it('sin(x)^2+cos(x)^2 should be equal 1 for lower values of x', () => {
         let result: boolean = true;
@@ -34,13 +39,13 @@ describe('ComplexDecimal', () => {
         }
 
         expect(result).toBe(true);
-    }, 20000);
+    }, 200);
 
     it('e^(i*pi) should be equal -1', () => {
         const value = ComplexDecimal.exp(ComplexDecimal.mul(ComplexDecimal.onei(), ComplexDecimal.pi()));
         const result = Boolean(ComplexDecimal.eq(value, ComplexDecimal.minusone()).re.toNumber()); // using ComplexDecimal.eq to comparison.
         expect(result).toBe(true);
-    }, 1000);
+    }, 100);
 
     it('abs(sin(n*pi+pi/2)) == 1 for integer n >= 0', () => {
         let result: boolean = true;
@@ -49,5 +54,5 @@ describe('ComplexDecimal', () => {
             result &&= Boolean(ComplexDecimal.eq(value, ComplexDecimal.one()).re.toNumber()); // using ComplexDecimal.eq to comparison.
         }
         expect(result).toBe(true);
-    }, 10000);
+    }, 30000);
 });

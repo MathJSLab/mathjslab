@@ -1,12 +1,15 @@
 /**
  * git-commit.cjs:
  */
+const path = require('node:path');
+const fs = require('node:fs');
 const { exec } = require('node:child_process');
+const packageJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', '..', 'package.json'), 'utf-8'));
 
 /* Default commit message. */
-const defaultMessage = `Committed on ${new Date().toGMTString()}`;
-/* Wait time in milliseconds (3 seconds). */
-const timeoutDuration = 3000;
+const defaultMessage = `chore(build): update in version ${packageJson.version} on ${new Date().toGMTString()}`;
+/* Wait time in milliseconds (5 seconds). */
+const timeoutDuration = 5000;
 
 console.log(`Enter the commit message. [${defaultMessage}]:`);
 

@@ -1,109 +1,163 @@
 {
-  "name": "mathjslab",
-  "version": "1.6.2",
-  "description": "MathJSLab - An interpreter with language syntax like MATLAB®/Octave, ISBN 978-65-00-82338-7.",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/MathJSLab/mathjslab.git"
-  },
-  "keywords": [
-    "MathJSLab",
-    "Mathematics",
-    "Educational",
-    "MATLAB",
-    "Octave",
-    "MathML",
-    "ANTLR",
-    "ANTLR4",
-    "math",
-    "lexer",
-    "parser",
-    "grammar",
-    "interpreter"
-  ],
-  "author": "Sergio Lindau <sergiolindau@gmail.com>",
-  "license": "MIT",
-  "bugs": {
-    "url": "https://github.com/MathJSLab/mathjslab/issues"
-  },
-  "homepage": "https://mathjslab.com/",
-  "main": "lib/mathjslab.umd2015.js",
-  "module": "lib/mathjslab.esm2020.js",
-  "exports": {
-    ".": {
-      "require": "./lib/mathjslab.umd2015.js",
-      "import": "./lib/mathjslab.esm2020.js",
-      "default": "./lib/mathjslab.umd2020.js"
+    "name": "mathjslab",
+    "version": "1.7.0-b1",
+    "description": "MathJSLab - An interpreter with language syntax like MATLAB®/Octave, ISBN 978-65-00-82338-7.",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/MathJSLab/mathjslab.git"
+    },
+    "keywords": [
+        "MathJSLab",
+        "Mathematics",
+        "Educational",
+        "MATLAB",
+        "Octave",
+        "MathML",
+        "ANTLR",
+        "ANTLR4",
+        "math",
+        "lexer",
+        "parser",
+        "grammar",
+        "interpreter"
+    ],
+    "author": "Sergio Lindau <sergiolindau@gmail.com>",
+    "license": "MIT",
+    "bugs": {
+        "url": "https://github.com/MathJSLab/mathjslab/issues"
+    },
+    "homepage": "https://mathjslab.com/",
+    "main": "lib/mathjslab.web.umd2020.js",
+    "module": "lib/mathjslab.web.esm2020.js",
+    "types": "lib/src/lib.d.ts",
+    "exports": {
+        ".": {
+            "types": "./lib/src/lib.d.ts",
+            "node": {
+                "types": "./lib/src/lib.d.ts",
+                "import": "./lib/mathjslab.node.esm2020.js",
+                "require": "./lib/mathjslab.node.cjs2020.js",
+                "default": "./lib/mathjslab.node.cjs2015.js"
+            },
+            "default": {
+                "types": "./lib/src/lib.d.ts",
+                "import": "./lib/mathjslab.web.esm2020.js",
+                "require": "./lib/mathjslab.web.umd2020.js",
+                "default": "./lib/mathjslab.web.umd2015.js"
+            }
+        },
+        "./node-esm": {
+            "types": "./lib/src/lib.d.ts",
+            "default": "./lib/mathjslab.node.esm2020.js"
+        },
+        "./node-cjs": {
+            "types": "./lib/src/lib.d.ts",
+            "default": "./lib/mathjslab.node.cjs2020.js"
+        },
+        "./web-esm": {
+            "types": "./lib/src/lib.d.ts",
+            "default": "./lib/mathjslab.web.esm2020.js"
+        },
+        "./web-umd": {
+            "types": "./lib/src/lib.d.ts",
+            "default": "./lib/mathjslab.web.umd2020.js"
+        },
+        "./mathjslab.js": "./lib/mathjslab.web.umd2020.js"
+    },
+    "browser": {
+        "./mathjslab.js": "./lib/mathjslab.web.umd2020.js",
+        "fs": false,
+        "os": false,
+        "path": false
+    },
+    "scripts": {
+        "clean:package-lock": "node script/helper/clean-package-lock.cjs",
+        "clean:resources": "rimraf res",
+        "clean:report": "rimraf report",
+        "clean:lib": "rimraf lib",
+        "clean:build": "rimraf lib report",
+        "clean:parser-tokens-interp": "rimraf ./src/.antlr ./src/MathJSLabLexer.tokens ./src/MathJSLabLexer.interp ./src/MathJSLabParser.tokens ./src/MathJSLabParser.interp",
+        "clean:parser-src": "rimraf ./src/MathJSLabLexer.ts ./src/MathJSLabParser.ts",
+        "clean:parser": "npm run clean:parser-src && npm run clean:parser-tokens-interp",
+        "clean:download-resources": "node script/helper/download-files.cjs clean && rimraf script/helper/download-files.cjs download.config.json",
+        "clean": "npm run clean:build && npm run clean:parser",
+        "clean:all": "npm run clean && npm run clean:resources && npm run clean:package-lock && npm run clean:download-resources",
+        "update": "npx npm-check-updates -u && npm install && npm run build:resources",
+        "git:add": "git add .",
+        "git:commit": "node script/helper/git-commit.cjs",
+        "git:push": "git push",
+        "git:all": "npm run git:add && npm run git:commit && npm run git:push",
+        "npm:publish": "npm publish --access public --tag beta",
+        "git:all:npm:publish": "npm run git:all && npm run npm:publish",
+        "format": "prettier --write **/*.{js,cjs,mjs,ts,cts,mts,json}",
+        "lint": "eslint --fix",
+        "format:lint": "npm run format && npm run lint",
+        "pretest": "npm run build:parser && npm run build:package:types",
+        "test": "jest",
+        "test:all": "npm run test",
+        "pretest:unit": "npm run pretest",
+        "test:unit": "jest --selectProjects unit-tests",
+        "test:node": "jest --selectProjects node-cjs2015-tests node-cjs2020-tests node-esm2020-tests",
+        "test:web": "jest --selectProjects web-umd2015-tests web-umd2020-tests web-esm2020-tests",
+        "test:bundle": "jest --selectProjects node-cjs2015-tests node-cjs2020-tests node-esm2020-tests web-umd2015-tests web-umd2020-tests web-esm2020-tests",
+        "test1": "jest ./src/CharString.spec.ts",
+        "pretest:watch": "pretest",
+        "test:watch": "jest --watch",
+        "tsx": "tsx --require tsconfig-paths/register",
+        "download-resources": "curl -k -o ./script/helper/download-files.cjs https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/script/helper/download-files.cjs && curl -k -o ./download.config.json https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/resource/mathjslab/download.config.json && node script/helper/download-files.cjs",
+        "build:resources": "npm run download-resources && npm run tsx script/build-resources.ts",
+        "build:parser": "set CLASSPATH=./res/antlr-complete.jar && java org.antlr.v4.Tool ./src/MathJSLabLexer.g4 ./src/MathJSLabParser.g4 -Dlanguage=TypeScript -no-visitor -no-listener -o ./src/",
+        "build:package:types": "tsc --project tsconfig.types.es2020.json",
+        "prebuild:package": "npm run clean && npm run build:parser && npm run build:package:types",
+        "build:package": "tsx --require tsconfig-paths/register ./node_modules/webpack/bin/webpack",
+        "build:dev": "npm run build:package -- --mode development",
+        "build:prod": "npm run build:package -- --mode production",
+        "build": "npm run build:prod",
+        "do:all": "npm run clean:all && npm run update && npm run format:lint && npm run test:unit && npm run build && npm run test:bundle && npm run git:all:npm:publish && echo script \"do:all\" finished."
+    },
+    "engines": {
+        "node": ">=16",
+        "npm": ">=8",
+        "yarn": "false",
+        "pnpm": "false"
+    },
+    "devDependencies": {
+        "@types/debug": "^4.1.12",
+        "@types/eslint-config-prettier": "^6.11.3",
+        "@types/jest": "^29.5.14",
+        "@types/node": "^22.10.10",
+        "@types/supertest": "^6.0.2",
+        "@types/webpack": "^5.28.5",
+        "@types/webpack-bundle-analyzer": "^4.7.0",
+        "@typescript-eslint/eslint-plugin": "^8.21.0",
+        "@typescript-eslint/parser": "^8.21.0",
+        "eslint": "^9.19.0",
+        "eslint-config-prettier": "^10.0.1",
+        "eslint-plugin-import": "^2.31.0",
+        "eslint-plugin-jest": "^28.11.0",
+        "eslint-plugin-prettier": "^5.2.3",
+        "jest": "^29.7.0",
+        "jest-environment-jsdom": "^29.7.0",
+        "jsdom": "^26.0.0",
+        "license-webpack-plugin": "^4.0.2",
+        "lint-staged": "^15.4.3",
+        "node-html-parser": "^7.0.1",
+        "prettier": "^3.4.2",
+        "rimraf": "^6.0.1",
+        "source-map-support": "^0.5.21",
+        "ts-jest": "^29.2.5",
+        "ts-loader": "^9.5.2",
+        "ts-node": "^10.9.2",
+        "tsconfig-paths": "^4.2.0",
+        "tsx": "^4.19.2",
+        "typescript": "^5.7.3",
+        "webpack": "^5.97.1",
+        "webpack-bundle-analyzer": "^4.10.2",
+        "webpack-cli": "^6.0.1"
+    },
+    "dependencies": {
+        "antlr4": "^4.13.2",
+        "decimal.js": "^10.5.0",
+        "globalthis": "^1.0.4"
     }
-  },
-  "browser": {
-    "fs": false,
-    "os": false,
-    "path": false
-  },
-  "types": "lib/src/lib.d.ts",
-  "scripts": {
-    "clean:package-lock": "node script/helper/clean-package-lock.cjs",
-    "clean:build:resources": "rimraf res",
-    "clean:build": "rimraf lib",
-    "clean:parser-tokens-interp": "rimraf ./src/.antlr ./src/MathJSLabLexer.tokens ./src/MathJSLabLexer.interp ./src/MathJSLabParser.tokens ./src/MathJSLabParser.interp",
-    "clean:parser-src": "rimraf ./src/MathJSLabLexer.ts ./src/MathJSLabParser.ts",
-    "clean:parser": "npm run clean:parser-src && npm run clean:parser-tokens-interp",
-    "clean:download-resources": "node script/helper/download-files.cjs clean && rimraf script/helper/download-files.cjs download.config.json",
-    "clean": "npm run clean:build && npm run clean:parser",
-    "clean:all": "npm run clean && npm run clean:build:resources && npm run clean:package-lock && npm run clean:download-resources",
-    "update": "npx npm-check-updates -u && npm install && npm run build:resources",
-    "git:add": "git add .",
-    "git:commit": "node script/helper/git-commit.cjs",
-    "git:push": "git push",
-    "git:all": "npm run git:add && npm run git:commit && npm run git:push",
-    "npm:publish": "npm publish --access public",
-    "git:all:npm:publish": "npm run git:all && npm run npm:publish",
-    "format": "prettier --write \"**/*.+(js|ts|json)\"",
-    "lint": "eslint --fix",
-    "format:lint": "npm run format && npm run lint",
-    "pretest": "npm run build:parser",
-    "test": "jest --verbose",
-    "pretest:watch": "npm run build:parser",
-    "test:watch": "jest --watch",
-    "tsx": "tsx --require tsconfig-paths/register",
-    "download-resources": "curl -k -o ./script/helper/download-files.cjs https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/script/helper/download-files.cjs && curl -k -o ./download.config.json https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/resource/mathjslab/download.config.json && node script/helper/download-files.cjs",
-    "build:resources": "npm run download-resources && npm run tsx script/build-resources.ts",
-    "build:parser": "set CLASSPATH=./res/antlr-complete.jar && java org.antlr.v4.Tool ./src/MathJSLabLexer.g4 ./src/MathJSLabParser.g4 -Dlanguage=TypeScript -no-visitor -no-listener -o ./src/",
-    "prebuild": "npm run clean && npm run build:parser",
-    "build": "tsx --require tsconfig-paths/register ./node_modules/webpack/bin/webpack --mode production",
-    "do:all": "npm run clean:all && npm run update && npm run format:lint && npm run test && npm run build && npm run git:add && npm run git:commit",
-    "original-do:all": "npm run clean:all && npm run update && npm run format:lint && npm run test && npm run build && npm run git:all:npm:publish"
-  },
-  "devDependencies": {
-    "@types/debug": "^4.1.12",
-    "@types/eslint-config-prettier": "^6.11.3",
-    "@types/jest": "29.5.14",
-    "@types/node": "^22.10.7",
-    "@types/supertest": "^6.0.2",
-    "@types/webpack": "^5.28.5",
-    "@typescript-eslint/eslint-plugin": "^8.20.0",
-    "@typescript-eslint/parser": "^8.20.0",
-    "eslint": "^9.18.0",
-    "eslint-config-prettier": "^10.0.1",
-    "eslint-plugin-import": "^2.31.0",
-    "eslint-plugin-prettier": "^5.2.3",
-    "jest": "29.7.0",
-    "lint-staged": "^15.4.1",
-    "node-html-parser": "^7.0.1",
-    "prettier": "^3.4.2",
-    "rimraf": "^6.0.1",
-    "ts-jest": "29.2.5",
-    "ts-loader": "^9.5.2",
-    "tsconfig-paths": "^4.2.0",
-    "tsx": "^4.19.2",
-    "typescript": "^5.7.3",
-    "webpack": "^5.97.1",
-    "webpack-cli": "^6.0.1"
-  },
-  "dependencies": {
-    "antlr4": "^4.13.2",
-    "decimal.js": "^10.4.3",
-    "globalthis": "^1.0.4"
-  }
 }

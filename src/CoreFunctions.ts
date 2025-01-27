@@ -4,7 +4,7 @@ import { Evaluator } from './Evaluator';
 import { CharString } from './CharString';
 import * as AST from './AST';
 import { Structure } from './Structure';
-import Decimal from 'decimal.js';
+import { Decimal } from 'decimal.js';
 
 export abstract class CoreFunctions {
     public static functions: Record<string, Function> = {

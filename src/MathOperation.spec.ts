@@ -1,7 +1,12 @@
+import path from 'node:path';
 import { MathOperation } from './MathOperation';
 
-describe('MathOperation', () => {
-    it('MathOperation and its generic methods should be defined', () => {
+const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.sep}]+)\\.spec\\.([cm]?[jt]s)\$`))!;
+const unitName = __filenameMatch[1];
+const testExtension = __filenameMatch[2];
+
+describe(`${unitName} unit test (.${testExtension} test file).`, () => {
+    it(`${unitName} and its generic methods should be defined.`, () => {
         expect(MathOperation).toBeDefined();
         expect(MathOperation.copy).toBeDefined();
         expect(MathOperation.mand).toBeDefined();

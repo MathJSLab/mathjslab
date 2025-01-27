@@ -1,33 +1,33 @@
 {
-  "dataset": "mathjslab",
-  "files": [
-    {
-      "src": "https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/script/helper/clean-package-lock.cjs",
-      "dest": "script/helper/clean-package-lock.cjs"
-    },
-    {
-      "src": "https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/script/helper/downloadIfNotExist.ts",
-      "dest": "script/helper/downloadIfNotExist.ts"
-    },
-    {
-      "src": "https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/script/helper/getHtmlParsed.ts",
-      "dest": "script/helper/getHtmlParsed.ts"
-    },
-    {
-      "src": "https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/script/helper/httpGet.ts",
-      "dest": "script/helper/httpGet.ts"
-    },
-    {
-      "src": "https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/script/helper/mkDirIfNotExist.ts",
-      "dest": "script/helper/mkDirIfNotExist.ts"
-    },
-    {
-      "src": "https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/script/helper/git-commit.cjs",
-      "dest": "script/helper/git-commit.cjs"
-    },
-    {
-      "src": "https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/images/mathjslab-logo.svg",
-      "dest": "mathjslab-logo.svg"
-    }
-  ]
+    "dataset": "mathjslab",
+    "files": [
+        {
+            "src": "https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/script/helper/clean-package-lock.cjs",
+            "dest": "script/helper/clean-package-lock.cjs"
+        },
+        {
+            "src": "https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/script/helper/downloadIfNotExist.ts",
+            "dest": "script/helper/downloadIfNotExist.ts"
+        },
+        {
+            "src": "https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/script/helper/getHtmlParsed.ts",
+            "dest": "script/helper/getHtmlParsed.ts"
+        },
+        {
+            "src": "https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/script/helper/httpGet.ts",
+            "dest": "script/helper/httpGet.ts"
+        },
+        {
+            "src": "https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/script/helper/mkDirIfNotExist.ts",
+            "dest": "script/helper/mkDirIfNotExist.ts"
+        },
+        {
+            "src": "https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/script/helper/git-commit.cjs",
+            "dest": "script/helper/git-commit.cjs"
+        },
+        {
+            "src": "https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/images/mathjslab-logo.svg",
+            "dest": "mathjslab-logo.svg"
+        }
+    ]
 }

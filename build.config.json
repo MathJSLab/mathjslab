@@ -1,0 +1,12 @@
+{
+    "production": {
+        "bundles": ["web.umd2015", "node.cjs2015", "web.umd2020", "node.cjs2020", "web.esm2020", "node.esm2020"],
+        "analyzer": {
+            "openAnalyzer": false
+        }
+    },
+    "development": {
+        "bundles": ["cjs.dev"],
+        "analyzer": false
+    }
+}

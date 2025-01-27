@@ -1,6 +1,7 @@
 /**
  * eslint.config.cjs: ESLint configuration.
  */
+
 const path = require('node:path');
 const globals = require('globals');
 const tsPlugin = require('@typescript-eslint/eslint-plugin');
@@ -50,7 +51,7 @@ module.exports = [
         },
     },
     {
-        files: ['script/**/*.ts', 'eslint.config.*', 'jest.config.*', 'webpack.config.*', '**/*.spec.*'],
+        files: ['script/**/*.{ts,cts,mts}', 'eslint.config.{ts,cts,mts}', 'jest.config.{ts,cts,mts}', 'webpack.config.{ts,cts,mts}', '**/*.spec.{ts,cts,mts}'],
         languageOptions: {
             parser: tsParser,
             parserOptions: {
@@ -76,6 +77,36 @@ module.exports = [
             'no-console': 'off',
             ...prettierPlugin.configs.recommended.rules,
             ...eslintConfigPrettier.rules,
+            '@typescript-eslint/ban-ts-comment': 'off',
+        },
+    },
+    {
+        files: ['**/*.{js,cjs,mjs}', '**/*.spec.{js,cjs,mjs}'],
+        languageOptions: {
+            sourceType: 'module',
+            ecmaVersion: 2020,
+            globals: {
+                ...globals.node,
+                jest: 'readonly',
+                describe: 'readonly',
+                it: 'readonly',
+                expect: 'readonly',
+            },
+        },
+        plugins: {
+            jest: require('eslint-plugin-jest'),
+        },
+        rules: {
+            // JavaScript general rules.
+            'no-unused-vars': 'warn',
+            'no-undef': 'error',
+            semi: ['error', 'always'],
+            quotes: ['error', 'single', { avoidEscape: true }],
+            // Jest specific rules.
+            'jest/no-disabled-tests': 'warn',
+            'jest/no-focused-tests': 'error',
+            'jest/no-identical-title': 'error',
+            'jest/valid-expect': 'error',
         },
     },
 ];

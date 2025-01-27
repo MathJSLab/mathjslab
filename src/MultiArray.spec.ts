@@ -1,10 +1,15 @@
+import path from 'node:path';
 import { ComplexDecimal } from './ComplexDecimal';
 import { Evaluator } from './Evaluator';
 import { MultiArray } from './MultiArray';
 
 let evaluator: Evaluator;
 
-describe('MultiArray', () => {
+const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.sep}]+)\\.spec\\.([cm]?[jt]s)\$`))!;
+const unitName = __filenameMatch[1];
+const testExtension = __filenameMatch[2];
+
+describe(`${unitName} unit test (.${testExtension} test file).`, () => {
     beforeEach(async () => {
         evaluator = new Evaluator();
     });

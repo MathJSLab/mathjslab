@@ -1,2 +1,2 @@
 import 'globalthis/polyfill';
-export * from './lib';
+export * from './lib-core';

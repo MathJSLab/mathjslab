@@ -2,9 +2,23 @@
 All notable changes to this project will be documented in this file.
 This project adheres to [Semantic Versioning](http://semver.org/).
 
-## 1.7.0
+## 1.7.0-b1
+- The reason for publishing this beta version is to test access via CDNs before publishing the final version, so that we can describe the use of CDNs in the `README.md` file.
 - All dependencies have been updated.
-- Now Webpack generates 3 different bundles: UMD targeting "ES2015", ESM targeting "ES2020" and UMD targeting "ES2020". The UMD targeting "ES2015" imports 'globalthis/polyfill' (imported by file 'src/lib.umd2015.ts') for compatibility ('globalthis' package added as regular dependency). The fields "main", "module" and "exports" of `package.json` file has been set to support different targets.
+- 'globalThis' has been configured as a global object to make the package work in any JavaScript environment, as per [#2](https://github.com/MathJSLab/mathjslab/issues/2) and [#3](https://github.com/MathJSLab/mathjslab/pull/3). Now the project Webpack configuration generates 6 different bundles:
+1. web.umd2015
+2. node.cjs2015
+3. web.umd2020
+4. node.cjs2020
+5. web.esm2020
+6. node.esm2020
+
+Additionally, type generation is now done by `tsc` in an initial build step, separate from the build of bundles.
+The bundles targeting "ES2015" imports 'globalthis/polyfill' (imported by file 'src/lib.es2015.ts') for compatibility ('globalthis' package added as regular dependency). The fields "main", "module" and "exports" of `package.json` file has been set to support different targets. The `license-webpack-plugin` is used to generate the license of each bundle accurately. The generation of .d.ts files is now done in a separate step by tsc, before the Webpack build. Some `tsconfig` files were created, extending the `tsconfig.build.json` file, for building the various bundles and type definitions.
+- The `build.config.json` file was created, which is imported by `webpack.config.json` to customize some Webpack build configurations.
+- The `test` directory was created, with bundle integration tests, in addition to other tests. The Jest configuration (`jest.config.js`) has been updated: there are 7 test projects, one is a unitary test and the others are resulting bundles tests. Scripts to run tests has been created in `package.json` file. The tests have not yet been fully implemented. In fact, the test coverage is small, and what has been done is only the structure of the tests, the creation of the `.spec.*` files, the configuration of Jest, etc.
+- The `script/build-resources.ts` has been updated to download the ANTLR license. It's not available at `node_modules`, then the `license-webpack-plugin` can't insert license text in the outputh directory `./lib/`. The ANTLR license is downloaded from GitHub repository and inserted as licenseTextOverrides plugin parameter.
+- The `git-commit.cjs` script was created to commit with the user's message. If no message is entered, after the timeout (5s) a default message with the date is used. The file was also created in the [MathJSLab organization repository](https://github.com/MathJSLab) to be available on other projects as well.
 
 ## 1.6.2
 - All dependencies have been updated.

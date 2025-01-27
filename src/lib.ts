@@ -1,13 +1,5 @@
-export { Decimal } from 'decimal.js';
-export { CharString } from './CharString';
-export { ComplexDecimal } from './ComplexDecimal';
-export { ElementType, MultiArray } from './MultiArray';
-export { Structure } from './Structure';
-export { FunctionHandle } from './FunctionHandle';
-export { LinearAlgebra } from './LinearAlgebra';
-export { MathOperation } from './MathOperation';
-export { CoreFunctions } from './CoreFunctions';
-export { Configuration } from './Configuration';
-export { SymbolTable } from './SymbolTable';
-export * as AST from './AST';
-export * from './Evaluator';
+export * from './lib-core';
+/**
+ * Exported types.
+ */
+export type { ElementType } from './MultiArray';

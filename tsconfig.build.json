@@ -1,4 +1,4 @@
 {
-  "extends": "./tsconfig.json",
-  "exclude": ["node_modules", "eslint.config.*", "jest.config.*", "webpack.config.*", "**/*spec.*", "lib", "res", "script"]
+    "extends": "./tsconfig.json",
+    "exclude": ["node_modules", "eslint.config.*", "jest.config.*", "webpack.config.*", "**/*spec.*", "lib", "report", "res", "script", "test"]
 }
