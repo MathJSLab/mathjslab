@@ -2,6 +2,10 @@
 All notable changes to this project will be documented in this file.
 This project adheres to [Semantic Versioning](http://semver.org/).
 
+## 1.7.0
+- All dependencies have been updated.
+- The `README.md` file has been updated with trademark notice.
+
 ## 1.7.0-b1
 - The reason for publishing this beta version is to test access via CDNs before publishing the final version, so that we can describe the use of CDNs in the `README.md` file.
 - All dependencies have been updated.
