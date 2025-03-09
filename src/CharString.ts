@@ -1,8 +1,8 @@
 import { ComplexDecimal } from './ComplexDecimal';
 
-export type StringQuote = '"' | "'";
+type StringQuote = '"' | "'";
 
-export class CharString {
+class CharString {
     public str: string;
     public quote: StringQuote;
     public static readonly STRING = 3;
@@ -24,7 +24,7 @@ export class CharString {
     public static parse(str: string): CharString {
         return new CharString(str);
     }
-    public static unparse(value: CharString): string {
+    public static unparse(value: CharString, parentPrecedence = 0): string {
         return value.str;
     }
     public static unparseEscaped(value: CharString): string {
@@ -35,7 +35,7 @@ export class CharString {
             .replace(/\\\"/, '""');
         return '"' + result + '"';
     }
-    public static unparseMathML(value: CharString): string {
+    public static unparseMathML(value: CharString, parentPrecedence = 0): string {
         return '<mn><pre>' + value.str + '</pre></mn>';
     }
     public static unparseEscapedMathML(value: CharString): string {
@@ -59,3 +59,6 @@ export class CharString {
         return this.str ? ComplexDecimal.true() : ComplexDecimal.false();
     }
 }
+export type { StringQuote };
+export { CharString };
+export default CharString;

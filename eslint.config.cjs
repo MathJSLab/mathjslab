@@ -41,7 +41,7 @@ module.exports = [
             '@typescript-eslint/explicit-function-return-type': 'off',
             '@typescript-eslint/explicit-module-boundary-types': 'off',
             '@typescript-eslint/no-explicit-any': 'off',
-            '@typescript-eslint/no-unused-vars': 'warn',
+            '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
             '@typescript-eslint/no-unsafe-function-type': 'off',
             '@typescript-eslint/no-empty-object-type': 'off',
             '@typescript-eslint/ban-types': 'off',
@@ -73,7 +73,7 @@ module.exports = [
             '@typescript-eslint/no-require-imports': 'off',
             '@typescript-eslint/explicit-function-return-type': 'off',
             '@typescript-eslint/no-explicit-any': 'off',
-            '@typescript-eslint/no-unused-vars': 'warn',
+            '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
             'no-console': 'off',
             ...prettierPlugin.configs.recommended.rules,
             ...eslintConfigPrettier.rules,
@@ -96,9 +96,10 @@ module.exports = [
         plugins: {
             jest: require('eslint-plugin-jest'),
         },
+        ignores: ['eslint.config.*', 'jest.config.*', 'webpack.config.*', 'res/**', 'lib/**'],
         rules: {
             // JavaScript general rules.
-            'no-unused-vars': 'warn',
+            'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
             'no-undef': 'error',
             semi: ['error', 'always'],
             quotes: ['error', 'single', { avoidEscape: true }],

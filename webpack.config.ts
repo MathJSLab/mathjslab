@@ -201,16 +201,12 @@ export default (env: any, argv: any): webpack.Configuration[] => {
     const mode = (argv.mode || 'production') as 'production' | 'development';
     const isProduction = mode === 'production';
     const buildConfiguration = buildConfig[mode];
-
-    const exclude = [/node_modules/, /lib/, /report/, /res/, /script/, /.*\.spec\.[jt]s$/];
-
+    const exclude = ['node_modules', 'lib', 'report', 'res', 'script', /.*\.spec\.[jt]s$/].map((dir) => (typeof dir === 'string' ? path.join(__dirname, dir) : dir));
     console.log(`Running Webpack (configuration: ${__filename} ...`);
     console.warn(`Build environment variables:`);
     console.table(env);
-
     const bundlesConfiguration = WebpackConfiguration.filter((config) => buildConfiguration.bundles.includes(config.name!));
     console.log(`Building the following ${bundlesConfiguration.length === 1 ? `${mode} bundle` : `${bundlesConfiguration.length} ${mode} bundles`}:`);
-
     return bundlesConfiguration.map((config, index) => {
         console.log(`${index + 1}. ${config.name}`);
         config.mode = mode;

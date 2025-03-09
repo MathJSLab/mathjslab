@@ -10,6 +10,7 @@
 [![MIT License](https://img.shields.io/npm/l/mathjslab)](https://github.com/MathJSLab/mathjslab/blob/main/LICENSE)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.8396265.svg)](https://doi.org/10.5281/zenodo.8396265)
 [![ISBN](https://img.shields.io/badge/ISBN-978--65--00--82338--7-green?style=flat&link=https://grp.isbn-international.org/search/piid_solr?keys=978-65-00-82338-7)](https://grp.isbn-international.org/search/piid_solr?keys=978-65-00-82338-7)
+[![OpenAIRE](https://img.shields.io/badge/OpenAIRE-blue?style=flat&link=https://explore.openaire.eu/search/advanced/research-outcomes?f0=q&fv0=MathJSLab)](https://explore.openaire.eu/search/advanced/research-outcomes?f0=q&fv0=MathJSLab)
 [![NPM Downloads](https://img.shields.io/npm/d18m/mathjslab)](https://www.npmjs.com/package/mathjslab)
 [![jsDelivr hits (npm)](https://img.shields.io/jsdelivr/npm/hy/mathjslab)](https://www.jsdelivr.com/package/npm/mathjslab)
 [![Libraries.io SourceRank](https://img.shields.io/librariesio/sourcerank/npm/mathjslab)](https://libraries.io/npm/mathjslab/sourcerank)
@@ -74,8 +75,12 @@ available in the
 
 ## Features
 
-- Runs on any [JavaScript](https://www.ecma-international.org/publications-and-standards/standards/ecma-262/) engine.
-- Improved demo [Web application](https://en.wikipedia.org/wiki/Web_application) at project page: [mathjslab.com](https://mathjslab.com/) ([repository](https://github.com/MathJSLab/mathjslab-app)).
+- Runs on any [JavaScript](https://www.ecma-international.org/publications-and-standards/standards/ecma-262/) engine. All `mathjslab` code was written synchronously. Asynchronous functions were used only at build time.
+- Improved demo [Web application](https://en.wikipedia.org/wiki/Web_application) at project page: [mathjslab.com](https://mathjslab.com/) ([repository](https://github.com/MathJSLab/mathjslab-app)). The demo [Web application](https://en.wikipedia.org/wiki/Web_application) was coded as a [Progressive Web App (PWA)](https://pt.wikipedia.org/wiki/Progressive_web_app), with the most modern web programming features, such as:
+    * Reusable [Web Components](https://developer.mozilla.org/en-US/docs/Web/API/Web_components) to structure the user interface.
+    * [Responsive](https://en.wikipedia.org/wiki/Responsive_web_design) [HTML](https://developer.mozilla.org/en-US/docs/Web/HTML) elements and [components](https://developer.mozilla.org/en-US/docs/Web/API/Web_components).
+    * [Styles](https://www.w3.org/TR/css/) defined by [SASS](https://sass-lang.com/) templates, with definitions in a more rationalized and modular manner.
+    * [Nunjucks](https://mozilla.github.io/nunjucks/) templates processed by [Eleventy](https://www.11ty.dev/) to dynamically configure values ​​at build time.
 - Comes with a large set of built-in operations, functions and commands well documented in the demo [Web application](https://en.wikipedia.org/wiki/Web_application) in [english](https://github.com/MathJSLab/mathjslab-app/tree/main/help/en), [portuguese](https://github.com/MathJSLab/mathjslab-app/tree/main/help/pt) and [spanish](https://github.com/MathJSLab/mathjslab-app/tree/main/help/es).
 - Includes test suite using [Jest](https://jestjs.io/) [framework](https://en.wikipedia.org/wiki/Software_framework) (most tests not yet implemented).
 - Is easily extensible through configuration parameters passed to [`Evaluator` constructor](https://github.com/MathJSLab/mathjslab/blob/main/src/Evaluator.ts).

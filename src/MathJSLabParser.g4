@@ -7,6 +7,10 @@ options { tokenVocab = MathJSLabLexer; }
 import * as AST from './AST';
 
 /**
+ * # MathJSLabParser
+ *
+ * A parser that recognizes a language syntax like MATLAB®/Octave written in TypeScript.
+ *
  * ## References
  * * [MATLAB Operator Precedence](https://www.mathworks.com/help/matlab/matlab_prog/operator-precedence.html)
  * * [Octave lexer](https://github.com/gnu-octave/octave/blob/default/libinterp/parse-tree/lex.ll)

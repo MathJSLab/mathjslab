@@ -3,7 +3,7 @@
  * @param id String containing greek names
  * @returns String with greek names replaced by HTML entities
  */
-export function substSymbol(id: string): string {
+function substSymbol(id: string): string {
     const greekLetters: Array<string> = [
         'alpha',
         'beta',
@@ -94,3 +94,5 @@ export function substSymbol(id: string): string {
     id = id.replace(/^[Ii]nf$/, '&infin;').replace(/^NaN$|^nan$/, '<b>NaN</b>');
     return id;
 }
+export { substSymbol };
+export default substSymbol;

@@ -2,7 +2,7 @@ import { ComplexDecimal } from './ComplexDecimal';
 import * as AST from './AST';
 import { Evaluator } from './Evaluator';
 
-export class FunctionHandle {
+class FunctionHandle {
     public static readonly FUNCTION_HANDLE = 5;
     public readonly type = FunctionHandle.FUNCTION_HANDLE;
     public parent: any;
@@ -22,7 +22,7 @@ export class FunctionHandle {
         return new FunctionHandle(id, commat, parameter, expression);
     }
 
-    public static unparse(fhandle: FunctionHandle, evaluator: Evaluator): string {
+    public static unparse(fhandle: FunctionHandle, evaluator: Evaluator, parentPrecedence = 0): string {
         if (fhandle.id) {
             return (fhandle.commat ? '@' : '') + fhandle.id;
         } else {
@@ -30,14 +30,14 @@ export class FunctionHandle {
         }
     }
 
-    public static unparseMathML(fhandle: FunctionHandle, evaluator: Evaluator): string {
+    public static unparseMathML(fhandle: FunctionHandle, evaluator: Evaluator, parentPrecedence = 0): string {
         if (fhandle.id) {
             return `${fhandle.commat ? '<mo>@</mo><mi>' : ''}${fhandle.id}</mi>`;
         } else {
             return (
-                '<mo>@</mo><mo>(</mo>' +
+                '<mo>@</mo><mo fence="true" stretchy="true">(</mo>' +
                 fhandle.parameter.map((param: AST.NodeExpr) => evaluator.unparserMathML(param)).join('<mo>,</mo>') +
-                '<mo>)</mo><mspace width="0.8em"/>' +
+                '<mo fence="true" stretchy="true">)</mo><mspace width="0.8em"/>' +
                 evaluator.unparserMathML(fhandle.expression)
             );
         }
@@ -63,3 +63,5 @@ export class FunctionHandle {
         return ComplexDecimal.false();
     }
 }
+export { FunctionHandle };
+export default FunctionHandle;

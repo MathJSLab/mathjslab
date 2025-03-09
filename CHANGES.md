@@ -2,14 +2,49 @@
 All notable changes to this project will be documented in this file.
 This project adheres to [Semantic Versioning](http://semver.org/).
 
+## 1.7.1
+- More rational definitions in `webpack.config.ts`.
+- The `cross-env` package has been instaled as development dependency and some
+scripts in the `package.json` file has been made platform-independent.
+- All references to `global` have been changed to `globalThis`.
+- Dependencies updated.
+- The `ajv` package was installed as a development dependency. It was needed
+after the last dependency update. An error was occurring during the Webpack
+build, which was resolved after installing `ajv`. The reason for this error
+may be related to running Webpack using `tsx`.
+- The `fence` and `stretchy` properties has been set to `true` on all `<mo>`
+elements referring to delimiters in MathML unparse functions.
+- The definition of namespace in `ComplexDecimal.ts` file has been removed.
+- The inline exports of types and objects in multiple files have been moved to
+the end of the files. This way they comply with the modern way of defining
+modules. It's a new code convention (decribed in `CONTRIBUTING.md` file).
+- A more detailed description of the demo web application's features has been
+included in the documentation (`README.md` file).
+- A badge pointing to the [OpenAIRE](https://explore.openaire.eu/) search for
+MathJSLab has been added to the `README.md` file.
+- An operator precedence table has been added to the `Evaluator` class and the
+`unparserMathML` method has been modified to not represent unnecessary
+parentheses in the result. The `Evaluator.nodePrecedence` method was also
+created, which, by consulting the precedence table, returns the precedence of
+the AST node.
+- The file `MathML.ts` was created containing some types and an abstract
+class with a static property (`format`) that defines functions to help unparse
+in MathML language. The comments in this file contain relevant MathML language
+references that were used to code this module.
+
 ## 1.7.0
 - All dependencies have been updated.
 - The `README.md` file has been updated with trademark notice.
 
 ## 1.7.0-b1
-- The reason for publishing this beta version is to test access via CDNs before publishing the final version, so that we can describe the use of CDNs in the `README.md` file.
+- The reason for publishing this beta version is to test access via CDNs
+before publishing the final version, so that we can describe the use of CDNs
+in the `README.md` file.
 - All dependencies have been updated.
-- 'globalThis' has been configured as a global object to make the package work in any JavaScript environment, as per [#2](https://github.com/MathJSLab/mathjslab/issues/2) and [#3](https://github.com/MathJSLab/mathjslab/pull/3). Now the project Webpack configuration generates 6 different bundles:
+- 'globalThis' has been configured as a global object to make the package work
+in any JavaScript environment, as per [#2](https://github.com/MathJSLab/mathjslab/issues/2)
+and [#3](https://github.com/MathJSLab/mathjslab/pull/3). Now the project
+Webpack configuration generates 6 different bundles:
 1. web.umd2015
 2. node.cjs2015
 3. web.umd2020
@@ -172,7 +207,7 @@ in MATLAB&reg;/Octave.
 - Optimizations in `ComplexDecimal.set`.
 - Changes in `Evaluator.baseFunctionTable` and function calling:
   * mapper field is now not optional.
-  * `Evaluator.localTable` variable creation using `global.crypto.randomUUID`.
+  * `Evaluator.localTable` variable creation using `globalThis.crypto.randomUUID`.
   * Function parameters selectively evaluated if ev.length > 0.
 
 

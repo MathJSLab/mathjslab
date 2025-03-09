@@ -23,7 +23,7 @@ async function spawnCurl(src, dest) {
     });
 }
 /* Parse command line and set configuration file path. */
-global.console.log(`Running ${__filename} ...`);
+globalThis.console.log(`Running ${__filename} ...`);
 const defaultConfigFile = 'download.config.json';
 const argConfigFilePos = process.argv.length > 2 && process.argv[2].trim() === 'clean' ? 3 : 2;
 let downloadConfigPath = process.argv.length > argConfigFilePos ? process.argv[argConfigFilePos] : defaultConfigFile;
@@ -41,26 +41,26 @@ try {
 }
 if (argConfigFilePos === 3) {
     /* Cleanup downloaded files. */
-    global.console.warn(`Removing downloaded files specified in ${downloadConfigPath} ...`);
+    globalThis.console.warn(`Removing downloaded files specified in ${downloadConfigPath} ...`);
     Promise.all(
         downloadConfig.files.map(async (file) => {
             let filePath;
             try {
                 filePath = path.resolve(file.dest);
-                global.console.log(`Removing ${filePath} ...`);
+                globalThis.console.log(`Removing ${filePath} ...`);
                 fs.unlinkSync(filePath);
-                global.console.log(`Removing ${filePath} done.`);
+                globalThis.console.log(`Removing ${filePath} done.`);
             } catch {
-                global.console.log(`Cannot remove ${filePath} \nIgnoring...`);
+                globalThis.console.log(`Cannot remove ${filePath} \nIgnoring...`);
             }
         }),
     ).then((_result) => {
-        global.console.warn(`Removing downloaded files specified in ${downloadConfigPath} done.`);
-        global.console.log(`Running ${__filename} done.\r\n`);
+        globalThis.console.warn(`Removing downloaded files specified in ${downloadConfigPath} done.`);
+        globalThis.console.log(`Running ${__filename} done.\r\n`);
     });
 } else {
     /* Download files. */
-    global.console.warn(`Downloading files specified in ${downloadConfigPath} ...`);
+    globalThis.console.warn(`Downloading files specified in ${downloadConfigPath} ...`);
     Promise.all(
         downloadConfig.files.map(async (file) => {
             if (!path.isAbsolute(file.dest)) {
@@ -70,7 +70,7 @@ if (argConfigFilePos === 3) {
             return spawnCurl(file.src, file.dest);
         }),
     ).then((_result) => {
-        global.console.warn(`Downloading files specified in ${downloadConfigPath} done.`);
-        global.console.log(`Running ${__filename} done.\r\n`);
+        globalThis.console.warn(`Downloading files specified in ${downloadConfigPath} done.`);
+        globalThis.console.log(`Running ${__filename} done.\r\n`);
     });
 }

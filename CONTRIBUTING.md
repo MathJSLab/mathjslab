@@ -69,21 +69,24 @@ All code is linted with [Prettier](https://prettier.io/).
 
 Start reading our code and you'll get the hang of it. In summary, we adopted:
 
-* We indent using four spaces for code files and two spaces for json files, set by EditorConfig.
-* We use the following name convention: for constants, variables, functions and class methods we use camelCase with uncapitalized initial letter. For types and classes we use CamelCase with first letter capitalized.
+* We indent using four spaces for code files and two spaces for json files, set by EditorConfig and Prettier.
+* We use the following name convention: for constants, variables, functions and class methods we use camelCase with uncapitalized initial letter. For types, interfaces, and classes we use CamelCase with first letter capitalized.
 * We ALWAYS put spaces after list items and method parameters (`[1, 2, 3]`, not `[1,2,3]`), around operators (`x += 1`, not `x+=1`), and around hash arrows.
-* Inline exports with expressions whenever possible:
+* Don't use inline exports whenever as possible:
 ```typescript
 // Use this:
-export default class ClassName {
-
-}
-
-// Instead of:
 class ClassName {
 
 }
-export default ClassName
+export {
+    ClassName
+};
+export default ClassName;
+
+// Instead of:
+export default class ClassName {
+
+}
 ```
 * This is an [open source software](https://en.wikipedia.org/wiki/Open-source_software). Consider the people who will read your code, and make it look nice for them.
 
@@ -118,6 +121,7 @@ Here are some references consulted to carry out this project.
 * [Wolfram MathWorld](https://mathworld.wolfram.com/)
 * [WolframAlpha](https://www.wolframalpha.com/)
 * [Decimal.js Documentation](https://mikemcl.github.io/decimal.js/)
+* [MATLAB&reg; Online](https://matlab.mathworks.com/)
 * [MATLAB&reg; Documentation](https://www.mathworks.com/help/matlab/index.html)
     * [Get Started with MATLAB&reg;](https://www.mathworks.com/help/matlab/getting-started-with-matlab.html)
     * [Fundamental MATLAB Classes](https://www.mathworks.com/help/matlab/matlab_prog/fundamental-matlab-classes.html)

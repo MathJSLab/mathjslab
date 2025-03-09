@@ -1,5 +1,5 @@
 import { ComplexDecimal } from './ComplexDecimal';
-import { ElementType, MultiArray } from './MultiArray';
+import { type ElementType, MultiArray } from './MultiArray';
 import * as AST from './AST';
 
 /**
@@ -13,7 +13,7 @@ import * as AST from './AST';
  * * [Fundamental Theorem of Linear Algebra at Wolfram MathWorld](https://mathworld.wolfram.com/FundamentalTheoremofLinearAlgebra.html)
  * * [Linear algebra at Wikipedia](https://en.wikipedia.org/wiki/Linear_algebra)
  */
-export abstract class LinearAlgebra {
+abstract class LinearAlgebra {
     /**
      * LinearAlgebra functions.
      */
@@ -481,3 +481,5 @@ export abstract class LinearAlgebra {
         });
     }
 }
+export { LinearAlgebra };
+export default LinearAlgebra;

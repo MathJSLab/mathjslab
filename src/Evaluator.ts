@@ -15,59 +15,61 @@ import { ComplexDecimal } from './ComplexDecimal';
 import { MultiArray } from './MultiArray';
 import { CoreFunctions } from './CoreFunctions';
 import { LinearAlgebra } from './LinearAlgebra';
-import { MathObject, MathOperationType, UnaryMathOperation, BinaryMathOperation, MathOperation } from './MathOperation';
+import type { MathObject, MathOperationType, UnaryMathOperation, BinaryMathOperation } from './MathOperation';
+import { MathOperation } from './MathOperation';
 import { Configuration } from './Configuration';
 import { Structure } from './Structure';
 import { SymbolTable } from './SymbolTable';
 import { FunctionHandle } from './FunctionHandle';
+import * as MathML from './MathML';
 
 /**
  * aliasNameTable and AliasFunction type.
  */
-export type AliasNameTable = Record<string, RegExp>;
-export type AliasFunction = (name: string) => string;
+type AliasNameTable = Record<string, RegExp>;
+type AliasFunction = (name: string) => string;
 
 /**
  * builtInFunctionTable type.
  */
-export type BuiltInFunctionTableEntry = {
+type BuiltInFunctionTableEntry = {
     type: 'BUILTIN';
     mapper: boolean;
     ev: boolean[];
     func: Function;
     unparserMathML?: (tree: AST.NodeInput) => string;
 };
-export type BuiltInFunctionTable = Record<string, BuiltInFunctionTableEntry>;
+type BuiltInFunctionTable = Record<string, BuiltInFunctionTableEntry>;
 
 /**
  * nameTable type.
  */
-export type NameTable = Record<string, AST.NodeExpr>;
+type NameTable = Record<string, AST.NodeExpr>;
 
 /**
  * commandWordListTable type.
  */
-export type CommandWordListFunction = (...args: string[]) => any;
-export type CommandWordListTableEntry = {
+type CommandWordListFunction = (...args: string[]) => any;
+type CommandWordListTableEntry = {
     func: CommandWordListFunction;
 };
-export type CommandWordListTable = Record<string, CommandWordListTableEntry>;
+type CommandWordListTable = Record<string, CommandWordListTableEntry>;
 
 /**
  * EvaluatorConfig type.
  */
-export type EvaluatorConfig = {
+type EvaluatorConfig = {
     aliasNameTable?: AliasNameTable;
     externalFunctionTable?: BuiltInFunctionTable;
     externalCmdWListTable?: CommandWordListTable;
 };
 
-export type IncDecOperator = (tree: AST.NodeIdentifier) => MathObject;
+type IncDecOperator = (tree: AST.NodeIdentifier) => MathObject;
 
 /**
  * Evaluator object.
  */
-export class Evaluator {
+class Evaluator {
     /**
      * After run Evaluate method, the exitStatus property will contains
      * exit state of method.
@@ -266,6 +268,53 @@ export class Evaluator {
         '_--': this.incDecOp(false, 'minus'),
     };
 
+    private static readonly precedence: string[][] = [
+        ['min', '=', '+=', '-=', '*=', '/=', '\\='],
+        ['||'],
+        ['&&'],
+        ['|'],
+        ['&'],
+        ['!=', '<', '>', '<=', '>='],
+        ['+', '-'],
+        ['.*', '*', './', '/', '.\\', '\\'],
+        ['^', '.**', '**', ".'", "'"],
+        ['!', '~', '-_', '+_'],
+        ['preMax', '_.^', '_.**', '_^', '_**', "__.'", "__'", '__++'],
+        ['max', '()', 'IDENT', 'ENDRANGE', ':', '<~>', '.'],
+    ];
+
+    /**
+     * Operator precedence table.
+     */
+    public readonly precedenceTable: { [key: string]: number };
+
+    /**
+     * Get tree node precedence.
+     * @param tree Tree node.
+     * @returns Node precedence.
+     */
+    private nodePrecedence(tree: AST.NodeInput): number {
+        if (typeof tree.type === 'number') {
+            /* If `typeof tree.type === 'number'` then tree is a literal number or singleton element.  */
+            if (tree instanceof ComplexDecimal) {
+                return ComplexDecimal.precedence(tree, this);
+            } else {
+                return this.precedenceTable.max;
+            }
+        } else if (tree.type === 'IDX') {
+            const aliasTreeName = this.aliasName(tree.expr.id);
+            return tree.expr.type === 'IDENT' &&
+                aliasTreeName in this.builtInFunctionTable &&
+                (!!this.builtInFunctionTable[aliasTreeName].unparserMathML || aliasTreeName in MathML.format)
+                ? this.precedenceTable.max
+                : this.precedenceTable.preMax;
+        } else if (tree.type === 'RANGE') {
+            return tree.start_ && tree.stop_ ? this.precedenceTable.min : this.precedenceTable.max;
+        } else {
+            return this.precedenceTable[tree.type] || 0;
+        }
+    }
+
     /**
      * User functions.
      */
@@ -312,16 +361,34 @@ export class Evaluator {
      * Special functions MathML unparser.
      */
     private readonly unparseMathMLFunctions: Record<string, (tree: AST.NodeIndexExpr) => string> = {
-        abs: (tree: AST.NodeIndexExpr): string => `<mrow><mo>|</mo>${this.unparserMathML(tree.args[0])}<mo>|</mo></mrow>`,
-        conj: (tree: AST.NodeIndexExpr): string => `<mover><mrow>${this.unparserMathML(tree.args[0])}</mrow><mo>&OverBar;</mo></mover>`,
-        sqrt: (tree: AST.NodeIndexExpr): string => `<msqrt><mrow>${this.unparserMathML(tree.args[0])}</mrow></msqrt>`,
-        root: (tree: AST.NodeIndexExpr): string => `<mroot><mrow>${this.unparserMathML(tree.args[0])}</mrow><mrow>${this.unparserMathML(tree.args[1])}</mrow></mroot>`,
-        exp: (tree: AST.NodeIndexExpr): string => `<msup><mi>e</mi><mrow>${this.unparserMathML(tree.args[0])}</mrow></msup>`,
-        logb: (tree: AST.NodeIndexExpr): string => `<msub><mi>log</mi><mrow>${this.unparserMathML(tree.args[0])}</mrow></msub><mrow>${this.unparserMathML(tree.args[1])}</mrow>`,
-        log2: (tree: AST.NodeIndexExpr): string => `<msub><mi>log</mi><mrow><mn>2</mn></mrow></msub><mrow>${this.unparserMathML(tree.args[0])}</mrow>`,
-        log10: (tree: AST.NodeIndexExpr): string => `<msub><mi>log</mi><mrow><mn>10</mn></mrow></msub><mrow>${this.unparserMathML(tree.args[0])}</mrow>`,
-        gamma: (tree: AST.NodeIndexExpr): string => `<mi>&Gamma;</mi><mrow><mo>(</mo>${this.unparserMathML(tree.args[0])}<mo>)</mo></mrow>`,
-        factorial: (tree: AST.NodeIndexExpr): string => `<mrow><mo>(</mo>${this.unparserMathML(tree.args[0])}<mo>)</mo></mrow><mo>!</mo>`,
+        logb: (tree: AST.NodeIndexExpr): string => {
+            let unparseArgument = this.unparserMathML(tree.args[1]);
+            if (this.nodePrecedence(tree.args[1]) < this.precedenceTable.max) {
+                unparseArgument = MathML.format['()']('(', unparseArgument, ')');
+            }
+            return MathML.format['logb'](this.unparserMathML(tree.args[0]), unparseArgument);
+        },
+        log2: (tree: AST.NodeIndexExpr): string => {
+            let unparseArgument = this.unparserMathML(tree.args[0]);
+            if (this.nodePrecedence(tree.args[0]) < this.precedenceTable.max) {
+                unparseArgument = MathML.format['()']('(', unparseArgument, ')');
+            }
+            return MathML.format['log2'](unparseArgument);
+        },
+        log10: (tree: AST.NodeIndexExpr): string => {
+            let unparseArgument = this.unparserMathML(tree.args[0]);
+            if (this.nodePrecedence(tree.args[0]) < this.precedenceTable.max) {
+                unparseArgument = MathML.format['()']('(', unparseArgument, ')');
+            }
+            return MathML.format['log10'](unparseArgument);
+        },
+        factorial: (tree: AST.NodeIndexExpr): string => {
+            let unparseArgument = this.unparserMathML(tree.args[0]);
+            if (this.nodePrecedence(tree.args[0]) < this.precedenceTable.max) {
+                unparseArgument = MathML.format['()']('(', unparseArgument, ')');
+            }
+            return MathML.format['factorial'](unparseArgument);
+        },
     };
 
     /**
@@ -336,11 +403,23 @@ export class Evaluator {
      */
     constructor(config?: EvaluatorConfig) {
         this.exitStatus = this.response.OK;
+        this.precedenceTable = {};
+        Evaluator.precedence.forEach((list, precedence) => {
+            list.forEach((field) => {
+                this.precedenceTable[field] = precedence + 1;
+            });
+        });
         /* Set opTable aliases */
         this.opTable['**'] = this.opTable['^'];
+        this.precedenceTable['**'] = this.precedenceTable['^'];
         this.opTable['.**'] = this.opTable['.^'];
+        this.precedenceTable['.**'] = this.precedenceTable['.^'];
+        this.precedenceTable['_**'] = this.precedenceTable['_^'];
+        this.precedenceTable['_.**'] = this.precedenceTable['_.^'];
         this.opTable['~='] = this.opTable['!='];
+        this.precedenceTable['~='] = this.precedenceTable['!='];
         this.opTable['~'] = this.opTable['!'];
+        this.precedenceTable['~'] = this.precedenceTable['!'];
         /* Load nativeNameTable */
         this.loadNativeTable();
         /* Define Evaluator functions */
@@ -1111,7 +1190,7 @@ export class Evaluator {
                                     throw new EvalError(`invalid number of arguments in function ${tree.expr.id}.`);
                                 }
                                 /* Create localTable entry. */
-                                const new_fname = tree.expr.id + '_' + global.crypto.randomUUID();
+                                const new_fname = tree.expr.id + '_' + globalThis.crypto.randomUUID();
                                 this.localTable[new_fname] = {};
                                 for (let i = 0; i < tree.args.length; i++) {
                                     /* Evaluate defined function arguments list. */
@@ -1300,7 +1379,7 @@ export class Evaluator {
                             return (
                                 this.Unparse(tree.obj) +
                                 '.' +
-                                tree.field.map((value: string | AST.NodeExpr) => (typeof value === 'string' ? value : `(${this.Unparse(value)})`)).join('.')
+                                tree.field.map((value: string | AST.NodeExpr) => (typeof value === 'string' ? value : '(' + this.Unparse(value) + ')')).join('.')
                             );
                         case 'LIST':
                             return tree.list.map((value: AST.NodeInput) => this.Unparse(value)).join('\n') + '\n';
@@ -1355,23 +1434,28 @@ export class Evaluator {
      * @param tree Expression tree.
      * @returns String of expression `tree` unparsed as MathML language.
      */
-    public unparserMathML(tree: AST.NodeInput): string {
+    public unparserMathML(tree: AST.NodeInput, parentPrecedence = 0): string {
         try {
             if (tree) {
                 if (tree === undefined) {
-                    return '<mi>undefined</mi>';
+                    return MathML.format['UNDEFINED']();
                 } else if (tree instanceof ComplexDecimal) {
-                    return this.unparseNumberMathML(tree);
+                    return this.unparseNumberMathML(tree, this, parentPrecedence);
                 } else if (tree instanceof CharString) {
-                    return this.unparseStringMathML(tree);
+                    return this.unparseStringMathML(tree, parentPrecedence);
                 } else if (tree instanceof MultiArray) {
-                    return this.unparseArrayMathML(tree, this);
+                    return this.unparseArrayMathML(tree, this, parentPrecedence);
                 } else if (tree instanceof Structure) {
-                    return this.unparseStructureMathML(tree, this);
+                    return this.unparseStructureMathML(tree, this, parentPrecedence);
                 } else if (tree instanceof FunctionHandle) {
-                    return this.unparseFunctionHandleMathML(tree, this);
+                    return this.unparseFunctionHandleMathML(tree, this, parentPrecedence);
                 } else {
                     switch (tree.type) {
+                        case '()': {
+                            const precedence = this.nodePrecedence(tree.right);
+                            const rightUnparse = this.unparserMathML(tree.right, precedence);
+                            return precedence < parentPrecedence ? MathML.format['()']('(', rightUnparse, ')') : rightUnparse;
+                        }
                         case '+':
                         case '-':
                         case '.*':
@@ -1402,90 +1486,97 @@ export class Evaluator {
                         case '.**=':
                         case '&=':
                         case '|=':
-                            return this.unparserMathML(tree.left) + '<mo>' + tree.type + '</mo>' + this.unparserMathML(tree.right);
                         case '<=':
-                            return this.unparserMathML(tree.left) + '<mo>&le;</mo>' + this.unparserMathML(tree.right);
                         case '>=':
-                            return this.unparserMathML(tree.left) + '<mo>&ge;</mo>' + this.unparserMathML(tree.right);
                         case '!=':
                         case '~=':
-                            return this.unparserMathML(tree.left) + '<mo>&ne;</mo>' + this.unparserMathML(tree.right);
-                        case '()':
-                            return '<mo>(</mo>' + this.unparserMathML(tree.right) + '<mo>)</mo>';
-                        case '*':
-                            return this.unparserMathML(tree.left) + '<mo>&times;</mo>' + this.unparserMathML(tree.right);
+                        case '*': {
+                            const precedence = this.nodePrecedence(tree);
+                            const leftUnparse = this.unparserMathML(tree.left, precedence);
+                            const rightUnparse = this.unparserMathML(tree.right, precedence);
+                            return MathML.format[tree.type](
+                                this.nodePrecedence(tree.left) < precedence ? MathML.format['()']('(', leftUnparse, ')') : leftUnparse,
+                                this.nodePrecedence(tree.right) < precedence ? MathML.format['()']('(', rightUnparse, ')') : rightUnparse,
+                            );
+                        }
                         case '/':
-                            return '<mfrac><mrow>' + this.unparserMathML(tree.left) + '</mrow><mrow>' + this.unparserMathML(tree.right) + '</mrow></mfrac>';
+                            return MathML.format[tree.type](this.unparserMathML(tree.left), this.unparserMathML(tree.right));
                         case '**':
                         case '^':
-                            return '<msup><mrow>' + this.unparserMathML(tree.left) + '</mrow><mrow>' + this.unparserMathML(tree.right) + '</mrow></msup>';
+                            return MathML.format[tree.type](this.unparserMathML(tree.left, this.precedenceTable['_' + tree.type]), this.unparserMathML(tree.right));
                         case '!':
                         case '~':
-                            return '<mo>' + tree.type + '</mo>' + this.unparserMathML(tree.right);
                         case '+_':
-                            return '<mo>+</mo>' + this.unparserMathML(tree.right);
                         case '-_':
-                            return '<mo>-</mo>' + this.unparserMathML(tree.right);
                         case '++_':
-                            return '<mo>++</mo>' + this.unparserMathML(tree.right);
                         case '--_':
-                            return '<mo>--</mo>' + this.unparserMathML(tree.right);
+                            return MathML.format[tree.type](this.unparserMathML(tree.right));
                         case '_++':
-                            return this.unparserMathML(tree.left) + '<mo>++</mo>';
                         case '_--':
-                            return this.unparserMathML(tree.left) + '<mo>--</mo>';
                         case ".'":
-                            return '<msup><mrow>' + this.unparserMathML(tree.left) + '</mrow><mrow><mi>T</mi></mrow></msup>';
                         case "'":
-                            return '<msup><mrow>' + this.unparserMathML(tree.left) + '</mrow><mrow><mi>H</mi></mrow></msup>';
+                            return MathML.format[tree.type](this.unparserMathML(tree.left, this.precedenceTable['_' + tree.type]));
                         case 'IDENT':
-                            return '<mi>' + substSymbol(tree.id) + '</mi>';
+                            return MathML.format['IDENT'](substSymbol(tree.id));
                         case '.':
-                            return (
-                                this.unparserMathML(tree.obj) +
-                                '<mo>.</mo>' +
-                                tree.field
-                                    .map((value: string | AST.NodeExpr) => (typeof value === 'string' ? `<mi>${value}</mi>` : `<mo>(</mo>${this.unparserMathML(value)}<mo>)</mo>`))
-                                    .join('<mo>.</mo>')
+                            return MathML.format['.'](
+                                this.unparserMathML(tree.obj),
+                                tree.field.map((value: string | AST.NodeExpr) =>
+                                    typeof value === 'string' ? MathML.format['IDENT'](value) : MathML.format['()']('(', this.unparserMathML(value), ')'),
+                                ),
                             );
                         case 'LIST':
-                            return `<mtable>${tree.list.map((value: AST.NodeInput) => `<mtr><mtd>${this.unparserMathML(value)}</mtd></mtr>`).join('')}</mtable>`;
+                            return MathML.format['LIST'](tree.list.map((value: AST.NodeInput) => this.unparserMathML(value)));
                         case 'RANGE':
                             if (tree.start_ && tree.stop_) {
                                 if (tree.stride_) {
-                                    return this.unparserMathML(tree.start_) + '<mo>:</mo>' + this.unparserMathML(tree.stride_) + '<mo>:</mo>' + this.unparserMathML(tree.stop_);
+                                    return MathML.format['RANGE'](this.unparserMathML(tree.start_), this.unparserMathML(tree.stride_), this.unparserMathML(tree.stop_));
                                 } else {
-                                    return this.unparserMathML(tree.start_) + '<mo>:</mo>' + this.unparserMathML(tree.stop_);
+                                    return MathML.format['RANGE'](this.unparserMathML(tree.start_), this.unparserMathML(tree.stop_));
                                 }
                             } else {
-                                return '<mo>:</mo>';
+                                return MathML.format['RANGE']();
                             }
                         case 'ENDRANGE':
-                            return '<mi>end</mi>';
                         case ':':
-                            return '<mo>:</mo>';
                         case '<~>':
-                            return '<mo>~</mo>';
+                            return MathML.format[tree.type]();
                         case 'IDX':
                             if (tree.args.length === 0) {
-                                return this.unparserMathML(tree.expr) + `<mrow><mo>${tree.delim[0]}</mo><mo>${tree.delim[1]}</mo></mrow>`;
+                                return MathML.format['IDX'](this.unparserMathML(tree.expr), tree.delim[0], [], tree.delim[1]);
                             } else {
-                                const arglist = tree.args.map((arg: AST.NodeExpr) => this.unparserMathML(arg)).join('<mo>,</mo>');
+                                let unparse;
                                 if (tree.expr.type === 'IDENT') {
                                     const aliasTreeName = this.aliasName(tree.expr.id);
                                     if (aliasTreeName in this.builtInFunctionTable && this.builtInFunctionTable[aliasTreeName].unparserMathML) {
-                                        return this.builtInFunctionTable[aliasTreeName].unparserMathML!(tree);
+                                        unparse = this.builtInFunctionTable[aliasTreeName].unparserMathML(tree);
+                                    } else if (aliasTreeName in this.builtInFunctionTable && aliasTreeName in MathML.format) {
+                                        unparse = MathML.format[aliasTreeName](...tree.args.map((arg: AST.NodeExpr) => this.unparserMathML(arg)));
                                     } else {
-                                        return `<mi>${substSymbol(tree.expr.id)}</mi><mrow><mo>${tree.delim[0]}</mo>${arglist}<mo>${tree.delim[1]}</mo></mrow>`;
+                                        unparse = MathML.format['IDX'](
+                                            MathML.format['IDENT'](substSymbol(tree.expr.id)),
+                                            tree.delim[0],
+                                            tree.args.map((arg: AST.NodeExpr) => this.unparserMathML(arg)),
+                                            tree.delim[1],
+                                        );
                                     }
                                 } else {
-                                    return `${this.unparserMathML(tree.expr)}<mrow><mo>${tree.delim[0]}</mo>${arglist}<mo>${tree.delim[1]}</mo></mrow>`;
+                                    unparse = MathML.format['IDX'](
+                                        this.unparserMathML(tree.expr, parentPrecedence),
+                                        tree.delim[0],
+                                        tree.args.map((arg: AST.NodeExpr) => this.unparserMathML(arg)),
+                                        tree.delim[1],
+                                    );
                                 }
+                                return this.nodePrecedence(tree) > parentPrecedence ? unparse : MathML.format['()']('(', unparse, ')');
                             }
                         case 'RETLIST':
-                            return '<mi>RETLIST</mi>';
+                            return MathML.format['RETLIST']();
                         case 'CMDWLIST':
-                            return '<mtext>' + tree.id + ' ' + tree.args.map((arg: CharString) => this.unparserMathML(arg)).join(' ') + '</mtext>';
+                            return MathML.format['CMDWLIST'](
+                                tree.id,
+                                tree.args.map((arg: CharString) => this.unparserMathML(arg)),
+                            );
                         case 'IF':
                             const ifThenArray = tree.expression.map(
                                 (expr: AST.NodeInput, i: number) =>
@@ -1496,17 +1587,17 @@ export class Evaluator {
                             const ifElse = tree.else ? `<mtr><mtd><mo><b>else</b></mo></mtd></mtr><mtr><mtd></mtd><mtd>${this.unparserMathML(tree.else)}</mtd></mtr>` : '';
                             return `<mtable>${ifThenArray.join('')}${ifElse}<mtr><mtd><mo><b>endif</b></mo></mtd></mtr></mtable>`;
                         default:
-                            return '<mi>invalid</mi>';
+                            return MathML.format['INVALID']();
                     }
                 }
             } else {
-                return '';
+                return MathML.format['UNDEFINED']();
             }
         } catch (e) {
             if (this.debug) {
                 throw e;
             } else {
-                return '<mi>error</mi>';
+                return MathML.format['ERROR']();
             }
         }
     }
@@ -1519,10 +1610,9 @@ export class Evaluator {
     public UnparseMathML(tree: AST.NodeInput, display: 'inline' | 'block' = 'block'): string {
         let result: string = this.unparserMathML(tree);
         if (result) {
-            result = result.replace(/\<mo\>\(\<\/mo\>\<mi\>error\<\/mi\><\mi\>error\<\/mi\>\<mi\>i\<\/mi\>\<mo\>\)\<\/mo\>/gi, '<mi>error</mi>');
-            return `<math xmlns = "http://www.w3.org/1998/Math/MathML" display="${display}">${result}</math>`;
+            return MathML.format.math(MathML.format.errorReplace(result), display);
         } else {
-            return '';
+            return '<b>Unparse error.</b>';
         }
     }
 
@@ -1536,3 +1626,17 @@ export class Evaluator {
         return this.UnparseMathML(this.Parse(input), display);
     }
 }
+export type {
+    AliasNameTable,
+    AliasFunction,
+    BuiltInFunctionTableEntry,
+    BuiltInFunctionTable,
+    NameTable,
+    CommandWordListFunction,
+    CommandWordListTableEntry,
+    CommandWordListTable,
+    EvaluatorConfig,
+    IncDecOperator,
+};
+export { Evaluator };
+export default Evaluator;

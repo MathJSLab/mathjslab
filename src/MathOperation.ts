@@ -1,19 +1,20 @@
 import { CharString } from './CharString';
 import { ComplexDecimal } from './ComplexDecimal';
-import { ElementType, MultiArray } from './MultiArray';
+import type { TUnaryOperationLeftName, TBinaryOperationName } from './ComplexDecimal';
+import { type ElementType, MultiArray } from './MultiArray';
 import { LinearAlgebra } from './LinearAlgebra';
 import { Structure } from './Structure';
 import { FunctionHandle } from './FunctionHandle';
 
-export type MathObject = ElementType;
+type MathObject = ElementType;
 
-export type UnaryMathOperation = (expression: MathObject) => MathObject;
+type UnaryMathOperation = (expression: MathObject) => MathObject;
 
-export type BinaryMathOperation = (left: MathObject, right: MathObject) => MathObject;
+type BinaryMathOperation = (left: MathObject, right: MathObject) => MathObject;
 
-export type MathOperationType = UnaryMathOperation | BinaryMathOperation;
+type MathOperationType = UnaryMathOperation | BinaryMathOperation;
 
-export abstract class MathOperation {
+abstract class MathOperation {
     public static unaryOperations: { [name: string]: UnaryMathOperation } = {
         uplus: MathOperation.uplus,
         uminus: MathOperation.uminus,
@@ -62,7 +63,7 @@ export abstract class MathOperation {
         }
     }
 
-    private static elementWiseOperation(op: ComplexDecimal.TBinaryOperationName, left: MathObject, right: MathObject): MathObject {
+    private static elementWiseOperation(op: TBinaryOperationName, left: MathObject, right: MathObject): MathObject {
         if (left instanceof CharString) {
             left = MultiArray.fromCharString(left);
         }
@@ -82,7 +83,7 @@ export abstract class MathOperation {
         }
     }
 
-    private static leftOperation(op: ComplexDecimal.TUnaryOperationLeftName, right: MathObject): MathObject {
+    private static leftOperation(op: TUnaryOperationLeftName, right: MathObject): MathObject {
         if (right instanceof CharString) {
             right = MultiArray.fromCharString(right);
         }
@@ -303,3 +304,6 @@ export abstract class MathOperation {
         return MathOperation.elementWiseOperation('xor', left, right);
     }
 }
+export type { MathObject, UnaryMathOperation, BinaryMathOperation, MathOperationType };
+export { MathOperation };
+export default MathOperation;

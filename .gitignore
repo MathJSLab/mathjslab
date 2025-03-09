@@ -3,6 +3,9 @@ logs
 *.log
 npm-debug.log*
 
+# Commit configuration
+git-commit.config.json
+
 # Generated source files
 src/.antlr/
 src/MathJSLabLexer.ts

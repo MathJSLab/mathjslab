@@ -1,12 +1,13 @@
 import { ComplexDecimal } from './ComplexDecimal';
-import { ElementType, MultiArray } from './MultiArray';
+import { type TBinaryOperationName } from './ComplexDecimal';
+import { type ElementType, MultiArray } from './MultiArray';
 import { Evaluator } from './Evaluator';
 import { CharString } from './CharString';
 import * as AST from './AST';
 import { Structure } from './Structure';
 import { Decimal } from 'decimal.js';
 
-export abstract class CoreFunctions {
+abstract class CoreFunctions {
     public static functions: Record<string, Function> = {
         isempty: CoreFunctions.isempty,
         isscalar: CoreFunctions.isscalar,
@@ -858,7 +859,7 @@ export abstract class CoreFunctions {
                 return minMaxAlogDimension(MultiArray.scalarToMultiArray(args[0]), dimension);
             case 2:
                 // Broadcast
-                return MultiArray.elementWiseOperation((op + 'Wise') as ComplexDecimal.TBinaryOperationName, MultiArray.scalarToMultiArray(args[0]), args[1] as MultiArray);
+                return MultiArray.elementWiseOperation((op + 'Wise') as TBinaryOperationName, MultiArray.scalarToMultiArray(args[0]), args[1] as MultiArray);
             case 3:
                 // Along selected dimension.
                 if (!MultiArray.isEmpty(args[1])) {
@@ -1015,3 +1016,5 @@ export abstract class CoreFunctions {
         }
     }
 }
+export { CoreFunctions };
+export default CoreFunctions;

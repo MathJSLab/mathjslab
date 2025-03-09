@@ -1,12 +1,13 @@
 import { CharString } from './CharString';
 import { ComplexDecimal } from './ComplexDecimal';
+import type { Rounding, Modulo } from './ComplexDecimal';
 import { CoreFunctions } from './CoreFunctions';
 import { ElementType, MultiArray } from './MultiArray';
 
 /**
  * MathJSLab configuration.
  */
-export abstract class Configuration {
+abstract class Configuration {
     /**
      * User functions
      */
@@ -44,7 +45,7 @@ export abstract class Configuration {
             set: (rounding: CharString) => {
                 const roundingMode = Configuration.roundingStrings.indexOf(rounding.str);
                 if (roundingMode > 0) {
-                    ComplexDecimal.set({ rounding: roundingMode as ComplexDecimal.Rounding });
+                    ComplexDecimal.set({ rounding: roundingMode as Rounding });
                 } else {
                     throw new Error(`configure: invalid rounding mode: ${rounding.str}`);
                 }
@@ -76,7 +77,7 @@ export abstract class Configuration {
             set: (modulo: CharString) => {
                 const moduloMode = Configuration.moduloStrings.indexOf(modulo.str);
                 if (moduloMode > 0) {
-                    ComplexDecimal.set({ modulo: moduloMode as ComplexDecimal.Modulo });
+                    ComplexDecimal.set({ modulo: moduloMode as Modulo });
                 } else {
                     throw new Error(`configure: invalid modulo mode: ${modulo.str}`);
                 }
@@ -165,3 +166,5 @@ export abstract class Configuration {
         }
     }
 }
+export { Configuration };
+export default Configuration;

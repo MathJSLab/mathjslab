@@ -4,10 +4,21 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const { exec } = require('node:child_process');
+
 const packageJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', '..', 'package.json'), 'utf-8'));
 
-/* Default commit message. */
-const defaultMessage = `chore(build): update in version ${packageJson.version} on ${new Date().toGMTString()}`;
+let defaultMessage;
+const updateMessage = () => `Update in version ${packageJson.version} on ${new Date().toGMTString()}`;
+try {
+    const configPath = path.resolve(__dirname, '..', '..', 'git-commit.config.json');
+    fs.accessSync(configPath, fs.constants.R_OK);
+    const configJson = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    defaultMessage = `${configJson.message.trim() ? configJson.message.trim() : 'chore(build):'} ${updateMessage()}`;
+} catch {
+    /* Default commit message. */
+    defaultMessage = `chore(build): ${updateMessage()}`;
+}
+
 /* Wait time in milliseconds (5 seconds). */
 const timeoutDuration = 5000;
 
@@ -25,7 +36,7 @@ const executeCommit = (message) => {
     exec(`git commit -m "${commitMessage}"`, (err, stdout, stderr) => {
         if (err) {
             console.error(`Error: ${err.message}`);
-            process.exit(1);
+            process.exit(1); // Finish the script.
         }
         if (stderr) {
             console.error(`Git Output: ${stderr}`);

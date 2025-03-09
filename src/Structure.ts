@@ -1,8 +1,8 @@
 import { ComplexDecimal } from './ComplexDecimal';
 import { Evaluator } from './Evaluator';
-import { ElementType, MultiArray } from './MultiArray';
+import { type ElementType, MultiArray } from './MultiArray';
 
-export class Structure {
+class Structure {
     public static readonly STRUCTURE = 4;
     public readonly type = Structure.STRUCTURE;
     parent: any;
@@ -117,7 +117,7 @@ export class Structure {
      * @param evaluator
      * @returns
      */
-    public static unparse(S: Structure, evaluator: Evaluator): string {
+    public static unparse(S: Structure, evaluator: Evaluator, parentPrecedence = 0): string {
         return `struct {\n${Object.entries(S.field)
             .map((entry) => `${entry[0]}: ${evaluator.Unparse(entry[1])}`)
             .join('\n')}\n}`;
@@ -129,7 +129,7 @@ export class Structure {
      * @param evaluator
      * @returns
      */
-    public static unparseMathML(S: Structure, evaluator: Evaluator): string {
+    public static unparseMathML(S: Structure, evaluator: Evaluator, parentPrecedence = 0): string {
         let result = `<mtr><mtd columnspan="2"><mtext>struct {</mtext></mtd></mtr>`;
         result += Object.entries(S.field)
             .map((entry) => `<mtr><mtd><mi>${entry[0]}</mi><mo>:</mo></mtd><mtd>${evaluator.unparserMathML(entry[1])}</mtd></mtr>`)
@@ -208,3 +208,5 @@ export class Structure {
         }
     }
 }
+export { Structure };
+export default Structure;

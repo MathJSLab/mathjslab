@@ -1,7 +1,7 @@
 import * as AST from './AST';
-import { AliasFunction, BuiltInFunctionTable, BuiltInFunctionTableEntry } from './Evaluator';
+import type { AliasFunction, BuiltInFunctionTable, BuiltInFunctionTableEntry } from './Evaluator';
 
-export class SymbolTable {
+class SymbolTable {
     variableTable: Record<string, AST.NodeExpr>;
     functionTable: Record<string, AST.NodeFunction>;
     builtInTable: BuiltInFunctionTable;
@@ -61,3 +61,5 @@ export class SymbolTable {
         return [this.functionTable[id], this.scope];
     }
 }
+export { SymbolTable };
+export default SymbolTable;

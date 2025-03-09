@@ -1,89 +1,88 @@
 import { Decimal } from 'decimal.js';
+import { Evaluator } from './Evaluator';
 
-export namespace ComplexDecimal {
-    export type Rounding = Decimal.Rounding;
+type Rounding = Decimal.Rounding;
 
-    export type Modulo = Decimal.Modulo;
+type Modulo = Decimal.Modulo;
 
-    export type ComplexDecimalConfig = {
-        /**
-         * The maximum number of significant digits of the result of an operation.
-         * Values equal to or greater than 336 is used to produce correct rounding of
-         * trigonometric, hyperbolic and exponential functions.
-         */
-        precision?: number;
-        /**
-         * Number of significant digits to reduce precision before compare operations and
-         * unparse.
-         */
-        precisionCompare?: number;
-        /**
-         * The default rounding mode used when rounding the result of an operation to
-         * precision significant digits.
-         */
-        rounding?: Rounding;
-        /**
-         * The positive exponent value at and above which unparse returns exponential
-         * notation.
-         */
-        toExpPos?: number;
-        /**
-         * The negative exponent limit, i.e. the exponent value below which underflow
-         * to zero occurs.
-         */
-        minE?: number;
-        /**
-         * The positive exponent limit, i.e. the exponent value above which overflow
-         * to Infinity occurs.
-         */
-        maxE?: number;
-        /**
-         * The negative exponent value at and below which unparse returns exponential
-         * notation.
-         */
-        toExpNeg?: number;
-        /**
-         * The modulo mode used when calculating the modulus: a mod n.
-         */
-        modulo?: Decimal.Modulo;
-        /**
-         * The value that determines whether cryptographically-secure
-         * pseudo-random number generation is used.
-         */
-        crypto?: boolean;
-    };
-
+type ComplexDecimalConfig = {
     /**
-     * Binary operations name type.
+     * The maximum number of significant digits of the result of an operation.
+     * Values equal to or greater than 336 is used to produce correct rounding of
+     * trigonometric, hyperbolic and exponential functions.
      */
-    export type TBinaryOperationName =
-        | 'add'
-        | 'sub'
-        | 'mul'
-        | 'rdiv'
-        | 'ldiv'
-        | 'power'
-        | 'lt'
-        | 'le'
-        | 'eq'
-        | 'ge'
-        | 'gt'
-        | 'ne'
-        | 'and'
-        | 'or'
-        | 'xor'
-        | 'mod'
-        | 'rem'
-        | 'minWise'
-        | 'maxWise';
-
+    precision?: number;
     /**
-     * Unary operations name type.
+     * Number of significant digits to reduce precision before compare operations and
+     * unparse.
      */
-    export type TUnaryOperationLeftName = 'copy' | 'neg' | 'not';
-}
+    precisionCompare?: number;
+    /**
+     * The default rounding mode used when rounding the result of an operation to
+     * precision significant digits.
+     */
+    rounding?: Rounding;
+    /**
+     * The positive exponent value at and above which unparse returns exponential
+     * notation.
+     */
+    toExpPos?: number;
+    /**
+     * The negative exponent limit, i.e. the exponent value below which underflow
+     * to zero occurs.
+     */
+    minE?: number;
+    /**
+     * The positive exponent limit, i.e. the exponent value above which overflow
+     * to Infinity occurs.
+     */
+    maxE?: number;
+    /**
+     * The negative exponent value at and below which unparse returns exponential
+     * notation.
+     */
+    toExpNeg?: number;
+    /**
+     * The modulo mode used when calculating the modulus: a mod n.
+     */
+    modulo?: Decimal.Modulo;
+    /**
+     * The value that determines whether cryptographically-secure
+     * pseudo-random number generation is used.
+     */
+    crypto?: boolean;
+};
 
-const ComplexDecimalConfig: ComplexDecimal.ComplexDecimalConfig = {
+/**
+ * Binary operations name type.
+ */
+type TBinaryOperationName =
+    | 'add'
+    | 'sub'
+    | 'mul'
+    | 'rdiv'
+    | 'ldiv'
+    | 'power'
+    | 'lt'
+    | 'le'
+    | 'eq'
+    | 'ge'
+    | 'gt'
+    | 'ne'
+    | 'and'
+    | 'or'
+    | 'xor'
+    | 'mod'
+    | 'rem'
+    | 'minWise'
+    | 'maxWise';
+
+/**
+ * Unary operations name type.
+ */
+type TUnaryOperationLeftName = 'copy' | 'neg' | 'not';
+
+const ComplexDecimalConfig: ComplexDecimalConfig = {
     precision: 336,
     precisionCompare: 7,
     rounding: Decimal.ROUND_HALF_DOWN,
@@ -105,7 +104,7 @@ const defaultComplexDecimalConfig = Object.assign({}, ComplexDecimalConfig);
  * ## References
  * * https://mathworld.wolfram.com/ComplexNumber.html
  */
-export class ComplexDecimal {
+class ComplexDecimal {
     public static readonly defaultConfiguration = defaultComplexDecimalConfig;
 
     public static get settings() {
@@ -116,7 +115,7 @@ export class ComplexDecimal {
      *
      * @param config
      */
-    public static set(config: ComplexDecimal.ComplexDecimalConfig): void {
+    public static set(config: ComplexDecimalConfig): void {
         const decimalConfig = ['precision', 'rounding', 'toExpPos', 'toExpNeg', 'minE', 'maxE', 'modulo', 'crypto'];
         const decimal: Decimal.Config = {};
         decimalConfig.forEach((param) => {
@@ -317,7 +316,7 @@ export class ComplexDecimal {
      * @param value Value to unparse.
      * @returns String of unparsed value.
      */
-    public static unparse(value: ComplexDecimal): string {
+    public static unparse(value: ComplexDecimal, parentPrecedence = 0): string {
         if (value.type !== ComplexDecimal.LOGICAL) {
             const value_prec = ComplexDecimal.toMaxPrecision(value);
             if (!value_prec.re.isZero() && !value_prec.im.isZero()) {
@@ -377,7 +376,26 @@ export class ComplexDecimal {
             return value.isNaN() ? '<mi><b>NaN</b></mi>' : (value.isNeg() ? '<mo>-</mo>' : '') + '<mi>&infin;</mi>';
         }
     }
-
+    public static precedence(value: ComplexDecimal, evaluator: Evaluator) {
+        if (value.type !== ComplexDecimal.LOGICAL) {
+            const value_prec = ComplexDecimal.toMaxPrecision(value);
+            if (!value_prec.re.isZero() && !value_prec.im.isZero()) {
+                return evaluator.precedenceTable['+'];
+            } else if (!value_prec.re.isZero()) {
+                return value_prec.re.isNeg() ? evaluator.precedenceTable['-_'] : evaluator.precedenceTable['()'];
+            } else if (!value_prec.im.isZero()) {
+                return value_prec.im.isNeg() ? evaluator.precedenceTable['-_'] : evaluator.precedenceTable['()'];
+            } else if (!value_prec.re.isNeg() && !value_prec.im.isNeg()) {
+                return evaluator.precedenceTable['()'];
+            } else if (value_prec.re.isNeg() && value_prec.im.isNeg()) {
+                return evaluator.precedenceTable['-_'];
+            } else {
+                return evaluator.precedenceTable['+'];
+            }
+        } else {
+            return evaluator.precedenceTable['()'];
+        }
+    }
     /**
      * Unparse ComplexDecimal value as MathML language. Show true/false if
      * logical value, otherwise show real and imaginary parts enclosed by
@@ -386,29 +404,62 @@ export class ComplexDecimal {
      * @param value value to unparse.
      * @returns string of unparsed value.
      */
-    public static unparseMathML(value: ComplexDecimal): string {
+    public static unparseMathML(value: ComplexDecimal, evaluator: Evaluator, parentPrecedence = 0): string {
         if (value.type !== ComplexDecimal.LOGICAL) {
             const value_prec = ComplexDecimal.toMaxPrecision(value);
             if (!value_prec.re.isZero() && !value_prec.im.isZero()) {
-                return (
-                    '<mo>(</mo>' +
+                const unparsed =
                     ComplexDecimal.unparseDecimalMathML(value_prec.re) +
                     (value_prec.im.gt(0) ? '<mo>+</mo>' : '') +
                     (!value_prec.im.eq(1) ? (!value_prec.im.eq(-1) ? ComplexDecimal.unparseDecimalMathML(value_prec.im) : '<mo>-</mo>') : '') +
-                    '<mi>i</mi><mo>)</mo>'
-                );
+                    '<mi>i</mi>';
+                if (parentPrecedence > evaluator.precedenceTable['+']) {
+                    return `<mo fence="true" stretchy="true">(</mo>${unparsed}<mo fence="true" stretchy="true">)</mo>`;
+                } else {
+                    return unparsed;
+                }
             } else if (!value_prec.re.isZero()) {
-                return ComplexDecimal.unparseDecimalMathML(value_prec.re);
+                const unparsed = ComplexDecimal.unparseDecimalMathML(value_prec.re);
+                if (parentPrecedence > (value_prec.re.isNeg() ? evaluator.precedenceTable['-_'] : evaluator.precedenceTable['()'])) {
+                    return `<mo fence="true" stretchy="true">(</mo>${unparsed}<mo fence="true" stretchy="true">)</mo>`;
+                } else {
+                    return unparsed;
+                }
             } else if (!value_prec.im.isZero()) {
-                return (!value_prec.im.eq(1) ? (!value_prec.im.eq(-1) ? ComplexDecimal.unparseDecimalMathML(value_prec.im) : '<mo>-</mo>') : '') + '<mi>i</mi>';
+                const unparsed = (!value_prec.im.eq(1) ? (!value_prec.im.eq(-1) ? ComplexDecimal.unparseDecimalMathML(value_prec.im) : '<mo>-</mo>') : '') + '<mi>i</mi>';
+                if (parentPrecedence > (value_prec.im.isNeg() ? evaluator.precedenceTable['-_'] : evaluator.precedenceTable['()'])) {
+                    return `<mo fence="true" stretchy="true">(</mo>${unparsed}<mo fence="true" stretchy="true">)</mo>`;
+                } else {
+                    return unparsed;
+                }
             } else if (!value_prec.re.isNeg() && !value_prec.im.isNeg()) {
-                return '<mn>0</mn>';
+                const unparsed = '<mn>0</mn>';
+                if (parentPrecedence > evaluator.precedenceTable['()']) {
+                    return `<mo fence="true" stretchy="true">(</mo>${unparsed}<mo fence="true" stretchy="true">)</mo>`;
+                } else {
+                    return unparsed;
+                }
             } else if (value_prec.re.isNeg() && value_prec.im.isNeg()) {
-                return '<mn>-0</mn>';
+                const unparsed = '<mn>-0</mn>';
+                if (parentPrecedence > evaluator.precedenceTable['-_']) {
+                    return `<mo fence="true" stretchy="true">(</mo>${unparsed}<mo fence="true" stretchy="true">)</mo>`;
+                } else {
+                    return unparsed;
+                }
             } else if (value_prec.re.isNeg() && !value_prec.im.isNeg()) {
-                return '<mo>(</mo><mn>-0</mn><mo>+</mo><mn>0</mn><mi>i</mi><mo>)</mo>';
+                const unparsed = '<mn>-0</mn><mo>+</mo><mn>0</mn><mi>i</mi>';
+                if (parentPrecedence > evaluator.precedenceTable['+']) {
+                    return `<mo fence="true" stretchy="true">(</mo>${unparsed}<mo fence="true" stretchy="true">)</mo>`;
+                } else {
+                    return unparsed;
+                }
             } else {
-                return '<mo>(</mo><mn>0</mn><mo>-</mo><mn>0</mn><mi>i</mi><mo>)</mo>';
+                const unparsed = '<mn>0</mn><mo>-</mo><mn>0</mn><mi>i</mi>';
+                if (parentPrecedence > evaluator.precedenceTable['+']) {
+                    return `<mo fence="true" stretchy="true">(</mo>${unparsed}<mo fence="true" stretchy="true">)</mo>`;
+                } else {
+                    return unparsed;
+                }
             }
         } else {
             if (value.re.isZero()) {
@@ -1694,3 +1745,6 @@ export class ComplexDecimal {
  * Initial setup.
  */
 ComplexDecimal.set(defaultComplexDecimalConfig);
+export type { Rounding, Modulo, ComplexDecimalConfig, TBinaryOperationName, TUnaryOperationLeftName };
+export { ComplexDecimal };
+export default ComplexDecimal;

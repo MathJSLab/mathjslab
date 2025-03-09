@@ -1,5 +1,6 @@
 import { CharString } from './CharString';
 import { ComplexDecimal } from './ComplexDecimal';
+import type { TUnaryOperationLeftName, TBinaryOperationName } from './ComplexDecimal';
 import { Evaluator, NameTable } from './Evaluator';
 import { FunctionHandle } from './FunctionHandle';
 import { Structure } from './Structure';
@@ -7,14 +8,14 @@ import { Structure } from './Structure';
 /**
  * MultiArray Element type.
  */
-export type ElementType = MultiArray | ComplexDecimal | CharString | Structure | FunctionHandle | null | undefined;
+type ElementType = MultiArray | ComplexDecimal | CharString | Structure | FunctionHandle | null | undefined;
 
 /**
  * # MultiArray
  *
  * Multimensional array library. This class represents common arrays and cell arrays.
  */
-export class MultiArray {
+class MultiArray {
     /**
      * Dimensions property ([lines, columns, pages, blocks, ...]).
      */
@@ -363,7 +364,7 @@ export class MultiArray {
      * @param M MultiArray object.
      * @returns String of unparsed MultiArray.
      */
-    public static unparse(M: MultiArray, evaluator: Evaluator): string {
+    public static unparse(M: MultiArray, evaluator: Evaluator, parentPrecedence = 0): string {
         const unparseRows = (row: ElementType[]) => row.map((value) => evaluator.Unparse(value)).join() + ';\n';
         let arraystr: string = '';
         if (M.dimension.reduce((p, c) => p * c, 1) === 0) {
@@ -392,11 +393,12 @@ export class MultiArray {
      * @param M MultiArray object.
      * @returns String of unparsed MultiArray in MathML language.
      */
-    public static unparseMathML(M: MultiArray, evaluator: Evaluator): string {
+    public static unparseMathML(M: MultiArray, evaluator: Evaluator, parentPrecedence = 0): string {
         const unparseRows = (row: ElementType[]) => `<mtr>${row.map((value) => `<mtd>${evaluator.unparserMathML(value)}</mtd>`).join('')}</mtr>`;
-        const buildMrow = (rows: string) => `<mrow><mo>${M.isCell ? '{' : '['}</mo><mtable>${rows}</mtable><mo>${M.isCell ? '}' : ']'}</mo></mrow>`;
+        const buildMrow = (rows: string) =>
+            `<mrow><mo fence="true" stretchy="true">${M.isCell ? '{' : '['}</mo><mtable>${rows}</mtable><mo fence="true" stretchy="true">${M.isCell ? '}' : ']'}</mo></mrow>`;
         if (M.dimension.reduce((p, c) => p * c, 1) === 0) {
-            return `${buildMrow('<mspace width="0.5em"/>')}<mo>(</mo><mn>${M.dimension.join('</mn><mi>&times;</mi><mn>')}</mn><mo>)</mo>`;
+            return `${buildMrow('<mspace width="0.5em"/>')}<mo fence="true" stretchy="true">(</mo><mn>${M.dimension.join('</mn><mi>&times;</mi><mn>')}</mn><mo fence="true" stretchy="true">)</mo>`;
         }
         if (M.dimension.length > 2) {
             let result = '';
@@ -409,7 +411,7 @@ export class MultiArray {
                     .slice(1)
                     .map((d) => `<mn>${d}</mn>`)
                     .join('<mo>,</mo>');
-                result += `<mtr><mtd><msub>${buildMrow(array)}<mrow><mo>(</mo><mo>:</mo><mo>,</mo><mo>:</mo><mo>,</mo>${subscript}<mo>)</mo></mrow></msub></mtd></mtr>`;
+                result += `<mtr><mtd><msub>${buildMrow(array)}<mrow><mo fence="true" stretchy="true">(</mo><mo>:</mo><mo>,</mo><mo>:</mo><mo>,</mo>${subscript}<mo fence="true" stretchy="true">)</mo></mrow></msub></mtd></mtr>`;
             }
             return `<mtable>${result}</mtable>`;
         } else {
@@ -835,7 +837,7 @@ export class MultiArray {
      * @param right Right operand (array).
      * @returns Result of operation.
      */
-    public static scalarOpMultiArray(op: ComplexDecimal.TBinaryOperationName, left: ComplexDecimal, right: MultiArray): MultiArray {
+    public static scalarOpMultiArray(op: TBinaryOperationName, left: ComplexDecimal, right: MultiArray): MultiArray {
         const result = new MultiArray(right.dimension);
         result.array = right.array.map((row) => row.map((value) => ComplexDecimal[op](left, value as ComplexDecimal)));
         MultiArray.setType(result);
@@ -849,7 +851,7 @@ export class MultiArray {
      * @param right Right operaand (scalar).
      * @returns Result of operation.
      */
-    public static MultiArrayOpScalar(op: ComplexDecimal.TBinaryOperationName, left: MultiArray, right: ComplexDecimal): MultiArray {
+    public static MultiArrayOpScalar(op: TBinaryOperationName, left: MultiArray, right: ComplexDecimal): MultiArray {
         const result = new MultiArray(left.dimension);
         result.array = left.array.map((row) => row.map((value) => ComplexDecimal[op](value as ComplexDecimal, right)));
         MultiArray.setType(result);
@@ -862,7 +864,7 @@ export class MultiArray {
      * @param right Operand (array)
      * @returns Result of operation.
      */
-    public static leftOperation(op: ComplexDecimal.TUnaryOperationLeftName, right: MultiArray): MultiArray {
+    public static leftOperation(op: TUnaryOperationLeftName, right: MultiArray): MultiArray {
         const result = new MultiArray(right.dimension);
         result.array = right.array.map((row) => row.map((value) => ComplexDecimal[op](value as ComplexDecimal)));
         MultiArray.setType(result);
@@ -876,7 +878,7 @@ export class MultiArray {
      * @param right Right operand.
      * @returns Binary element-wise result.
      */
-    public static elementWiseOperation(op: ComplexDecimal.TBinaryOperationName, left: MultiArray, right: MultiArray): MultiArray {
+    public static elementWiseOperation(op: TBinaryOperationName, left: MultiArray, right: MultiArray): MultiArray {
         let leftDimension = left.dimension.slice();
         let rightDimension = right.dimension.slice();
         if (leftDimension.length < rightDimension.length) {
@@ -1401,3 +1403,6 @@ export class MultiArray {
         }
     }
 }
+export type { ElementType };
+export { MultiArray };
+export default MultiArray;

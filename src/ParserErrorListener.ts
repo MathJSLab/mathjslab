@@ -1,6 +1,6 @@
 import { ErrorListener, RecognitionException, Recognizer, Token } from 'antlr4';
 
-export default class ParserErrorListener extends ErrorListener<Token> {
+class ParserErrorListener extends ErrorListener<Token> {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     syntaxError(recognizer: Recognizer<Token>, offendingSymbol: Token, line: number, column: number, msg: string, e: RecognitionException | undefined): void {
         if (msg === "mismatched input '' expecting {';', SP}") {
@@ -16,3 +16,5 @@ export default class ParserErrorListener extends ErrorListener<Token> {
         throw new SyntaxError(`${msg} (${line}:${column})`);
     }
 }
+export { ParserErrorListener };
+export default ParserErrorListener;
