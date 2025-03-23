@@ -1,48 +1,81 @@
-<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="630" height="630" viewBox="0 0 630 630">
   <style>
-.fillSymbol {
-  fill: hsl(120, 52%, 16%);
-}
-.strokePanel {
-  stroke: green;
-}
-.fillPanel {
-  fill: hsl(120, 52%, 88%);
-}
-.strokeTrace {
-  fill: none;
-  stroke: hsl(0, 0%, 24%);
-}
-.fillTrace {
-  fill: hsl(0, 0%, 24%);
-}
-@media (prefers-color-scheme: dark) {
-.fillSymbol {
-  fill: hsl(120, 52%, 88%);
-}
-.strokePanel {
-  stroke: green;
-}
-.fillPanel {
-  fill: hsl(120, 52%, 16%);
-}
-.strokeTrace {
-  stroke: hsl(0, 0%, 92%);
-}
-.fillTrace {
-  fill: hsl(0, 0%, 92%);
-}
-}
+    .fill-symbol {
+      fill: hsl(120, 52%, 16%);
+    }
+
+    .stroke-fill-panel {
+      stroke: hsl(120, 100%, 25%);
+      fill: hsl(120, 52%, 88%);
+    }
+
+    .stroke-trace {
+      fill: none;
+      stroke: hsl(0, 0%, 24%);
+    }
+
+    .fill-trace {
+      fill: hsl(0, 0%, 24%);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .fill-symbol {
+        fill: hsl(120, 52%, 88%);
+      }
+      .stroke-fill-panel {
+        stroke: hsl(120, 100%, 25%);
+        fill: hsl(120, 52%, 16%);
+      }
+      .stroke-trace {
+        stroke: hsl(0, 0%, 92%);
+      }
+      .fill-trace {
+        fill: hsl(0, 0%, 92%);
+      }
+    }
   </style>
-  <circle style="fill:none;stroke:none;stroke-opacity:1" cx="315" cy="315" r="315" />
-  <circle class="strokePanel fillPanel" style="stroke-width:14px" cx="315" cy="315" r="288" />
-  <text class="fillSymbol" style="font-size:378px;font-family:Symbol" x="210" y="240">p</text>
-  <text class="fillSymbol" style="font-size:79px;font-family:'Times New Roman';font-style:italic" x="198" y="432">ax+bx<tspan style="font-size:65%;baseline-shift:super">2</tspan>+cx<tspan
-            style="font-size:65%;baseline-shift:super"
-        >3</tspan></text>
-  <path class="strokeTrace" style="stroke-width:14px;stroke-linecap:round" d="M 126,90 V 490 H 560" />
-  <path class="strokeTrace" style="stroke-width:14px" d="M 126,441 H 176 V 490" />
-  <circle class="fillTrace" style="stroke:none" cx="152" cy="464" r="4.1" />
-  <path class="strokeTrace" style="stroke-width:14px;stroke-linecap:round" d="M 126,441 C 140,390 210,273 252,273 315,273 336,330 378,330 420,330 504,210 546,154" />
+  <circle style="fill: none; stroke: none; stroke-opacity: 1" cx="315" cy="315" r="315" />
+  <circle class="stroke-fill-panel" style="stroke-width: 14px" cx="315" cy="315" r="288" />
+  <path
+    class="fill-symbol"
+    d="M 237,64
+      C 248,54 255,51 275,51
+      H 408
+      V 85
+      H 360
+      C 359,95 358,100 358,110
+      C 357,125 355,155 355,170
+      C 355,182 357,188 360,195
+      C 364,203 372,208 380,208
+      C 392,208 400,198 401,180
+      H 410
+      C 409,199 408,207 402,217
+      C 394,235 380,245 366,245
+      C 343,245 328,219 328,178
+      C 328,155 331,115 336,85
+      H 294
+      L 290,133
+      L 289,142
+      C 288,145 288,149 287,162
+      C 285,184 282,196 281,206
+      C 277,232 267,246 252,246
+      C 240,246 231,237 231,225
+      C 231,217 234,211 246,200
+      C 259,188 264,180 265,170
+      L 275,86
+      H 240
+      C 232,86 225,86 220,90
+      C 222,84 231,70 237,64 Z"
+  />
+  <!-- prettier-ignore -->
+  <text class="fill-symbol" style="font-size:79px;font-family:'Times New Roman';font-style:italic" x="198" y="432">ax+bx<tspan style="font-size:65%;baseline-shift:super">2</tspan>+cx<tspan style="font-size:65%;baseline-shift:super">3</tspan></text>
+  <path class="stroke-trace" style="stroke-width: 14px; stroke-linecap: round" d="M 126,90 V 490 H 560" />
+  <path class="stroke-trace" style="stroke-width: 14px" d="M 126,441 H 176 V 490" />
+  <circle class="fill-trace" style="stroke: none" cx="152" cy="464" r="4.1" />
+  <path
+    class="stroke-trace"
+    style="stroke-width: 14px; stroke-linecap: round"
+    d="M 126,441 C 140,390 210,273 252,273 315,273 336,330 378,330 420,330 504,210 546,154"
+  />
 </svg>

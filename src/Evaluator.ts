@@ -5,8 +5,8 @@
 import { CharStreams, CommonTokenStream, DiagnosticErrorListener, PredictionMode } from 'antlr4';
 import MathJSLabLexer from './MathJSLabLexer';
 import MathJSLabParser from './MathJSLabParser';
-import LexerErrorListener from './LexerErrorListener';
-import ParserErrorListener from './ParserErrorListener';
+import { LexerErrorListener } from './LexerErrorListener';
+import { ParserErrorListener } from './ParserErrorListener';
 import * as AST from './AST';
 
 import { substSymbol } from './substSymbol';
@@ -21,7 +21,7 @@ import { Configuration } from './Configuration';
 import { Structure } from './Structure';
 import { SymbolTable } from './SymbolTable';
 import { FunctionHandle } from './FunctionHandle';
-import * as MathML from './MathML';
+import { MathML } from './MathML';
 
 /**
  * aliasNameTable and AliasFunction type.
@@ -303,9 +303,7 @@ class Evaluator {
             }
         } else if (tree.type === 'IDX') {
             const aliasTreeName = this.aliasName(tree.expr.id);
-            return tree.expr.type === 'IDENT' &&
-                aliasTreeName in this.builtInFunctionTable &&
-                (!!this.builtInFunctionTable[aliasTreeName].unparserMathML || aliasTreeName in MathML.format)
+            return tree.expr.type === 'IDENT' && aliasTreeName in this.builtInFunctionTable && (!!this.builtInFunctionTable[aliasTreeName].unparserMathML || aliasTreeName in MathML.format)
                 ? this.precedenceTable.max
                 : this.precedenceTable.preMax;
         } else if (tree.type === 'RANGE') {

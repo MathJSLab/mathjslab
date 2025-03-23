@@ -56,26 +56,7 @@ type ComplexDecimalConfig = {
 /**
  * Binary operations name type.
  */
-type TBinaryOperationName =
-    | 'add'
-    | 'sub'
-    | 'mul'
-    | 'rdiv'
-    | 'ldiv'
-    | 'power'
-    | 'lt'
-    | 'le'
-    | 'eq'
-    | 'ge'
-    | 'gt'
-    | 'ne'
-    | 'and'
-    | 'or'
-    | 'xor'
-    | 'mod'
-    | 'rem'
-    | 'minWise'
-    | 'maxWise';
+type TBinaryOperationName = 'add' | 'sub' | 'mul' | 'rdiv' | 'ldiv' | 'power' | 'lt' | 'le' | 'eq' | 'ge' | 'gt' | 'ne' | 'and' | 'or' | 'xor' | 'mod' | 'rem' | 'minWise' | 'maxWise';
 
 /**
  * Unary operations name type.
@@ -365,11 +346,7 @@ class ComplexDecimal {
                 return '<mn>' + value_unparsed[0].slice(0, Decimal.toExpPos) + '</mn>';
             } else {
                 return (
-                    '<mn>' +
-                    value_unparsed[0].slice(0, Decimal.toExpPos) +
-                    '</mn><mo>&sdot;</mo><msup><mrow><mn>10</mn></mrow><mrow><mn>' +
-                    Number(value_unparsed[1]) +
-                    '</mn></mrow></msup>'
+                    '<mn>' + value_unparsed[0].slice(0, Decimal.toExpPos) + '</mn><mo>&sdot;</mo><msup><mrow><mn>10</mn></mrow><mrow><mn>' + Number(value_unparsed[1]) + '</mn></mrow></msup>'
                 );
             }
         } else {

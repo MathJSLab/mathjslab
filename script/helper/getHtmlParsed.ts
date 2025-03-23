@@ -1,4 +1,4 @@
-import * as http from 'node:http';
+import http from 'node:http';
 import HTMLParser, { HTMLElement, Options } from 'node-html-parser';
 import httpGet from './httpGet';
 

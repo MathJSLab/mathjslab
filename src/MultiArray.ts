@@ -782,9 +782,7 @@ class MultiArray {
             const left = irrelevantSubscript(indexPosition);
             const right = irrelevantSubscript(index.length - indexPosition - 1);
             throw new RangeError(
-                `${input ? input : ''}(${left}${!!left ? ',' : ''}${index[indexPosition]}${!!right ? ',' : ''}${right}): out of bound ${bound} (dimensions are ${dimension.join(
-                    'x',
-                )}).`,
+                `${input ? input : ''}(${left}${!!left ? ',' : ''}${index[indexPosition]}${!!right ? ',' : ''}${right}): out of bound ${bound} (dimensions are ${dimension.join('x')}).`,
             );
         };
         // Copy index to indexReduced and remove singleton tail.
@@ -1069,12 +1067,7 @@ class MultiArray {
      * element of dimension.
      * @returns Multiarray with `dimension` reduced using `callback`.
      */
-    public static reduce(
-        dimension: number,
-        M: MultiArray,
-        callback: (previous: ElementType, current: ElementType, index?: number) => ElementType,
-        initial?: ElementType,
-    ): ElementType {
+    public static reduce(dimension: number, M: MultiArray, callback: (previous: ElementType, current: ElementType, index?: number) => ElementType, initial?: ElementType): ElementType {
         if (dimension >= M.dimension.length) {
             return M;
         } else {
@@ -1288,15 +1281,7 @@ class MultiArray {
      * @param args Linear indices or subscripts.
      * @param right Value to assign.
      */
-    public static setElements(
-        nameTable: NameTable,
-        id: string,
-        field: string[],
-        indexList: (ComplexDecimal | MultiArray)[],
-        right: MultiArray,
-        input?: string,
-        evaluator?: Evaluator,
-    ): void {
+    public static setElements(nameTable: NameTable, id: string, field: string[], indexList: (ComplexDecimal | MultiArray)[], right: MultiArray, input?: string, evaluator?: Evaluator): void {
         if (indexList.length === 0) {
             throw new RangeError('invalid empty index list.');
         } else {
@@ -1306,10 +1291,7 @@ class MultiArray {
             const argsLength = args.map((arg) => arg.length);
             const argsParsed = args.map((arg) =>
                 arg.map((i) =>
-                    MultiArray.testIndex(
-                        i as ComplexDecimal,
-                        `${input ? input : ''}${evaluator ? '(' + args.map((arg) => arg.map((i) => evaluator.Unparse(i))).join() + ')' : ''}`,
-                    ),
+                    MultiArray.testIndex(i as ComplexDecimal, `${input ? input : ''}${evaluator ? '(' + args.map((arg) => arg.map((i) => evaluator.Unparse(i))).join() + ')' : ''}`),
                 ),
             );
             const argsMax = argsParsed.map((arg) => Math.max(...arg));

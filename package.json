@@ -1,6 +1,6 @@
 {
     "name": "mathjslab",
-    "version": "1.7.1",
+    "version": "1.7.2",
     "description": "MathJSLab - An interpreter with language syntax like MATLAB®/Octave, ISBN 978-65-00-82338-7.",
     "repository": {
         "type": "git",
@@ -27,24 +27,21 @@
         "url": "https://github.com/MathJSLab/mathjslab/issues"
     },
     "homepage": "https://mathjslab.com/",
-    "main": "lib/mathjslab.web.umd2020.js",
+    "type": "module",
+    "main": "lib/mathjslab.web.esm2020.js",
     "module": "lib/mathjslab.web.esm2020.js",
     "types": "lib/src/lib.d.ts",
     "exports": {
         ".": {
             "types": "./lib/src/lib.d.ts",
             "node": {
-                "types": "./lib/src/lib.d.ts",
                 "import": "./lib/mathjslab.node.esm2020.js",
-                "require": "./lib/mathjslab.node.cjs2020.js",
-                "default": "./lib/mathjslab.node.cjs2015.js"
+                "require": "./lib/mathjslab.node.cjs2020.js"
             },
-            "default": {
-                "types": "./lib/src/lib.d.ts",
-                "import": "./lib/mathjslab.web.esm2020.js",
-                "require": "./lib/mathjslab.web.umd2020.js",
-                "default": "./lib/mathjslab.web.umd2015.js"
-            }
+            "browser": {
+                "import": "./lib/mathjslab.web.esm2020.js"
+            },
+            "default": "./lib/mathjslab.web.esm2020.js"
         },
         "./node-esm": {
             "types": "./lib/src/lib.d.ts",
@@ -54,6 +51,10 @@
             "types": "./lib/src/lib.d.ts",
             "default": "./lib/mathjslab.node.cjs2020.js"
         },
+        "./node-cjs-es2015": {
+            "types": "./lib/src/lib.d.ts",
+            "default": "./lib/mathjslab.node.cjs2015.js"
+        },
         "./web-esm": {
             "types": "./lib/src/lib.d.ts",
             "default": "./lib/mathjslab.web.esm2020.js"
@@ -62,10 +63,14 @@
             "types": "./lib/src/lib.d.ts",
             "default": "./lib/mathjslab.web.umd2020.js"
         },
-        "./mathjslab.js": "./lib/mathjslab.web.umd2020.js"
+        "./web-umd-es2015": {
+            "types": "./lib/src/lib.d.ts",
+            "default": "./lib/mathjslab.web.umd2015.js"
+        }
     },
     "browser": {
-        "./mathjslab.js": "./lib/mathjslab.web.umd2020.js",
+        "./node-cjs": "./lib/mathjslab.web.umd2020.js",
+        "./node-esm": "./lib/mathjslab.web.esm2020.js",
         "fs": false,
         "os": false,
         "path": false
@@ -125,15 +130,15 @@
         "@types/debug": "^4.1.12",
         "@types/eslint-config-prettier": "^6.11.3",
         "@types/jest": "^29.5.14",
-        "@types/node": "^22.13.10",
+        "@types/node": "^22.13.11",
         "@types/supertest": "^6.0.2",
         "@types/webpack": "^5.28.5",
         "@types/webpack-bundle-analyzer": "^4.7.0",
-        "@typescript-eslint/eslint-plugin": "^8.26.0",
-        "@typescript-eslint/parser": "^8.26.0",
+        "@typescript-eslint/eslint-plugin": "^8.27.0",
+        "@typescript-eslint/parser": "^8.27.0",
         "ajv": "^8.17.1",
         "cross-env": "^7.0.3",
-        "eslint": "^9.22.0",
+        "eslint": "^9.23.0",
         "eslint-config-prettier": "^10.1.1",
         "eslint-plugin-import": "^2.31.0",
         "eslint-plugin-jest": "^28.11.0",
@@ -142,7 +147,7 @@
         "jest-environment-jsdom": "^29.7.0",
         "jsdom": "^26.0.0",
         "license-webpack-plugin": "^4.0.2",
-        "lint-staged": "^15.4.3",
+        "lint-staged": "^15.5.0",
         "node-html-parser": "^7.0.1",
         "prettier": "^3.5.3",
         "rimraf": "^6.0.1",

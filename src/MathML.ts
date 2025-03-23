@@ -262,4 +262,4 @@ export { format, MathML };
 /**
  * Default export.
  */
-export default MathML;
+export default { format, MathML };

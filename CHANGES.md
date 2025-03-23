@@ -2,6 +2,13 @@
 All notable changes to this project will be documented in this file.
 This project adheres to [Semantic Versioning](http://semver.org/).
 
+## 1.7.2
+- The `"type": "module"` field has been added to the `package.json` file and
+the `"main"`, `"module"`, `"exports"` and `"browser"` fields in the
+`package.json` file have been changed to follow modern standards and avoid
+unwanted fallback to the UMD bundle.
+- All dependencies have been updated.
+
 ## 1.7.1
 - More rational definitions in `webpack.config.ts`.
 - The `cross-env` package has been instaled as development dependency and some
