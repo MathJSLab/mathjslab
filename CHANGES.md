@@ -2,6 +2,21 @@
 All notable changes to this project will be documented in this file.
 This project adheres to [Semantic Versioning](http://semver.org/).
 
+## 1.7.3
+- The following dependencies has been removed: `@types/debug`,
+`@types/supertest` and `source-map-support`. The
+`@types/eslint-config-prettier` package has been installed as development
+dependency.
+- The following scripts in the `package.json`file has been renamed:
+  * `"download-resources"` to `"download"`.
+  * `"clean:download-resources"` to `"clean:download"`.
+- All dependencies have been updated.
+- The MathJSLab logo have been updated.
+- Added `mathjslab.bib` file with bibtex entry to cite the software properly.
+- The generation of es2020 targets has been changed to generate es2022 targets.
+- The `string.at` method in the `src/MathJSLabParser.g4` (line 134) has been
+- changed to indexing due to target incompatibility (es2015).
+
 ## 1.7.2
 - The `"type": "module"` field has been added to the `package.json` file and
 the `"main"`, `"module"`, `"exports"` and `"browser"` fields in the

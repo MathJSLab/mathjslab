@@ -39,43 +39,29 @@
   <circle class="stroke-fill-panel" style="stroke-width: 14px" cx="315" cy="315" r="288" />
   <path
     class="fill-symbol"
-    d="M 237,64
-      C 248,54 255,51 275,51
+    d="M 237,94
+      C 248,85 255,82 275,82
       H 408
-      V 85
+      V 109
       H 360
-      C 359,95 358,100 358,110
-      C 357,125 355,155 355,170
-      C 355,182 357,188 360,195
-      C 364,203 372,208 380,208
-      C 392,208 400,198 401,180
+      C 359,118 359,120 358,131 357,142 355,181 355,181 355,192 357,196 360,202 364,210 372,214 380,214 392,214 400,200 400,190
       H 410
-      C 409,199 408,207 402,217
-      C 394,235 380,245 366,245
-      C 343,245 328,219 328,178
-      C 328,155 331,115 336,85
+      C 409,206 409,209 402,221 395,233 380,245 366,245 343,245 328,223 328,188 328,181 331,135 336,109
       H 294
-      L 290,133
-      L 289,142
-      C 288,145 288,149 287,162
-      C 285,184 282,196 281,206
-      C 277,232 267,246 252,246
-      C 240,246 231,237 231,225
-      C 231,217 234,211 246,200
-      C 259,188 264,180 265,170
-      L 275,86
+      C 292,131 290,155 287,175 284,195 282,204 281,212 277,234 267,246 252,246 240,246 231,238 231,228 231,221 234,216 246,207 259,196 264,190 265,181
+      L 275,110
       H 240
-      C 232,86 225,86 220,90
-      C 222,84 231,70 237,64 Z"
+      C 234,110 228,110 220,118 222,108 231,100 237,94
+      Z"
   />
   <!-- prettier-ignore -->
-  <text class="fill-symbol" style="font-size:79px;font-family:'Times New Roman';font-style:italic" x="198" y="432">ax+bx<tspan style="font-size:65%;baseline-shift:super">2</tspan>+cx<tspan style="font-size:65%;baseline-shift:super">3</tspan></text>
-  <path class="stroke-trace" style="stroke-width: 14px; stroke-linecap: round" d="M 126,90 V 490 H 560" />
+  <text class="fill-symbol" style="font-size:76px;font-family:'Times New Roman';font-style:italic" x="153" y="423">ax<tspan style="font-size:65%;baseline-shift:super">3</tspan><tspan style="font-style:normal;font-weight:bold;font-size:80%;font-family:'Times New Roman'">+</tspan>bx<tspan style="font-size:65%;baseline-shift:super">2</tspan><tspan style="font-style:normal;font-weight:bold;font-size:80%;font-family:'Times New Roman'">+</tspan>cx<tspan style="font-style:normal;font-weight:bold;font-size:80%;font-family:'Times New Roman'">+</tspan>d</text>
+  <path class="stroke-trace" style="stroke-width: 14px; stroke-linecap: round" d="M 126,135 V 490 H 513" />
   <path class="stroke-trace" style="stroke-width: 14px" d="M 126,441 H 176 V 490" />
   <circle class="fill-trace" style="stroke: none" cx="152" cy="464" r="4.1" />
   <path
     class="stroke-trace"
     style="stroke-width: 14px; stroke-linecap: round"
-    d="M 126,441 C 140,390 210,273 252,273 315,273 336,330 378,330 420,330 504,210 546,154"
+    d="M 126,441 C 140,390 203,273 252,273 305,273 336,330 378,330 420,330 513,203 532,168"
   />
 </svg>

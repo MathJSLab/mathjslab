@@ -1,6 +1,6 @@
 {
     "name": "mathjslab",
-    "version": "1.7.2",
+    "version": "1.7.3",
     "description": "MathJSLab - An interpreter with language syntax like MATLAB®/Octave, ISBN 978-65-00-82338-7.",
     "repository": {
         "type": "git",
@@ -28,28 +28,28 @@
     },
     "homepage": "https://mathjslab.com/",
     "type": "module",
-    "main": "lib/mathjslab.web.esm2020.js",
-    "module": "lib/mathjslab.web.esm2020.js",
+    "main": "lib/mathjslab.web.esm2022.js",
+    "module": "lib/mathjslab.web.esm2022.js",
     "types": "lib/src/lib.d.ts",
     "exports": {
         ".": {
             "types": "./lib/src/lib.d.ts",
             "node": {
-                "import": "./lib/mathjslab.node.esm2020.js",
-                "require": "./lib/mathjslab.node.cjs2020.js"
+                "import": "./lib/mathjslab.node.esm2022.js",
+                "require": "./lib/mathjslab.node.cjs2022.js"
             },
             "browser": {
-                "import": "./lib/mathjslab.web.esm2020.js"
+                "import": "./lib/mathjslab.web.esm2022.js"
             },
-            "default": "./lib/mathjslab.web.esm2020.js"
+            "default": "./lib/mathjslab.web.esm2022.js"
         },
         "./node-esm": {
             "types": "./lib/src/lib.d.ts",
-            "default": "./lib/mathjslab.node.esm2020.js"
+            "default": "./lib/mathjslab.node.esm2022.js"
         },
         "./node-cjs": {
             "types": "./lib/src/lib.d.ts",
-            "default": "./lib/mathjslab.node.cjs2020.js"
+            "default": "./lib/mathjslab.node.cjs2022.js"
         },
         "./node-cjs-es2015": {
             "types": "./lib/src/lib.d.ts",
@@ -57,11 +57,11 @@
         },
         "./web-esm": {
             "types": "./lib/src/lib.d.ts",
-            "default": "./lib/mathjslab.web.esm2020.js"
+            "default": "./lib/mathjslab.web.esm2022.js"
         },
         "./web-umd": {
             "types": "./lib/src/lib.d.ts",
-            "default": "./lib/mathjslab.web.umd2020.js"
+            "default": "./lib/mathjslab.web.umd2022.js"
         },
         "./web-umd-es2015": {
             "types": "./lib/src/lib.d.ts",
@@ -69,8 +69,8 @@
         }
     },
     "browser": {
-        "./node-cjs": "./lib/mathjslab.web.umd2020.js",
-        "./node-esm": "./lib/mathjslab.web.esm2020.js",
+        "./node-cjs": "./lib/mathjslab.web.umd2022.js",
+        "./node-esm": "./lib/mathjslab.web.esm2022.js",
         "fs": false,
         "os": false,
         "path": false
@@ -84,9 +84,9 @@
         "clean:parser-tokens-interp": "rimraf ./src/.antlr ./src/MathJSLabLexer.tokens ./src/MathJSLabLexer.interp ./src/MathJSLabParser.tokens ./src/MathJSLabParser.interp",
         "clean:parser-src": "rimraf ./src/MathJSLabLexer.ts ./src/MathJSLabParser.ts",
         "clean:parser": "npm run clean:parser-src && npm run clean:parser-tokens-interp",
-        "clean:download-resources": "node script/helper/download-files.cjs clean && rimraf script/helper/download-files.cjs download.config.json",
+        "clean:download": "node script/helper/download-files.cjs clean && rimraf script/helper/download-files.cjs download.config.json",
         "clean": "npm run clean:build && npm run clean:parser",
-        "clean:all": "npm run clean && npm run clean:resources && npm run clean:package-lock && npm run clean:download-resources",
+        "clean:all": "npm run clean && npm run clean:resources && npm run clean:package-lock && npm run clean:download",
         "update": "npx npm-check-updates -u && npm install && npm run build:resources",
         "git:add": "git add .",
         "git:commit": "node script/helper/git-commit.cjs",
@@ -102,17 +102,17 @@
         "test:all": "npm run test",
         "pretest:unit": "npm run pretest",
         "test:unit": "jest --selectProjects unit-tests",
-        "test:node": "jest --selectProjects node-cjs2015-tests node-cjs2020-tests node-esm2020-tests",
-        "test:web": "jest --selectProjects web-umd2015-tests web-umd2020-tests web-esm2020-tests",
-        "test:bundle": "jest --selectProjects node-cjs2015-tests node-cjs2020-tests node-esm2020-tests web-umd2015-tests web-umd2020-tests web-esm2020-tests",
+        "test:node": "jest --selectProjects node-cjs2015-tests node-cjs2022-tests node-esm2022-tests",
+        "test:web": "jest --selectProjects web-umd2015-tests web-umd2022-tests web-esm2022-tests",
+        "test:bundle": "jest --selectProjects node-cjs2015-tests node-cjs2022-tests node-esm2022-tests web-umd2015-tests web-umd2022-tests web-esm2022-tests",
         "test1": "jest ./src/CharString.spec.ts",
         "pretest:watch": "pretest",
         "test:watch": "jest --watch",
         "tsx": "tsx --require tsconfig-paths/register",
-        "download-resources": "curl -k -o ./script/helper/download-files.cjs https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/script/helper/download-files.cjs && curl -k -o ./download.config.json https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/resource/mathjslab/download.config.json && node script/helper/download-files.cjs",
-        "build:resources": "npm run download-resources && npm run tsx script/build-resources.ts",
+        "download": "curl -k -o ./script/helper/download-files.cjs https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/script/helper/download-files.cjs && curl -k -o ./download.config.json https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/resource/mathjslab/download.config.json && node script/helper/download-files.cjs",
+        "build:resources": "npm run download && npm run tsx script/build-resources.ts",
         "build:parser": "cross-env CLASSPATH=./res/antlr-complete.jar java org.antlr.v4.Tool ./src/MathJSLabLexer.g4 ./src/MathJSLabParser.g4 -Dlanguage=TypeScript -no-visitor -no-listener -o ./src/",
-        "build:package:types": "tsc --project tsconfig.types.es2020.json",
+        "build:package:types": "tsc --project tsconfig.types.es2022.json",
         "prebuild:package": "npm run clean && npm run build:parser && npm run build:package:types",
         "build:package": "tsx --require tsconfig-paths/register ./node_modules/webpack/bin/webpack",
         "build:dev": "npm run build:package -- --mode development",
@@ -127,44 +127,40 @@
         "pnpm": "false"
     },
     "devDependencies": {
-        "@types/debug": "^4.1.12",
         "@types/eslint-config-prettier": "^6.11.3",
-        "@types/jest": "^29.5.14",
-        "@types/node": "^22.13.11",
-        "@types/supertest": "^6.0.2",
+        "@types/jest": "^30.0.0",
+        "@types/node": "^24.3.0",
         "@types/webpack": "^5.28.5",
         "@types/webpack-bundle-analyzer": "^4.7.0",
-        "@typescript-eslint/eslint-plugin": "^8.27.0",
-        "@typescript-eslint/parser": "^8.27.0",
+        "@typescript-eslint/eslint-plugin": "^8.40.0",
+        "@typescript-eslint/parser": "^8.40.0",
         "ajv": "^8.17.1",
-        "cross-env": "^7.0.3",
-        "eslint": "^9.23.0",
-        "eslint-config-prettier": "^10.1.1",
-        "eslint-plugin-import": "^2.31.0",
-        "eslint-plugin-jest": "^28.11.0",
-        "eslint-plugin-prettier": "^5.2.3",
-        "jest": "^29.7.0",
-        "jest-environment-jsdom": "^29.7.0",
-        "jsdom": "^26.0.0",
+        "cross-env": "^10.0.0",
+        "eslint": "^9.34.0",
+        "eslint-config-prettier": "^10.1.8",
+        "eslint-plugin-import": "^2.32.0",
+        "eslint-plugin-jest": "^29.0.1",
+        "eslint-plugin-prettier": "^5.5.4",
+        "jest": "^30.0.5",
+        "jest-environment-jsdom": "^30.0.5",
+        "jsdom": "^26.1.0",
         "license-webpack-plugin": "^4.0.2",
-        "lint-staged": "^15.5.0",
         "node-html-parser": "^7.0.1",
-        "prettier": "^3.5.3",
+        "prettier": "^3.6.2",
         "rimraf": "^6.0.1",
-        "source-map-support": "^0.5.21",
-        "ts-jest": "^29.2.6",
-        "ts-loader": "^9.5.2",
+        "ts-jest": "^29.4.1",
+        "ts-loader": "^9.5.4",
         "ts-node": "^10.9.2",
         "tsconfig-paths": "^4.2.0",
-        "tsx": "^4.19.3",
-        "typescript": "^5.8.2",
-        "webpack": "^5.98.0",
+        "tsx": "^4.20.5",
+        "typescript": "^5.9.2",
+        "webpack": "^5.101.3",
         "webpack-bundle-analyzer": "^4.10.2",
         "webpack-cli": "^6.0.1"
     },
     "dependencies": {
         "antlr4": "^4.13.2",
-        "decimal.js": "^10.5.0",
+        "decimal.js": "^10.6.0",
         "globalthis": "^1.0.4"
     }
 }

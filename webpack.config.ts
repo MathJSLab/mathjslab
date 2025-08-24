@@ -64,11 +64,11 @@ export const WebpackConfiguration: webpack.Configuration[] = [
             },
         },
     },
-    /* 3. Build for UMD and ES2020 target (modern compatible browser environments). */
+    /* 3. Build for UMD and ES2022 target (modern compatible browser environments). */
     {
-        name: 'web.umd2020',
+        name: 'web.umd2022',
         entry: path.join(__dirname, 'src', 'lib-core.ts'),
-        target: ['web', 'es2020'],
+        target: ['web', 'es2022'],
         output: {
             library: {
                 type: 'umd2',
@@ -80,7 +80,7 @@ export const WebpackConfiguration: webpack.Configuration[] = [
                 {
                     use: {
                         options: {
-                            configFile: 'tsconfig.cjs.es2020.json',
+                            configFile: 'tsconfig.cjs.es2022.json',
                         },
                     },
                     exclude: [/.*\.es2015\.ts$/],
@@ -93,11 +93,11 @@ export const WebpackConfiguration: webpack.Configuration[] = [
             },
         },
     },
-    /* 4. Build for CommonJS and ES2020 target (modern compatible node environments). */
+    /* 4. Build for CommonJS and ES2022 target (modern compatible node environments). */
     {
-        name: 'node.cjs2020',
+        name: 'node.cjs2022',
         entry: path.join(__dirname, 'src', 'lib-core.ts'),
-        target: ['node', 'es2020'],
+        target: ['node', 'es2022'],
         output: {
             library: {
                 type: 'commonjs2',
@@ -108,7 +108,7 @@ export const WebpackConfiguration: webpack.Configuration[] = [
                 {
                     use: {
                         options: {
-                            configFile: 'tsconfig.cjs.es2020.json',
+                            configFile: 'tsconfig.cjs.es2022.json',
                         },
                     },
                     exclude: [/.*\.es2015\.ts$/],
@@ -121,11 +121,11 @@ export const WebpackConfiguration: webpack.Configuration[] = [
             },
         },
     },
-    /* 5. Build for ESM and ES2020 target (modern browser environments). */
+    /* 5. Build for ESM and ES2022 target (modern browser environments). */
     {
-        name: 'web.esm2020',
+        name: 'web.esm2022',
         entry: path.join(__dirname, 'src', 'lib-core.ts'),
-        target: ['web', 'es2020'],
+        target: ['web', 'es2022'],
         output: {
             library: {
                 type: 'module',
@@ -136,7 +136,7 @@ export const WebpackConfiguration: webpack.Configuration[] = [
                 {
                     use: {
                         options: {
-                            configFile: 'tsconfig.esm.es2020.json',
+                            configFile: 'tsconfig.esm.es2022.json',
                         },
                     },
                     exclude: [/.*\.es2015\.ts$/],
@@ -144,11 +144,11 @@ export const WebpackConfiguration: webpack.Configuration[] = [
             ],
         },
     },
-    /* 6. Build for ESM and ES2020 target (modern node environments). */
+    /* 6. Build for ESM and ES2022 target (modern node environments). */
     {
-        name: 'node.esm2020',
+        name: 'node.esm2022',
         entry: path.join(__dirname, 'src', 'lib-core.ts'),
-        target: ['node', 'es2020'],
+        target: ['node', 'es2022'],
         output: {
             library: {
                 type: 'module',
@@ -159,7 +159,7 @@ export const WebpackConfiguration: webpack.Configuration[] = [
                 {
                     use: {
                         options: {
-                            configFile: 'tsconfig.esm.es2020.json',
+                            configFile: 'tsconfig.esm.es2022.json',
                         },
                     },
                     exclude: [/.*\.es2015\.ts$/],
@@ -167,11 +167,11 @@ export const WebpackConfiguration: webpack.Configuration[] = [
             ],
         },
     },
-    /* 7. Build development mode. It's for CommonJS and ES2020 target (modern compatible node environments). */
+    /* 7. Build development mode. It's for CommonJS and ES2022 target (modern compatible node environments). */
     {
         name: 'cjs.dev',
         entry: path.join(__dirname, 'src', 'lib-core.ts'),
-        target: ['node', 'es2020'],
+        target: ['node', 'es2022'],
         output: {
             library: {
                 type: 'commonjs2',
@@ -182,7 +182,7 @@ export const WebpackConfiguration: webpack.Configuration[] = [
                 {
                     use: {
                         options: {
-                            configFile: 'tsconfig.cjs.es2020.json',
+                            configFile: 'tsconfig.cjs.es2022.json',
                         },
                     },
                     exclude: [/.*\.es2015\.ts$/],

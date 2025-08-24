@@ -100,11 +100,11 @@ and [Edge](https://www.microsoft.com/edge).
 
 There are 6 different bundles:
 - For [Node.js](https://nodejs.org/) environment, [CommonJS](https://nodejs.org/docs/latest/api/modules.html), [ES2015](https://262.ecma-international.org/6.0/) target ([mathjslab.node.cjs2015.js](https://cdn.jsdelivr.net/npm/mathjslab/lib/mathjslab.node.cjs2015.js)).
-- For [Node.js](https://nodejs.org/) environment, [CommonJS](https://nodejs.org/docs/latest/api/modules.html), [ES2020](https://262.ecma-international.org/11.0/) target ([mathjslab.node.cjs2020.js](https://cdn.jsdelivr.net/npm/mathjslab/lib/mathjslab.node.cjs2020.js)).
-- For [Node.js](https://nodejs.org/) environment, [ES Module](https://nodejs.org/api/esm.html), [ES2020](https://262.ecma-international.org/11.0/) target ([mathjslab.node.esm2020.js](https://cdn.jsdelivr.net/npm/mathjslab/lib/mathjslab.node.esm2020.js)).
+- For [Node.js](https://nodejs.org/) environment, [CommonJS](https://nodejs.org/docs/latest/api/modules.html), [ES2022](https://262.ecma-international.org/11.0/) target ([mathjslab.node.cjs2022.js](https://cdn.jsdelivr.net/npm/mathjslab/lib/mathjslab.node.cjs2022.js)).
+- For [Node.js](https://nodejs.org/) environment, [ES Module](https://nodejs.org/api/esm.html), [ES2022](https://262.ecma-international.org/11.0/) target ([mathjslab.node.esm2022.js](https://cdn.jsdelivr.net/npm/mathjslab/lib/mathjslab.node.esm2022.js)).
 - For browser environment, [UMD](https://github.com/umdjs/umd), [ES2015](https://262.ecma-international.org/6.0/) target ([mathjslab.web.umd2015.js](https://cdn.jsdelivr.net/npm/mathjslab/lib/mathjslab.web.umd2015.js)).
-- For browser environment, [UMD](https://github.com/umdjs/umd), [ES2020](https://262.ecma-international.org/11.0/) target ([mathjslab.web.umd2020.js](https://cdn.jsdelivr.net/npm/mathjslab/lib/mathjslab.web.umd2020.js)).
-- For browser environment, [ES Module](https://nodejs.org/api/esm.html), [ES2020](https://262.ecma-international.org/11.0/) target ([mathjslab.web.esm2020.js]((https://cdn.jsdelivr.net/npm/mathjslab/lib/mathjslab.web.esm2020.js))).
+- For browser environment, [UMD](https://github.com/umdjs/umd), [ES2022](https://262.ecma-international.org/11.0/) target ([mathjslab.web.umd2022.js](https://cdn.jsdelivr.net/npm/mathjslab/lib/mathjslab.web.umd2022.js)).
+- For browser environment, [ES Module](https://nodejs.org/api/esm.html), [ES2022](https://262.ecma-international.org/11.0/) target ([mathjslab.web.esm2022.js]((https://cdn.jsdelivr.net/npm/mathjslab/lib/mathjslab.web.esm2022.js))).
 
 
 ## Installation

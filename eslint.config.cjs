@@ -84,7 +84,7 @@ module.exports = [
         files: ['**/*.{js,cjs,mjs}', '**/*.spec.{js,cjs,mjs}'],
         languageOptions: {
             sourceType: 'module',
-            ecmaVersion: 2020,
+            ecmaVersion: 2022,
             globals: {
                 ...globals.node,
                 jest: 'readonly',

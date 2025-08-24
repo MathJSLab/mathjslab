@@ -1,6 +1,6 @@
 {
     "production": {
-        "bundles": ["web.umd2015", "node.cjs2015", "web.umd2020", "node.cjs2020", "web.esm2020", "node.esm2020"],
+        "bundles": ["web.umd2015", "node.cjs2015", "web.umd2022", "node.cjs2022", "web.esm2022", "node.esm2022"],
         "analyzer": {
             "openAnalyzer": false
         }

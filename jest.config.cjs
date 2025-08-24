@@ -14,7 +14,7 @@ module.exports = {
             testEnvironment: 'node',
             testMatch: ['<rootDir>/src/**/*.spec.{js,cjs,mjs,ts,cts,mts}'],
             transform: {
-                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.esm.es2020.json' }],
+                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.esm.es2022.json' }],
             },
         },
         {
@@ -26,19 +26,19 @@ module.exports = {
             },
         },
         {
-            displayName: 'node-cjs2020-tests',
+            displayName: 'node-cjs2022-tests',
             testEnvironment: 'node',
-            testMatch: ['<rootDir>/test/node/**/*cjs2020.spec.{js,cjs,mjs,ts,cts,mts}'],
+            testMatch: ['<rootDir>/test/node/**/*cjs2022.spec.{js,cjs,mjs,ts,cts,mts}'],
             transform: {
-                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.cjs.es2020.json' }],
+                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.cjs.es2022.json' }],
             },
         },
         {
-            displayName: 'node-esm2020-tests',
+            displayName: 'node-esm2022-tests',
             testEnvironment: 'node',
-            testMatch: ['<rootDir>/test/node/**/*esm2020.spec.{js,cjs,mjs,ts,cts,mts}'],
+            testMatch: ['<rootDir>/test/node/**/*esm2022.spec.{js,cjs,mjs,ts,cts,mts}'],
             transform: {
-                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.esm.es2020.json' }],
+                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.esm.es2022.json' }],
             },
         },
         {
@@ -50,19 +50,19 @@ module.exports = {
             },
         },
         {
-            displayName: 'web-umd2020-tests',
+            displayName: 'web-umd2022-tests',
             testEnvironment: 'jsdom',
-            testMatch: ['<rootDir>/test/web/**/*umd2020.spec.{js,cjs,mjs,ts,cts,mts}'],
+            testMatch: ['<rootDir>/test/web/**/*umd2022.spec.{js,cjs,mjs,ts,cts,mts}'],
             transform: {
-                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.cjs.es2020.json' }],
+                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.cjs.es2022.json' }],
             },
         },
         {
-            displayName: 'web-esm2020-tests',
+            displayName: 'web-esm2022-tests',
             testEnvironment: 'jsdom',
-            testMatch: ['<rootDir>/test/web/**/*esm2020.spec.{js,cjs,mjs,ts,cts,mts}'],
+            testMatch: ['<rootDir>/test/web/**/*esm2022.spec.{js,cjs,mjs,ts,cts,mts}'],
             transform: {
-                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.esm.es2020.json' }],
+                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.esm.es2022.json' }],
             },
         },
     ],

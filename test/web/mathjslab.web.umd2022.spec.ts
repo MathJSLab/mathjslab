@@ -2,8 +2,8 @@ import path from 'node:path';
 import { Evaluator as EvaluatorDefinition } from '../../src/Evaluator';
 
 // @ts-ignore
-import { Evaluator as namedEvaluator } from '../../lib/mathjslab.web.umd2020';
-// import * as mathjslabNamespace from '../../lib/mathjslab.web.umd2020';
+import { Evaluator as namedEvaluator } from '../../lib/mathjslab.web.umd2022';
+// import * as mathjslabNamespace from '../../lib/mathjslab.web.umd2022';
 
 const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.sep}]+)\\.spec\\.([cm]?[jt]s)\$`))!;
 const bundleName = __filenameMatch[1];

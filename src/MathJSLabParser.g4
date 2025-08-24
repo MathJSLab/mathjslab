@@ -131,7 +131,8 @@ identifier returns [node: AST.NodeExpr]
 string returns [node: AST.NodeExpr]
     : STRING {
         const str = localctx.STRING().getText();
-        localctx.node = AST.nodeString(str.substring(1, str.length - 1), str.at(0));
+        // localctx.node = AST.nodeString(str.substring(1, str.length - 1), str.at(0));
+        localctx.node = AST.nodeString(str.substring(1, str.length - 1), str[0]);
     }
     | UNQUOTED_STRING {
         localctx.node = AST.nodeString(localctx.UNQUOTED_STRING().getText());
