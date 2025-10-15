@@ -17,4 +17,4 @@ class ParserErrorListener extends ErrorListener<Token> {
     }
 }
 export { ParserErrorListener };
-export default ParserErrorListener;
+export default { ParserErrorListener };

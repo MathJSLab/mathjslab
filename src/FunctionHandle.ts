@@ -1,4 +1,4 @@
-import { ComplexDecimal } from './ComplexDecimal';
+import { Complex, ComplexType } from './Complex';
 import * as AST from './AST';
 import { Evaluator } from './Evaluator';
 
@@ -11,6 +11,20 @@ class FunctionHandle {
     public parameter: AST.NodeExpr[];
     public expression: AST.NodeExpr;
 
+    /**
+     *
+     * @param value
+     * @returns
+     */
+    public static isInstanceOf = (value: unknown): boolean => value instanceof FunctionHandle;
+
+    /**
+     *
+     * @param id
+     * @param commat
+     * @param parameter
+     * @param expression
+     */
     constructor(id: string | null = null, commat: boolean = false, parameter: AST.NodeExpr[] | null = null, expression: AST.NodeExpr = null) {
         this.id = id;
         this.commat = commat;
@@ -18,19 +32,40 @@ class FunctionHandle {
         this.expression = expression;
     }
 
-    public static newThis(id: string | null = null, commat: boolean = false, parameter: AST.NodeExpr[] | null = null, expression: AST.NodeExpr = null) {
-        return new FunctionHandle(id, commat, parameter, expression);
-    }
+    /**
+     *
+     * @param id
+     * @param commat
+     * @param parameter
+     * @param expression
+     * @returns
+     */
+    public static create = (id: string | null = null, commat: boolean = false, parameter: AST.NodeExpr[] | null = null, expression: AST.NodeExpr = null) =>
+        new FunctionHandle(id, commat, parameter, expression);
 
-    public static unparse(fhandle: FunctionHandle, evaluator: Evaluator, parentPrecedence = 0): string {
+    /**
+     *
+     * @param fhandle
+     * @param evaluator
+     * @param parentPrecedence
+     * @returns
+     */
+    public static unparse = (fhandle: FunctionHandle, evaluator: Evaluator, parentPrecedence = 0): string => {
         if (fhandle.id) {
             return (fhandle.commat ? '@' : '') + fhandle.id;
         } else {
             return '@(' + fhandle.parameter.map((param: AST.NodeExpr) => evaluator.Unparse(param)).join(',') + ') ' + evaluator.Unparse(fhandle.expression);
         }
-    }
+    };
 
-    public static unparseMathML(fhandle: FunctionHandle, evaluator: Evaluator, parentPrecedence = 0): string {
+    /**
+     *
+     * @param fhandle
+     * @param evaluator
+     * @param parentPrecedence
+     * @returns
+     */
+    public static unparseMathML = (fhandle: FunctionHandle, evaluator: Evaluator, parentPrecedence = 0): string => {
         if (fhandle.id) {
             return `${fhandle.commat ? '<mo>@</mo><mi>' : ''}${fhandle.id}</mi>`;
         } else {
@@ -41,27 +76,44 @@ class FunctionHandle {
                 evaluator.unparserMathML(fhandle.expression)
             );
         }
-    }
+    };
 
-    public static copy(fhandle: FunctionHandle): FunctionHandle {
+    /**
+     *
+     * @param fhandle
+     * @returns
+     */
+    public static copy = (fhandle: FunctionHandle): FunctionHandle => {
         const result = new FunctionHandle(fhandle.id, fhandle.commat, fhandle.parameter, fhandle.expression);
         result.parent = fhandle.parent;
         return result;
-    }
+    };
 
+    /**
+     *
+     * @returns
+     */
     public copy(): FunctionHandle {
         const result = new FunctionHandle(this.id, this.commat, this.parameter, this.expression);
         result.parent = this.parent;
         return result;
     }
 
-    public static toLogical(fhandle: FunctionHandle): ComplexDecimal {
-        return ComplexDecimal.false();
-    }
+    /**
+     *
+     * @param fhandle
+     * @returns
+     */
+    public static toLogical = (fhandle: FunctionHandle): ComplexType => Complex.false();
 
-    public toLogical(): ComplexDecimal {
-        return ComplexDecimal.false();
+    /**
+     *
+     * @returns
+     */
+    public toLogical(): ComplexType {
+        return Complex.false();
     }
 }
+
 export { FunctionHandle };
-export default FunctionHandle;
+export default { FunctionHandle };

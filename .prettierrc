@@ -1,28 +1,23 @@
 {
+    "printWidth": 190,
     "singleQuote": true,
     "trailingComma": "all",
-    "printWidth": 190,
+    "semi": true,
+    "arrowParens": "always",
+    "bracketSpacing": true,
     "overrides": [
         {
-            "files": "*.svg",
+            "files": "*.md",
             "options": {
-                "parser": "html",
-                "printWidth": 120,
-                "tabWidth": 2,
+                "printWidth": 79,
+                "tabWidth": 4,
                 "useTabs": false,
-                "proseWrap": "preserve",
-                "htmlWhitespaceSensitivity": "strict"
-            }
-        },
-        {
-            "files": "*.scss",
-            "options": {
-                "parser": "scss",
-                "printWidth": 120,
-                "tabWidth": 2,
-                "useTabs": false,
-                "proseWrap": "preserve",
-                "bracketSpacing": false
+                "proseWrap": "always",
+                "embeddedLanguageFormatting": "auto",
+                "singleQuote": false,
+                "trailingComma": "all",
+                "semi": true,
+                "arrowParens": "always"
             }
         }
     ]

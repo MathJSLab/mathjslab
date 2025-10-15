@@ -6,6 +6,10 @@
             "dest": "script/tsconfig.json"
         },
         {
+            "src": "https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/script/helper/buildKeyTable.ts",
+            "dest": "script/helper/buildKeyTable.ts"
+        },
+        {
             "src": "https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/script/helper/clean-package-lock.cjs",
             "dest": "script/helper/clean-package-lock.cjs"
         },
@@ -38,7 +42,7 @@
             "dest": ".prettierignore"
         },
         {
-            "src": "https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/.prettierrc",
+            "src": "https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/resource/mathjslab/.prettierrc",
             "dest": ".prettierrc"
         }
     ]

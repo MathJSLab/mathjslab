@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { Structure } from './Structure';
+// import { Structure } from './Structure';
 
 const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.sep}]+)\\.spec\\.([cm]?[jt]s)\$`))!;
 const unitName = __filenameMatch[1];

@@ -17,4 +17,4 @@ class LexerErrorListener extends ErrorListener<number> {
     }
 }
 export { LexerErrorListener };
-export default LexerErrorListener;
+export default { LexerErrorListener };

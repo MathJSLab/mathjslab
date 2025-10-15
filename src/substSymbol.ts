@@ -95,4 +95,4 @@ function substSymbol(id: string): string {
     return id;
 }
 export { substSymbol };
-export default substSymbol;
+export default { substSymbol };

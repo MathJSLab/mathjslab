@@ -1,6 +1,8 @@
 export { Decimal } from 'decimal.js';
 export { CharString } from './CharString';
+export { ComplexNumber } from './ComplexNumber';
 export { ComplexDecimal } from './ComplexDecimal';
+export { Complex, type ComplexType } from './Complex';
 export { MultiArray } from './MultiArray';
 export { Structure } from './Structure';
 export { FunctionHandle } from './FunctionHandle';
@@ -10,9 +12,5 @@ export { CoreFunctions } from './CoreFunctions';
 export { Configuration } from './Configuration';
 export { SymbolTable } from './SymbolTable';
 export { MathML } from './MathML';
-export * as AST from './AST';
+export * from './AST';
 export * from './Evaluator';
-/**
- * The following constant is defined in `webpack.config.ts`
- */
-export const bundleConfiguration = __WEBPACK_BUNDLE_CONFIGURATION;

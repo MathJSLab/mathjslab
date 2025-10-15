@@ -62,4 +62,4 @@ class SymbolTable {
     }
 }
 export { SymbolTable };
-export default SymbolTable;
+export default { SymbolTable };

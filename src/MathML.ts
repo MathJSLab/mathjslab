@@ -67,6 +67,8 @@ interface FormatRegistry<T extends string = string> {
     '--_': (right: T) => string;
     '_++': (left: T) => string;
     '_--': (left: T) => string;
+    '!': (right: T) => string;
+    '~': (right: T) => string;
     '/': (left: T, right: T) => string;
     '^': (left: T, right: T) => string;
     '**': (left: T, right: T) => string;
@@ -219,6 +221,8 @@ abstract class MathML {
         '--_': (right) => '<mo form="prefix" stretchy="true">--</mo>' + right,
         '_++': (left) => left + '<mo form="postfix" stretchy="true">++</mo>',
         '_--': (left) => left + '<mo form="postfix" stretchy="true">--</mo>',
+        '!': (right) => '<mo form="prefix" stretchy="true">!</mo>' + right,
+        '~': (right) => '<mo form="prefix" stretchy="true">~</mo>' + right,
         '/': (left, right) => '<mfrac><mrow>' + left + '</mrow><mrow>' + right + '</mrow></mfrac>',
         '^': (left, right) => '<msup><mrow>' + left + '</mrow><mrow>' + right + '</mrow></msup>',
         '**': (left, right) => '<msup><mrow>' + left + '</mrow><mrow>' + right + '</mrow></msup>',
@@ -235,7 +239,7 @@ abstract class MathML {
         IDX: (expr, left, list, right) =>
             expr + '<mrow><mo fence="true" stretchy="true">' + left + '</mo>' + list.join('<mo>,</mo>') + '<mo fence="true" stretchy="true">' + right + '</mo></mrow>',
         RETLIST: () => '<mi>RETLIST</mi>',
-        CMDWLIST: (cmd, list) => '<mtext>' + cmd + ' ' + list.join(' ') + '</mtext>',
+        CMDWLIST: (cmd, list) => '<mrow><mtext>' + cmd + '</mtext> ' + list.join(' ') + '</mrow>',
         INVALID: () => '<mi>invalid</mi>',
         UNDEFINED: () => '<mi>undefined tree</mi>',
         ERROR: () => '<mi>error</mi>',

@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { Evaluator as EvaluatorDefinition } from '../../src/Evaluator';
 
-// @ts-ignore
+// @ts-expect-error ignore
 import { Evaluator as namedEvaluator } from '../../lib/mathjslab.web.umd2022';
 // import * as mathjslabNamespace from '../../lib/mathjslab.web.umd2022';
 
@@ -26,11 +26,11 @@ describe(`${bundleName} bundle test (.${testExtension} test file).`, () => {
     // }, 200);
 
     // it('mathjslab (namespace) should be defined, evaluator can be instantiated and should parse, evaluate and unparse a simple real expression: 1+2*3.', () => {
-    //     // @ts-ignore
+    //     // @ts-expect-error ignore
     //     expect(mathjslabNamespace).toBeDefined();
-    //     // @ts-ignore
+    //     // @ts-expect-error ignore
     //     const evaluatorNamespace = new mathjslabNamespace.Evaluator() as EvaluatorDefinition;
-    //     // @ts-ignore
+    //     // @ts-expect-error ignore
     //     expect(evaluatorNamespace).toBeInstanceOf(mathjslabNamespace.Evaluator);
     //     const tree = evaluatorNamespace.Parse('1+2*3');
     //     const value = evaluatorNamespace.Evaluate(tree);
@@ -54,9 +54,9 @@ describe(`${bundleName} bundle test (.${testExtension} test file).`, () => {
     // it('mathjslab (dynamic) should be defined, evaluator can be instantiated and should parse, evaluate and unparse a simple real expression: 1+2*3.', async () => {
     //     const mathjslabDynamic = await import(`../../lib/${__bundlename}`);
     //     expect(mathjslabDynamic).toBeDefined();
-    //     // @ts-ignore
+    //     // @ts-expect-error ignore
     //     const evaluatorDynamic = new mathjslabDynamic.Evaluator() as EvaluatorDefinition;
-    //     // @ts-ignore
+    //     // @ts-expect-error ignore
     //     expect(evaluatorDynamic).toBeInstanceOf(mathjslabDynamic.Evaluator);
     //     const tree = evaluatorDynamic.Parse('1+2*3');
     //     const value = evaluatorDynamic.Evaluate(tree);

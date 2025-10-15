@@ -1,12 +1,13 @@
 {
     "production": {
-        "bundles": ["web.umd2015", "node.cjs2015", "web.umd2022", "node.cjs2022", "web.esm2022", "node.esm2022"],
+        "bundle": ["web.umd2015", "node.cjs2015", "web.umd2022", "node.cjs2022", "web.esm2022", "node.esm2022"],
         "analyzer": {
-            "openAnalyzer": false
+            "openAnalyzer": false,
+            "bundle": [{}, {}, {}, {}, { "excludeAssets": ["mathjslab.web.esm2022.js"] }, { "excludeAssets": ["mathjslab.node.esm2022.js"] }]
         }
     },
     "development": {
-        "bundles": ["cjs.dev"],
+        "bundle": ["cjs.dev"],
         "analyzer": false
     }
 }

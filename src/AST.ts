@@ -1,5 +1,5 @@
 import { CharString } from './CharString';
-import { ComplexDecimal } from './ComplexDecimal';
+import { Complex } from './Complex';
 import { FunctionHandle } from './FunctionHandle';
 import { type ElementType, MultiArray } from './MultiArray';
 
@@ -10,7 +10,7 @@ import { type ElementType, MultiArray } from './MultiArray';
 /**
  * Operator type.
  */
-type TOperator =
+type OperatorType =
     | '+'
     | '-'
     | '.*'
@@ -62,13 +62,19 @@ type TOperator =
     | '_--';
 
 /**
- * Common primary node.
+ * NodeType
  */
-interface PrimaryNode {
-    type: string | number;
+type NodeType = 'IDENT' | 'CMDWLIST' | 'IDX' | 'RANGE' | 'ENDRANGE' | 'LIST' | '.' | ':' | '<~>' | 'RETLIST' | 'FCN' | 'GLOBAL' | 'PERSIST' | 'IF' | OperatorType;
+
+/**
+ * Node base.
+ */
+interface NodeBase {
+    type: NodeType | number;
     parent?: any;
     index?: number;
-    omitOut?: boolean;
+    omitOutput?: boolean;
+    omitAnswer?: boolean; // To omit result to be stored in 'ans' variable.
     start?: { line: number; column: number };
     stop?: { line: number; column: number };
 }
@@ -83,17 +89,17 @@ type NodeExpr = ElementType | NodeIdentifier | NodeIndexExpr | NodeOperation | N
 /**
  * Reserved node.
  */
-interface NodeReserved extends PrimaryNode {}
+interface NodeReserved extends NodeBase {}
 
 /**
  * Literal node.
  */
-interface NodeLiteral extends PrimaryNode {}
+interface NodeLiteral extends NodeBase {}
 
 /**
  * Name node.
  */
-interface NodeIdentifier extends PrimaryNode {
+interface NodeIdentifier extends NodeBase {
     type: 'IDENT';
     id: string;
 }
@@ -101,17 +107,16 @@ interface NodeIdentifier extends PrimaryNode {
 /**
  * Command word list node.
  */
-interface NodeCmdWList extends PrimaryNode {
+interface NodeCmdWList extends NodeBase {
     type: 'CMDWLIST';
     id: string;
     args: CharString[];
-    omitAns?: boolean;
 }
 
 /**
  * Expression and arguments node.
  */
-interface NodeIndexExpr extends PrimaryNode {
+interface NodeIndexExpr extends NodeBase {
     type: 'IDX';
     expr: NodeExpr;
     args: NodeExpr[];
@@ -121,7 +126,7 @@ interface NodeIndexExpr extends PrimaryNode {
 /**
  * Range node.
  */
-interface NodeRange extends PrimaryNode {
+interface NodeRange extends NodeBase {
     type: 'RANGE';
     start_: NodeExpr | null;
     stop_: NodeExpr | null;
@@ -141,36 +146,34 @@ type UnaryOperation = UnaryOperationL | UnaryOperationR;
 /**
  * Right unary operation node.
  */
-interface UnaryOperationR extends PrimaryNode {
+interface UnaryOperationR extends NodeBase {
     right: NodeExpr;
 }
 
 /**
  * Left unary operation node.
  */
-interface UnaryOperationL extends PrimaryNode {
+interface UnaryOperationL extends NodeBase {
     left: NodeExpr;
-    omitAns?: boolean; // To omit result to be stored in 'ans' variable.
 }
 
 /**
  * Binary operation.
  */
-interface BinaryOperation extends PrimaryNode {
+interface BinaryOperation extends NodeBase {
     left: NodeExpr;
     right: NodeExpr;
-    omitAns?: boolean; // To omit result to be stored in 'ans' variable.
 }
 
 /**
  * List node
  */
-interface NodeList extends PrimaryNode {
+interface NodeList extends NodeBase {
     type: 'LIST';
     list: NodeInput[];
 }
 
-interface NodeIndirectRef extends PrimaryNode {
+interface NodeIndirectRef extends NodeBase {
     type: '.';
     obj: NodeExpr;
     field: (string | NodeExpr)[];
@@ -181,12 +184,12 @@ type ReturnSelector = (length: number, index: number) => any;
 /**
  * Return list node
  */
-interface NodeReturnList extends PrimaryNode {
+interface NodeReturnList extends NodeBase {
     type: 'RETLIST';
     selector: ReturnSelector;
 }
 
-interface NodeFunction extends PrimaryNode {
+interface NodeFunction extends NodeBase {
     type: 'FCN';
     id: string;
     return: NodeInput[];
@@ -208,17 +211,16 @@ interface NodeArguments {
     validation: NodeArgumentValidation[];
 }
 
-interface NodeDeclaration extends PrimaryNode {
+interface NodeDeclaration extends NodeBase {
     type: 'GLOBAL' | 'PERSIST';
     list: NodeExpr[];
 }
 
-interface NodeIf extends PrimaryNode {
+interface NodeIf extends NodeBase {
     type: 'IF';
     expression: NodeExpr[];
     then: NodeList[];
     else: NodeList | null;
-    omitAns?: boolean;
 }
 
 interface NodeElseIf {
@@ -231,332 +233,435 @@ interface NodeElse {
 }
 
 /**
- * AST (Abstract Syntax Tree) constructor methods.
+ * AST (Abstract Syntax Tree) node factory methods.
  */
+abstract class AST {
+    /**
+     * External node factory methods.
+     */
+    public static nodeString = CharString.create;
+    public static nodeNumber = Complex.parse;
+    public static firstRow = MultiArray.firstRow;
+    public static appendRow = MultiArray.appendRow;
+    public static emptyArray = MultiArray.emptyArray;
 
-const nodeString = CharString.create;
-const nodeNumber = ComplexDecimal.parse;
-const firstRow = MultiArray.firstRow;
-const appendRow = MultiArray.appendRow;
-const emptyArray = MultiArray.emptyArray;
+    /**
+     * Reload external node factory methods.
+     */
+    public static readonly reload = (): void => {
+        AST.nodeString = CharString.create;
+        AST.nodeNumber = Complex.parse;
+        AST.firstRow = MultiArray.firstRow;
+        AST.appendRow = MultiArray.appendRow;
+        AST.emptyArray = MultiArray.emptyArray;
+    };
 
-/**
- * Create literal node.
- * @param type
- * @returns
- */
-const nodeLiteral = (type: string): NodeLiteral => ({ type });
+    /**
+     * Node types that, by definition, should omit writing to the `ans`
+     * variable.
+     */
+    public static readonly omitAnswerTable: (NodeType | number)[] = [
+        '=',
+        '+=',
+        '-=',
+        '*=',
+        '/=',
+        '\\=',
+        '^=',
+        '**=',
+        '.*=',
+        './=',
+        '.\\=',
+        '.^=',
+        '.**=',
+        '&=',
+        '|=',
+        '++_',
+        '--_',
+        '_++',
+        '_--',
+        'CMDWLIST',
+        'IF',
+    ];
 
-/**
- * Create name node.
- * @param nodeid
- * @returns
- */
-const nodeIdentifier = (id: string): NodeIdentifier => {
-    return {
+    /**
+     * Tests whether the node should omit writing to the `ans` variable.
+     * @param node
+     * @returns
+     */
+    public static readonly omitAnswer = (node: NodeInput): boolean => AST.omitAnswerTable.includes(node.type) || node.omitAnswer;
+
+    /**
+     * Create literal node.
+     * @param type
+     * @returns
+     */
+    public static readonly nodeLiteral = (type: NodeType): NodeLiteral => ({ type });
+
+    /**
+     * Create name node.
+     * @param nodeid
+     * @returns
+     */
+    public static readonly nodeIdentifier = (id: string): NodeIdentifier => ({
         type: 'IDENT',
         id: id.replace(/(\r\n|[\n\r])|[\ ]/gm, ''),
-    };
-};
+    });
 
-/**
- * Create command word list node.
- * @param nodename
- * @param nodelist
- * @returns
- */
-const nodeCmdWList = (nodename: NodeIdentifier, nodelist: NodeList): NodeCmdWList => {
-    return {
+    /**
+     * Create command word list node.
+     * @param nodename
+     * @param nodelist
+     * @returns
+     */
+    public static readonly nodeCmdWList = (nodename: NodeIdentifier, nodelist: NodeList): NodeCmdWList => ({
         type: 'CMDWLIST',
         id: nodename.id,
         args: nodelist ? (nodelist.list as CharString[]) : [],
-        omitAns: true,
-    };
-};
+    });
 
-/**
- * Create expression and arguments node.
- * @param nodeexpr
- * @param nodelist
- * @returns
- */
-const nodeIndexExpr = (nodeexpr: NodeExpr, nodelist: NodeList | null = null, delimiter: '()' | '{}' = '()'): NodeIndexExpr => {
-    return {
+    /**
+     * Create expression and arguments node.
+     * @param nodeexpr
+     * @param nodelist
+     * @returns
+     */
+    public static readonly nodeIndexExpr = (nodeexpr: NodeExpr, nodelist: NodeList | null = null, delimiter: '()' | '{}' = '()'): NodeIndexExpr => ({
         type: 'IDX',
         expr: nodeexpr,
         args: nodelist ? (nodelist.list as NodeExpr[]) : [],
         delim: delimiter,
-    };
-};
+    });
 
-/**
- * Create range node.
- * @param start_
- * @param stop_
- * @param stride_
- * @returns NodeRange.
- */
-const nodeRange = (start_: NodeExpr, stop_: NodeExpr, stride_?: NodeExpr): NodeRange => {
-    return {
+    /**
+     * Create range node.
+     * @param start_
+     * @param stop_
+     * @param stride_
+     * @returns NodeRange.
+     */
+    public static readonly nodeRange = (start_: NodeExpr, stop_: NodeExpr, stride_?: NodeExpr): NodeRange => ({
         type: 'RANGE',
         start_,
         stop_,
         stride_: stride_ ?? null,
+    });
+
+    /**
+     * Create operator node.
+     * @param op
+     * @param data1
+     * @param data2
+     * @returns
+     */
+    public static readonly nodeOp = (op: OperatorType, data1: NodeExpr, data2?: NodeExpr): NodeOperation => {
+        switch (op) {
+            case '+':
+            case '-':
+            case '.*':
+            case '*':
+            case './':
+            case '/':
+            case '.\\':
+            case '\\':
+            case '.^':
+            case '^':
+            case '.**':
+            case '**':
+            case '<':
+            case '<=':
+            case '==':
+            case '>=':
+            case '>':
+            case '!=':
+            case '~=':
+            case '&':
+            case '|':
+            case '&&':
+            case '||':
+                return { type: op, left: data1, right: data2 };
+            case '=':
+            case '+=':
+            case '-=':
+            case '*=':
+            case '/=':
+            case '\\=':
+            case '^=':
+            case '**=':
+            case '.*=':
+            case './=':
+            case '.\\=':
+            case '.^=':
+            case '.**=':
+            case '&=':
+            case '|=':
+                return { type: op, left: data1, right: data2 };
+            case '()':
+            case '!':
+            case '~':
+            case '+_':
+            case '-_':
+                return { type: op, right: data1 };
+            case '++_':
+            case '--_':
+                return { type: op, right: data1 };
+            case ".'":
+            case "'":
+                return { type: op, left: data1 };
+            case '_++':
+            case '_--':
+                return { type: op, left: data1 };
+            default:
+                return { type: `INVALID:${op}` as NodeType } as NodeOperation;
+        }
     };
-};
 
-/**
- * Create operator node.
- * @param op
- * @param data1
- * @param data2
- * @returns
- */
-const nodeOp = (op: TOperator, data1: NodeExpr, data2?: NodeExpr): NodeOperation => {
-    switch (op) {
-        case '+':
-        case '-':
-        case '.*':
-        case '*':
-        case './':
-        case '/':
-        case '.\\':
-        case '\\':
-        case '.^':
-        case '^':
-        case '.**':
-        case '**':
-        case '<':
-        case '<=':
-        case '==':
-        case '>=':
-        case '>':
-        case '!=':
-        case '~=':
-        case '&':
-        case '|':
-        case '&&':
-        case '||':
-            return { type: op, left: data1, right: data2 };
-        case '=':
-        case '+=':
-        case '-=':
-        case '*=':
-        case '/=':
-        case '\\=':
-        case '^=':
-        case '**=':
-        case '.*=':
-        case './=':
-        case '.\\=':
-        case '.^=':
-        case '.**=':
-        case '&=':
-        case '|=':
-            return { type: op, left: data1, right: data2, omitAns: true };
-        case '()':
-        case '!':
-        case '~':
-        case '+_':
-        case '-_':
-            return { type: op, right: data1 };
-        case '++_':
-        case '--_':
-            return { type: op, right: data1, omitAns: true };
-        case ".'":
-        case "'":
-            return { type: op, left: data1 };
-        case '_++':
-        case '_--':
-            return { type: op, left: data1, omitAns: true };
-        default:
-            return { type: `INVALID:${op}` } as NodeOperation;
-    }
-};
+    /**
+     * Create first element of list node.
+     * @param node First element of list node.
+     * @returns A NodeList.
+     */
+    public static readonly nodeListFirst = (node?: NodeInput): NodeList => {
+        if (node) {
+            const result = {
+                type: 'LIST',
+                list: [node],
+            };
+            node.parent = result;
+            return result as NodeList;
+        } else {
+            return {
+                type: 'LIST',
+                list: [],
+            };
+        }
+    };
 
-/**
- * Create first element of list node.
- * @param node First element of list node.
- * @returns A NodeList.
- */
-const nodeListFirst = (node?: NodeInput): NodeList => {
-    if (node) {
-        const result = {
-            type: 'LIST',
-            list: [node],
-        };
-        node.parent = result;
-        return result as NodeList;
-    } else {
-        return {
-            type: 'LIST',
-            list: [],
-        };
-    }
-};
+    /**
+     * Append node to list node.
+     * @param lnode NodeList.
+     * @param node Element to append to list.
+     * @returns NodeList with element appended.
+     */
+    public static readonly appendNodeList = (lnode: NodeList, node: NodeInput): NodeList => {
+        node!.parent = lnode;
+        lnode.list.push(node);
+        return lnode;
+    };
 
-/**
- * Append node to list node.
- * @param lnode NodeList.
- * @param node Element to append to list.
- * @returns NodeList with element appended.
- */
-const appendNodeList = (lnode: NodeList, node: NodeInput): NodeList => {
-    node!.parent = lnode;
-    lnode.list.push(node);
-    return lnode;
-};
-
-const nodeList = (list: NodeInput[]): NodeList => {
-    return {
+    /**
+     *
+     * @param list
+     * @returns
+     */
+    public static readonly nodeList = (list: NodeInput[]): NodeList => ({
         type: 'LIST',
         list,
+    });
+
+    /**
+     * Create first row of a MultiArray.
+     * @param row
+     * @returns
+     */
+    public static readonly nodeFirstRow = (row: NodeList | null = null, iscell?: boolean): MultiArray => (row ? AST.firstRow(row.list as ElementType[], iscell) : AST.emptyArray(iscell));
+
+    /**
+     * Append row to MultiArray.
+     * @param M
+     * @param row
+     * @returns
+     */
+    public static readonly nodeAppendRow = (M: MultiArray, row: NodeList | null = null): MultiArray => (row ? AST.appendRow(M, row.list as ElementType[]) : M);
+
+    /**
+     *
+     * @param left
+     * @param right
+     * @returns
+     */
+    public static readonly nodeIndirectRef = (left: NodeExpr, right: string | NodeExpr): NodeIndirectRef => {
+        if (left.type === '.') {
+            left.field.push(right);
+            return left;
+        } else {
+            return {
+                type: '.',
+                obj: left,
+                field: [right],
+            };
+        }
     };
-};
 
-/**
- * Create first row of a MultiArray.
- * @param row
- * @returns
- */
-const nodeFirstRow = (row: NodeList | null = null, iscell?: boolean): MultiArray => {
-    if (row) {
-        return firstRow(row.list as ElementType[], iscell);
-    } else {
-        return emptyArray(iscell);
-    }
-};
-
-/**
- * Append row to MultiArray.
- * @param M
- * @param row
- * @returns
- */
-const nodeAppendRow = (M: MultiArray, row: NodeList | null = null): MultiArray => {
-    if (row) {
-        return appendRow(M, row.list as ElementType[]);
-    } else {
-        return M;
-    }
-};
-
-const nodeIndirectRef = (left: NodeExpr, right: string | NodeExpr): NodeIndirectRef => {
-    if (left.type === '.') {
-        left.field.push(right);
-        return left;
-    } else {
-        return {
-            type: '.',
-            obj: left,
-            field: [right],
-        };
-    }
-};
-
-/**
- * Creates NodeReturnList (multiple assignment)
- * @param selector Left side selector function.
- * @returns Return list node.
- */
-const nodeReturnList = (selector: ReturnSelector): NodeReturnList => {
-    return {
+    /**
+     * Creates NodeReturnList (multiple assignment)
+     * @param selector Left side selector function.
+     * @returns Return list node.
+     */
+    public static readonly nodeReturnList = (selector: ReturnSelector): NodeReturnList => ({
         type: 'RETLIST',
         selector,
-    };
-};
+    });
 
-const nodeFunctionHandle = (id: NodeIdentifier | null = null, parameter_list: NodeList | null = null, expression: NodeExpr = null): FunctionHandle => {
-    return new FunctionHandle(id ? id.id : null, true, parameter_list ? parameter_list.list : [], expression);
-};
+    /**
+     *
+     * @param id
+     * @param parameter_list
+     * @param expression
+     * @returns
+     */
+    public static readonly nodeFunctionHandle = (id: NodeIdentifier | null = null, parameter_list: NodeList | null = null, expression: NodeExpr = null): FunctionHandle =>
+        new FunctionHandle(id ? id.id : null, true, parameter_list ? parameter_list.list : [], expression);
 
-const nodeFunction = (id: NodeIdentifier, return_list: NodeList, parameter_list: NodeList, arguments_list: NodeList, statements_list: NodeList): NodeFunction => {
-    return {
+    /**
+     *
+     * @param id
+     * @param return_list
+     * @param parameter_list
+     * @param arguments_list
+     * @param statements_list
+     * @returns
+     */
+    public static readonly nodeFunction = (id: NodeIdentifier, return_list: NodeList, parameter_list: NodeList, arguments_list: NodeList, statements_list: NodeList): NodeFunction => ({
         type: 'FCN',
         id: id.id,
         return: return_list.list,
         parameter: parameter_list.list,
         arguments: arguments_list.list,
         statements: statements_list.list,
-    };
-};
+    });
 
-const nodeArgumentValidation = (name: NodeIdentifier, size: NodeList, cl: NodeIdentifier | null = null, functions: NodeList, dflt: NodeExpr = null): NodeArgumentValidation => {
-    return {
+    /**
+     *
+     * @param name
+     * @param size
+     * @param cl
+     * @param functions
+     * @param dflt
+     * @returns
+     */
+    public static readonly nodeArgumentValidation = (
+        name: NodeIdentifier,
+        size: NodeList,
+        cl: NodeIdentifier | null = null,
+        functions: NodeList,
+        dflt: NodeExpr = null,
+    ): NodeArgumentValidation => ({
         name,
         size: size.list,
         class: cl,
         functions: functions.list,
         default: dflt,
-    };
-};
+    });
 
-const nodeArguments = (attribute: NodeIdentifier | null, validationList: NodeList): NodeArguments => {
-    return {
+    /**
+     *
+     * @param attribute
+     * @param validationList
+     * @returns
+     */
+    public static readonly nodeArguments = (attribute: NodeIdentifier | null, validationList: NodeList): NodeArguments => ({
         attribute,
         validation: validationList.list as unknown as NodeArgumentValidation[],
-    };
-};
+    });
 
-const nodeDeclarationFirst = (type: 'GLOBAL' | 'PERSIST'): NodeDeclaration => {
-    return {
+    /**
+     *
+     * @param type
+     * @returns
+     */
+    public static readonly nodeDeclarationFirst = (type: 'GLOBAL' | 'PERSIST'): NodeDeclaration => ({
         type,
         list: [],
+    });
+
+    /**
+     *
+     * @param node
+     * @param declaration
+     * @returns
+     */
+    public static readonly nodeAppendDeclaration = (node: NodeDeclaration, declaration: NodeExpr): NodeDeclaration => {
+        node.list.push(declaration);
+        return node;
     };
-};
 
-const nodeAppendDeclaration = (node: NodeDeclaration, declaration: NodeExpr): NodeDeclaration => {
-    node.list.push(declaration);
-    return node;
-};
-
-const nodeIfBegin = (expression: NodeExpr, then: NodeList): NodeIf => {
-    return {
+    /**
+     *
+     * @param expression
+     * @param then
+     * @returns
+     */
+    public static readonly nodeIfBegin = (expression: NodeExpr, then: NodeList): NodeIf => ({
         type: 'IF',
         expression: [expression],
         then: [then],
         else: null,
-        omitAns: true,
+    });
+
+    /**
+     *
+     * @param nodeIf
+     * @param nodeElse
+     * @returns
+     */
+    public static readonly nodeIfAppendElse = (nodeIf: NodeIf, nodeElse: NodeElse): NodeIf => {
+        nodeIf.else = nodeElse.else;
+        return nodeIf;
     };
-};
 
-const nodeIfAppendElse = (nodeIf: NodeIf, nodeElse: NodeElse): NodeIf => {
-    nodeIf.else = nodeElse.else;
-    return nodeIf;
-};
+    /**
+     *
+     * @param nodeIf
+     * @param nodeElseIf
+     * @returns
+     */
+    public static readonly nodeIfAppendElseIf = (nodeIf: NodeIf, nodeElseIf: NodeElseIf): NodeIf => {
+        nodeIf.expression.push(nodeElseIf.expression);
+        nodeIf.then.push(nodeElseIf.then);
+        return nodeIf;
+    };
 
-const nodeIfAppendElseIf = (nodeIf: NodeIf, nodeElseIf: NodeElseIf): NodeIf => {
-    nodeIf.expression.push(nodeElseIf.expression);
-    nodeIf.then.push(nodeElseIf.then);
-    return nodeIf;
-};
-
-const nodeElseIf = (expression: NodeExpr, then: NodeList): NodeElseIf => {
-    return {
+    /**
+     *
+     * @param expression
+     * @param then
+     * @returns
+     */
+    public static readonly nodeElseIf = (expression: NodeExpr, then: NodeList): NodeElseIf => ({
         expression,
         then,
-    };
-};
+    });
 
-const nodeElse = (elseStmt: NodeList): NodeElse => {
-    return {
+    /**
+     *
+     * @param elseStmt
+     * @returns
+     */
+    public static readonly nodeElse = (elseStmt: NodeList): NodeElse => ({
         else: elseStmt,
-    };
-};
-export type { TOperator, NodeInput, NodeExpr, NodeOperation, UnaryOperation, ReturnSelector };
-export {
-    PrimaryNode,
+    });
+}
+
+export type {
+    OperatorType,
+    NodeBase,
+    NodeInput,
+    NodeExpr,
     NodeReserved,
     NodeLiteral,
     NodeIdentifier,
     NodeCmdWList,
     NodeIndexExpr,
     NodeRange,
+    NodeOperation,
+    UnaryOperation,
     UnaryOperationR,
     UnaryOperationL,
     BinaryOperation,
     NodeList,
     NodeIndirectRef,
+    ReturnSelector,
     NodeReturnList,
     NodeFunction,
     NodeArgumentValidation,
@@ -565,33 +670,18 @@ export {
     NodeIf,
     NodeElseIf,
     NodeElse,
-    nodeString,
-    nodeNumber,
-    firstRow,
-    appendRow,
-    emptyArray,
-    nodeLiteral,
-    nodeIdentifier,
-    nodeCmdWList,
-    nodeIndexExpr,
-    nodeRange,
-    nodeOp,
-    nodeListFirst,
-    appendNodeList,
-    nodeList,
-    nodeFirstRow,
-    nodeAppendRow,
-    nodeIndirectRef,
-    nodeReturnList,
-    nodeFunctionHandle,
-    nodeFunction,
-    nodeArgumentValidation,
-    nodeArguments,
-    nodeDeclarationFirst,
-    nodeAppendDeclaration,
-    nodeIfBegin,
-    nodeIfAppendElse,
-    nodeIfAppendElseIf,
-    nodeElseIf,
-    nodeElse,
 };
+export { AST };
+export default { AST };
+
+/**
+ * External exports.
+ */
+export type { SingleQuoteCharacter, DoubleQuoteCharacter, StringQuoteCharacter } from './CharString';
+export { singleQuoteCharacter, doubleQuoteCharacter, stringClass, CharString } from './CharString';
+export type { Decimal, RealType, NumberObjectType, RealTypeDescriptor, ComplexType } from './Complex';
+export { Complex } from './Complex';
+export type { ElementType } from './MultiArray';
+export { MultiArray } from './MultiArray';
+export { Structure } from './Structure';
+export { FunctionHandle } from './FunctionHandle';
