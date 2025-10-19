@@ -113,7 +113,8 @@
         "test:circ": "madge --circular src/ --extensions ts || shx true",
         "test:circ:unit": "npm run test:circ && npm run test:unit",
         "tsx": "tsx --require tsconfig-paths/register",
-        "download": "curl -k -o ./script/helper/download-files.cjs https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/script/helper/download-files.cjs && curl -k -o ./download.config.json https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/resource/mathjslab/download.config.json && node script/helper/download-files.cjs",
+        "predownload": "curl -k -o ./script/helper/download-files.cjs https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/script/helper/download-files.cjs && curl -k -o ./download.config.json https://raw.githubusercontent.com/MathJSLab/.github/refs/heads/main/resource/mathjslab/download.config.json",
+        "download": "node script/helper/download-files.cjs",
         "build:resources": "npm run download && npm run tsx script/build-resources.ts",
         "build:parser": "cross-env CLASSPATH=./res/antlr-complete.jar java org.antlr.v4.Tool ./src/MathJSLabLexer.g4 ./src/MathJSLabParser.g4 -Dlanguage=TypeScript -no-visitor -no-listener -o ./src/",
         "build:package:types": "tsc --project tsconfig.types.es2022.json",
@@ -125,7 +126,8 @@
         "rebuild:dev": "tsx --require tsconfig-paths/register ./node_modules/webpack/bin/webpack --mode development",
         "rebuild:prod": "tsx --require tsconfig-paths/register ./node_modules/webpack/bin/webpack --mode production",
         "build": "npm run build:prod",
-        "do:all": "npm run clean:all && npm run update && npm run format:lint && npm run test:circ:unit && npm run build && npm run test:bundle && npm run git:all:npm:publish && echo script \"do:all\" finished."
+        "do:all-original": "npm run clean:all && npm run update && npm run format:lint && npm run test:circ:unit && npm run build && npm run test:bundle && npm run git:all:npm:publish && echo script \"do:all\" finished.",
+        "do:all": "npm run clean:all && npm run update && npm run format:lint && npm run test:circ:unit && npm run build && npm run test:bundle && echo script \"do:all\" finished."
     },
     "engines": {
         "node": ">=16",

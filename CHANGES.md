@@ -3,6 +3,10 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 1.8.1
+- Better racional definitions of `package.json`scripts (using pre- and post- definitions).
+- Modifications in `.prettierignore` file.
+
 ## 1.8.0
 
 - The second release of 2025 (`reia`) has been launch.

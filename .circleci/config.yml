@@ -1,0 +1,39 @@
+version: 2.1
+
+jobs:
+  build:
+    docker:
+      - image: cimg/node:25.0
+    steps:
+      - checkout
+
+      - run:
+          name: Displays Node and npm versions
+          command: |
+            node -v
+            npm -v
+
+      - run:
+          name: Install dependencies and download artifacts from MathJSLab organization repository
+          command: |
+            npm install
+            npm run download
+            npm run build:script
+
+      - run:
+          name: Code Lint
+          command: npm run lint
+
+      - run:
+          name: Production build
+          command: npm run build:prod
+
+      - run:
+          name: Check output directory
+          command: du -sh dist || echo "⚠️ dist directory not found."
+
+workflows:
+  version: 2
+  main_pipeline:
+    jobs:
+      - build

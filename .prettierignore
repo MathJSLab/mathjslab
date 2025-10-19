@@ -1,7 +1,14 @@
-
+# dependencies directory.
 node_modules/
+# package-lock.json file.
+package-lock.json
+# Report directory.
+report/
+# Minifyed javascript.
 *.min.js
 # Scripts build directory.
 script/build/
-# Advertising directory (there are Inkscape .svg files that cannot be changed).
-advertising/
+# Output directory.
+lib/
+# Resource directory.
+res/
