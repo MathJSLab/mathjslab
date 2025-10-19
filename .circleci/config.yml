@@ -18,7 +18,6 @@ jobs:
           command: |
             npm install
             npm run download
-            npm run build:script
 
       - run:
           name: Code Lint
