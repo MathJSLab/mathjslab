@@ -6,12 +6,10 @@ npm-debug.log*
 # Commit configuration
 git-commit.config.json
 
-# Generated source files
+# ANTLR token an rule name files
 src/.antlr/
-src/MathJSLabLexer.ts
 src/MathJSLabLexer.tokens
 src/MathJSLabLexer.interp
-src/MathJSLabParser.ts
 src/MathJSLabParser.tokens
 src/MathJSLabParser.interp
 
@@ -23,6 +21,9 @@ lib/
 
 # Build report directory
 report/
+
+# Repositories directory
+repo/
 
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json

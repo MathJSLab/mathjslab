@@ -161,5 +161,5 @@ export const ComplexInterfaceStaticKeyTable: ComplexInterfaceStaticKey[] = [
     'factorial',
     'applyFunction',
     'mapFunction',
-    'twoArgFunction'
+    'twoArgFunction',
 ];

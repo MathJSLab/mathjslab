@@ -29,7 +29,7 @@ jobs:
 
       - run:
           name: Check output directory
-          command: du -sh dist || echo "⚠️ dist directory not found."
+          command: du -sh lib || echo "⚠️ lib directory not found."
 
 workflows:
   version: 2

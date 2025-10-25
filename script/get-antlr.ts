@@ -1,6 +1,5 @@
 /**
- * build-resources.ts: This script obtains the resources needed to build the
- * project, such as downloading the latest version of ANTLR.
+ * get-antlr.ts: This script gets the latest version of ANTLR.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -8,15 +7,27 @@ import { fileURLToPath } from 'url';
 
 import getHtmlParsed from './helper/getHtmlParsed';
 import downloadIfNotExist from './helper/downloadIfNotExist';
+import { exit } from 'node:process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const resourceDir = 'res';
+let resourceDir: string;
+
+/* Process command line. */
+if (process.argv.length === 2) {
+    resourceDir = 'res';
+} else if (process.argv.length === 3) {
+    resourceDir = process.argv[2];
+} else {
+    console.log('Usage:\n  tsx get-antlr.ts [directory]');
+    exit(1);
+}
 
 (async () => {
     console.log(`Running ${__filename} ...`);
-    console.warn('Getting the latest version of ANTLR ...');
+    console.log('Getting the latest version of ANTLR ...');
+    console.log('Output directory:', resourceDir);
     const links = Array.from(((await getHtmlParsed('https://www.antlr.org/download.html')) as unknown as HTMLElement).querySelectorAll('a'));
     let antlrVersion = '';
     const antlrUrl =
@@ -58,6 +69,6 @@ const resourceDir = 'res';
     } else {
         console.log('The last version of ANTLR is installed.');
     }
-    console.warn('Getting the latest version of ANTLR done.');
+    console.log('Getting the latest version of ANTLR done.');
     console.log(`Running ${__filename} done.\n\n`);
 })();

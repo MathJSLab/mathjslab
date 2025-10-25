@@ -6,6 +6,7 @@
 
 [![NPM Version](https://img.shields.io/npm/v/mathjslab)](https://www.npmjs.com/package/mathjslab)
 [![Website](https://img.shields.io/website?url=https%3A%2F%2Fmathjslab.com%2F)](https://mathjslab.com/)
+[![CircleCI](https://dl.circleci.com/status-badge/img/gh/MathJSLab/mathjslab-app/tree/main.svg?style=svg)](https://dl.circleci.com/status-badge/redirect/gh/MathJSLab/mathjslab-app/tree/main)
 [![GitHub Created At](https://img.shields.io/github/created-at/MathJSLab/mathjslab)](https://github.com/MathJSLab/mathjslab)
 [![MIT License](https://img.shields.io/npm/l/mathjslab)](https://github.com/MathJSLab/mathjslab/blob/main/LICENSE)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.8396265.svg)](https://doi.org/10.5281/zenodo.8396265)

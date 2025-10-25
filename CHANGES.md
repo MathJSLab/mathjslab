@@ -4,8 +4,30 @@ All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
 ## 1.8.1
-- Better racional definitions of `package.json`scripts (using pre- and post- definitions).
+
 - Modifications in `.prettierignore` file.
+- The following modifications were made due to comply the package build to be
+  checked by a CircleCI pipeline:
+    - More streamlined script definitions in the `package.json` file (removing
+      pre and post definitions where possible).
+    - The `.circleci/config.yml` file was created to configure a CircleCI
+      pipeline.
+    - The `src/MathJSLabLexer.ts` and `src/MathJSLabParser.ts` entries of
+      `.gitignore` file has been removed.
+    - The `script/build-resources.ts` file has been renamed to
+      `script/get-antlr.ts` and modifications have been made so the script
+      accepts command line parameters (the output directory).
+    - The `"files"` field was created in the `package.json` file to select only
+      the files that should be saved to the npm registry.
+    - The `npx sort-package-json` command was executed to sort the fields in
+      the `package.json` file.
+    - The CircleCI status badge has been included in the `README.md` file.
+- Due to GitHub's rate limit issues, the organization repository's direct raw
+  file download system was replaced with a system that clones the entire
+  repository, then copies individual files to the current project and removes
+  the cloned repositories directory. The files
+  `script/helper/copy-repo-files.ts` and `copy.repo.config.json` were created
+  and moved to the organization repository.
 
 ## 1.8.0
 

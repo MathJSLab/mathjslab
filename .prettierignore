@@ -12,3 +12,5 @@ script/build/
 lib/
 # Resource directory.
 res/
+# Repositories directory
+repo/
