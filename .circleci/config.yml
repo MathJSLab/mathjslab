@@ -17,15 +17,29 @@ jobs:
           name: Install dependencies and download artifacts from MathJSLab organization repository
           command: |
             npm install
-            npm run download
+            npm run clone:copy:clean:repo
+
+      - run:
+          name: Build keys and types
+          command: |
+            npm run build:key
+            npm run build:types
 
       - run:
           name: Code Lint
           command: npm run lint
 
       - run:
+          name: Detect circular dependecies and do unitary tests
+          command: npm run test:circ:unit
+
+      - run:
           name: Production build
           command: npm run build:prod
+
+      - run:
+          name: Test bundles
+          command: npm run test:bundle
 
       - run:
           name: Check output directory
