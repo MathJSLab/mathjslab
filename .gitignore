@@ -13,6 +13,9 @@ src/MathJSLabLexer.interp
 src/MathJSLabParser.tokens
 src/MathJSLabParser.interp
 
+# Key table files
+src/*KeyTable.ts
+
 # ANTLR jar file
 res/antlr-complete.jar
 res/antlr-version
