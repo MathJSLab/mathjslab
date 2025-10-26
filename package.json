@@ -129,8 +129,7 @@
         "build:dev": "npm run build:package -- --mode development",
         "build:prod": "npm run build:package -- --mode production",
         "build": "npm run build:prod",
-        "do:all-original": "npm run clean:all && npm run update && npm run build:parser:key:types && npm run format:lint && npm run test:circ:unit && npm run build && npm run test:bundle && npm run git:all:npm:publish && echo script \"do:all\" finished.",
-        "do:all": "npm run clean:all && npm run update && npm run build:parser:key:types && npm run format:lint && npm run test:circ:unit && npm run build && npm run test:bundle && npm run git:all && echo script \"do:all\" finished."
+        "do:all": "npm run clean:all && npm run update && npm run build:parser:key:types && npm run format:lint && npm run test:circ:unit && npm run build && npm run test:bundle && npm run git:all:npm:publish && echo script \"do:all\" finished."
     },
     "dependencies": {
         "antlr4": "^4.13.2",

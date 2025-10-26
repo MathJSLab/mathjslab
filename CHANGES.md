@@ -31,7 +31,7 @@ project adheres to [Semantic Versioning](http://semver.org/).
   `script/helper/copy-repo-files.ts` and `copy.repo.config.json` were created
   and moved to the organization repository.
 - The MathJSLab logo in the .md files has been modified to use logo image in
-  the website (mathjslab-www repository)...
+  the website (mathjslab-www repository).
 
 ## 1.8.0
 
