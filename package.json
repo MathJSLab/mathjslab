@@ -1,6 +1,6 @@
 {
     "name": "mathjslab",
-    "version": "1.8.1",
+    "version": "1.8.2",
     "description": "MathJSLab - An interpreter with language syntax like MATLAB®/Octave, ISBN 978-65-00-82338-7.",
     "keywords": [
         "MathJSLab",
@@ -124,7 +124,6 @@
         "test:bundle": "jest --selectProjects node-cjs2015-tests node-cjs2022-tests node-esm2022-tests web-umd2015-tests web-umd2022-tests web-esm2022-tests",
         "test:circ:unit": "npm run test:circ && npm run test:unit",
         "test:watch": "jest --watch",
-        "prebuild:package": "npm run clean:build",
         "build:package": "npm run tsx -- ./node_modules/webpack/bin/webpack",
         "build:dev": "npm run build:package -- --mode development",
         "build:prod": "npm run build:package -- --mode production",
