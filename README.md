@@ -1,5 +1,5 @@
 <p align="center">
-    <a href="https://mathjslab.com/" target="_blank" rel="noopener"><img src="mathjslab-logo.svg" alt="logo" width="210" height="210" /></a>
+    <a href="https://mathjslab.com/" target="_blank" rel="noopener"><img src="https://mathjslab.com/img/mathjslab-logo.svg" alt="logo" width="210" height="210" /></a>
 </p>
 
 # [MathJSLab](https://mathjslab.com/) - [mathjslab.com](https://mathjslab.com/)

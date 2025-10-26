@@ -10,10 +10,6 @@
         "script/helper/mkDirIfNotExist.ts",
         "script/helper/git-commit.cjs",
         {
-            "src": "images/mathjslab-logo.svg",
-            "dest": "mathjslab-logo.svg"
-        },
-        {
             "src": "resource/mathjslab/.prettierrc",
             "dest": ".prettierrc"
         }
