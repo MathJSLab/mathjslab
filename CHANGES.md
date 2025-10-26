@@ -6,6 +6,8 @@ project adheres to [Semantic Versioning](http://semver.org/).
 ## 1.8.1
 
 - Modifications in `.prettierignore` file.
+- The package `turndown` has been installed as development dependency. It's
+  used to convert antlr HTML license to Markdown format.
 - The following modifications were made due to comply the package build to be
   checked by a CircleCI pipeline:
     - More streamlined script definitions in the `package.json` file (removing
