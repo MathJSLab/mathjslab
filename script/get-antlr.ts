@@ -4,6 +4,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'url';
+import turndown from 'turndown';
+
+const turndownService = new turndown({ br: '\r\n', emDelimiter: '*' });
 
 import getHtmlParsed from './helper/getHtmlParsed';
 import downloadIfNotExist from './helper/downloadIfNotExist';
@@ -43,10 +46,14 @@ if (process.argv.length === 2) {
                 }
             })[0].attributes as any
         ).href;
+    fs.mkdirSync(path.resolve(__dirname, '..', resourceDir), { recursive: true });
     const antlrPath = path.resolve(__dirname, '..', resourceDir, 'antlr-complete.jar');
-    const antlrVersionPath = path.resolve(__dirname, '..', resourceDir, 'antlr-version.txt');
-    const antlrLicenseUrl = 'https://raw.githubusercontent.com/antlr/antlr4/refs/heads/dev/LICENSE.txt';
-    const antlrLicensePath = path.resolve(__dirname, '..', resourceDir, 'antlr-LICENSE.txt');
+    const antlrVersionPath = path.resolve(__dirname, '..', resourceDir, 'antlr-version');
+    const license = turndownService.turndown(((await getHtmlParsed('https://www.antlr.org/license.html')) as unknown as HTMLElement).querySelector('div#content')!.innerHTML.trim());
+    const antlrLicensePath = path.resolve(__dirname, '..', resourceDir, 'antlr-LICENSE.md');
+    try {
+        fs.writeFileSync(antlrLicensePath, license);
+    } catch {}
     let antlrInstalledVersion: string;
     try {
         fs.accessSync(antlrPath, fs.constants.R_OK);
@@ -63,7 +70,6 @@ if (process.argv.length === 2) {
         } catch {}
         console.log(`Downloading ANTLR version ${antlrVersion} ...`);
         await downloadIfNotExist(antlrUrl, antlrPath);
-        await downloadIfNotExist(antlrLicenseUrl, antlrLicensePath);
         fs.writeFileSync(antlrVersionPath, antlrVersion);
         console.log(`Downloading ANTLR version ${antlrVersion} done.`);
     } else {

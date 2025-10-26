@@ -301,7 +301,7 @@ export default (env: any, argv: any): webpack.Configuration[] => {
                           },
                       ],
                       licenseTextOverrides: {
-                          antlr4: fs.readFileSync(path.resolve(__dirname, 'res', 'antlr-LICENSE.txt'), 'utf-8'),
+                          antlr4: fs.readFileSync(path.resolve(__dirname, 'res', 'antlr-LICENSE.md'), 'utf-8'),
                       },
                   }) as unknown as webpack.WebpackPluginInstance)
                 : undefined,

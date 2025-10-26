@@ -13,8 +13,9 @@ src/MathJSLabLexer.interp
 src/MathJSLabParser.tokens
 src/MathJSLabParser.interp
 
-# Resources directory
-res/
+# ANTLR jar file
+res/antlr-complete.jar
+res/antlr-version
 
 # Build directory
 lib/
