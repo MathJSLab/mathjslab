@@ -30,7 +30,7 @@ jobs:
           command: npm run lint
 
       - run:
-          name: Detect circular dependecies and do unitary tests
+          name: Detect circular dependecies and run unitary tests
           command: npm run test:circ:unit
 
       - run:
