@@ -112,7 +112,7 @@ export type TCompareOperationName = 'lt' | 'lte' | 'eq' | 'gt' | 'gte';
 export type TMinMaxCompareOperationName = 'lt' | 'gte';
 export type TMinMaxArrayCompareOperationName = 'lt' | 'gt';
 export type ComplexHandlerType<REAL, COMPLEX extends ComplexInterface<REAL>> = COMPLEX;
-export type IsInstanceOfComplexHandler = (value: unknown) => boolean;
+export type IsInstanceOfComplexHandler<T> = (value: unknown) => value is T;
 export type SetComplexHandler = (config: Partial<ComplexConfig>) => void;
 export type SetNumberTypeComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>> = (value: COMPLEX) => void;
 export type CreateComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>, TYPE = number, PARENT = unknown> = (
@@ -132,6 +132,7 @@ export type OneOptNumArgComplexHandler<REAL, COMPLEX extends ComplexInterface<RE
 export type OneArgNoReturnComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>> = (z: COMPLEX) => void;
 export type MapComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>> = OneArgComplexHandler<REAL, COMPLEX>;
 export type TwoArgComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>> = (x: COMPLEX, y: COMPLEX) => COMPLEX;
+export type ThreeArgComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>> = (x: COMPLEX, y: COMPLEX, z: COMPLEX) => COMPLEX;
 export type OneArgReturnBooleanComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>> = (z: COMPLEX) => boolean;
 export type OneArgReturnNumberComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>> = (z: COMPLEX) => number;
 export type TestNumLikeComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>> = (z: COMPLEX, value: NumLike<REAL>) => boolean;
@@ -180,7 +181,6 @@ export interface RealInterfaceStatic<REAL> {
     sign(x: REAL): REAL;
     exp(x: REAL): REAL;
     ln(x: REAL): REAL;
-    abs(x: REAL): REAL;
     abs(x: REAL): REAL;
     sin(x: REAL): REAL;
     cos(x: REAL): REAL;
@@ -625,7 +625,21 @@ export interface ComplexInterfaceStatic<
      * @returns -z
      */
     readonly neg: (z: COMPLEX) => COMPLEX;
+    /**
+     * Multiplication of `COMPLEX` numbers.
+     * @param left Value
+     * @param right Value
+     * @returns left * right
+     */
     readonly mul: (left: COMPLEX, right: COMPLEX) => COMPLEX;
+    /**
+     * Multiplication and sum with accumulator of `COMPLEX` numbers.
+     * @param result Variable to add left * right.
+     * @param left Value.
+     * @param right Value.
+     * @returns result
+     */
+    readonly mulAndSumTo: (left: COMPLEX, right: COMPLEX, result: COMPLEX) => COMPLEX;
     readonly rdiv: (left: COMPLEX, right: COMPLEX) => COMPLEX;
     /**
      * Left division. For `COMPLEX` the left division is the same of right division.
@@ -638,7 +652,9 @@ export interface ComplexInterfaceStatic<
     readonly power: (left: COMPLEX, right: COMPLEX) => COMPLEX;
     readonly root: (x: COMPLEX, n: COMPLEX) => COMPLEX;
     readonly absValue: (z: COMPLEX) => REAL;
+    readonly abs2Value: (z: COMPLEX) => REAL;
     readonly abs: (z: COMPLEX) => COMPLEX;
+    readonly abs2: (z: COMPLEX) => COMPLEX;
     readonly hypot: (x: COMPLEX, y: COMPLEX) => COMPLEX;
     readonly arg: (z: COMPLEX) => COMPLEX;
     readonly conj: (z: COMPLEX) => COMPLEX;
@@ -1542,6 +1558,40 @@ export const mulFactory =
     };
 
 /**
+ * Factory for `ctor.mulAndSumTo` method.
+ * @param ctor Complex instance constructor.
+ * @returns `ctor.mulAndSumTo` method.
+ */
+export const mulAndSumToFactory =
+    <REAL, COMPLEX extends ComplexInterface<REAL, TYPE, PARENT>, TYPE = number, PARENT = unknown, PRECEDENCE = number, ROUNDING = Rounding, MODULO = Modulo>(
+        rctor: RealInterfaceStatic<REAL> | unknown,
+        ctor: ComplexInterfaceStatic<REAL, COMPLEX, TYPE, PARENT, PRECEDENCE, ROUNDING, MODULO>,
+    ): ((result: COMPLEX, left: COMPLEX, right: COMPLEX) => COMPLEX) =>
+    /**
+     * Multiplication and sum with accumulator `COMPLEX` numbers.
+     * Compute product a * b and sum with `result` (mutates `result`).
+     * @param result Variable to add left * right.
+     * @param left Value.
+     * @param right Value.
+     * @returns result
+     */
+    (result: COMPLEX, left: COMPLEX, right: COMPLEX): COMPLEX => {
+        if (ctor.imagIsZero(left) && ctor.imagIsZero(right) && ctor.imagIsZero(result)) {
+            result.re = (rctor as RealInterfaceStatic<REAL>).add(result.re, (rctor as RealInterfaceStatic<REAL>).mul(left.re, right.re));
+        } else {
+            result.re = (rctor as RealInterfaceStatic<REAL>).add(
+                result.re,
+                (rctor as RealInterfaceStatic<REAL>).sub((rctor as RealInterfaceStatic<REAL>).mul(left.re, right.re), (rctor as RealInterfaceStatic<REAL>).mul(left.im, right.im)),
+            );
+            result.im = (rctor as RealInterfaceStatic<REAL>).add(
+                result.im,
+                (rctor as RealInterfaceStatic<REAL>).add((rctor as RealInterfaceStatic<REAL>).mul(left.re, right.im), (rctor as RealInterfaceStatic<REAL>).mul(left.im, right.re)),
+            );
+        }
+        return result;
+    };
+
+/**
  * Factory for `ctor.rdiv` method.
  * @param ctor Complex instance constructor.
  * @returns `ctor.rdiv` method.
@@ -1558,36 +1608,70 @@ export const rdivFactory =
      * @returns left / right.
      */
     (left: COMPLEX, right: COMPLEX): COMPLEX => {
-        const denom = (rctor as RealInterfaceStatic<REAL>).add((rctor as RealInterfaceStatic<REAL>).mul(right.re, right.re), (rctor as RealInterfaceStatic<REAL>).mul(right.im, right.im));
-        if ((rctor as RealInterfaceStatic<REAL>).isFinite(denom)) {
-            if ((rctor as RealInterfaceStatic<REAL>).isZero(denom)) {
-                return new ctor(
-                    (rctor as RealInterfaceStatic<REAL>).mul(left.re, (rctor as RealInterfaceStatic<REAL>).INF),
-                    ctor.imagIsZero(left) ? (rctor as RealInterfaceStatic<REAL>).ZERO : (rctor as RealInterfaceStatic<REAL>).mul(left.im, (rctor as RealInterfaceStatic<REAL>).INF),
-                );
+        if ((rctor as RealInterfaceStatic<REAL>).isZero(right.im)) {
+            if ((rctor as RealInterfaceStatic<REAL>).isFinite(right.re)) {
+                if ((rctor as RealInterfaceStatic<REAL>).isZero(right.re)) {
+                    return new ctor(
+                        (rctor as RealInterfaceStatic<REAL>).mul(left.re, (rctor as RealInterfaceStatic<REAL>).INF),
+                        (rctor as RealInterfaceStatic<REAL>).mul(left.im, (rctor as RealInterfaceStatic<REAL>).INF),
+                    );
+                } else {
+                    return new ctor((rctor as RealInterfaceStatic<REAL>).div(left.re, right.re), (rctor as RealInterfaceStatic<REAL>).div(left.im, right.re));
+                }
             } else {
-                return new ctor(
-                    (rctor as RealInterfaceStatic<REAL>).div(
-                        (rctor as RealInterfaceStatic<REAL>).add((rctor as RealInterfaceStatic<REAL>).mul(left.re, right.re), (rctor as RealInterfaceStatic<REAL>).mul(left.im, right.im)),
-                        denom,
-                    ),
-                    (rctor as RealInterfaceStatic<REAL>).div(
-                        (rctor as RealInterfaceStatic<REAL>).sub((rctor as RealInterfaceStatic<REAL>).mul(left.im, right.re), (rctor as RealInterfaceStatic<REAL>).mul(left.re, right.im)),
-                        denom,
-                    ),
-                );
+                if ((rctor as RealInterfaceStatic<REAL>).isNaN(right.re)) {
+                    if ((ctor.realIsFinite(right) || ctor.realIsNaN(right)) && (ctor.imagIsFinite(right) || ctor.imagIsNaN(right))) {
+                        return new ctor(NaN, 0);
+                    } else {
+                        return ctor.zero();
+                    }
+                } else if (ctor.realIsFinite(left) && ctor.imagIsFinite(left)) {
+                    return ctor.zero();
+                } else {
+                    return new ctor(NaN, 0);
+                }
             }
         } else {
-            if ((rctor as RealInterfaceStatic<REAL>).isNaN(denom)) {
-                if ((ctor.realIsFinite(right) || ctor.realIsNaN(right)) && (ctor.imagIsFinite(right) || ctor.imagIsNaN(right))) {
-                    return new ctor(NaN, 0);
+            const denom = (rctor as RealInterfaceStatic<REAL>).add(
+                (rctor as RealInterfaceStatic<REAL>).mul(right.re, right.re),
+                (rctor as RealInterfaceStatic<REAL>).mul(right.im, right.im),
+            );
+            if ((rctor as RealInterfaceStatic<REAL>).isFinite(denom)) {
+                if ((rctor as RealInterfaceStatic<REAL>).isZero(denom)) {
+                    return new ctor(
+                        (rctor as RealInterfaceStatic<REAL>).mul(left.re, (rctor as RealInterfaceStatic<REAL>).INF),
+                        ctor.imagIsZero(left) ? (rctor as RealInterfaceStatic<REAL>).ZERO : (rctor as RealInterfaceStatic<REAL>).mul(left.im, (rctor as RealInterfaceStatic<REAL>).INF),
+                    );
                 } else {
-                    return ctor.zero();
+                    return new ctor(
+                        (rctor as RealInterfaceStatic<REAL>).div(
+                            (rctor as RealInterfaceStatic<REAL>).add(
+                                (rctor as RealInterfaceStatic<REAL>).mul(left.re, right.re),
+                                (rctor as RealInterfaceStatic<REAL>).mul(left.im, right.im),
+                            ),
+                            denom,
+                        ),
+                        (rctor as RealInterfaceStatic<REAL>).div(
+                            (rctor as RealInterfaceStatic<REAL>).sub(
+                                (rctor as RealInterfaceStatic<REAL>).mul(left.im, right.re),
+                                (rctor as RealInterfaceStatic<REAL>).mul(left.re, right.im),
+                            ),
+                            denom,
+                        ),
+                    );
                 }
-            } else if (ctor.realIsFinite(left) && ctor.imagIsFinite(left)) {
-                return ctor.zero();
             } else {
-                return new ctor(NaN, 0);
+                if ((rctor as RealInterfaceStatic<REAL>).isNaN(denom)) {
+                    if ((ctor.realIsFinite(right) || ctor.realIsNaN(right)) && (ctor.imagIsFinite(right) || ctor.imagIsNaN(right))) {
+                        return new ctor(NaN, 0);
+                    } else {
+                        return ctor.zero();
+                    }
+                } else if (ctor.realIsFinite(left) && ctor.imagIsFinite(left)) {
+                    return ctor.zero();
+                } else {
+                    return new ctor(NaN, 0);
+                }
             }
         }
     };
@@ -1714,7 +1798,22 @@ export const absValueFactory =
         (rctor as RealInterfaceStatic<REAL>).sqrt(
             (rctor as RealInterfaceStatic<REAL>).add((rctor as RealInterfaceStatic<REAL>).mul(z.re, z.re), (rctor as RealInterfaceStatic<REAL>).mul(z.im, z.im)),
         );
-
+/**
+ * Factory for `ctor.abs2Value` method.
+ * @param ctor Complex instance constructor.
+ * @returns `ctor.abs2Value` method.
+ */
+export const abs2ValueFactory =
+    <REAL, COMPLEX extends ComplexInterface<REAL, TYPE, PARENT>, TYPE = number, PARENT = unknown, PRECEDENCE = number, ROUNDING = Rounding, MODULO = Modulo>(
+        rctor: RealInterfaceStatic<REAL> | unknown,
+    ): ((z: COMPLEX) => REAL) =>
+    /**
+     *
+     * @param z
+     * @returns
+     */
+    (z: COMPLEX): REAL =>
+        (rctor as RealInterfaceStatic<REAL>).add((rctor as RealInterfaceStatic<REAL>).mul(z.re, z.re), (rctor as RealInterfaceStatic<REAL>).mul(z.im, z.im));
 /**
  * Factory for `ctor.abs` method.
  * @param ctor Complex instance constructor.
@@ -1732,6 +1831,26 @@ export const absFactory =
      */
     (z: COMPLEX): COMPLEX =>
         ctor.imagIsZero(z) ? new ctor((rctor as RealInterfaceStatic<REAL>).abs(z.re)) : new ctor(ctor.absValue(z));
+
+/**
+ * Factory for `ctor.abs2` method.
+ * @param ctor Complex instance constructor.
+ * @returns `ctor.abs2` method.
+ */
+export const abs2Factory =
+    <REAL, COMPLEX extends ComplexInterface<REAL, TYPE, PARENT>, TYPE = number, PARENT = unknown, PRECEDENCE = number, ROUNDING = Rounding, MODULO = Modulo>(
+        rctor: RealInterfaceStatic<REAL> | unknown,
+        ctor: ComplexInterfaceStatic<REAL, COMPLEX, TYPE, PARENT, PRECEDENCE, ROUNDING, MODULO>,
+    ): ((z: COMPLEX) => COMPLEX) =>
+    /**
+     * Absolute value and complex magnitude.
+     * @param z value
+     * @returns Absolute value of z
+     */
+    (z: COMPLEX): COMPLEX => {
+        const value = (rctor as RealInterfaceStatic<REAL>).abs(z.re);
+        return ctor.imagIsZero(z) ? new ctor((rctor as RealInterfaceStatic<REAL>).mul(value, value)) : new ctor(ctor.abs2Value(z));
+    };
 
 /**
  * Factory for `ctor.hypot` method.

@@ -3,6 +3,55 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 1.9.0
+
+- The `dot` and `cross` functions (`LinearAlgebra.dot`) have been implemented.
+- The `Evaluator.throwErrorIfGreaterThanReturnList` and
+  `Evaluator.reduceIfReturnList` methods have been moved to the `AST` class.
+  The `reduceIfReturnList` method has been made static. The
+  `CoreFUnctions.throwInvalidCallError` has been moved to the `AST` class too.
+- The factory function `MultiArray.reduceFactory` was created to generate the
+  functions that use `MultiArray.reduce` and are defined in the `CoreFunctions`
+  class: `all`, `any`, `sum`, `prod`, `sumsq`, `max`, `min`, `mean`, `cumsum`,
+  `cumprod`, `cummin`, and `cummax`. The function `var`
+  (`CoreFunctions.variance`) was created using `MultiArray.reduce` directly,
+  and the function `std` was created using `CoreFunctions.variance`.
+- The properties `LinearAlgebra.blockThreshold` (= 1e5 by default) and
+  `LinearAlgebra.blockSize` (= 64 by default) were created to configure the
+  parameters of the block multiplication algorithm for matrices, which was
+  implemented (`BLAS.gemm`). The auxiliary function `BLAS.gemm_kernel` was
+  created, which multiplies two sub-blocks, accumulating them into a third. The
+  function `LinearAlgebra.set` was created to configure these parameters. The
+  `Configuration.ts` file was updated with these parameters to be configured by
+  the user using the `configure` function.
+- Bug fix: The `MultiArray.elementWiseOperation` static method has been fixed
+  and optimized. The `MultiArray.computeStrides` method has been created.
+- Bug fix: The `CoreFunctions.reshape` has been fixed. The function had a bug
+  that produced incorrect results and threw an error when the second parameter
+  was passed as an array.
+- Bug fix: There was a condition test in the `LinearAlgebra.inv` that was
+  flawed, producing incorrect results. The function has been enhanced to make
+  use of `LinearAlgebra.luDecomposition`.
+- Bug fix: functions that return multiple assignments had a limitation; they
+  returned values based on the `selector` function of `NodeReturnList` nodes.
+  This caused some functions to be executed repeatedly for each assignment. The
+  `handler` field was created in `NodeReturnList`, and the logic for executing
+  commands with multiple assignments is now evaluated using these two
+  functions: `handler` executes the code that should be executed once, based on
+  the length of the assignment list, and `selector` receives the result of
+  `handler` and the index of the assignment list, returning the corresponding
+  value.
+- All static methods in `MultiArray` have been converted to arrow functions.
+- All static methods in `CoreFunctions` have been converted to arrow functions.
+- We began developing the QR factorization algorithm and then created the
+  `BLAS` (`BLAS.ts` file) and `LAPACK` (`LAPACK.ts`) classes with several
+  functions analogous to the original implementation of these libraries.
+  Various modifications using these new definitions of static methods in these
+  classes were made to the `LinearAlgebra` functions. The `README.md` file has
+  been updated to provide information about the architecture adopted in the
+  design.
+- All dependencies have been updated.
+
 ## 1.8.2
 
 - Bug fix: the `lib/src/` directory was not being published. The

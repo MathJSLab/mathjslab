@@ -23,7 +23,7 @@ type ComplexType = TypeOfComplex.ComplexHandlerType<RealType, TypeOfComplex.Comp
 
 type ComplexInterfaceBase = TypeOfComplex.OmitComplexInterfaceDynamic<RealType, NumberObjectType, unknown>;
 type InterfaceStaticHandler = TypeOfComplex.ComplexInterfaceStatic<RealType, ComplexType>;
-type IsInstanceOfHandler = TypeOfComplex.IsInstanceOfComplexHandler;
+type IsInstanceOfHandler = TypeOfComplex.IsInstanceOfComplexHandler<ComplexType>;
 type SetHandler = TypeOfComplex.SetComplexHandler;
 type CreateHandler = TypeOfComplex.CreateComplexHandler<RealType, ComplexType, number>;
 type PartSetHandler = TypeOfComplex.PartSetComplexHandler<RealType, TypeOfComplex.ComplexInterface<RealType>>;
@@ -37,6 +37,7 @@ type OneOptNumArgHandler = TypeOfComplex.OneOptNumArgComplexHandler<RealType, Co
 type OneArgNoReturnHandler = TypeOfComplex.OneArgNoReturnComplexHandler<RealType, ComplexType>;
 type MapHandler = TypeOfComplex.MapComplexHandler<RealType, ComplexType>;
 type TwoArgHandler = TypeOfComplex.TwoArgComplexHandler<RealType, ComplexType>;
+type ThreeArgHandler = TypeOfComplex.ThreeArgComplexHandler<RealType, ComplexType>;
 type OneArgReturnBooleanHandler = TypeOfComplex.OneArgReturnBooleanComplexHandler<RealType, ComplexType>;
 type OneArgReturnNumberHandler = TypeOfComplex.OneArgReturnNumberComplexHandler<RealType, ComplexType>;
 type TestNumLikeHandler = TypeOfComplex.TestNumLikeComplexHandler<RealType, ComplexType>;
@@ -200,12 +201,14 @@ abstract class Complex implements ComplexInterfaceBase {
     public static readonly sub: TwoArgHandler;
     public static readonly neg: OneArgHandler;
     public static readonly mul: TwoArgHandler;
+    public static readonly mulAndSumTo: ThreeArgHandler;
     public static readonly rdiv: TwoArgHandler;
     public static readonly ldiv: TwoArgHandler;
     public static readonly inv: OneArgHandler;
     public static readonly power: TwoArgHandler;
     public static readonly root: TwoArgHandler;
     public static readonly abs: MapHandler;
+    public static readonly abs2: MapHandler;
     public static readonly hypot: TwoArgHandler;
     public static readonly arg: MapHandler;
     public static readonly conj: MapHandler;

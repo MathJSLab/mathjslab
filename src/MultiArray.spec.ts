@@ -31,7 +31,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         let value: any;
         tree = evaluator.Parse('det([1:3;4:6;7:9])');
         value = evaluator.Evaluate(tree);
-        expect(value.list[0].re.toNumber()).toBe(0);
+        expect(value.list[0].re.toNumber()).toBe(-0);
         tree = evaluator.Parse('det([2,1,-3; 3,2,4; 2,5,-2])');
         value = evaluator.Evaluate(tree);
         expect(value.list[0].re.toNumber()).toBe(-67);

@@ -49,7 +49,7 @@ class ComplexDecimal implements TypeOfComplex.ComplexInterface<Decimal, number, 
     public static readonly defaultSettings: TypeOfComplex.ComplexConfig = Object.assign({ precisionCompare: 7 }, defaultSettings as TypeOfComplex.ComplexConfig);
     public static readonly settings: TypeOfComplex.ComplexConfig = ComplexDecimal.defaultSettings;
 
-    public static readonly isInstanceOf: TypeOfComplex.IsInstanceOfComplexHandler = (value: unknown): boolean => value instanceof ComplexDecimal;
+    public static readonly isInstanceOf: TypeOfComplex.IsInstanceOfComplexHandler<ComplexDecimal> = (value: unknown): value is ComplexDecimal => value instanceof ComplexDecimal;
 
     public static readonly set: TypeOfComplex.SetComplexHandler = (config: Partial<TypeOfComplex.ComplexConfig>): void => {
         const decimal: Decimal.Config = {};
@@ -232,6 +232,7 @@ class ComplexDecimal implements TypeOfComplex.ComplexInterface<Decimal, number, 
     public static neg: TypeOfComplex.OneArgComplexHandler<Decimal, ComplexDecimal> = (z: ComplexDecimal): ComplexDecimal => new ComplexDecimal(z.re.neg(), z.im.neg());
 
     public static mul: TypeOfComplex.TwoArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.mulFactory<Decimal, ComplexDecimal>(Decimal, ComplexDecimal);
+    public static mulAndSumTo: TypeOfComplex.ThreeArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.mulAndSumToFactory<Decimal, ComplexDecimal>(Decimal, ComplexDecimal);
     public static rdiv: TypeOfComplex.TwoArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.rdivFactory<Decimal, ComplexDecimal>(Decimal, ComplexDecimal);
 
     public static ldiv: TypeOfComplex.TwoArgComplexHandler<Decimal, ComplexDecimal> = ComplexDecimal.rdiv;
@@ -240,7 +241,9 @@ class ComplexDecimal implements TypeOfComplex.ComplexInterface<Decimal, number, 
     public static power: TypeOfComplex.TwoArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.powerFactory<Decimal, ComplexDecimal>(Decimal, ComplexDecimal);
     public static root: TypeOfComplex.TwoArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.rootFactory<Decimal, ComplexDecimal>(ComplexDecimal);
     public static absValue: TypeOfComplex.AbsoluteValueComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.absValueFactory<Decimal, ComplexDecimal>(Decimal);
+    public static abs2Value: TypeOfComplex.AbsoluteValueComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.abs2ValueFactory<Decimal, ComplexDecimal>(Decimal);
     public static abs: TypeOfComplex.OneArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.absFactory<Decimal, ComplexDecimal>(Decimal, ComplexDecimal);
+    public static abs2: TypeOfComplex.OneArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.abs2Factory<Decimal, ComplexDecimal>(Decimal, ComplexDecimal);
     public static hypot: TypeOfComplex.TwoArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.hypotFactory<Decimal, ComplexDecimal>(ComplexDecimal);
     public static arg: TypeOfComplex.OneArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.argFactory<Decimal, ComplexDecimal>(Decimal, ComplexDecimal);
     public static conj: TypeOfComplex.OneArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.conjFactory<Decimal, ComplexDecimal>(Decimal, ComplexDecimal);

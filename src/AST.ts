@@ -1,5 +1,5 @@
-import { CharString } from './CharString';
-import { Complex } from './Complex';
+import { CharString, StringQuoteCharacter } from './CharString';
+import { Complex, ComplexType } from './Complex';
 import { FunctionHandle } from './FunctionHandle';
 import { type ElementType, MultiArray } from './MultiArray';
 
@@ -179,7 +179,9 @@ interface NodeIndirectRef extends NodeBase {
     field: (string | NodeExpr)[];
 }
 
-type ReturnSelector = (length: number, index: number) => any;
+type ReturnHandlerResult = { length: number } & Record<string, NodeExpr>;
+type ReturnSelector = (evaluated: ReturnHandlerResult, index: number) => NodeExpr;
+type ReturnHandler = (length: number) => ReturnHandlerResult;
 
 /**
  * Return list node
@@ -187,6 +189,7 @@ type ReturnSelector = (length: number, index: number) => any;
 interface NodeReturnList extends NodeBase {
     type: 'RETLIST';
     selector: ReturnSelector;
+    handler: ReturnHandler;
 }
 
 interface NodeFunction extends NodeBase {
@@ -239,11 +242,11 @@ abstract class AST {
     /**
      * External node factory methods.
      */
-    public static nodeString = CharString.create;
-    public static nodeNumber = Complex.parse;
-    public static firstRow = MultiArray.firstRow;
-    public static appendRow = MultiArray.appendRow;
-    public static emptyArray = MultiArray.emptyArray;
+    public static nodeString: (str: string, quote?: StringQuoteCharacter) => CharString;
+    public static nodeNumber: (value: string) => ComplexType;
+    public static firstRow: (row: ElementType[], iscell?: boolean) => MultiArray;
+    public static appendRow: (M: MultiArray, row: ElementType[]) => MultiArray;
+    public static emptyArray: (iscell?: boolean | undefined) => MultiArray;
 
     /**
      * Reload external node factory methods.
@@ -498,10 +501,54 @@ abstract class AST {
      * @param selector Left side selector function.
      * @returns Return list node.
      */
-    public static readonly nodeReturnList = (selector: ReturnSelector): NodeReturnList => ({
-        type: 'RETLIST',
-        selector,
-    });
+    public static readonly nodeReturnList = (selector: ReturnSelector, handler?: ReturnHandler): NodeReturnList => {
+        return {
+            type: 'RETLIST',
+            selector,
+            ...(typeof handler === 'undefined' ? { handler: (length: number) => ({ length }) } : typeof handler === 'function' ? { handler } : handler),
+        };
+    };
+
+    /**
+     * Throws error if left hand side length of multiple assignment greater
+     * than maximum length (to be used in ReturnSelector functions).
+     * @param maxLength Maximum length of return list.
+     * @param currentLength Requested length of return list.
+     */
+    public static readonly throwErrorIfGreaterThanReturnList = (maxLength: number, currentLength: number): void | never => {
+        if (currentLength > maxLength) {
+            throw new EvalError(`element number ${maxLength + 1} undefined in return list`);
+        }
+    };
+
+    /**
+     * Tests if it is a NodeReturnList and if so reduces it to its first
+     * element.
+     * @param value A node.
+     * @returns Reduced node if `tree` is a NodeReturnList.
+     */
+    public static readonly reduceToFirstIfReturnList = (tree: NodeInput): NodeInput => {
+        if (tree.type === 'RETLIST') {
+            const result =
+                typeof (tree as NodeReturnList).handler !== 'undefined'
+                    ? (tree as NodeReturnList).selector((tree as NodeReturnList).handler(1), 0)
+                    : (tree as NodeReturnList).selector({ length: 1 }, 0);
+            result.parent = tree.parent;
+            return result;
+        } else {
+            return tree;
+        }
+    };
+
+    /**
+     * Throw invalid call error if (optional) test is true.
+     * @param name
+     */
+    public static readonly throwInvalidCallError = (name: string, test: boolean = true): void => {
+        if (test) {
+            throw new Error(`Invalid call to ${name}. Type 'help ${name}' to see correct usage.`);
+        }
+    };
 
     /**
      *
@@ -661,6 +708,8 @@ export type {
     BinaryOperation,
     NodeList,
     NodeIndirectRef,
+    ReturnHandlerResult,
+    ReturnHandler,
     ReturnSelector,
     NodeReturnList,
     NodeFunction,

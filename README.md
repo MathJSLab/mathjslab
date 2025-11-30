@@ -63,6 +63,13 @@ are the evaluator, which computes the inputs, and the
 [MathML](https://www.w3.org/Math/) unparser, that generates mathematical
 representations of the inputs and results.
 
+The [MathJSLab engine](https://www.npmjs.com/package/mathjslab) is being
+architected similarly to
+[MATLAB&reg;](https://www.mathworks.com/products/matlab.html)/[Octave](https://www.gnu.org/software/octave/):
+based on the [BLAS](https://www.netlib.org/blas/) (Basic Linear Algebra
+Subprograms) and [LAPACK](https://www.netlib.org/lapack/) (Linear Algebra
+PACKage) routines.
+
 This software is intended for **educational purposes**, to provide teachers and
 students with a computer aided calculation tool that is capable of running in a
 browser environment. So it can be easily adapted to be used on different

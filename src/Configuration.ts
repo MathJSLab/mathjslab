@@ -1,23 +1,23 @@
 import { CharString } from './CharString';
 import { type Rounding, type Modulo, type RoundingName, type ModuloName, roundingName, moduloName } from './ComplexInterface';
 import { RealTypeDescriptor, Complex, ComplexType } from './Complex';
-import { CoreFunctions } from './CoreFunctions';
 import { ElementType, MultiArray } from './MultiArray';
+import { AST } from './AST';
+import { BLAS } from './BLAS';
+import { LinearAlgebra } from './LinearAlgebra';
 
 /**
  * MathJSLab configuration.
  */
 abstract class Configuration {
     /**
-     * User functions
+     * Table of rounding names.
      */
-    public static readonly functions: Record<string, Function> = {
-        configure: Configuration.configure,
-        getconfig: Configuration.getconfig,
-    };
-
     private static readonly roundingName = roundingName;
 
+    /**
+     * Table of modulo names.
+     */
     private static readonly moduloName = moduloName;
 
     /**
@@ -31,6 +31,16 @@ abstract class Configuration {
             get: () => any;
         }
     > = {
+        blockThreshold: {
+            set: (threshold: ComplexType) => BLAS.set({ blockThreshold: MultiArray.testInteger(threshold, 'configure', 'blockThreshold configuration parameter') }),
+            setDefault: () => BLAS.set({ blockThreshold: BLAS.defaultSettings.blockThreshold }),
+            get: () => Complex.create(BLAS.settings.blockThreshold),
+        },
+        blockSize: {
+            set: (size: ComplexType) => BLAS.set({ blockSize: MultiArray.testInteger(size, 'configure', 'blockSize configuration parameter') }),
+            setDefault: () => BLAS.set({ blockSize: BLAS.defaultSettings.blockSize }),
+            get: () => Complex.create(BLAS.settings.blockSize),
+        },
         real: {
             set: (engine: CharString) => (Complex.engine = engine.str as RealTypeDescriptor),
             setDefault: () => (Complex.engine = 'decimal'),
@@ -97,6 +107,9 @@ abstract class Configuration {
         },
     };
 
+    /**
+     * `configure`
+     */
     public static configure(): CharString;
     public static configure(config: CharString, value: ElementType): CharString;
     public static configure(CONFIG: MultiArray): CharString;
@@ -109,34 +122,37 @@ abstract class Configuration {
                     throw new ReferenceError(`configure: invalid configuration: '${config[0].str}'.`);
                 }
             } else {
-                CoreFunctions.throwInvalidCallError('configure');
+                AST.throwInvalidCallError('configure');
             }
         };
         if (args.length === 0) {
-            // Set default configuration.
+            /* Set default configuration. */
             for (const config in Configuration.configuration) {
                 Configuration.configuration[config].setDefault();
             }
             return new CharString('All configuration set to default values.');
         } else if (args.length === 1 && MultiArray.isInstanceOf(args[0])) {
-            // Array of configuration key and value.
+            /* Array of configuration key and value. */
             if (args[0].dimension[1] === 2) {
                 (args[0].array as [CharString, any][]).forEach((config: [CharString, any]) => {
                     setConfig(config);
                 });
                 return new CharString(`${args[0].array.length} configuration values set.`);
             } else {
-                CoreFunctions.throwInvalidCallError('configure');
+                AST.throwInvalidCallError('configure');
             }
         } else if (args.length === 2 && CharString.isInstanceOf(args[0])) {
-            // Configuration key and value.
+            /* Configuration key and value. */
             setConfig(args as [CharString, any]);
             return new CharString(`Configuration parameter '${args[0].str}' set to '${Configuration.configuration[args[0].str].get().unparse()}'`);
         } else {
-            CoreFunctions.throwInvalidCallError('configure');
+            AST.throwInvalidCallError('configure');
         }
     }
 
+    /**
+     * `getconfig`
+     */
     public static getconfig(): MultiArray;
     public static getconfig(config: CharString): MultiArray;
     public static getconfig(CONFIG: MultiArray): MultiArray;
@@ -150,12 +166,12 @@ abstract class Configuration {
             });
         };
         if (args.length === 0) {
-            // Get all configurations.
+            /* Get all configurations. */
             result = new MultiArray([keys.length, 2], null, true);
             loadResult(keys);
             return result;
         } else if (args.length === 1) {
-            // Get selected configurations.
+            /* Get selected configurations. */
             const C = MultiArray.linearize(MultiArray.scalarToMultiArray(args[0])).map((c) => {
                 if (CharString.isInstanceOf(c) && (c as CharString).str in Configuration.configuration) {
                     return (c as CharString).str;
@@ -167,9 +183,16 @@ abstract class Configuration {
             loadResult(C);
             return result;
         } else {
-            CoreFunctions.throwInvalidCallError('getconfig');
+            AST.throwInvalidCallError('getconfig');
         }
     }
+    /**
+     * User functions
+     */
+    public static readonly functions: Record<string, Function> = {
+        configure: Configuration.configure,
+        getconfig: Configuration.getconfig,
+    };
 }
 export { Configuration };
 export default { Configuration };

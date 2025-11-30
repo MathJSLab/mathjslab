@@ -11,6 +11,7 @@ import { type ElementType, MultiArray } from './MultiArray';
 import { LinearAlgebra } from './LinearAlgebra';
 import { Structure } from './Structure';
 import { FunctionHandle } from './FunctionHandle';
+import { BLAS } from './BLAS';
 
 /**
  * Generic mathematical object.
@@ -169,7 +170,22 @@ abstract class MathOperation {
         } else if (MultiArray.isInstanceOf(left) && Complex.isInstanceOf(right)) {
             return MultiArray.MultiArrayOpScalar('mul', left as MultiArray, right as ComplexType);
         } else {
-            return LinearAlgebra.mul(left as MultiArray, right as MultiArray);
+            // return BLAS.gemm(
+            //     left as MultiArray,
+            //     right as MultiArray
+            // );
+            const result = new MultiArray([(left as MultiArray).dimension[0], (right as MultiArray).dimension[1]]);
+            BLAS.gemm(
+                Complex.one(),
+                (left as MultiArray).array as ComplexType[][],
+                (left as MultiArray).dimension[0],
+                (left as MultiArray).dimension[1],
+                (right as MultiArray).array as ComplexType[][],
+                (right as MultiArray).dimension[1],
+                Complex.zero(),
+                result.array as ComplexType[][],
+            );
+            return result;
         }
     };
 
@@ -201,7 +217,20 @@ abstract class MathOperation {
         } else if (MultiArray.isInstanceOf(left) && Complex.isInstanceOf(right)) {
             return MultiArray.scalarOpMultiArray('mul', Complex.inv(right as ComplexType), left as MultiArray);
         } else {
-            return LinearAlgebra.mul(left as MultiArray, LinearAlgebra.inv(right as MultiArray));
+            // return BLAS.gemm(left as MultiArray, LinearAlgebra.inv(right as MultiArray));
+            const denom = LinearAlgebra.inv(right as MultiArray);
+            const result = new MultiArray([(left as MultiArray).dimension[0], (denom as MultiArray).dimension[1]]);
+            BLAS.gemm(
+                Complex.one(),
+                (left as MultiArray).array as ComplexType[][],
+                (left as MultiArray).dimension[0],
+                (left as MultiArray).dimension[1],
+                (denom as MultiArray).array as ComplexType[][],
+                (denom as MultiArray).dimension[1],
+                Complex.zero(),
+                result.array as ComplexType[][],
+            );
+            return result;
         }
     };
 

@@ -9,7 +9,7 @@ class Structure {
     public field: Record<string, ElementType>;
     private static readonly invalidReferenceMessage = 'value cannot be indexed with .';
 
-    public static isInstanceOf = (value: unknown): boolean => value instanceof Structure;
+    public static isInstanceOf = (value: unknown): value is Structure => value instanceof Structure;
 
     /**
      * Structure constructor. If an object is passed as parameter then create

@@ -16,7 +16,7 @@ class FunctionHandle {
      * @param value
      * @returns
      */
-    public static isInstanceOf = (value: unknown): boolean => value instanceof FunctionHandle;
+    public static isInstanceOf = (value: unknown): value is FunctionHandle => value instanceof FunctionHandle;
 
     /**
      *

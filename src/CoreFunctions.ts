@@ -1,187 +1,130 @@
 import { CharString } from './CharString';
-import { type TBinaryOperationName } from './ComplexInterface';
 import { Complex, ComplexType } from './Complex';
 import { type ElementType, MultiArray } from './MultiArray';
 import { Structure } from './Structure';
-import { type NodeReturnList, AST } from './AST';
-import { Evaluator } from './Evaluator';
+import { type NodeReturnList, AST, ReturnHandlerResult } from './AST';
 
 abstract class CoreFunctions {
-    public static functions: Record<string, Function> = {
-        isempty: CoreFunctions.isempty,
-        isscalar: CoreFunctions.isscalar,
-        ismatrix: CoreFunctions.ismatrix,
-        isvector: CoreFunctions.isvector,
-        iscell: CoreFunctions.iscell,
-        isrow: CoreFunctions.isrow,
-        iscolumn: CoreFunctions.iscolumn,
-        isstruct: CoreFunctions.isstruct,
-        ndims: CoreFunctions.ndims,
-        rows: CoreFunctions.rows,
-        columns: CoreFunctions.columns,
-        length: CoreFunctions.Length,
-        numel: CoreFunctions.numel,
-        ind2sub: CoreFunctions.ind2sub,
-        sub2ind: CoreFunctions.sub2ind,
-        size: CoreFunctions.size,
-        colon: CoreFunctions.colon,
-        linspace: CoreFunctions.linspace,
-        logspace: CoreFunctions.logspace,
-        meshgrid: CoreFunctions.meshgrid,
-        ndgrid: CoreFunctions.ndgrid,
-        repmat: CoreFunctions.repmat,
-        reshape: CoreFunctions.reshape,
-        squeeze: CoreFunctions.squeeze,
-        zeros: CoreFunctions.zeros,
-        ones: CoreFunctions.ones,
-        rand: CoreFunctions.rand,
-        randi: CoreFunctions.randi,
-        cat: CoreFunctions.cat,
-        horzcat: CoreFunctions.horzcat,
-        vertcat: CoreFunctions.vertcat,
-        sum: CoreFunctions.sum,
-        sumsq: CoreFunctions.sumsq,
-        prod: CoreFunctions.prod,
-        mean: CoreFunctions.mean,
-        min: CoreFunctions.min,
-        max: CoreFunctions.max,
-        cummin: CoreFunctions.cummin,
-        cummax: CoreFunctions.cummax,
-        cumsum: CoreFunctions.cumsum,
-        cumprod: CoreFunctions.cumprod,
-        struct: CoreFunctions.struct,
-    };
-
-    /**
-     * Throw invalid call error if (optional) test is true.
-     * @param name
-     */
-    public static throwInvalidCallError(name: string, test: boolean = true): void {
-        if (test) {
-            throw new Error(`Invalid call to ${name}. Type 'help ${name}' to see correct usage.`);
-        }
-    }
-
     /**
      *
      * @param name
      * @param M
      */
-    public static throwErrorIfCellArray(name: string, M: MultiArray | ComplexType): void {
+    public static readonly throwErrorIfCellArray = (name: string, M: MultiArray | ComplexType): void => {
         if (MultiArray.isInstanceOf(M) && (M as MultiArray).isCell) {
             throw new Error(`${name}: wrong type argument 'cell'`);
         }
-    }
+    };
 
     /**
      * Return true if M is an empty matrix
      * @param X
      * @returns
      */
-    public static isempty(X: ElementType): ComplexType {
-        CoreFunctions.throwInvalidCallError('isempty', arguments.length !== 1);
+    public static readonly isempty = (X?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('isempty', !(typeof X !== 'undefined' && rest.length === 0));
         return MultiArray.isEmpty(X) ? Complex.true() : Complex.false();
-    }
+    };
 
     /**
      * Return true if X is a scalar.
      * @param X
      * @returns
      */
-    public static isscalar(X: ElementType): ComplexType {
-        CoreFunctions.throwInvalidCallError('isscalar', arguments.length !== 1);
+    public static readonly isscalar = (X?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('isscalar', !(typeof X !== 'undefined' && rest.length === 0));
         return MultiArray.isScalar(X) ? Complex.true() : Complex.false();
-    }
+    };
 
     /**
      * Return true if X is a 2-D array.
      * @param X
      * @returns
      */
-    public static ismatrix(X: ElementType): ComplexType {
-        CoreFunctions.throwInvalidCallError('ismatrix', arguments.length !== 1);
+    public static readonly ismatrix = (X?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('ismatrix', !(typeof X !== 'undefined' && rest.length === 0));
         return MultiArray.isMatrix(X) ? Complex.true() : Complex.false();
-    }
+    };
 
     /**
      * Return true if X is a vector.
      * @param X
      * @returns
      */
-    public static isvector(X: ElementType): ComplexType {
-        CoreFunctions.throwInvalidCallError('isvector', arguments.length !== 1);
+    public static readonly isvector = (X?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('isvector', !(typeof X !== 'undefined' && rest.length === 0));
         return MultiArray.isVector(X) ? Complex.true() : Complex.false();
-    }
+    };
 
     /**
      * Return true if X is a cell array object.
      * @param M
      * @returns
      */
-    public static iscell(X: ElementType): ComplexType {
-        CoreFunctions.throwInvalidCallError('iscell', arguments.length !== 1);
+    public static readonly iscell = (X?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('iscell', !(typeof X !== 'undefined' && rest.length === 0));
         return MultiArray.isCellArray(X) ? Complex.true() : Complex.false();
-    }
+    };
 
     /**
      * Return true if X is a row vector.
      * @param X
      * @returns
      */
-    public static isrow(X: ElementType): ComplexType {
-        CoreFunctions.throwInvalidCallError('isrow', arguments.length !== 1);
+    public static readonly isrow = (X?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('isrow', !(typeof X !== 'undefined' && rest.length === 0));
         return MultiArray.isRowVector(X) ? Complex.true() : Complex.false();
-    }
+    };
 
     /**
      * Return true if X is a column vector.
      * @param X
      * @returns
      */
-    public static iscolumn(X: ElementType): ComplexType {
-        CoreFunctions.throwInvalidCallError('iscolumn', arguments.length !== 1);
+    public static readonly iscolumn = (X?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('iscolumn', !(typeof X !== 'undefined' && rest.length === 0));
         return MultiArray.isColumnVector(X) ? Complex.true() : Complex.false();
-    }
+    };
 
     /**
      * Return true if X is a column vector.
      * @param X
      * @returns
      */
-    public static isstruct(X: ElementType): ComplexType {
-        CoreFunctions.throwInvalidCallError('isstruct', arguments.length !== 1);
+    public static readonly isstruct = (X?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('isstruct', !(typeof X !== 'undefined' && rest.length === 0));
         return Structure.isStructure(X) ? Complex.true() : Complex.false();
-    }
+    };
 
     /**
      * Return the number of dimensions of M.
      * @param M
      * @returns
      */
-    public static ndims(M: ElementType): ComplexType {
-        CoreFunctions.throwInvalidCallError('ndims', arguments.length !== 1);
+    public static readonly ndims = (M?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('ndims', !(typeof M !== 'undefined' && rest.length === 0));
         return Complex.create(MultiArray.scalarToMultiArray(M).dimension.length);
-    }
+    };
 
     /**
      * eturn the number of rows of M.
      * @param M
      * @returns
      */
-    public static rows(M: ElementType): ComplexType {
-        CoreFunctions.throwInvalidCallError('rows', arguments.length !== 1);
+    public static readonly rows = (M?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('rows', !(typeof M !== 'undefined' && rest.length === 0));
         return Complex.create(MultiArray.scalarToMultiArray(M).dimension[0]);
-    }
+    };
 
     /**
      * Return the number of columns of M.
      * @param M
      * @returns
      */
-    public static columns(M: ElementType): ComplexType {
-        CoreFunctions.throwInvalidCallError('columns', arguments.length !== 1);
+    public static readonly columns = (M?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('columns', !(typeof M !== 'undefined' && rest.length === 0));
         return Complex.create(MultiArray.scalarToMultiArray(M).dimension[1]);
-    }
+    };
 
     /**
      * Return the length of the object M. The length is the number of elements
@@ -189,13 +132,19 @@ abstract class CoreFunctions {
      * @param M
      * @returns
      */
-    public static Length(M: ElementType): ComplexType {
-        // Capitalized name so as not to conflict with the built-in 'Function.length' property.
-        CoreFunctions.throwInvalidCallError('length', arguments.length !== 1);
+    public static readonly Length = (M?: ElementType, ...rest: unknown[]): ComplexType => {
+        /* Capitalized name so as not to conflict with the built-in 'Function.length' property. */
+        AST.throwInvalidCallError('length', !(typeof M !== 'undefined' && rest.length === 0));
         return Complex.create(Math.max(...MultiArray.scalarToMultiArray(M).dimension));
-    }
+    };
 
-    public static numel(M: ElementType, ...IDX: ElementType[]): ComplexType {
+    /**
+     *
+     * @param M
+     * @param IDX
+     * @returns
+     */
+    public static readonly numel = (M: ElementType, ...IDX: ElementType[]): ComplexType => {
         if (IDX.length === 0) {
             return MultiArray.isInstanceOf(M) ? Complex.create(MultiArray.linearLength(M as MultiArray)) : Complex.one();
         } else {
@@ -211,7 +160,7 @@ abstract class CoreFunctions {
             });
             return Complex.create(index.reduce((p, c) => p * c, 1));
         }
-    }
+    };
 
     /**
      * Convert linear indices to subscripts.
@@ -219,25 +168,25 @@ abstract class CoreFunctions {
      * @param IND
      * @returns
      */
-    public static ind2sub(DIMS: ElementType, IND: ElementType): NodeReturnList {
-        CoreFunctions.throwInvalidCallError('ind2sub', arguments.length !== 2);
-        return AST.nodeReturnList((length: number, index: number): ElementType => {
-            if (length === 1) {
+    public static readonly ind2sub = (DIMS?: ElementType, IND?: ElementType): NodeReturnList => {
+        AST.throwInvalidCallError('ind2sub', !(typeof DIMS !== 'undefined' && typeof IND !== 'undefined'));
+        return AST.nodeReturnList((evaluated: ReturnHandlerResult, index: number): ElementType => {
+            if (evaluated.length === 1) {
                 return IND;
             } else {
                 let dims = (MultiArray.linearize(DIMS) as ComplexType[]).map((value) => Complex.realToNumber(value));
                 let lenghtGreater = false;
-                if (length > dims.length) {
-                    MultiArray.appendSingletonTail(dims, length);
+                if (evaluated.length > dims.length) {
+                    MultiArray.appendSingletonTail(dims, evaluated.length);
                     lenghtGreater = true;
                 } else {
-                    dims = dims.slice(0, length - 1);
+                    dims = dims.slice(0, evaluated.length - 1);
                 }
                 const ind = MultiArray.scalarToMultiArray(IND);
                 const result = new MultiArray(ind.dimension);
                 const subscript = ind.array.map((row) => row.map((value) => MultiArray.ind2subNumber(dims, Complex.realToNumber(value as ComplexType))));
-                if (index === length - 1 && lenghtGreater) {
-                    result.array = subscript.map((row) => row.map((value) => Complex.create(value[length])));
+                if (index === evaluated.length - 1 && lenghtGreater) {
+                    result.array = subscript.map((row) => row.map((value) => Complex.create(value[evaluated.length])));
                 } else {
                     result.array = subscript.map((row) => row.map((value) => Complex.create(value[index])));
                 }
@@ -245,7 +194,7 @@ abstract class CoreFunctions {
                 return MultiArray.MultiArrayToScalar(result);
             }
         });
-    }
+    };
 
     /**
      * Convert subscripts to linear indices.
@@ -253,8 +202,8 @@ abstract class CoreFunctions {
      * @param S
      * @returns
      */
-    public static sub2ind(DIMS: ElementType, ...S: ElementType[]): ElementType {
-        CoreFunctions.throwInvalidCallError('sub2ind', arguments.length < 2);
+    public static readonly sub2ind = (DIMS: ElementType, ...S: ElementType[]): ElementType => {
+        AST.throwInvalidCallError('sub2ind', S.length < 1);
         const dims = (MultiArray.linearize(DIMS) as ComplexType[]).map((value) => Complex.realToNumber(value));
         const subscript: MultiArray[] = S.map((s) => MultiArray.scalarToMultiArray(s));
         for (let s = 1; s < subscript.length; s++) {
@@ -274,7 +223,7 @@ abstract class CoreFunctions {
             result.array[p][q] = Complex.create(index + 1);
         }
         return MultiArray.MultiArrayToScalar(result);
-    }
+    };
 
     /**
      * Returns array dimensions.
@@ -282,8 +231,8 @@ abstract class CoreFunctions {
      * @param DIM Dimensions
      * @returns Dimensions of `M` parameter.
      */
-    public static size(M: ElementType, ...DIM: ElementType[]): ElementType {
-        CoreFunctions.throwInvalidCallError('size', arguments.length < 1);
+    public static readonly size = (M?: ElementType, ...DIM: ElementType[]): ElementType => {
+        AST.throwInvalidCallError('size', !(typeof M !== 'undefined'));
         const parseDimension = (dimension: ComplexType): number => {
             const dim = Complex.realToNumber(dimension);
             if (dim < 1 || !Complex.realIsInteger(dimension)) {
@@ -308,29 +257,29 @@ abstract class CoreFunctions {
             result.type = Complex.REAL;
             return MultiArray.MultiArrayToScalar(result);
         }
-    }
+    };
 
     /**
      * Return the result of the colon expression.
      * @param args
      * @returns
      */
-    public static colon(...args: ElementType[]): ElementType {
+    public static readonly colon = (...args: ElementType[]): ElementType => {
         if (args.length === 2) {
             return MultiArray.expandRange(MultiArray.firstElement(args[0]) as ComplexType, MultiArray.firstElement(args[1]) as ComplexType);
         } else if (args.length === 3) {
             return MultiArray.expandRange(MultiArray.firstElement(args[0]) as ComplexType, MultiArray.firstElement(args[2]) as ComplexType, MultiArray.firstElement(args[1]) as ComplexType);
         } else {
-            CoreFunctions.throwInvalidCallError('colon');
+            AST.throwInvalidCallError('colon');
         }
-    }
+    };
 
     /**
      * Return a row vector with linearly spaced elements.
      * @param args
      * @returns
      */
-    public static linspace(...args: ElementType[]): ElementType {
+    public static readonly linspace = (...args: ElementType[]): ElementType => {
         let start: ComplexType[] = [];
         let end: ComplexType[] = [];
         let n: ComplexType | MultiArray = Complex.one();
@@ -363,7 +312,7 @@ abstract class CoreFunctions {
                 throw new Error('linspace: N must be a scalar.');
             }
         } else {
-            CoreFunctions.throwInvalidCallError('linspace');
+            AST.throwInvalidCallError('linspace');
         }
         if (start.length !== end.length) {
             throw new Error('linspace: vectors must be of equal length');
@@ -383,14 +332,14 @@ abstract class CoreFunctions {
             result.array[i][Complex.realToNumber(n as ComplexType) - 1] = end[i];
         }
         return MultiArray.MultiArrayToScalar(result);
-    }
+    };
 
     /**
      * Return a row vector with elements logarithmically spaced.
      * @param args
      * @returns
      */
-    public static logspace(...args: ElementType[]): ElementType {
+    public static readonly logspace = (...args: ElementType[]): ElementType => {
         let start: ComplexType[] = [];
         let end: ComplexType[] = [];
         let n: ComplexType | MultiArray = Complex.one();
@@ -423,7 +372,7 @@ abstract class CoreFunctions {
                 throw new Error('logspace: N must be a scalar.');
             }
         } else {
-            CoreFunctions.throwInvalidCallError('linspace');
+            AST.throwInvalidCallError('linspace');
         }
         if (start.length !== end.length) {
             throw new Error('logspace: vectors must be of equal length');
@@ -446,15 +395,15 @@ abstract class CoreFunctions {
             result.array[i][Complex.realToNumber(n as ComplexType) - 1] = Complex.power(Complex.create(10), end[i]);
         }
         return MultiArray.MultiArrayToScalar(result) as MultiArray | ComplexType;
-    }
+    };
 
     /**
      * Generate 2-D and 3-D grids.
      * @param args
      * @returns
      */
-    public static meshgrid(...args: ElementType[]): NodeReturnList {
-        CoreFunctions.throwInvalidCallError('meshgrid', args.length > 3 || args.length < 1);
+    public static readonly meshgrid = (...args: ElementType[]): NodeReturnList => {
+        AST.throwInvalidCallError('meshgrid', args.length > 3 || args.length < 1);
         const argsLinearized: ElementType[][] = [];
         for (let i = 0; i < 3; i++) {
             if (args.length > i) {
@@ -470,15 +419,15 @@ abstract class CoreFunctions {
                 break;
             }
         }
-        return AST.nodeReturnList((length: number, index: number): ElementType => {
-            if (length > 3) {
+        return AST.nodeReturnList((evaluated: ReturnHandlerResult, index: number): ElementType => {
+            if (evaluated.length > 3) {
                 throw new Error('meshgrid: function called with too many outputs.');
             }
             const args: ElementType[][] = argsLinearized;
-            while (args.length < length) {
+            while (args.length < evaluated.length) {
                 args[args.length] = args[args.length - 1];
             }
-            const result = length > 2 ? new MultiArray([args[1].length, args[0].length, args[2].length]) : new MultiArray([args[1].length, args[0].length]);
+            const result = evaluated.length > 2 ? new MultiArray([args[1].length, args[0].length, args[2].length]) : new MultiArray([args[1].length, args[0].length]);
             switch (index) {
                 case 0:
                     for (let i = 0; i < result.array.length; i++) {
@@ -499,13 +448,13 @@ abstract class CoreFunctions {
             }
             return MultiArray.MultiArrayToScalar(result);
         });
-    }
+    };
 
     /**
      * Given n vectors X1, ..., Xn, returns n arrays of n dimensions.
      * @returns
      */
-    public static ndgrid(...args: ElementType[]): NodeReturnList {
+    public static readonly ndgrid = (...args: ElementType[]): NodeReturnList => {
         const argsLinearized: MultiArray[] = [];
         for (let i = 0; i < args.length; i++) {
             if (MultiArray.isInstanceOf(args[i])) {
@@ -517,14 +466,14 @@ abstract class CoreFunctions {
                 argsLinearized[i] = MultiArray.scalarToMultiArray(args[i]);
             }
         }
-        return AST.nodeReturnList((length: number, index: number): ElementType => {
+        return AST.nodeReturnList((evaluated: ReturnHandlerResult, index: number): ElementType => {
             const args: MultiArray[] = argsLinearized;
             if (args.length === 1) {
-                while (args.length < length) {
+                while (args.length < evaluated.length) {
                     args[args.length] = args[args.length - 1];
                 }
             }
-            if (length > args.length) {
+            if (evaluated.length > args.length) {
                 throw new Error('ndgrid: function called with too many outputs.');
             }
             const shape: number[] = args.map((M) => M.dimension[0] * M.dimension[1]);
@@ -533,7 +482,7 @@ abstract class CoreFunctions {
             shape[index] = 1;
             return MultiArray.evaluate(new MultiArray(shape, MultiArray.reshape(args[index], r)));
         });
-    }
+    };
 
     /**
      * Repeat N-D array.
@@ -541,7 +490,7 @@ abstract class CoreFunctions {
      * @param dim
      * @returns
      */
-    public static repmat(A: ElementType, ...dim: ElementType[]): ElementType {
+    public static readonly repmat = (A: ElementType, ...dim: ElementType[]): ElementType => {
         let dimension: ElementType[];
         if (dim.length === 1) {
             dimension = MultiArray.firstVector(dim[0]);
@@ -562,7 +511,7 @@ abstract class CoreFunctions {
                 A,
             ),
         );
-    }
+    };
 
     /**
      * Return a matrix with the specified dimensions whose elements are taken from the matrix M.
@@ -570,12 +519,17 @@ abstract class CoreFunctions {
      * @param dimension
      * @returns
      */
-    public static reshape(M: ElementType, ...dimension: ElementType[]): ElementType {
+    public static readonly reshape = (M: ElementType, ...dimension: ElementType[]): ElementType => {
+        if (dimension.length < 1) {
+            throw new Error('invalid call to reshape');
+        }
         const m = MultiArray.scalarToMultiArray(M);
         let d: number = -1;
+        if (dimension.length === 1 && MultiArray.isInstanceOf(dimension[0])) {
+            dimension = MultiArray.linearize(dimension[0]);
+        }
         const dims = dimension.map((dim, i) => {
-            const element = MultiArray.firstElement(dim) as ComplexType;
-            if (MultiArray.isEmpty(element)) {
+            if (MultiArray.isEmpty(dim)) {
                 if (d < 0) {
                     d = i;
                     return 1;
@@ -583,19 +537,19 @@ abstract class CoreFunctions {
                     throw new Error('reshape: only a single dimension can be unknown.');
                 }
             } else {
-                return Complex.realToNumber(element);
+                return Complex.realToNumber(MultiArray.firstElement(dim) as ComplexType);
             }
         });
-        return MultiArray.reshape(m, dims, d >= 0 ? d : undefined);
-    }
+        return MultiArray.reshape(m, dims, d);
+    };
 
     /**
      * Remove singleton dimensions.
      * @param args
      * @returns
      */
-    public static squeeze(...args: ElementType[]): ElementType {
-        CoreFunctions.throwInvalidCallError('squeeze', args.length !== 1);
+    public static readonly squeeze = (...args: ElementType[]): ElementType => {
+        AST.throwInvalidCallError('squeeze', args.length !== 1);
         if (MultiArray.isInstanceOf(args[0]) && !(args[0] as MultiArray).isCell) {
             if ((args[0] as MultiArray).dimension.length > 2) {
                 return MultiArray.reshape(
@@ -608,7 +562,7 @@ abstract class CoreFunctions {
         } else {
             return args[0];
         }
-    }
+    };
 
     /**
      * Create MultiArray with all elements equals `fill` parameter.
@@ -616,7 +570,7 @@ abstract class CoreFunctions {
      * @param dimension Dimensions of created MultiArray.
      * @returns MultiArray filled with `fill` parameter.
      */
-    private static newFilled(fill: ElementType, name: string, ...dimension: ElementType[]): ElementType {
+    private static readonly newFilled = (fill: ElementType, name: string, ...dimension: ElementType[]): ElementType => {
         let dims: number[];
         if (dimension.length === 0) {
             return fill;
@@ -638,7 +592,7 @@ abstract class CoreFunctions {
             });
         }
         return MultiArray.MultiArrayToScalar(new MultiArray(dims, fill));
-    }
+    };
 
     /**
      * Create MultiArray with all elements filled with `fillFunction` result.
@@ -647,7 +601,7 @@ abstract class CoreFunctions {
      * @param dimension Dimensions of created MultiArray.
      * @returns MultiArray filled with `fillFunction` results for each element.
      */
-    private static newFilledEach(fillFunction: (index: number) => ElementType, ...dimension: ElementType[]): ElementType {
+    private static readonly newFilledEach = (fillFunction: (index: number) => ElementType, ...dimension: ElementType[]): ElementType => {
         let dims: number[];
         if (dimension.length === 1) {
             dims = (MultiArray.linearize(dimension[0]) as ComplexType[]).map((dim) => Complex.realToNumber(dim));
@@ -666,25 +620,25 @@ abstract class CoreFunctions {
         }
         MultiArray.setType(result);
         return MultiArray.MultiArrayToScalar(result);
-    }
+    };
 
     /**
      * Create array of all zeros.
      * @param dimension
      * @returns
      */
-    public static zeros(...dimension: ElementType[]): ElementType {
+    public static readonly zeros = (...dimension: ElementType[]): ElementType => {
         return CoreFunctions.newFilled(Complex.zero(), 'zeros', ...dimension);
-    }
+    };
 
     /**
      * Create array of all ones.
      * @param dimension
      * @returns
      */
-    public static ones(...dimension: ElementType[]): ElementType {
+    public static readonly ones = (...dimension: ElementType[]): ElementType => {
         return CoreFunctions.newFilled(Complex.one(), 'ones', ...dimension);
-    }
+    };
 
     /**
      * Uniformly distributed pseudorandom numbers distributed on the
@@ -692,9 +646,9 @@ abstract class CoreFunctions {
      * @param dimension
      * @returns
      */
-    public static rand(...dimension: ElementType[]): ElementType {
+    public static readonly rand = (...dimension: ElementType[]): ElementType => {
         return CoreFunctions.newFilledEach(() => Complex.random(), ...dimension);
-    }
+    };
 
     /**
      * Uniformly distributed pseudorandom integers.
@@ -702,7 +656,7 @@ abstract class CoreFunctions {
      * @param args
      * @returns
      */
-    public static randi(range: ElementType, ...dimension: ElementType[]): ElementType {
+    public static readonly randi = (range: ElementType, ...dimension: ElementType[]): ElementType => {
         let imin: ComplexType;
         let imax: ComplexType;
         if (MultiArray.isInstanceOf(range)) {
@@ -737,7 +691,7 @@ abstract class CoreFunctions {
                 throw new Error(`randi: require imax > imin.`);
             }
         }
-    }
+    };
 
     /**
      * Return the concatenation of N-D array objects, ARRAY1, ARRAY2, ...,
@@ -746,241 +700,173 @@ abstract class CoreFunctions {
      * @param ARRAY Arrays to concatenate.
      * @returns Concatenated arrays along dimension `DIM`.
      */
-    public static cat(DIM: ElementType, ...ARRAY: ElementType[]): MultiArray {
+    public static readonly cat = (DIM: ElementType, ...ARRAY: ElementType[]): MultiArray => {
         return MultiArray.concatenate(Complex.realToNumber(MultiArray.firstElement(DIM) as ComplexType) - 1, 'cat', ...ARRAY.map((m) => MultiArray.scalarToMultiArray(m)));
-    }
+    };
 
     /**
      * Concatenate arrays horizontally.
      * @param ARRAY Arrays to concatenate horizontally.
      * @returns Concatenated arrays horizontally.
      */
-    public static horzcat(...ARRAY: ElementType[]): MultiArray {
+    public static readonly horzcat = (...ARRAY: ElementType[]): MultiArray => {
         return MultiArray.concatenate(1, 'horzcat', ...ARRAY.map((m) => MultiArray.scalarToMultiArray(m)));
-    }
+    };
 
     /**
      * Concatenate arrays vertically.
      * @param ARRAY Arrays to concatenate vertically.
      * @returns Concatenated arrays vertically.
      */
-    public static vertcat(...ARRAY: ElementType[]): MultiArray {
+    public static readonly vertcat = (...ARRAY: ElementType[]): MultiArray => {
         return MultiArray.concatenate(0, 'vertcat', ...ARRAY.map((m) => MultiArray.scalarToMultiArray(m)));
-    }
+    };
+
+    public static readonly all = MultiArray.reduceFactory((p, c) => Complex.and(p as ComplexType, c as ComplexType), 'reduce', Complex.one());
+    public static readonly any = MultiArray.reduceFactory((p, c) => Complex.or(p as ComplexType, c as ComplexType), 'reduce', Complex.zero());
+    public static readonly sum = MultiArray.reduceFactory((p, c) => Complex.add(p as ComplexType, c as ComplexType), 'reduce', Complex.zero());
+    public static readonly prod = MultiArray.reduceFactory((p, c) => Complex.mul(p as ComplexType, c as ComplexType), 'reduce', Complex.one());
+    public static readonly sumsq = MultiArray.reduceFactory((p, c) => Complex.add(p as ComplexType, Complex.mul(c as ComplexType, c as ComplexType)), 'reduce', Complex.zero());
+    public static readonly cumsum = MultiArray.reduceFactory((acc, element) => Complex.add(acc as ComplexType, element as ComplexType), 'cumulative');
+    public static readonly cumprod = MultiArray.reduceFactory((acc, element) => Complex.mul(acc as ComplexType, element as ComplexType), 'cumulative');
+    public static readonly min = MultiArray.reduceFactory('lt', 'comparison');
+    public static readonly max = MultiArray.reduceFactory('gt', 'comparison');
+    public static readonly cummin = MultiArray.reduceFactory('lt', 'cumcomparison');
+    public static readonly cummax = MultiArray.reduceFactory('gt', 'cumcomparison');
 
     /**
-     * Calculate sum of elements along dimension DIM.
-     * @param M Array
-     * @param DIM Dimension
-     * @returns Array with sum of elements along dimension DIM.
-     */
-    public static sum(M: MultiArray, DIM?: ElementType): ElementType {
-        // TODO: Test if MultiArray.reduceToArray is better than MultiArray.reduce.
-        return MultiArray.reduce(DIM ? Complex.realToNumber(MultiArray.firstElement(DIM) as ComplexType) - 1 : MultiArray.firstNonSingleDimension(M), M, (p, c) =>
-            Complex.add(p as ComplexType, c as ComplexType),
-        );
-    }
-
-    /**
-     * Calculate sum of squares of elements along dimension DIM.
-     * @param M Matrix
-     * @param DIM Dimension
-     * @returns One dimensional matrix with sum of squares of elements along dimension DIM.
-     */
-    public static sumsq(M: MultiArray, DIM?: ElementType): ElementType {
-        // TODO: Test if MultiArray.reduceToArray is better than MultiArray.reduce.
-        return MultiArray.reduce(DIM ? Complex.realToNumber(MultiArray.firstElement(DIM) as ComplexType) - 1 : MultiArray.firstNonSingleDimension(M), M, (p, c) =>
-            Complex.add(Complex.mul(p as ComplexType, Complex.conj(p as ComplexType)), Complex.mul(c as ComplexType, Complex.conj(c as ComplexType))),
-        );
-    }
-
-    /**
-     * Calculate product of elements along dimension DIM.
-     * @param M Matrix
-     * @param DIM Dimension
-     * @returns One dimensional matrix with product of elements along dimension DIM.
-     */
-    public static prod(M: MultiArray, DIM?: ElementType): ElementType {
-        // TODO: Test if MultiArray.reduceToArray is better than MultiArray.reduce.
-        return MultiArray.reduce(DIM ? Complex.realToNumber(MultiArray.firstElement(DIM) as ComplexType) - 1 : MultiArray.firstNonSingleDimension(M), M, (p, c) =>
-            Complex.mul(p as ComplexType, c as ComplexType),
-        );
-    }
-
-    /**
-     * Calculate average or mean of elements along dimension DIM.
-     * @param M Matrix
-     * @param DIM Dimension
-     * @returns One dimensional matrix with product of elements along dimension DIM.
-     */
-    public static mean(M: MultiArray, DIM?: ElementType): ElementType {
-        // TODO: Test if MultiArray.reduceToArray is better than MultiArray.reduce.
-        const dim = DIM ? Complex.realToNumber(MultiArray.firstElement(DIM) as ComplexType) - 1 : MultiArray.firstNonSingleDimension(M);
-        const sum = MultiArray.reduce(dim, M, (p, c) => Complex.add(p as ComplexType, c as ComplexType));
-        return MultiArray.MultiArrayOpScalar('rdiv', MultiArray.scalarToMultiArray(sum), Complex.create(M.dimension[dim]));
-    }
-
-    /**
-     * Base method of min and max user functions.
-     * @param op 'min' or 'max'.
-     * @param args One to three arguments like user function.
-     * @returns Return like user function.
-     */
-    private static minMax(op: 'min' | 'max', ...args: ElementType[]): MultiArray | NodeReturnList | undefined {
-        const minMaxAlogDimension = (M: MultiArray, dimension: number) => {
-            const reduced = MultiArray.reduceToArray(dimension, M);
-            const resultM = new MultiArray(reduced.dimension);
-            const indexM = new MultiArray(reduced.dimension);
-            const cmp = op === 'min' ? 'lt' : 'gt';
-            for (let i = 0; i < indexM.array.length; i++) {
-                for (let j = 0; j < indexM.array[0].length; j++) {
-                    const [m, n] = Complex[`minMaxArray${args[0]!.type < 2 ? 'Real' : 'Complex'}WithIndex`](cmp, ...(reduced.array[i][j] as unknown as ComplexType[]));
-                    resultM.array[i][j] = m;
-                    indexM.array[i][j] = Complex.create(n + 1);
-                }
-            }
-            return AST.nodeReturnList((length: number, index: number): any => {
-                Evaluator.throwErrorIfGreaterThanReturnList(2, length);
-                return MultiArray.MultiArrayToScalar(index === 0 ? resultM : indexM);
-            });
-        };
-        switch (args.length) {
-            case 1:
-                // Along first non singleton dimension.
-                const dimension = MultiArray.firstNonSingleDimension(MultiArray.scalarToMultiArray(args[0]));
-                return minMaxAlogDimension(MultiArray.scalarToMultiArray(args[0]), dimension);
-            case 2:
-                // Broadcast
-                return MultiArray.elementWiseOperation((op + 'Wise') as TBinaryOperationName, MultiArray.scalarToMultiArray(args[0]), args[1] as MultiArray);
-            case 3:
-                // Along selected dimension.
-                if (!MultiArray.isEmpty(args[1])) {
-                    // Error if second argument is different from [](0x0).
-                    throw new Error(`${op}: second argument is ignored`);
-                }
-                return minMaxAlogDimension(MultiArray.scalarToMultiArray(args[0]), Complex.realToNumber(MultiArray.firstElement(args[2]) as ComplexType) - 1);
-            default:
-                CoreFunctions.throwInvalidCallError(op);
-        }
-    }
-
-    /**
-     * Minimum elements of array.
+     *
      * @param M
+     * @param DIM
      * @returns
      */
-    public static min(...args: ElementType[]): MultiArray | NodeReturnList | undefined {
-        return CoreFunctions.minMax('min', ...args);
-    }
+    public static readonly mean = (M: ElementType, DIM?: ElementType): ElementType => {
+        const MA = MultiArray.scalarToMultiArray(M);
+        const dim = typeof DIM !== 'undefined' ? Complex.realToNumber(MultiArray.firstElement(DIM as ElementType) as ComplexType) - 1 : MultiArray.firstNonSingleDimension(MA);
+        const sumM = CoreFunctions.sum(MA, Complex.create(dim + 1));
+        const sizeAlongDim = Complex.create(MA.dimension[dim]);
+        return MultiArray.divideElementByScalar(sumM as ElementType, sizeAlongDim);
+    };
 
     /**
-     * Maximum elements of array.
+     * Variance compatible with Octave var(A [, FLAG [, DIM]])
      * @param M
+     * @param FLAG
+     * @param DIM
      * @returns
      */
-    public static max(...args: ElementType[]): MultiArray | NodeReturnList | undefined {
-        return CoreFunctions.minMax('max', ...args);
-    }
-
-    /**
-     * Base method of cummin and cummax user functions.
-     * @param op 'min' or 'max'.
-     * @param M MultiArray.
-     * @param DIM Dimension in which the cumulative operation occurs.
-     * @returns MultiArray with cumulative values along dimension DIM.
-     */
-    private static cumMinMax(op: 'min' | 'max', M: ElementType, DIM?: ElementType): NodeReturnList {
-        M = MultiArray.scalarToMultiArray(M);
-        const indexM = new MultiArray(M.dimension);
-        let compare: ComplexType;
-        let index: ComplexType;
-        const result = MultiArray.alongDimensionMap(DIM ? Complex.realToNumber(MultiArray.firstElement(DIM) as ComplexType) - 1 : 1, M, (element, d, i, j) => {
-            if (d === 0) {
-                compare = element as ComplexType;
-                index = Complex.one();
+    public static readonly variance = (M: ElementType, FLAG?: ElementType, DIM?: ElementType): ElementType => {
+        /* 1) Convert to MultiArray */
+        const MA = MultiArray.scalarToMultiArray(M);
+        /* 2) Interpret FLAG and DIM */
+        let flag = 0; /* 0 = sample (N-1), 1 = population (N) */
+        let dim: number;
+        if (typeof FLAG !== 'undefined') {
+            const firstFlag = MultiArray.firstElement(FLAG) as ComplexType;
+            /* if FLAG looks like a dimension and DIM not given */
+            if (Complex.realIsInteger(firstFlag) && Complex.realToNumber(firstFlag) >= 1 && typeof DIM === 'undefined') {
+                dim = Complex.realToNumber(firstFlag) - 1; /* interpret FLAG as DIM */
             } else {
-                if (Complex.realToNumber(Complex[op === 'min' ? 'lt' : 'gt'](element as ComplexType, compare))) {
-                    index = Complex.create(d + 1);
-                    compare = element as ComplexType;
+                flag = Complex.realToNumber(firstFlag) === 1 ? 1 : 0;
+                if (typeof DIM !== 'undefined') {
+                    const dimElem = MultiArray.firstElement(DIM) as ComplexType;
+                    dim = MultiArray.testInteger(dimElem, 'var', 'DIM', [1, Infinity]) - 1;
+                } else {
+                    dim = MultiArray.firstNonSingleDimension(MA);
                 }
             }
-            indexM.array[i][j] = index;
-            return compare;
-        });
-        return AST.nodeReturnList((length: number, index: number): ElementType => {
-            Evaluator.throwErrorIfGreaterThanReturnList(2, length);
-            return MultiArray.MultiArrayToScalar(index === 0 ? result : indexM);
-        });
-    }
+        } else {
+            /* FLAG undefined */
+            if (typeof DIM !== 'undefined') {
+                const dimElem = MultiArray.firstElement(DIM) as ComplexType;
+                dim = MultiArray.testInteger(dimElem, 'var', 'DIM', [1, Infinity]) - 1;
+            } else {
+                dim = MultiArray.firstNonSingleDimension(MA);
+            }
+        }
+        /* 3) Number of elements along chosen dimension */
+        const N = MA.dimension[dim];
+        if (N <= 1) {
+            return Complex.zero();
+        }
+        /* 4) Sum along dim (possibly scalar) */
+        const sumAlong = MultiArray.reduce(dim, MA, (p, c) => Complex.add(p as ComplexType, c as ComplexType), Complex.zero());
+        const meanElem = MultiArray.divideElementByScalar(sumAlong, Complex.create(N));
+        /* 5) Compute squared diffs */
+        let outDim: number[];
+        if (MultiArray.isInstanceOf(sumAlong)) {
+            outDim = (sumAlong as MultiArray).dimension.slice();
+        } else {
+            outDim = MA.dimension.slice();
+            outDim[dim] = 1;
+        }
+        const result = new MultiArray(outDim);
+        const tailProd = outDim.length > 2 ? outDim.slice(2).reduce((p, c) => p * c, 1) : 1;
+        const resultPhysicalRows = outDim[0] * Math.max(1, tailProd);
+        const resultPhysicalCols = outDim[1] ?? 1;
+        result.array = new Array(resultPhysicalRows);
+        for (let r = 0; r < resultPhysicalRows; r++) {
+            result.array[r] = new Array(resultPhysicalCols);
+        }
+        const totalElements = MA.dimension.reduce((p, c) => p * c, 1);
+        for (let linIdx = 0; linIdx < totalElements; linIdx++) {
+            const subs = MultiArray.linearIndexToSubscript(MA.dimension, linIdx);
+            const meanSub = subs.slice();
+            meanSub[dim] = 1;
+
+            let meanVal: ComplexType;
+            if (MultiArray.isInstanceOf(meanElem)) {
+                const meanMA = meanElem as MultiArray;
+                const meanLinear = MultiArray.subscriptToLinearIndex(meanMA.dimension, meanSub);
+                const [mr, mc] = MultiArray.linearIndexToMultiArrayRowColumn(meanMA.dimension[0], meanMA.dimension[1], meanLinear);
+                meanVal = meanMA.array[mr][mc] as ComplexType;
+            } else {
+                meanVal = meanElem as ComplexType;
+            }
+            const [ar, ac] = MultiArray.linearIndexToMultiArrayRowColumn(MA.dimension[0], MA.dimension[1], linIdx);
+            const curVal = MA.array[ar][ac] as ComplexType;
+            const diff = Complex.sub(curVal, meanVal);
+            const sq = Complex.mul(diff, diff);
+            const outLinear = MultiArray.subscriptToLinearIndex(outDim, meanSub);
+            const [orow, ocol] = MultiArray.linearIndexToMultiArrayRowColumn(outDim[0], outDim[1], outLinear);
+            const prev = result.array[orow][ocol];
+            if (typeof prev === 'undefined' || prev === null) {
+                result.array[orow][ocol] = Complex.copy(sq);
+            } else {
+                result.array[orow][ocol] = Complex.add(prev as ComplexType, sq);
+            }
+        }
+        /* 6) Divide by (N - (1 - flag)) */
+        const divisor = Complex.create(N - (flag === 0 ? 1 : 0));
+        const varianceElem = MultiArray.divideElementByScalar(result, divisor);
+        if (MultiArray.isInstanceOf(varianceElem)) MultiArray.setType(varianceElem);
+        return varianceElem;
+    };
 
     /**
      *
      * @param M
+     * @param FLAG
      * @param DIM
      * @returns
      */
-    public static cummin(M: ElementType, DIM?: ElementType): NodeReturnList {
-        return CoreFunctions.cumMinMax('min', M, DIM);
-    }
-
-    /**
-     *
-     * @param M
-     * @param DIM
-     * @returns
-     */
-    public static cummax(M: ElementType, DIM?: ElementType): NodeReturnList {
-        return CoreFunctions.cumMinMax('max', M, DIM);
-    }
-
-    /**
-     *
-     * @param op
-     * @param M
-     * @param DIM
-     * @returns
-     */
-    private static cumSumProd(op: 'add' | 'mul', M: ElementType, DIM?: ElementType): ElementType {
-        M = MultiArray.scalarToMultiArray(M);
-        const initialValue = op === 'add' ? Complex.zero() : Complex.one();
-        const result = MultiArray.alongDimensionMap(
-            DIM ? Complex.realToNumber(MultiArray.firstElement(DIM) as ComplexType) - 1 : MultiArray.firstNonSingleDimension(M),
-            M,
-            (
-                (cum) => (element, dimension) =>
-                    (cum = dimension !== 0 ? Complex[op](cum, element as ComplexType) : (element as ComplexType))
-            )(initialValue),
-        );
-        MultiArray.setType(result);
-        return result;
-    }
-
-    /**
-     *
-     * @param M
-     * @param DIM
-     * @returns
-     */
-    public static cumsum(M: ElementType, DIM?: ElementType): ElementType {
-        return CoreFunctions.cumSumProd('add', M, DIM);
-    }
-
-    /**
-     *
-     * @param M
-     * @param DIM
-     * @returns
-     */
-    public static cumprod(M: ElementType, DIM?: ElementType): ElementType {
-        return CoreFunctions.cumSumProd('mul', M, DIM);
-    }
+    public static readonly std = (M: ElementType, FLAG?: ElementType, DIM?: ElementType): ElementType => {
+        const varElem = CoreFunctions.variance(M, FLAG, DIM);
+        if (MultiArray.isInstanceOf(varElem)) {
+            const stdMA = MultiArray.rawMap(varElem as MultiArray, (el: ComplexType) => Complex.sqrt(el));
+            MultiArray.setType(stdMA);
+            return stdMA;
+        } else {
+            return Complex.sqrt(varElem as ComplexType);
+        }
+    };
 
     /**
      *
      * @param args
      * @returns
      */
-    public static struct(...args: ElementType[]): ElementType {
+    public static readonly struct = (...args: ElementType[]): ElementType => {
         const errorMessage = `struct: additional arguments must occur as "field", VALUE pairs`;
         if (args.length === 0) {
             return new Structure({});
@@ -1006,7 +892,89 @@ abstract class CoreFunctions {
             }
             return new Structure(resultFields);
         }
-    }
+    };
+
+    public static readonly norm = (...args: ElementType[]): ElementType => {
+        if (args.length === 1) {
+            return null as ElementType;
+        } else if (args.length === 2) {
+            if (MultiArray.isInstanceOf(args[0]) && CharString.isInstanceOf(args[1]) && (args[1] as CharString).str === 'fro') {
+                const A = args[0];
+                let sum = Complex.zero();
+                const rows = A.dimension[0];
+                const cols = A.dimension[1];
+                const arr = A.array;
+
+                for (let i = 0; i < rows; i++) {
+                    const row = arr[i];
+                    for (let j = 0; j < cols; j++) {
+                        const a = row[j];
+                        // abs^2
+                        const mag = Complex.abs(a as ComplexType); // retorna ComplexType (real magnitude stored as real)
+                        const magNum = Complex.realToNumber(mag); // pega o número JS
+                        sum = Complex.add(sum, Complex.mul(mag, mag));
+                    }
+                }
+                return Complex.sqrt(sum);
+            }
+            return null as ElementType;
+        } else {
+            AST.throwInvalidCallError('norm');
+        }
+    };
+
+    /**
+     * User functions.
+     */
+    public static functions: { [F in keyof typeof CoreFunctions | string]: Function } = {
+        isempty: CoreFunctions.isempty,
+        isscalar: CoreFunctions.isscalar,
+        ismatrix: CoreFunctions.ismatrix,
+        isvector: CoreFunctions.isvector,
+        iscell: CoreFunctions.iscell,
+        isrow: CoreFunctions.isrow,
+        iscolumn: CoreFunctions.iscolumn,
+        isstruct: CoreFunctions.isstruct,
+        ndims: CoreFunctions.ndims,
+        rows: CoreFunctions.rows,
+        columns: CoreFunctions.columns,
+        length: CoreFunctions.Length,
+        numel: CoreFunctions.numel,
+        ind2sub: CoreFunctions.ind2sub,
+        sub2ind: CoreFunctions.sub2ind,
+        size: CoreFunctions.size,
+        colon: CoreFunctions.colon,
+        linspace: CoreFunctions.linspace,
+        logspace: CoreFunctions.logspace,
+        meshgrid: CoreFunctions.meshgrid,
+        ndgrid: CoreFunctions.ndgrid,
+        repmat: CoreFunctions.repmat,
+        reshape: CoreFunctions.reshape,
+        squeeze: CoreFunctions.squeeze,
+        zeros: CoreFunctions.zeros,
+        ones: CoreFunctions.ones,
+        rand: CoreFunctions.rand,
+        randi: CoreFunctions.randi,
+        cat: CoreFunctions.cat,
+        horzcat: CoreFunctions.horzcat,
+        vertcat: CoreFunctions.vertcat,
+        all: CoreFunctions.all,
+        any: CoreFunctions.any,
+        sum: CoreFunctions.sum,
+        prod: CoreFunctions.prod,
+        sumsq: CoreFunctions.sumsq,
+        max: CoreFunctions.max,
+        min: CoreFunctions.min,
+        mean: CoreFunctions.mean,
+        cumsum: CoreFunctions.cumsum,
+        cumprod: CoreFunctions.cumprod,
+        cummin: CoreFunctions.cummin,
+        cummax: CoreFunctions.cummax,
+        var: CoreFunctions.variance,
+        std: CoreFunctions.std,
+        struct: CoreFunctions.struct,
+    };
 }
+
 export { CoreFunctions };
 export default { CoreFunctions };

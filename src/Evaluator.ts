@@ -8,7 +8,7 @@ import MathJSLabLexer from './MathJSLabLexer';
 import MathJSLabParser from './MathJSLabParser';
 import { LexerErrorListener } from './LexerErrorListener';
 import { ParserErrorListener } from './ParserErrorListener';
-import type { OperatorType, NodeInput, NodeExpr, NodeIdentifier, NodeIndexExpr } from './AST';
+import type { OperatorType, NodeInput, NodeExpr, NodeIdentifier, NodeIndexExpr, ReturnHandlerResult, NodeReturnList } from './AST';
 import { AST, CharString, Complex, ComplexType, MultiArray, Structure, FunctionHandle } from './AST';
 import type { MathObject, MathOperationType, UnaryMathOperation, BinaryMathOperation, KeyOfTypeOfMathOperation } from './MathOperation';
 import { MathOperation } from './MathOperation';
@@ -80,7 +80,7 @@ class Evaluator {
     };
 
     /**
-     * Debug flag.
+     * Debug flags.
      */
     public debug: boolean = false;
 
@@ -397,7 +397,7 @@ class Evaluator {
         }
         /* Define LinearAlgebra functions */
         for (const func in LinearAlgebra.functions) {
-            this.defineFunction(func, LinearAlgebra.functions[func]);
+            this.defineFunction(func, LinearAlgebra.functions[func as keyof LinearAlgebra]);
         }
         /* Load unparserMathML for special functions */
         for (const func in this.unparseMathMLFunctions) {
@@ -535,34 +535,6 @@ class Evaluator {
     }
 
     /**
-     * Throws error if left hand side length of multiple assignment greater
-     * than maximum length (to be used in ReturnSelector functions).
-     * @param maxLength Maximum length of return list.
-     * @param currentLength Requested length of return list.
-     */
-    public static throwErrorIfGreaterThanReturnList(maxLength: number, currentLength: number): void {
-        if (currentLength > maxLength) {
-            throw new EvalError(`element number ${maxLength + 1} undefined in return list`);
-        }
-    }
-
-    /**
-     * Tests if it is a NodeReturnList and if so reduces it to its first
-     * element.
-     * @param value A node.
-     * @returns Reduced node if `tree` is a NodeReturnList.
-     */
-    public reduceIfReturnList(tree: NodeInput): NodeInput {
-        if (tree.type === 'RETLIST') {
-            const result = tree.selector(1, 0);
-            result.parent = tree.parent;
-            return result;
-        } else {
-            return tree;
-        }
-    }
-
-    /**
      * Validate left side of assignment node.
      * @param tree Left side of assignment node.
      * @param shallow True if tree is a left root of assignment.
@@ -591,7 +563,7 @@ class Evaluator {
                 if (typeof field === 'string') {
                     return field;
                 } else {
-                    const result = this.reduceIfReturnList(this.Evaluator(field, local, fname));
+                    const result = AST.reduceToFirstIfReturnList(this.Evaluator(field, local, fname));
                     if (CharString.isInstanceOf(result)) {
                         return result.str;
                     } else {
@@ -776,18 +748,18 @@ class Evaluator {
                         tree.left.parent = tree;
                         tree.right.parent = tree;
                         return (this.opTable[tree.type] as BinaryMathOperation)(
-                            this.reduceIfReturnList(this.Evaluator(tree.left, local, fname)),
-                            this.reduceIfReturnList(this.Evaluator(tree.right, local, fname)),
+                            AST.reduceToFirstIfReturnList(this.Evaluator(tree.left, local, fname)),
+                            AST.reduceToFirstIfReturnList(this.Evaluator(tree.right, local, fname)),
                         );
                     case '()':
                         tree.right.parent = tree;
-                        return this.reduceIfReturnList(this.Evaluator(tree.right, local, fname));
+                        return AST.reduceToFirstIfReturnList(this.Evaluator(tree.right, local, fname));
                     case '!':
                     case '~':
                     case '+_':
                     case '-_':
                         tree.right.parent = tree;
-                        return (this.opTable[tree.type] as UnaryMathOperation)(this.reduceIfReturnList(this.Evaluator(tree.right, local, fname)));
+                        return (this.opTable[tree.type] as UnaryMathOperation)(AST.reduceToFirstIfReturnList(this.Evaluator(tree.right, local, fname)));
                     case '++_':
                     case '--_':
                         tree.right.parent = tree;
@@ -795,7 +767,7 @@ class Evaluator {
                     case ".'":
                     case "'":
                         tree.left.parent = tree;
-                        return (this.opTable[tree.type] as UnaryMathOperation)(this.reduceIfReturnList(this.Evaluator(tree.left, local, fname)));
+                        return (this.opTable[tree.type] as UnaryMathOperation)(AST.reduceToFirstIfReturnList(this.Evaluator(tree.left, local, fname)));
                     case '_++':
                     case '_--':
                         tree.left.parent = tree;
@@ -815,6 +787,7 @@ class Evaluator {
                     case '.**=':
                     case '&=':
                     case '|=': {
+                        /* `tree` is an assignment */
                         tree.left.parent = tree;
                         tree.right.parent = tree;
                         const assignment = this.validateAssignment(tree.left, true, local, fname);
@@ -829,24 +802,26 @@ class Evaluator {
                             right = tree.right;
                         }
                         if (right.type !== 'RETLIST') {
-                            right = AST.nodeReturnList((length: number, index: number) => {
+                            right = AST.nodeReturnList((evaluated: ReturnHandlerResult, index: number) => {
                                 if (index === 0) {
                                     return tree.right;
                                 } else {
-                                    throw new EvalError(`element number ${index + 1} undefined in return list`);
+                                    AST.throwErrorIfGreaterThanReturnList(evaluated.length, index);
                                 }
                             });
                         }
                         const resultList = AST.nodeListFirst();
+                        const evaluated = (right as NodeReturnList).handler(assignment.length);
                         for (let n = 0; n < assignment.length; n++) {
                             const { id, index, field } = assignment[n];
                             if (id !== '~') {
+                                /* Do assignment */
                                 if (index.length === 0) {
                                     /* Name definition. */
                                     if (right.type !== 'RETLIST') {
                                         right = this.Evaluator(right, false, fname);
                                     }
-                                    const rightN = right.selector(assignment.length, n);
+                                    const rightN = (right as NodeReturnList).selector(evaluated, n);
                                     rightN.parent = tree.right;
                                     const expr = op.length ? AST.nodeOp(op as OperatorType, AST.nodeIdentifier(id), rightN) : rightN;
                                     try {
@@ -855,13 +830,13 @@ class Evaluator {
                                                 this.nameTable[id] = new Structure({});
                                             }
                                             if (Structure.isInstanceOf(this.nameTable[id])) {
-                                                Structure.setNewField(this.nameTable[id], field, this.reduceIfReturnList(this.Evaluator(expr)));
+                                                Structure.setNewField(this.nameTable[id], field, AST.reduceToFirstIfReturnList(this.Evaluator(expr)));
                                             } else {
                                                 throw new EvalError('in indexed assignment.');
                                             }
                                             AST.appendNodeList(resultList, AST.nodeOp('=', AST.nodeIdentifier(id), this.nameTable[id]));
                                         } else {
-                                            this.nameTable[id] = this.reduceIfReturnList(this.Evaluator(expr));
+                                            this.nameTable[id] = AST.reduceToFirstIfReturnList(this.Evaluator(expr));
                                             AST.appendNodeList(resultList, AST.nodeOp('=', AST.nodeIdentifier(id), this.nameTable[id]));
                                         }
                                         continue;
@@ -877,7 +852,7 @@ class Evaluator {
                                                 /* Indexed matrix reference on left hand side with operator. */
                                                 if (index.length === 1) {
                                                     /* Test logical indexing. */
-                                                    const arg0 = this.reduceIfReturnList(this.Evaluator(index[0], local, fname));
+                                                    const arg0 = AST.reduceToFirstIfReturnList(this.Evaluator(index[0], local, fname));
                                                     if (MultiArray.isInstanceOf(arg0) && arg0.type === Complex.LOGICAL) {
                                                         /* Logical indexing. */
                                                         MultiArray.setElementsLogical(
@@ -886,12 +861,14 @@ class Evaluator {
                                                             field,
                                                             MultiArray.linearize(arg0) as ComplexType[],
                                                             MultiArray.scalarToMultiArray(
-                                                                this.reduceIfReturnList(
+                                                                AST.reduceToFirstIfReturnList(
                                                                     this.Evaluator(
                                                                         AST.nodeOp(
                                                                             op,
                                                                             MultiArray.getElementsLogical(this.nameTable[id], id, field, arg0),
-                                                                            MultiArray.scalarToMultiArray(this.reduceIfReturnList(this.Evaluator(right.selector(assignment.length, n)))),
+                                                                            MultiArray.scalarToMultiArray(
+                                                                                AST.reduceToFirstIfReturnList(this.Evaluator((right as NodeReturnList).selector(evaluated, n))),
+                                                                            ),
                                                                         ),
                                                                         false,
                                                                         fname,
@@ -907,12 +884,14 @@ class Evaluator {
                                                             field,
                                                             [arg0],
                                                             MultiArray.scalarToMultiArray(
-                                                                this.reduceIfReturnList(
+                                                                AST.reduceToFirstIfReturnList(
                                                                     this.Evaluator(
                                                                         AST.nodeOp(
                                                                             op,
                                                                             MultiArray.getElements(this.nameTable[id], id, field, [arg0]),
-                                                                            MultiArray.scalarToMultiArray(this.reduceIfReturnList(this.Evaluator(right.selector(assignment.length, n)))),
+                                                                            MultiArray.scalarToMultiArray(
+                                                                                AST.reduceToFirstIfReturnList(this.Evaluator((right as NodeReturnList).selector(evaluated, n))),
+                                                                            ),
                                                                         ),
                                                                         false,
                                                                         fname,
@@ -926,14 +905,16 @@ class Evaluator {
                                                         this.nameTable,
                                                         id,
                                                         field,
-                                                        index.map((arg: NodeExpr) => this.reduceIfReturnList(this.Evaluator(arg))),
+                                                        index.map((arg: NodeExpr) => AST.reduceToFirstIfReturnList(this.Evaluator(arg))),
                                                         MultiArray.scalarToMultiArray(
-                                                            this.reduceIfReturnList(
+                                                            AST.reduceToFirstIfReturnList(
                                                                 this.Evaluator(
                                                                     AST.nodeOp(
                                                                         op,
                                                                         MultiArray.getElements(this.nameTable[id], id, field, index),
-                                                                        MultiArray.scalarToMultiArray(this.reduceIfReturnList(this.Evaluator(right.selector(assignment.length, n)))),
+                                                                        MultiArray.scalarToMultiArray(
+                                                                            AST.reduceToFirstIfReturnList(this.Evaluator((right as NodeReturnList).selector(evaluated, n))),
+                                                                        ),
                                                                     ),
                                                                     false,
                                                                     fname,
@@ -956,7 +937,7 @@ class Evaluator {
                                             /* Test logical indexing. */
                                             index[0].parent = tree.left;
                                             index[0].index = 0;
-                                            const arg0 = this.reduceIfReturnList(this.Evaluator(index[0], local, fname));
+                                            const arg0 = AST.reduceToFirstIfReturnList(this.Evaluator(index[0], local, fname));
                                             if (MultiArray.isInstanceOf(arg0) && arg0.type === Complex.LOGICAL) {
                                                 /* Logical indexing. */
                                                 MultiArray.setElementsLogical(
@@ -964,7 +945,7 @@ class Evaluator {
                                                     id,
                                                     field,
                                                     MultiArray.linearize(arg0) as ComplexType[],
-                                                    MultiArray.scalarToMultiArray(this.reduceIfReturnList(this.Evaluator(right.selector(assignment.length, n)))),
+                                                    MultiArray.scalarToMultiArray(AST.reduceToFirstIfReturnList(this.Evaluator((right as NodeReturnList).selector(evaluated, n)))),
                                                 );
                                             } else {
                                                 /* Not logical indexing. */
@@ -973,7 +954,7 @@ class Evaluator {
                                                     id,
                                                     field,
                                                     [arg0],
-                                                    MultiArray.scalarToMultiArray(this.reduceIfReturnList(this.Evaluator(right.selector(assignment.length, n)))),
+                                                    MultiArray.scalarToMultiArray(AST.reduceToFirstIfReturnList(this.Evaluator((right as NodeReturnList).selector(evaluated, n)))),
                                                 );
                                             }
                                         } else {
@@ -984,9 +965,9 @@ class Evaluator {
                                                 index.map((arg: NodeExpr, i: number) => {
                                                     arg.parent = tree.left;
                                                     arg.index = i;
-                                                    return this.reduceIfReturnList(this.Evaluator(arg));
+                                                    return AST.reduceToFirstIfReturnList(this.Evaluator(arg));
                                                 }),
-                                                MultiArray.scalarToMultiArray(this.reduceIfReturnList(this.Evaluator(right.selector(assignment.length, n)))),
+                                                MultiArray.scalarToMultiArray(AST.reduceToFirstIfReturnList(this.Evaluator((right as NodeReturnList).selector(evaluated, n)))),
                                             );
                                         }
                                         AST.appendNodeList(resultList, AST.nodeOp('=', AST.nodeIdentifier(id), this.nameTable[id]));
@@ -1016,7 +997,7 @@ class Evaluator {
                         } else if (tree.id in this.nameTable) {
                             /* Defined in nameTable. */
                             this.nameTable[tree.id].parent = tree;
-                            return this.reduceIfReturnList(this.Evaluator(this.nameTable[tree.id]));
+                            return AST.reduceToFirstIfReturnList(this.Evaluator(this.nameTable[tree.id]));
                         } else if (this.aliasName(tree.id) in this.builtInFunctionTable) {
                             /* Defined as built-in function */
                             return FunctionHandle.create(tree.id);
@@ -1025,12 +1006,12 @@ class Evaluator {
                         }
                     case '.': {
                         const result = Structure.getFields(
-                            this.reduceIfReturnList(this.Evaluator(tree.obj, local, fname)),
+                            AST.reduceToFirstIfReturnList(this.Evaluator(tree.obj, local, fname)),
                             tree.field.map((field: NodeExpr) => {
                                 if (typeof field === 'string') {
                                     return field;
                                 } else {
-                                    const result = this.reduceIfReturnList(this.Evaluator(field, local, fname));
+                                    const result = AST.reduceToFirstIfReturnList(this.Evaluator(field, local, fname));
                                     if (CharString.isInstanceOf(result)) {
                                         return result.str;
                                     } else {
@@ -1065,7 +1046,7 @@ class Evaluator {
                             }
                             tree.list[i].parent = result;
                             tree.list[i].index = n;
-                            const item = this.reduceIfReturnList(this.Evaluator(tree.list[i], local, fname));
+                            const item = AST.reduceToFirstIfReturnList(this.Evaluator(tree.list[i], local, fname));
                             if (item.type === 'LIST') {
                                 for (let j = 0; j < item.list.length; j++, n++) {
                                     item.list[j].parent = result;
@@ -1091,9 +1072,9 @@ class Evaluator {
                             tree.stride_.parent = tree;
                         }
                         return MultiArray.expandRange(
-                            this.reduceIfReturnList(this.Evaluator(tree.start_, local, fname)),
-                            this.reduceIfReturnList(this.Evaluator(tree.stop_, local, fname)),
-                            tree.stride_ ? this.reduceIfReturnList(this.Evaluator(tree.stride_, local, fname)) : null,
+                            AST.reduceToFirstIfReturnList(this.Evaluator(tree.start_, local, fname)),
+                            AST.reduceToFirstIfReturnList(this.Evaluator(tree.stop_, local, fname)),
+                            tree.stride_ ? AST.reduceToFirstIfReturnList(this.Evaluator(tree.stride_, local, fname)) : null,
                         );
                     case 'ENDRANGE': {
                         let parent = tree.parent;
@@ -1104,7 +1085,7 @@ class Evaluator {
                             parent = parent.parent;
                         }
                         if (parent && parent.type === 'IDX') {
-                            const expr = this.reduceIfReturnList(this.Evaluator(parent.expr, local, fname));
+                            const expr = AST.reduceToFirstIfReturnList(this.Evaluator(parent.expr, local, fname));
                             if (MultiArray.isInstanceOf(expr)) {
                                 return parent.args.length === 1 ? Complex.create(MultiArray.linearLength(expr)) : Complex.create(MultiArray.getDimension(expr, index));
                             } else {
@@ -1116,7 +1097,7 @@ class Evaluator {
                     }
                     case ':':
                         if (tree.parent.type === 'IDX') {
-                            const expr = this.reduceIfReturnList(this.Evaluator(tree.parent.expr, local, fname));
+                            const expr = AST.reduceToFirstIfReturnList(this.Evaluator(tree.parent.expr, local, fname));
                             if (MultiArray.isInstanceOf(expr)) {
                                 return tree.parent.args.length === 1
                                     ? MultiArray.expandColon(MultiArray.linearLength(expr))
@@ -1133,7 +1114,7 @@ class Evaluator {
                             throw new ReferenceError(`'${tree.id}' undefined.`);
                         }
                         tree.expr.parent = tree;
-                        const expr = this.reduceIfReturnList(this.Evaluator(tree.expr, local, fname));
+                        const expr = AST.reduceToFirstIfReturnList(this.Evaluator(tree.expr, local, fname));
                         if (FunctionHandle.isInstanceOf(expr)) {
                             if (expr.id) {
                                 const aliasTreeName = this.aliasName(expr.id as string);
@@ -1144,7 +1125,7 @@ class Evaluator {
                                         i < this.builtInFunctionTable[aliasTreeName].ev.length &&
                                         !this.builtInFunctionTable[aliasTreeName].ev[i]
                                         ? arg
-                                        : this.reduceIfReturnList(this.Evaluator(arg, local, fname));
+                                        : AST.reduceToFirstIfReturnList(this.Evaluator(arg, local, fname));
                                 });
                                 /* Error if mapper and #arguments!==1 (Invalid call). */
                                 if (this.builtInFunctionTable[aliasTreeName].mapper && argumentsList.length !== 1) {
@@ -1165,9 +1146,9 @@ class Evaluator {
                                     /* Evaluate defined function arguments list. */
                                     tree.args[i].parent = tree;
                                     tree.args[i].index = i;
-                                    this.localTable[new_fname][expr.parameter[i].id] = this.reduceIfReturnList(this.Evaluator(tree.args[i], true, fname));
+                                    this.localTable[new_fname][expr.parameter[i].id] = AST.reduceToFirstIfReturnList(this.Evaluator(tree.args[i], true, fname));
                                 }
-                                const temp = this.reduceIfReturnList(this.Evaluator(expr.expression, true, new_fname));
+                                const temp = AST.reduceToFirstIfReturnList(this.Evaluator(expr.expression, true, new_fname));
                                 /* Delete localTable entry. */
                                 delete this.localTable[new_fname];
                                 return temp;
@@ -1183,7 +1164,7 @@ class Evaluator {
                                 /* Test logical indexing. */
                                 tree.args[0].parent = tree;
                                 tree.args[0].index = 0;
-                                const arg0 = this.reduceIfReturnList(this.Evaluator(tree.args[0], local, fname));
+                                const arg0 = AST.reduceToFirstIfReturnList(this.Evaluator(tree.args[0], local, fname));
                                 if (MultiArray.isInstanceOf(arg0) && arg0.type === Complex.LOGICAL) {
                                     /* Logical indexing. */
                                     result = MultiArray.getElementsLogical(array, tree.expr.id, [], arg0);
@@ -1199,7 +1180,7 @@ class Evaluator {
                                     tree.args.map((arg: NodeExpr, i: number) => {
                                         arg.parent = tree;
                                         arg.index = i;
-                                        return this.reduceIfReturnList(this.Evaluator(arg, local, fname));
+                                        return AST.reduceToFirstIfReturnList(this.Evaluator(arg, local, fname));
                                     }),
                                 );
                             }
@@ -1219,15 +1200,15 @@ class Evaluator {
                     case 'IF': {
                         for (let ifTest = 0; ifTest < tree.expression.length; ifTest++) {
                             tree.expression[ifTest].parent = tree;
-                            if (this.toBoolean(this.reduceIfReturnList(this.Evaluator(tree.expression[ifTest], local, fname)))) {
+                            if (this.toBoolean(AST.reduceToFirstIfReturnList(this.Evaluator(tree.expression[ifTest], local, fname)))) {
                                 tree.then[ifTest].parent = tree;
-                                return this.reduceIfReturnList(this.Evaluator(tree.then[ifTest], local, fname));
+                                return AST.reduceToFirstIfReturnList(this.Evaluator(tree.then[ifTest], local, fname));
                             }
                         }
                         // No one then clause.
                         if (tree.else) {
                             tree.else.parent = tree;
-                            return this.reduceIfReturnList(this.Evaluator(tree.else, local, fname));
+                            return AST.reduceToFirstIfReturnList(this.Evaluator(tree.else, local, fname));
                         }
                         // Return null NodeList.
                         return {

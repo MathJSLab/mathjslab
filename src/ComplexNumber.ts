@@ -51,7 +51,7 @@ class ComplexNumber implements TypeOfComplex.ComplexInterface<number, number, un
     public static readonly defaultSettings: TypeOfComplex.ComplexConfig = Object.assign({}, defaultSettings as TypeOfComplex.ComplexConfig);
     public static readonly settings: TypeOfComplex.ComplexConfig = this.defaultSettings;
 
-    public static readonly isInstanceOf = (value: unknown): boolean => value instanceof ComplexNumber;
+    public static readonly isInstanceOf: TypeOfComplex.IsInstanceOfComplexHandler<ComplexNumber> = (value: unknown): value is ComplexNumber => value instanceof ComplexNumber;
 
     public static readonly set = (config: Partial<TypeOfComplex.ComplexConfig>): void => {};
 
@@ -238,6 +238,7 @@ class ComplexNumber implements TypeOfComplex.ComplexInterface<number, number, un
     public static neg: TypeOfComplex.OneArgComplexHandler<number, ComplexNumber> = (z: ComplexNumber): ComplexNumber => new ComplexNumber(-z.re, -z.im);
 
     public static mul: TypeOfComplex.TwoArgComplexHandler<number, ComplexNumber> = TypeOfComplex.mulFactory<number, ComplexNumber>(Math, ComplexNumber);
+    public static mulAndSumTo: TypeOfComplex.ThreeArgComplexHandler<number, ComplexNumber> = TypeOfComplex.mulAndSumToFactory<number, ComplexNumber>(Math, ComplexNumber);
     public static rdiv: TypeOfComplex.TwoArgComplexHandler<number, ComplexNumber> = TypeOfComplex.rdivFactory<number, ComplexNumber>(Math, ComplexNumber);
 
     public static ldiv: TypeOfComplex.TwoArgComplexHandler<number, ComplexNumber> = ComplexNumber.rdiv;
@@ -246,7 +247,9 @@ class ComplexNumber implements TypeOfComplex.ComplexInterface<number, number, un
     public static power: TypeOfComplex.TwoArgComplexHandler<number, ComplexNumber> = TypeOfComplex.powerFactory<number, ComplexNumber>(Math, ComplexNumber);
     public static root: TypeOfComplex.TwoArgComplexHandler<number, ComplexNumber> = TypeOfComplex.rootFactory<number, ComplexNumber>(ComplexNumber);
     public static absValue: TypeOfComplex.AbsoluteValueComplexHandler<number, ComplexNumber> = TypeOfComplex.absValueFactory<number, ComplexNumber>(Math);
+    public static abs2Value: TypeOfComplex.AbsoluteValueComplexHandler<number, ComplexNumber> = TypeOfComplex.abs2ValueFactory<number, ComplexNumber>(Math);
     public static abs: TypeOfComplex.OneArgComplexHandler<number, ComplexNumber> = TypeOfComplex.absFactory<number, ComplexNumber>(Math, ComplexNumber);
+    public static abs2: TypeOfComplex.OneArgComplexHandler<number, ComplexNumber> = TypeOfComplex.abs2Factory<number, ComplexNumber>(Math, ComplexNumber);
     public static hypot: TypeOfComplex.TwoArgComplexHandler<number, ComplexNumber> = TypeOfComplex.hypotFactory<number, ComplexNumber>(ComplexNumber);
     public static arg: TypeOfComplex.OneArgComplexHandler<number, ComplexNumber> = TypeOfComplex.argFactory<number, ComplexNumber>(Math, ComplexNumber);
     public static conj: TypeOfComplex.OneArgComplexHandler<number, ComplexNumber> = TypeOfComplex.conjFactory<number, ComplexNumber>(Math, ComplexNumber);
