@@ -5,13 +5,15 @@
  */
 
 import { CharString } from './CharString';
-import { Complex, ComplexType } from './Complex';
 import type { TUnaryOperationLeftName, TBinaryOperationName } from './ComplexInterface';
+import { type ComplexType, Complex } from './Complex';
 import { type ElementType, MultiArray } from './MultiArray';
-import { LinearAlgebra } from './LinearAlgebra';
 import { Structure } from './Structure';
 import { FunctionHandle } from './FunctionHandle';
 import { BLAS } from './BLAS';
+import { LinearAlgebra } from './LinearAlgebra';
+import { LAPACK } from './LAPACK';
+import { AST } from './AST';
 
 /**
  * Generic mathematical object.
@@ -47,20 +49,20 @@ type KeyOfTypeOfMathOperation = keyof typeof MathOperation;
 abstract class MathOperation {
     /**
      * Creates a copy of `MathObject` object.
-     * @param right
+     * @param value
      * @returns
      */
-    public static readonly copy: UnaryMathOperation = (right: MathObject): MathObject => {
-        if (Complex.isInstanceOf(right)) {
-            return Complex.copy(right as ComplexType);
-        } else if (MultiArray.isInstanceOf(right)) {
-            return MultiArray.copy(right as MultiArray);
-        } else if (CharString.isInstanceOf(right)) {
-            return CharString.copy(right as CharString);
-        } else if (Structure.isInstanceOf(right)) {
-            return Structure.copy(right as Structure);
+    public static readonly copy: UnaryMathOperation = (value: MathObject): MathObject => {
+        if (Complex.isInstanceOf(value)) {
+            return Complex.copy(value as ComplexType);
+        } else if (MultiArray.isInstanceOf(value)) {
+            return MultiArray.copy(value as MultiArray);
+        } else if (CharString.isInstanceOf(value)) {
+            return CharString.copy(value as CharString);
+        } else if (Structure.isInstanceOf(value)) {
+            return Structure.copy(value as Structure);
         } else {
-            return FunctionHandle.copy(right as FunctionHandle);
+            return FunctionHandle.copy(value as FunctionHandle);
         }
     };
 
@@ -170,22 +172,7 @@ abstract class MathOperation {
         } else if (MultiArray.isInstanceOf(left) && Complex.isInstanceOf(right)) {
             return MultiArray.MultiArrayOpScalar('mul', left as MultiArray, right as ComplexType);
         } else {
-            // return BLAS.gemm(
-            //     left as MultiArray,
-            //     right as MultiArray
-            // );
-            const result = new MultiArray([(left as MultiArray).dimension[0], (right as MultiArray).dimension[1]]);
-            BLAS.gemm(
-                Complex.one(),
-                (left as MultiArray).array as ComplexType[][],
-                (left as MultiArray).dimension[0],
-                (left as MultiArray).dimension[1],
-                (right as MultiArray).array as ComplexType[][],
-                (right as MultiArray).dimension[1],
-                Complex.zero(),
-                result.array as ComplexType[][],
-            );
-            return result;
+            return LinearAlgebra.mul(left as MultiArray, right as MultiArray);
         }
     };
 
@@ -249,7 +236,26 @@ abstract class MathOperation {
      * @returns
      */
     public static readonly mldivide: BinaryMathOperation = (left: MathObject, right: MathObject): MathObject => {
-        return Complex.one(); // TODO: implement left division.
+        if (CharString.isInstanceOf(left)) {
+            left = MultiArray.fromCharString(left as CharString);
+        }
+        if (CharString.isInstanceOf(right)) {
+            right = MultiArray.fromCharString(right as CharString);
+        }
+        if (Complex.isInstanceOf(left) && Complex.isInstanceOf(right)) {
+            return Complex.ldiv(left as ComplexType, right as ComplexType);
+        } else if (Complex.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
+            return MultiArray.scalarOpMultiArray('ldiv', left as ComplexType, right as MultiArray);
+        } else if (MultiArray.isInstanceOf(left) && Complex.isInstanceOf(right)) {
+            throw new EvalError(`operator \\: nonconformant arguments (op1 is ${left.dimension.join('x')}, op2 is 1x1).`);
+        } else {
+            if ((left as MultiArray).dimension[1] === (right as MultiArray).dimension[0]) {
+                // MATLAB: X = A \ B
+                return LAPACK.mldivide(left as MultiArray, right as MultiArray).X;
+            } else {
+                throw new EvalError(`operator \\: nonconformant arguments (op1 is ${(left as MultiArray).dimension.join('x')}, op2 is ${(right as MultiArray).dimension.join('x')}).`);
+            }
+        }
     };
 
     /**

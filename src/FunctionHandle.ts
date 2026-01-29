@@ -58,6 +58,18 @@ class FunctionHandle {
         }
     };
 
+    public static toString = (fhandle: FunctionHandle): string => {
+        if (fhandle.id) {
+            return (fhandle.commat ? '@' : '') + fhandle.id;
+        } else {
+            return '@anonymous function handle';
+        }
+    };
+
+    public toString(): string {
+        return FunctionHandle.toString(this);
+    }
+
     /**
      *
      * @param fhandle
@@ -71,9 +83,9 @@ class FunctionHandle {
         } else {
             return (
                 '<mo>@</mo><mo fence="true" stretchy="true">(</mo>' +
-                fhandle.parameter.map((param: AST.NodeExpr) => evaluator.unparserMathML(param)).join('<mo>,</mo>') +
+                fhandle.parameter.map((param: AST.NodeExpr) => evaluator.UnparserMathML(param)).join('<mo>,</mo>') +
                 '<mo fence="true" stretchy="true">)</mo><mspace width="0.8em"/>' +
-                evaluator.unparserMathML(fhandle.expression)
+                evaluator.UnparserMathML(fhandle.expression)
             );
         }
     };

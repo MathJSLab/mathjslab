@@ -64,7 +64,7 @@ type OperatorType =
 /**
  * NodeType
  */
-type NodeType = 'IDENT' | 'CMDWLIST' | 'IDX' | 'RANGE' | 'ENDRANGE' | 'LIST' | '.' | ':' | '<~>' | 'RETLIST' | 'FCN' | 'GLOBAL' | 'PERSIST' | 'IF' | OperatorType;
+type NodeType = 'IDENT' | 'CMDWLIST' | 'IDX' | 'RANGE' | 'ENDRANGE' | 'LIST' | '.' | ':' | '<~>' | 'UNPARSE' | 'RETLIST' | 'FCN' | 'GLOBAL' | 'PERSIST' | 'IF' | OperatorType;
 
 /**
  * Node base.
@@ -499,6 +499,9 @@ abstract class AST {
     /**
      * Creates NodeReturnList (multiple assignment)
      * @param selector Left side selector function.
+     * @param handler A handler that returns an object containing the length
+     * of the multiple assignment and the values evaluated by the function in
+     * a single execution. The `selector` function uses these values.
      * @returns Return list node.
      */
     public static readonly nodeReturnList = (selector: ReturnSelector, handler?: ReturnHandler): NodeReturnList => {
@@ -544,9 +547,9 @@ abstract class AST {
      * Throw invalid call error if (optional) test is true.
      * @param name
      */
-    public static readonly throwInvalidCallError = (name: string, test: boolean = true): void => {
+    public static readonly throwInvalidCallError = (name: string, test: boolean = true): void | never => {
         if (test) {
-            throw new Error(`Invalid call to ${name}. Type 'help ${name}' to see correct usage.`);
+            throw new SyntaxError(`Invalid call to ${name}. Type 'help ${name}' to see correct usage.`);
         }
     };
 
@@ -692,6 +695,7 @@ abstract class AST {
 
 export type {
     OperatorType,
+    NodeType,
     NodeBase,
     NodeInput,
     NodeExpr,

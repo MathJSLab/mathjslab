@@ -88,8 +88,8 @@ export interface ComplexInterface<REAL, TYPE = number, PARENT = unknown> {
     /**
      * Instance methods.
      */
-    unparse(): string;
     copy(): ComplexInterface<REAL, TYPE, PARENT>;
+    toString(): string;
     toLogical(): ComplexInterface<REAL, TYPE, PARENT>;
 }
 
@@ -139,14 +139,14 @@ export type TestNumLikeComplexHandler<REAL, COMPLEX extends ComplexInterface<REA
 export type CompareValueComplexHandler<REAL> = (cmp: TCompareOperationName, left: REAL, right: REAL) => boolean;
 export type CmpComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>> = (cmp: TCompareOperationName, left: COMPLEX, right: COMPLEX) => COMPLEX;
 export type ParseComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>> = (value: string) => COMPLEX;
+export type PrecedenceComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>, EVALUATOR = Evaluator, PRECEDENCE = number> = (value: COMPLEX, evaluator: EVALUATOR) => PRECEDENCE;
 export type UnparseValueComplexHandler<REAL> = (value: REAL) => string;
-export type UnparseComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>, PRECEDENCE = number> = (value: COMPLEX, parentPrecedence: PRECEDENCE) => string;
-export type PrecedenceComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>, EVALUATOR, PRECEDENCE = number> = (value: COMPLEX, evaluator: EVALUATOR) => PRECEDENCE;
-export type UnparseMathMLComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>, EVALUATOR, PRECEDENCE = number> = (
+export type UnparseComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>, EVALUATOR = Evaluator, PRECEDENCE = number> = (
     value: COMPLEX,
     evaluator: EVALUATOR,
-    parentPrecedence: PRECEDENCE,
+    parentPrecedence?: PRECEDENCE,
 ) => string;
+export type ToStringComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>> = (value: COMPLEX) => string;
 export type RandomComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>> = (significantDigits?: number) => COMPLEX;
 export type CompareComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>> = (cmp: TCompareOperationName, left: COMPLEX, right: COMPLEX) => COMPLEX;
 export type MinMaxArrayComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>> = (cmp: TMinMaxArrayCompareOperationName, ...args: COMPLEX[]) => COMPLEX;
@@ -184,6 +184,7 @@ export interface RealInterfaceStatic<REAL> {
     abs(x: REAL): REAL;
     sin(x: REAL): REAL;
     cos(x: REAL): REAL;
+    atan(x: REAL): REAL;
     atan2(x: REAL, y: REAL): REAL;
     sinh(x: REAL): REAL;
     cosh(x: REAL): REAL;
@@ -309,6 +310,18 @@ export interface ComplexInterfaceStatic<
      */
     readonly imag: (z: COMPLEX) => COMPLEX;
     /**
+     * Check if number is a complex (non-zero imaginary part).
+     * @param z value.
+     * @returns `true` if `z` has a non null imaginary part. `false` otherwise.
+     */
+    readonly isComplexValue: (z: COMPLEX) => boolean;
+    /**
+     * Check if number is a real (zero imaginary part).
+     * @param z value.
+     * @returns `true` if `z` is real (has a zero imaginary part). `false` otherwise.
+     */
+    readonly isRealValue: (z: COMPLEX) => boolean;
+    /**
      * Tests whether the real part is an integer.
      * @param z `COMPLEX` to test.
      * @returns `true` if the real part is an integer. `false` otherwise.
@@ -387,6 +400,12 @@ export interface ComplexInterfaceStatic<
      */
     readonly realToNumber: (z: COMPLEX) => number;
     /**
+     * Returns type `boolean` `true` if real or imaginary part is non-zero.
+     * @param z `COMPLEX` value to convert `boolean` type.
+     * @returns `boolean` `true` if real or imaginary part is non-zero, otherwise `false`.
+     */
+    readonly toBoolean: (z: COMPLEX) => boolean;
+    /**
      * Converts the imaginary part to type `number`.
      * @param z `COMPLEX` value to convert imaginary part.
      * @returns Imaginary part of `COMPLEX` value coverted to `number`.
@@ -464,7 +483,8 @@ export interface ComplexInterfaceStatic<
     readonly imagGreaterThan: (z: COMPLEX, value: NumLike<REAL>) => boolean;
     readonly parse: (value: string) => COMPLEX;
     readonly unparseValue: (value: REAL) => string;
-    readonly unparse: (value: COMPLEX, parentPrecedence: PRECEDENCE) => string;
+    readonly unparse: (value: COMPLEX, evaluator: Evaluator, parentPrecedence: PRECEDENCE) => string;
+    readonly toString: (value: COMPLEX) => string;
     readonly unparseMathMLValue: (value: REAL) => string;
     readonly precedence: (value: COMPLEX, evaluator: Evaluator) => PRECEDENCE;
     readonly unparseMathML: (value: COMPLEX, evaluator: Evaluator, parentPrecedence: PRECEDENCE) => string;
@@ -690,6 +710,7 @@ export interface ComplexInterfaceStatic<
     readonly acos: (z: COMPLEX) => COMPLEX;
     readonly acosd: (z: COMPLEX) => COMPLEX;
     readonly atan: (z: COMPLEX) => COMPLEX;
+    readonly atan2: (x: COMPLEX, y: COMPLEX) => COMPLEX;
     readonly atand: (z: COMPLEX) => COMPLEX;
     readonly acsc: (z: COMPLEX) => COMPLEX;
     readonly acscd: (z: COMPLEX) => COMPLEX;
@@ -805,11 +826,46 @@ export const parseFactory = <REAL, COMPLEX extends ComplexInterface<REAL, TYPE, 
      */
     return (value: string): COMPLEX => {
         const num = value[0] === '0' && (value[1] === 'x' || value[1] === 'X') ? value.replace('_', '') : value.replace(/[dD]/, 'e');
-
         if (/[ijIJ]$/.test(num)) {
             return ctor.create(0, num.slice(0, -1));
         }
         return ctor.create(num, 0);
+    };
+};
+
+/**
+ * Factory for `ctor.precedence` method.
+ * @param ctor COMPLEX instance constructor.
+ * @returns `ctor.precedence` COMPLEX method.
+ */
+export const precedenceFactory = <REAL, COMPLEX extends ComplexInterface<REAL, TYPE, PARENT>, TYPE = number, PARENT = unknown, PRECEDENCE = number, ROUNDING = Rounding, MODULO = Modulo>(
+    ctor: ComplexInterfaceStatic<REAL, COMPLEX, TYPE, PARENT, PRECEDENCE, ROUNDING, MODULO>,
+): ((value: COMPLEX, evaluator: Evaluator) => number) => {
+    /**
+     * Returns the precedence of a `ctor` `value` by querying the precedence table in `evaluator` object (`Evaluator.ts`).
+     * @param value `ctor` value.
+     * @param evaluator `Evaluator` instance.
+     * @returns Precedence level.
+     */
+    return (value: COMPLEX, evaluator: Evaluator): number => {
+        if (value.type !== ctor.LOGICAL) {
+            const value_prec = ctor.toMaxPrecision(value);
+            if (!ctor.realIsZero(value_prec) && !ctor.imagIsZero(value_prec)) {
+                return evaluator.precedenceTable['+'];
+            } else if (!ctor.realIsZero(value_prec)) {
+                return ctor.realIsNegative(value_prec) ? evaluator.precedenceTable['-_'] : evaluator.precedenceTable['()'];
+            } else if (!ctor.imagIsZero(value_prec)) {
+                return ctor.imagIsNegative(value_prec) ? evaluator.precedenceTable['-_'] : evaluator.precedenceTable['()'];
+            } else if (!ctor.realIsNegative(value_prec) && !ctor.imagIsNegative(value_prec)) {
+                return evaluator.precedenceTable['()'];
+            } else if (ctor.realIsNegative(value_prec) && ctor.imagIsNegative(value_prec)) {
+                return evaluator.precedenceTable['-_'];
+            } else {
+                return evaluator.precedenceTable['+'];
+            }
+        } else {
+            return evaluator.precedenceTable['()'];
+        }
     };
 };
 
@@ -848,25 +904,101 @@ export const unparseValueFactory =
  */
 export const unparseFactory = <REAL, COMPLEX extends ComplexInterface<REAL, TYPE, PARENT>, TYPE = number, PARENT = unknown, PRECEDENCE = number, ROUNDING = Rounding, MODULO = Modulo>(
     ctor: ComplexInterfaceStatic<REAL, COMPLEX, TYPE, PARENT, PRECEDENCE, ROUNDING, MODULO>,
-): ((value: COMPLEX, parentPrecedence?: number) => string) => {
+): ((value: COMPLEX, evaluator: Evaluator, parentPrecedence?: number) => string) => {
     /**
      * Unparse `ctor` value. Show true/false if logical value,
-     * otherwise show real and imaginary parts enclosed by parenthesis. If
-     * some part is zero the null part is ommited (and parenthesis is ommited
-     * too).
+     * otherwise show real and imaginary parts enclosed by parenthesis if
+     * needed by parent precedence. If some part is zero the null part is
+     * ommited (and an eventual needed parenthesis is ommited too).
      * @param value Value to unparse.
      * @returns String of unparsed value.
      */
-    return (value: COMPLEX, parentPrecedence: number = 0): string => {
+    return (value: COMPLEX, evaluator: Evaluator, parentPrecedence: number = 0): string => {
+        if (value.type !== ctor.LOGICAL) {
+            const value_prec = ctor.toMaxPrecision(value);
+            if (!ctor.realIsZero(value_prec) && !ctor.imagIsZero(value_prec)) {
+                const unparsed =
+                    ctor.unparseValue(value_prec.re) +
+                    (ctor.imagGreaterThan(value_prec, 0) ? '+' : '') +
+                    (!ctor.imagEquals(value_prec, 1) ? (!ctor.imagEquals(value_prec, -1) ? ctor.unparseValue(value_prec.im) : '-') : '') +
+                    'i';
+                if (parentPrecedence > evaluator.precedenceTable['+']) {
+                    return '(' + unparsed + ')';
+                } else {
+                    return unparsed;
+                }
+            } else if (!ctor.realIsZero(value_prec)) {
+                const unparsed = ctor.unparseValue(value_prec.re);
+                if (parentPrecedence > (ctor.realIsNegative(value_prec) ? evaluator.precedenceTable['-_'] : evaluator.precedenceTable['()'])) {
+                    return '(' + unparsed + ')';
+                } else {
+                    return unparsed;
+                }
+            } else if (!ctor.imagIsZero(value_prec)) {
+                const unparsed = (!ctor.imagEquals(value_prec, 1) ? (!ctor.imagEquals(value_prec, -1) ? ctor.unparseValue(value_prec.im) : '-') : '') + 'i';
+                if (parentPrecedence > (ctor.imagIsNegative(value_prec) ? evaluator.precedenceTable['-_'] : evaluator.precedenceTable['()'])) {
+                    return '(' + unparsed + ')';
+                } else {
+                    return unparsed;
+                }
+            } else if (!ctor.realIsNegative(value_prec) && !ctor.imagIsNegative(value_prec)) {
+                return '0';
+            } else if (ctor.realIsNegative(value_prec) && ctor.imagIsNegative(value_prec)) {
+                const unparsed = '-0';
+                if (parentPrecedence > evaluator.precedenceTable['-_']) {
+                    return '(' + unparsed + ')';
+                } else {
+                    return unparsed;
+                }
+            } else if (ctor.realIsNegative(value_prec) && !ctor.imagIsNegative(value_prec)) {
+                const unparsed = '-0+0i';
+                if (parentPrecedence > evaluator.precedenceTable['+']) {
+                    return '(' + unparsed + ')';
+                } else {
+                    return unparsed;
+                }
+            } else {
+                const unparsed = '0-0i';
+                if (parentPrecedence > evaluator.precedenceTable['+']) {
+                    return '(' + unparsed + ')';
+                } else {
+                    return unparsed;
+                }
+            }
+        } else {
+            if (ctor.realIsZero(value)) {
+                return 'false';
+            } else {
+                return 'true';
+            }
+        }
+    };
+};
+
+/**
+ * Factory for `ctor.toString` method.
+ * @param ctor COMPLEX instance constructor.
+ * @returns `ctor.toString` COMPLEX method.
+ */
+export const toStringFactory = <REAL, COMPLEX extends ComplexInterface<REAL, TYPE, PARENT>, TYPE = number, PARENT = unknown, PRECEDENCE = number, ROUNDING = Rounding, MODULO = Modulo>(
+    ctor: ComplexInterfaceStatic<REAL, COMPLEX, TYPE, PARENT, PRECEDENCE, ROUNDING, MODULO>,
+): ((value: COMPLEX) => string) => {
+    /**
+     * Converts the value of `ctor` to the type `string`. Show true/false if
+     * logical value, otherwise show real and imaginary parts. If some part is
+     * zero the null part is ommited.
+     * @param value Value to converted to `string`.
+     * @returns String representation of value.
+     */
+    return (value: COMPLEX): string => {
         if (value.type !== ctor.LOGICAL) {
             const value_prec = ctor.toMaxPrecision(value);
             if (!ctor.realIsZero(value_prec) && !ctor.imagIsZero(value_prec)) {
                 return (
-                    '(' +
                     ctor.unparseValue(value_prec.re) +
                     (ctor.imagGreaterThan(value_prec, 0) ? '+' : '') +
                     (!ctor.imagEquals(value_prec, 1) ? (!ctor.imagEquals(value_prec, -1) ? ctor.unparseValue(value_prec.im) : '-') : '') +
-                    'i)'
+                    'i'
                 );
             } else if (!ctor.realIsZero(value_prec)) {
                 return ctor.unparseValue(value_prec.re);
@@ -877,9 +1009,9 @@ export const unparseFactory = <REAL, COMPLEX extends ComplexInterface<REAL, TYPE
             } else if (ctor.realIsNegative(value_prec) && ctor.imagIsNegative(value_prec)) {
                 return '-0';
             } else if (ctor.realIsNegative(value_prec) && !ctor.imagIsNegative(value_prec)) {
-                return '(-0+0i)';
+                return '-0+0i';
             } else {
-                return '(0-0i)';
+                return '0-0i';
             }
         } else {
             if (ctor.realIsZero(value)) {
@@ -926,42 +1058,6 @@ export const unparseMathMLValueFactory =
     };
 
 /**
- * Factory for `ctor.precedence` method.
- * @param ctor COMPLEX instance constructor.
- * @returns `ctor.precedence` COMPLEX method.
- */
-export const precedenceFactory = <REAL, COMPLEX extends ComplexInterface<REAL, TYPE, PARENT>, TYPE = number, PARENT = unknown, PRECEDENCE = number, ROUNDING = Rounding, MODULO = Modulo>(
-    ctor: ComplexInterfaceStatic<REAL, COMPLEX, TYPE, PARENT, PRECEDENCE, ROUNDING, MODULO>,
-): ((value: COMPLEX, evaluator: Evaluator) => number) => {
-    /**
-     * Returns the precedence of a `ctor` `value` by querying the precedence table in `evaluator` object (`Evaluator.ts`).
-     * @param value `ctor` value.
-     * @param evaluator `Evaluator` instance.
-     * @returns Precedence level.
-     */
-    return (value: COMPLEX, evaluator: Evaluator): number => {
-        if (value.type !== ctor.LOGICAL) {
-            const value_prec = ctor.toMaxPrecision(value);
-            if (!ctor.realIsZero(value_prec) && !ctor.imagIsZero(value_prec)) {
-                return evaluator.precedenceTable['+'];
-            } else if (!ctor.realIsZero(value_prec)) {
-                return ctor.realIsNegative(value_prec) ? evaluator.precedenceTable['-_'] : evaluator.precedenceTable['()'];
-            } else if (!ctor.imagIsZero(value_prec)) {
-                return ctor.imagIsNegative(value_prec) ? evaluator.precedenceTable['-_'] : evaluator.precedenceTable['()'];
-            } else if (!ctor.realIsNegative(value_prec) && !ctor.imagIsNegative(value_prec)) {
-                return evaluator.precedenceTable['()'];
-            } else if (ctor.realIsNegative(value_prec) && ctor.imagIsNegative(value_prec)) {
-                return evaluator.precedenceTable['-_'];
-            } else {
-                return evaluator.precedenceTable['+'];
-            }
-        } else {
-            return evaluator.precedenceTable['()'];
-        }
-    };
-};
-
-/**
  * Factory for `ctor.unparseMathML` method.
  * @param ctor COMPLEX instance constructor.
  * @returns `ctor.unparseMathML` COMPLEX method.
@@ -1006,12 +1102,13 @@ export const unparseMathMLFactory = <REAL, COMPLEX extends ComplexInterface<REAL
                     return unparsed;
                 }
             } else if (!ctor.realIsNegative(value_prec) && !ctor.imagIsNegative(value_prec)) {
-                const unparsed = '<mn>0</mn>';
-                if (parentPrecedence > evaluator.precedenceTable['()']) {
-                    return `<mo fence="true" stretchy="true">(</mo>${unparsed}<mo fence="true" stretchy="true">)</mo>`;
-                } else {
-                    return unparsed;
-                }
+                // const unparsed = '<mn>0</mn>';
+                // if (parentPrecedence > evaluator.precedenceTable['()']) {
+                //     return `<mo fence="true" stretchy="true">(</mo>${unparsed}<mo fence="true" stretchy="true">)</mo>`;
+                // } else {
+                //     return unparsed;
+                // }
+                return '<mn>0</mn>';
             } else if (ctor.realIsNegative(value_prec) && ctor.imagIsNegative(value_prec)) {
                 const unparsed = '<mn>-0</mn>';
                 if (parentPrecedence > evaluator.precedenceTable['-_']) {
@@ -1676,6 +1773,24 @@ export const rdivFactory =
         }
     };
 
+/**
+ * Factory for `ctor.ldiv` method.
+ * @param ctor Complex instance constructor.
+ * @returns `ctor.ldiv` method.
+ */
+export const ldivFactory = <REAL, COMPLEX extends ComplexInterface<REAL, TYPE, PARENT>, TYPE = number, PARENT = unknown, PRECEDENCE = number, ROUNDING = Rounding, MODULO = Modulo>(
+    rctor: RealInterfaceStatic<REAL> | unknown,
+    ctor: ComplexInterfaceStatic<REAL, COMPLEX, TYPE, PARENT, PRECEDENCE, ROUNDING, MODULO>,
+): ((left: COMPLEX, right: COMPLEX) => COMPLEX) => {
+    const rdiv = rdivFactory(rctor, ctor);
+    /**
+     * Left Division.
+     * @param left Dividend.
+     * @param right Divisor.
+     * @returns left \ right.
+     */
+    return (left: COMPLEX, right: COMPLEX): COMPLEX => rdiv(right, left);
+};
 /**
  * Factory for `ctor.inv` method.
  * @param ctor Complex instance constructor.
@@ -2554,6 +2669,67 @@ export const atanFactory =
         ctor.mul(ctor.minusonediv2i(), ctor.log(ctor.rdiv(ctor.sub(ctor.onei(), z), ctor.add(ctor.onei(), z))));
 
 /**
+ * Factory for `ctor.atan2` method.
+ * @param ctor Complex instance constructor.
+ * @returns `ctor.atan2` method.
+ */
+export const atan2Factory =
+    <REAL, COMPLEX extends ComplexInterface<REAL, TYPE, PARENT>, TYPE = number, PARENT = unknown, PRECEDENCE = number, ROUNDING = Rounding, MODULO = Modulo>(
+        rctor: RealInterfaceStatic<REAL> | unknown,
+        ctor: ComplexInterfaceStatic<REAL, COMPLEX, TYPE, PARENT, PRECEDENCE, ROUNDING, MODULO>,
+    ): ((x: COMPLEX, y: COMPLEX) => COMPLEX) =>
+    /**
+     * Inverse (arc) tangent. Defined as: atan2(x,y) = atan(x/y)
+     * @param z Argument (unitless).
+     * @returns Inverse tangent of z in radians.
+     */
+    (x: COMPLEX, y: COMPLEX): COMPLEX => {
+        const u = (rctor as RealInterfaceStatic<REAL>).div(
+            (rctor as RealInterfaceStatic<REAL>).add((rctor as RealInterfaceStatic<REAL>).mul(x.re, y.re), (rctor as RealInterfaceStatic<REAL>).mul(x.im, y.im)),
+            (rctor as RealInterfaceStatic<REAL>).add((rctor as RealInterfaceStatic<REAL>).mul(y.re, y.re), (rctor as RealInterfaceStatic<REAL>).mul(y.im, y.im)),
+        );
+        const v = (rctor as RealInterfaceStatic<REAL>).div(
+            (rctor as RealInterfaceStatic<REAL>).sub((rctor as RealInterfaceStatic<REAL>).mul(x.im, y.re), (rctor as RealInterfaceStatic<REAL>).mul(x.re, y.im)),
+            (rctor as RealInterfaceStatic<REAL>).add((rctor as RealInterfaceStatic<REAL>).mul(y.re, y.re), (rctor as RealInterfaceStatic<REAL>).mul(y.im, y.im)),
+        );
+        return ctor.create(
+            (rctor as RealInterfaceStatic<REAL>).mul(
+                (rctor as RealInterfaceStatic<REAL>).create(1 / 2),
+                (rctor as RealInterfaceStatic<REAL>).atan(
+                    (rctor as RealInterfaceStatic<REAL>).div(
+                        (rctor as RealInterfaceStatic<REAL>).mul((rctor as RealInterfaceStatic<REAL>).create(2), u),
+                        (rctor as RealInterfaceStatic<REAL>).sub(
+                            (rctor as RealInterfaceStatic<REAL>).sub((rctor as RealInterfaceStatic<REAL>).create(1), (rctor as RealInterfaceStatic<REAL>).mul(u, u)),
+                            (rctor as RealInterfaceStatic<REAL>).mul(v, v),
+                        ),
+                    ),
+                ),
+            ),
+            (rctor as RealInterfaceStatic<REAL>).mul(
+                (rctor as RealInterfaceStatic<REAL>).create(-1 / 4),
+                (rctor as RealInterfaceStatic<REAL>).ln(
+                    (rctor as RealInterfaceStatic<REAL>).div(
+                        (rctor as RealInterfaceStatic<REAL>).add(
+                            (rctor as RealInterfaceStatic<REAL>).mul(
+                                (rctor as RealInterfaceStatic<REAL>).sub((rctor as RealInterfaceStatic<REAL>).create(1), v),
+                                (rctor as RealInterfaceStatic<REAL>).sub((rctor as RealInterfaceStatic<REAL>).create(1), v),
+                            ),
+                            (rctor as RealInterfaceStatic<REAL>).mul(u, u),
+                        ),
+                        (rctor as RealInterfaceStatic<REAL>).add(
+                            (rctor as RealInterfaceStatic<REAL>).mul(
+                                (rctor as RealInterfaceStatic<REAL>).add((rctor as RealInterfaceStatic<REAL>).create(1), v),
+                                (rctor as RealInterfaceStatic<REAL>).add((rctor as RealInterfaceStatic<REAL>).create(1), v),
+                            ),
+                            (rctor as RealInterfaceStatic<REAL>).mul(u, u),
+                        ),
+                    ),
+                ),
+            ),
+        );
+    };
+
+/**
  * Factory for `ctor.atand` method.
  * @param ctor Complex instance constructor.
  * @returns `ctor.atand` method.
@@ -3048,4 +3224,5 @@ export const twoArgFunctionFactory = <REAL, COMPLEX extends ComplexInterface<REA
         hypot: ctor.hypot,
         power: ctor.power,
         logb: ctor.logb,
+        atan2: ctor.atan2,
     });

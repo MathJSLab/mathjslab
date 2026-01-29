@@ -13,14 +13,15 @@ import { Evaluator } from './Evaluator';
  */
 
 type RealType = number | Decimal;
+type NumLikeType = TypeOfComplex.NumLike<RealType>;
 type NumberObjectType = number;
 type RealTypeDescriptor = 'number' | 'decimal';
 type ComplexType = TypeOfComplex.ComplexHandlerType<RealType, TypeOfComplex.ComplexInterface<RealType>>;
+const toNumber = (value: NumLikeType): number => (value instanceof Decimal ? value.toNumber() : Number(value));
 
 /**
  * Complex Facade internal type definitions.
  */
-
 type ComplexInterfaceBase = TypeOfComplex.OmitComplexInterfaceDynamic<RealType, NumberObjectType, unknown>;
 type InterfaceStaticHandler = TypeOfComplex.ComplexInterfaceStatic<RealType, ComplexType>;
 type IsInstanceOfHandler = TypeOfComplex.IsInstanceOfComplexHandler<ComplexType>;
@@ -42,10 +43,10 @@ type OneArgReturnBooleanHandler = TypeOfComplex.OneArgReturnBooleanComplexHandle
 type OneArgReturnNumberHandler = TypeOfComplex.OneArgReturnNumberComplexHandler<RealType, ComplexType>;
 type TestNumLikeHandler = TypeOfComplex.TestNumLikeComplexHandler<RealType, ComplexType>;
 type ParseHandler = TypeOfComplex.ParseComplexHandler<RealType, ComplexType>;
-type UnparseValueHandler = TypeOfComplex.UnparseValueComplexHandler<RealType>;
-type UnparseHandler = TypeOfComplex.UnparseComplexHandler<RealType, ComplexType, number>;
 type PrecedenceHandler = TypeOfComplex.PrecedenceComplexHandler<RealType, ComplexType, Evaluator, number>;
-type UnparseMathMLHandler = TypeOfComplex.UnparseMathMLComplexHandler<RealType, ComplexType, Evaluator, number>;
+type UnparseValueHandler = TypeOfComplex.UnparseValueComplexHandler<RealType>;
+type UnparseHandler = TypeOfComplex.UnparseComplexHandler<RealType, ComplexType, Evaluator, number>;
+type ToStringHandler = TypeOfComplex.ToStringComplexHandler<RealType, ComplexType>;
 type CompareHandler = TypeOfComplex.CompareComplexHandler<RealType, ComplexType>;
 type MinMaxArrayHandler = TypeOfComplex.MinMaxArrayComplexHandler<RealType, ComplexType>;
 type MinMaxArrayWithIndexHandler = TypeOfComplex.MinMaxArrayWithIndexComplexHandler<RealType, ComplexType>;
@@ -123,6 +124,8 @@ abstract class Complex implements ComplexInterfaceBase {
     public static readonly from: FromHandler;
     public static readonly real: MapHandler;
     public static readonly imag: MapHandler;
+    public static readonly isComplexValue: OneArgReturnBooleanHandler;
+    public static readonly isRealValue: OneArgReturnBooleanHandler;
     public static readonly realIsFinite: OneArgReturnBooleanHandler;
     public static readonly imagIsFinite: OneArgReturnBooleanHandler;
     public static readonly realIsNaN: OneArgReturnBooleanHandler;
@@ -136,6 +139,7 @@ abstract class Complex implements ComplexInterfaceBase {
     public static readonly realIsPositive: OneArgReturnBooleanHandler;
     public static readonly imagIsPositive: OneArgReturnBooleanHandler;
     public static readonly realToNumber: OneArgReturnNumberHandler;
+    public static readonly toBoolean: OneArgReturnNumberHandler;
     public static readonly imagToNumber: OneArgReturnNumberHandler;
     public static readonly realLessThan: TestNumLikeHandler;
     public static readonly imagLessThan: TestNumLikeHandler;
@@ -148,11 +152,12 @@ abstract class Complex implements ComplexInterfaceBase {
     public static readonly realGreaterThan: TestNumLikeHandler;
     public static readonly imagGreaterThan: TestNumLikeHandler;
     public static readonly parse: ParseHandler;
+    public static readonly precedence: PrecedenceHandler;
     public static readonly unparseValue: UnparseValueHandler;
     public static readonly unparse: UnparseHandler;
+    public static readonly toString: ToStringHandler;
     public static readonly unparseMathMLValue: UnparseValueHandler;
-    public static readonly precedence: PrecedenceHandler;
-    public static readonly unparseMathML: UnparseMathMLHandler;
+    public static readonly unparseMathML: UnparseHandler;
     public static readonly copy: OneArgHandler;
     public static readonly toMaxPrecisionValue: OneArgValueHandler;
     public static readonly toMaxPrecision: OneArgHandler;
@@ -244,6 +249,7 @@ abstract class Complex implements ComplexInterfaceBase {
     public static readonly acos: MapHandler;
     public static readonly acosd: MapHandler;
     public static readonly atan: MapHandler;
+    public static readonly atan2: TwoArgHandler;
     public static readonly atand: MapHandler;
     public static readonly acsc: MapHandler;
     public static readonly acscd: MapHandler;
@@ -275,6 +281,6 @@ abstract class Complex implements ComplexInterfaceBase {
  */
 Complex.engine = 'decimal';
 
-export type { Decimal, RealType, NumberObjectType, RealTypeDescriptor, ComplexType };
-export { Complex };
+export type { Decimal, RealType, NumLikeType, NumberObjectType, RealTypeDescriptor, ComplexType };
+export { Complex, toNumber };
 export default { Complex };

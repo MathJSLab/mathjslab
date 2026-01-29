@@ -144,7 +144,7 @@ abstract class Configuration {
         } else if (args.length === 2 && CharString.isInstanceOf(args[0])) {
             /* Configuration key and value. */
             setConfig(args as [CharString, any]);
-            return new CharString(`Configuration parameter '${args[0].str}' set to '${Configuration.configuration[args[0].str].get().unparse()}'`);
+            return new CharString(`Configuration parameter '${args[0].str}' set to '${Configuration.configuration[args[0].str].get().toString()}'`);
         } else {
             AST.throwInvalidCallError('configure');
         }

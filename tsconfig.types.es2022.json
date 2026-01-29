@@ -7,5 +7,5 @@
         "declaration": true /* Generate .d.ts files from TypeScript and JavaScript files in your project. */,
         "emitDeclarationOnly": true /* Only output d.ts files and not JavaScript files. */
     },
-    "exclude": ["node_modules", "eslint.config.*", "jest.config.*", "webpack.config.*", "**/*spec.*", "lib", "report", "res", "script", "test", "src/lib.es2015.ts"]
+    "exclude": ["node_modules", "eslint.config.*", "jest.config.*", "webpack.config.*", "**/*spec.*", "lib", "report", "res", "script", "test"]
 }

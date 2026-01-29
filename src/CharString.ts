@@ -116,6 +116,17 @@ class CharString {
      * @param value
      * @returns
      */
+    public static readonly toString = (value: CharString): string => value.str;
+
+    public toString(): string {
+        return this.str;
+    }
+
+    /**
+     *
+     * @param value
+     * @returns
+     */
     public static readonly unparseEscaped = (value: CharString): string => {
         let result = JSON.stringify(value.str);
         result = result
@@ -146,22 +157,6 @@ class CharString {
             .replace(/\\\"/, '""');
         return '<mi><pre>"' + result + '"</pre></mi>';
     };
-
-    /**
-     *
-     * @returns
-     */
-    public unparse(): string {
-        return this.str;
-    }
-
-    /**
-     *
-     * @returns
-     */
-    public unparseEscaped(): string {
-        return CharString.unparseEscaped(this);
-    }
 
     /**
      *

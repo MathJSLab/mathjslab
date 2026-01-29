@@ -4,17 +4,21 @@ import { MultiArray } from './MultiArray';
 import { LinearAlgebra } from './LinearAlgebra';
 import { MathOperation } from './MathOperation';
 import { BLAS } from './BLAS';
+import { Evaluator } from './Evaluator';
 
 const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.sep}]+)\\.spec\\.([cm]?[jt]s)\$`))!;
 const unitName = __filenameMatch[1];
 const testExtension = __filenameMatch[2];
 
+let evaluator: Evaluator;
+
 describe(`${unitName} unit test (.${testExtension} test file).`, () => {
-    it(`${unitName} should be defined.`, () => {
-        expect(LinearAlgebra).toBeDefined();
+    beforeAll(() => {
+        evaluator = Evaluator.Create();
     });
 
-    it('LinearAlgebra.functions and its methods should be defined', () => {
+    it("LinearAlgebra and it's functions should be defined", () => {
+        expect(LinearAlgebra).toBeDefined();
         expect(LinearAlgebra.functions).toBeDefined();
         expect(LinearAlgebra.trace).toBeDefined();
         expect(LinearAlgebra.transpose).toBeDefined();
@@ -26,6 +30,15 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         expect(LinearAlgebra.lu).toBeDefined();
         expect(LinearAlgebra.dot).toBeDefined();
     });
+
+    it('Evaluator should be instatiated and should parse, evaluate and unparse a simple real expression (evaluator test).', () => {
+        expect(evaluator).toBeInstanceOf(Evaluator);
+        const tree = evaluator.Parse('1+2*3');
+        const value = evaluator.Evaluate(tree);
+        const unparsed = evaluator.Unparse(tree);
+        expect(Complex.realToNumber(value.list[0])).toBe(7);
+        expect(unparsed === '1+2*3\n').toBe(true);
+    }, 1000);
 
     it('LinearAlgebra.dot of simple real vectors', () => {
         const A = new MultiArray([1, 3]);

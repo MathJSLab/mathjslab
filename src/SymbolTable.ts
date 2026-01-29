@@ -1,16 +1,16 @@
 import * as AST from './AST';
-import type { AliasFunction, BuiltInFunctionTable, BuiltInFunctionTableEntry } from './Evaluator';
+import type { AliasNameFunction, BuiltInFunctionTable, BuiltInFunctionTableEntry } from './Evaluator';
 
 class SymbolTable {
     variableTable: Record<string, AST.NodeExpr>;
     functionTable: Record<string, AST.NodeFunction>;
     builtInTable: BuiltInFunctionTable;
-    aliasName: AliasFunction;
+    aliasNameFunction: AliasNameFunction;
     parent: SymbolTable | null;
     child: SymbolTable[];
     scope: string | null;
 
-    constructor(builtInTable: BuiltInFunctionTable, aliasName: AliasFunction, parent?: SymbolTable | null, scope?: string | null, node?: any) {
+    constructor(builtInTable: BuiltInFunctionTable, aliasNameFunction: AliasNameFunction, parent?: SymbolTable | null, scope?: string | null, node?: any) {
         const thisParent = typeof parent !== 'undefined' ? parent : null;
         if (thisParent) {
             thisParent.child.push(this);
@@ -18,7 +18,7 @@ class SymbolTable {
         this.variableTable = {};
         this.functionTable = {};
         this.builtInTable = builtInTable;
-        this.aliasName = aliasName;
+        this.aliasNameFunction = aliasNameFunction;
         this.parent = thisParent;
         this.child = [];
         this.scope = scope ?? null;

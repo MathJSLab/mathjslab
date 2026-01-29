@@ -95,6 +95,8 @@ class ComplexNumber implements TypeOfComplex.ComplexInterface<number, number, un
     public static readonly from = (obj: ComplexNumber): ComplexNumber => new ComplexNumber(obj.re, obj.im, obj.type);
     public static readonly real = (z: ComplexNumber): ComplexNumber => new ComplexNumber(z.re);
     public static readonly imag = (z: ComplexNumber): ComplexNumber => new ComplexNumber(z.im);
+    public static readonly isComplexValue = (z: ComplexNumber): boolean => z.im !== 0;
+    public static readonly isRealValue = (z: ComplexNumber): boolean => z.im === 0;
     public static readonly realIsInteger = (z: ComplexNumber): boolean => Number.isInteger(z.re);
     public static readonly imagIsInteger = (z: ComplexNumber): boolean => Number.isInteger(z.im);
     public static readonly realIsFinite = (z: ComplexNumber): boolean => Number.isFinite(z.re);
@@ -108,6 +110,7 @@ class ComplexNumber implements TypeOfComplex.ComplexInterface<number, number, un
     public static readonly realIsPositive = (z: ComplexNumber): boolean => z.re >= 0;
     public static readonly imagIsPositive = (z: ComplexNumber): boolean => z.im >= 0;
     public static readonly realToNumber = (z: ComplexNumber): number => z.re;
+    public static readonly toBoolean = (z: ComplexNumber): boolean => (z.type === ComplexNumber.LOGICAL ? Boolean(z.re) : Boolean(z.re) || Boolean(z.im));
     public static readonly imagToNumber = (z: ComplexNumber): number => z.im;
     public static readonly realLessThan = (z: ComplexNumber, value: TypeOfComplex.NumLike<number>): boolean => z.re < Number(value);
     public static readonly imagLessThan = (z: ComplexNumber, value: TypeOfComplex.NumLike<number>): boolean => z.im < Number(value);
@@ -121,26 +124,19 @@ class ComplexNumber implements TypeOfComplex.ComplexInterface<number, number, un
     public static readonly imagGreaterThan = (z: ComplexNumber, value: TypeOfComplex.NumLike<number>): boolean => z.im > Number(value);
 
     public static readonly parse: TypeOfComplex.ParseComplexHandler<number, ComplexNumber> = TypeOfComplex.parseFactory<number, ComplexNumber>(ComplexNumber);
+    public static readonly precedence: TypeOfComplex.PrecedenceComplexHandler<number, ComplexNumber, Evaluator, number> = TypeOfComplex.precedenceFactory<number, ComplexNumber, number>(
+        ComplexNumber,
+    );
     public static readonly unparseValue: TypeOfComplex.UnparseValueComplexHandler<number> = TypeOfComplex.unparseValueFactory<number, ComplexNumber>(Math, ComplexNumber);
-    public static readonly unparse: TypeOfComplex.UnparseComplexHandler<number, ComplexNumber> = TypeOfComplex.unparseFactory<number, ComplexNumber>(ComplexNumber);
-
-    public unparse(): string {
-        return ComplexNumber.unparse(this, 0);
+    public static readonly unparse: TypeOfComplex.UnparseComplexHandler<number, ComplexNumber, Evaluator> = TypeOfComplex.unparseFactory<number, ComplexNumber>(ComplexNumber);
+    public static readonly toString: TypeOfComplex.ToStringComplexHandler<number, ComplexNumber> = TypeOfComplex.toStringFactory<number, ComplexNumber, number, unknown>(ComplexNumber);
+    public toString(): string {
+        return ComplexNumber.toString(this);
     }
-
     public static readonly unparseMathMLValue: TypeOfComplex.UnparseValueComplexHandler<number> = TypeOfComplex.unparseMathMLValueFactory<number, ComplexNumber>(Math, ComplexNumber);
-    public static readonly precedence: TypeOfComplex.PrecedenceComplexHandler<number, ComplexNumber, Evaluator, number> = TypeOfComplex.precedenceFactory<
-        number,
+    public static readonly unparseMathML: TypeOfComplex.UnparseComplexHandler<number, ComplexNumber, Evaluator, number> = TypeOfComplex.unparseMathMLFactory<number, ComplexNumber, number>(
         ComplexNumber,
-        number,
-        unknown
-    >(ComplexNumber);
-    public static readonly unparseMathML: TypeOfComplex.UnparseMathMLComplexHandler<number, ComplexNumber, Evaluator, number> = TypeOfComplex.unparseMathMLFactory<
-        number,
-        ComplexNumber,
-        number,
-        unknown
-    >(ComplexNumber);
+    );
 
     public static copy: TypeOfComplex.OneArgComplexHandler<number, ComplexNumber> = TypeOfComplex.copyFactory<number, ComplexNumber>(ComplexNumber);
 
@@ -154,7 +150,7 @@ class ComplexNumber implements TypeOfComplex.ComplexInterface<number, number, un
     public static toMaxPrecision: TypeOfComplex.OneArgComplexHandler<number, ComplexNumber> = TypeOfComplex.toMaxPrecisionFactory<number, ComplexNumber>(ComplexNumber);
 
     public static epsilonValue(): number {
-        return Math.pow(10, -this.settings.precision + this.settings.precisionCompare!);
+        return Math.max(Math.pow(10, -this.settings.precision + this.settings.precisionCompare!), Number.EPSILON);
     }
 
     public static epsilon: TypeOfComplex.NoArgComplexHandler<number, ComplexNumber> = TypeOfComplex.epsilonFactory<number, ComplexNumber>(ComplexNumber);
@@ -240,9 +236,7 @@ class ComplexNumber implements TypeOfComplex.ComplexInterface<number, number, un
     public static mul: TypeOfComplex.TwoArgComplexHandler<number, ComplexNumber> = TypeOfComplex.mulFactory<number, ComplexNumber>(Math, ComplexNumber);
     public static mulAndSumTo: TypeOfComplex.ThreeArgComplexHandler<number, ComplexNumber> = TypeOfComplex.mulAndSumToFactory<number, ComplexNumber>(Math, ComplexNumber);
     public static rdiv: TypeOfComplex.TwoArgComplexHandler<number, ComplexNumber> = TypeOfComplex.rdivFactory<number, ComplexNumber>(Math, ComplexNumber);
-
-    public static ldiv: TypeOfComplex.TwoArgComplexHandler<number, ComplexNumber> = ComplexNumber.rdiv;
-
+    public static ldiv: TypeOfComplex.TwoArgComplexHandler<number, ComplexNumber> = TypeOfComplex.ldivFactory<number, ComplexNumber>(Math, ComplexNumber);
     public static inv: TypeOfComplex.OneArgComplexHandler<number, ComplexNumber> = TypeOfComplex.invFactory<number, ComplexNumber>(Math, ComplexNumber);
     public static power: TypeOfComplex.TwoArgComplexHandler<number, ComplexNumber> = TypeOfComplex.powerFactory<number, ComplexNumber>(Math, ComplexNumber);
     public static root: TypeOfComplex.TwoArgComplexHandler<number, ComplexNumber> = TypeOfComplex.rootFactory<number, ComplexNumber>(ComplexNumber);
@@ -285,6 +279,7 @@ class ComplexNumber implements TypeOfComplex.ComplexInterface<number, number, un
     public static acos: TypeOfComplex.OneArgComplexHandler<number, ComplexNumber> = TypeOfComplex.acosFactory<number, ComplexNumber>(ComplexNumber);
     public static acosd: TypeOfComplex.OneArgComplexHandler<number, ComplexNumber> = TypeOfComplex.acosdFactory<number, ComplexNumber>(ComplexNumber);
     public static atan: TypeOfComplex.OneArgComplexHandler<number, ComplexNumber> = TypeOfComplex.atanFactory<number, ComplexNumber>(ComplexNumber);
+    public static atan2: TypeOfComplex.TwoArgComplexHandler<number, ComplexNumber> = TypeOfComplex.atan2Factory<number, ComplexNumber>(Math, ComplexNumber);
     public static atand: TypeOfComplex.OneArgComplexHandler<number, ComplexNumber> = TypeOfComplex.atandFactory<number, ComplexNumber>(ComplexNumber);
     public static acsc: TypeOfComplex.OneArgComplexHandler<number, ComplexNumber> = TypeOfComplex.acscFactory<number, ComplexNumber>(ComplexNumber);
     public static acscd: TypeOfComplex.OneArgComplexHandler<number, ComplexNumber> = TypeOfComplex.acscdFactory<number, ComplexNumber>(ComplexNumber);

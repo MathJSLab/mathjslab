@@ -139,7 +139,7 @@ class Structure {
     public static unparseMathML = (S: Structure, evaluator: Evaluator, parentPrecedence = 0): string => {
         let result = `<mtr><mtd columnspan="2"><mtext>struct {</mtext></mtd></mtr>`;
         result += Object.entries(S.field)
-            .map((entry) => `<mtr><mtd><mi>${entry[0]}</mi><mo>:</mo></mtd><mtd>${evaluator.unparserMathML(entry[1])}</mtd></mtr>`)
+            .map((entry) => `<mtr><mtd><mi>${entry[0]}</mi><mo>:</mo></mtd><mtd>${evaluator.UnparserMathML(entry[1])}</mtd></mtr>`)
             .join('');
         result += `<mtr><mtd columnspan="2"><mtext>}</mtext></mtd></mtr>`;
         return `<mtable>${result}</mtable>`;

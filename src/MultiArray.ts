@@ -9,7 +9,9 @@ import { AST, NodeReturnList, ReturnHandlerResult } from './AST';
 /**
  * MultiArray Element type.
  */
-type ElementType = MultiArray | ComplexType | CharString | Structure | FunctionHandle | null | undefined;
+type Elements = ComplexType | CharString | Structure | FunctionHandle;
+type ElementType<ELEMENT = Elements> = MultiArray | ELEMENT | null | undefined;
+// type ElementType = MultiArray | ComplexType | CharString | Structure | FunctionHandle | null | undefined;
 
 /**
  * Reduce factory function types.
@@ -17,12 +19,12 @@ type ElementType = MultiArray | ComplexType | CharString | Structure | FunctionH
 
 type ReduceComparisonType = 'lt' | 'gt';
 type ReduceType = 'reduce' | 'cumulative' | 'cumcomparison' | 'comparison';
-type ReduceElementType = ElementType;
+type ReduceElementType<ELEMENT = Elements> = ElementType<ELEMENT>;
 type ReduceCallbackType = (prev: ReduceElementType, curr: ReduceElementType, index?: number) => ReduceElementType;
 type ReduceCallbackOrComparisonType = ReduceCallbackType | ReduceComparisonType;
 type ReduceInitialType = ReduceElementType;
 type ReduceReduceHandlerType = (M: ReduceElementType, DIM?: ReduceElementType) => ReduceElementType;
-type ReduceComparisonHandlerType = (...args: ElementType[]) => MultiArray | NodeReturnList | undefined;
+type ReduceComparisonHandlerType<ELEMENT = Elements> = (...args: ElementType<ELEMENT>[]) => MultiArray<ELEMENT> | NodeReturnList | undefined;
 type ReduceHandlerType = ReduceReduceHandlerType | ReduceComparisonHandlerType;
 
 /**
@@ -30,7 +32,7 @@ type ReduceHandlerType = ReduceReduceHandlerType | ReduceComparisonHandlerType;
  *
  * Multimensional array library. This class represents common arrays and cell arrays.
  */
-class MultiArray {
+class MultiArray<ELEMENT = Elements> {
     /**
      * Dimensions property ([lines, columns, pages, blocks, ...]).
      */
@@ -46,7 +48,7 @@ class MultiArray {
     /**
      * Array content.
      */
-    public array: ElementType[][];
+    public array: ElementType<ELEMENT>[][];
 
     /**
      * Type attribute.
@@ -77,33 +79,38 @@ class MultiArray {
      * @param shape Dimensions ([rows, columns, pages, blocks, ...]).
      * @param fill Data to fill MultiArray. The same object will be put in all elements of MultiArray.
      */
-    public constructor(shape?: number[], fill?: ElementType, iscell?: boolean) {
+    public constructor(shape?: number[], fill?: ElementType | ((...dims: number[]) => ElementType) | ElementType[][], iscell?: boolean) {
         if (shape) {
             this.dimension = shape.slice();
             MultiArray.appendSingletonTail(this.dimension, 2);
             MultiArray.removeSingletonTail(this.dimension);
-            this.array = new Array(this.dimensionR.reduce((p, c) => p * c, 1));
             if (fill) {
-                if (fill instanceof MultiArray || fill instanceof Structure) {
-                    for (let i = 0; i < this.array.length; i++) {
-                        this.array[i] = new Array(this.dimension[1]);
-                        for (let j = 0; j < this.dimension[1]; j++) {
-                            this.array[i][j] = fill.copy();
+                if (typeof fill === 'function') {
+                    this.array = Array.from({ length: shape[0] * shape.slice(2).reduce((p, c) => p * c, 1) }, (_, i) =>
+                        Array.from({ length: shape[1] }, (_, j) => fill(...MultiArray.rowColumnToSubscript(shape, i, j))),
+                    ) as ElementType<ELEMENT>[][];
+                } else if (Array.isArray(fill) && Array.isArray(fill[0])) {
+                    this.array = fill.map((row: ElementType[]) => row.map((elem: ElementType) => elem!.copy() as ElementType)) as any;
+                } else {
+                    this.array = new Array(this.dimensionR.reduce((p, c) => p * c, 1));
+                    if (fill instanceof MultiArray || fill instanceof Structure) {
+                        for (let i = 0; i < this.array.length; i++) {
+                            this.array[i] = new Array(this.dimension[1]);
+                            for (let j = 0; j < this.dimension[1]; j++) {
+                                this.array[i][j] = fill.copy() as ElementType<ELEMENT>;
+                            }
+                        }
+                    } else {
+                        for (let i = 0; i < this.array.length; i++) {
+                            this.array[i] = new Array(this.dimension[1]).fill(fill);
                         }
                     }
-                } else {
-                    for (let i = 0; i < this.array.length; i++) {
-                        this.array[i] = new Array(this.dimension[1]).fill(fill);
-                    }
+                    this.type = (fill as ElementType)!.type;
                 }
-                this.type = fill.type;
             } else {
-                for (let i = 0; i < this.array.length; i++) {
-                    this.array[i] = new Array(this.dimension[1]);
-                    for (let j = 0; j < this.dimension[1]; j++) {
-                        this.array[i][j] = Complex.zero();
-                    }
-                }
+                this.array = Array.from({ length: shape[0] * shape.slice(2).reduce((p, c) => p * c, 1) }, (_) =>
+                    Array.from({ length: shape[1] }, (_) => Complex.zero()),
+                ) as ElementType<ELEMENT>[][];
                 this.type = -1;
             }
         } else {
@@ -129,11 +136,58 @@ class MultiArray {
     public static readonly isRowVector = (obj: unknown): boolean => obj instanceof MultiArray && obj.dimension.length === 2 && obj.dimension[0] === 1;
 
     /**
+     * Converts a vector of type `ElementType[]` into a row matrix of type `MultiArray`.
+     * @param vector
+     * @returns
+     */
+    public static readonly toRowVector = (vector: ElementType[]): MultiArray => {
+        const result = new MultiArray([1, vector.length]);
+        result.array[0] = vector.slice();
+        return result;
+    };
+
+    /**
+     *
+     * @param vector
+     * @returns
+     */
+    public static readonly fromRowVector = (vector: MultiArray): ElementType[] => vector.array[0];
+
+    /**
      * Check if object is a MultiArray and it is a row vector.
      * @param obj Any object.
      * @returns `true` if object is a row vector. false otherwise.
      */
     public static readonly isColumnVector = (obj: unknown): boolean => obj instanceof MultiArray && obj.dimension.length === 2 && obj.dimension[1] === 1;
+
+    /**
+     * Converts a vector of type `ElementType[]` into a column matrix of type `MultiArray`.
+     * @param vector
+     * @returns
+     */
+    public static readonly toColumnVector = (vector: ElementType[]): MultiArray => {
+        const result = new MultiArray([vector.length, 1]);
+        result.array.map((_, i, array) => (array[i][0] = vector[i]));
+        return result;
+    };
+
+    /**
+     *
+     * @param vector
+     * @returns
+     */
+    public static readonly fromColumnVector = (vector: MultiArray): ElementType[] => vector.array.map((row) => row[0]);
+
+    /**
+     * * Converts a vector of type `ElementType[]` into a diagonal matrix of type `MultiArray`.
+     * @param vector
+     * @returns
+     */
+    public static readonly toDiagonalMatrix = (vector: ElementType[]): MultiArray => {
+        const result = new MultiArray([vector.length, vector.length]);
+        result.array.map((_, i, array) => (array[i][i] = vector[i]));
+        return result;
+    };
 
     /**
      * Check if object is a MultiArray and it is a row vector or a column vector.
@@ -163,6 +217,24 @@ class MultiArray {
      * @returns `true` if object is a cell array. false otherwise.
      */
     public static readonly isCellArray = (obj: unknown): boolean => obj instanceof MultiArray && obj.isCell;
+
+    /**
+     *
+     * @param M
+     * @returns
+     */
+    public static readonly isComplexMultiArray = (M: MultiArray): boolean => {
+        let result = false;
+        for (let i = 0; i < M.dimensionR.reduce((a, b) => a * b, 1); i++) {
+            for (let j = 0; j < M.dimension[1]; j++) {
+                if (Complex.isComplexValue(M.array[i][j] as ComplexType)) {
+                    result = true;
+                    break;
+                }
+            }
+        }
+        return result;
+    };
 
     /**
      * Set type property in place with maximum value of array items type.
@@ -247,6 +319,18 @@ class MultiArray {
      */
     public static readonly rowColumnToLinearIndex = (dimension: number[], i: number, j: number): number =>
         Math.floor(i / dimension[0]) * dimension[0] * dimension[1] + j * dimension[0] + (i % dimension[0]);
+
+    /**
+     * Converts MultiArray raw row and column to MultiArray subscript.
+     * @param dimension
+     * @param i
+     * @param j
+     * @returns
+     */
+    public static readonly rowColumnToSubscript = (dimension: number[], i: number, j: number): number[] => {
+        const index = Math.floor(i / dimension[0]) * dimension[0] * dimension[1] + j * dimension[0] + (i % dimension[0]);
+        return dimension.map((dim, i) => (Math.floor(index / dimension.slice(0, i).reduce((p, c) => p * c, 1)) % dim) + 1);
+    };
 
     /**
      * Compute stride vector (column-major order).
@@ -539,13 +623,16 @@ class MultiArray {
         }
     };
 
+    public toString(): string {
+        return `array ${this.dimension.join('x')}`;
+    }
     /**
      * Unparse MultiArray as MathML language.
      * @param M MultiArray object.
      * @returns String of unparsed MultiArray in MathML language.
      */
     public static readonly unparseMathML = (M: MultiArray, evaluator: Evaluator, parentPrecedence = 0): string => {
-        const unparseRows = (row: ElementType[]) => `<mtr>${row.map((value) => `<mtd>${evaluator.unparserMathML(value)}</mtd>`).join('')}</mtr>`;
+        const unparseRows = (row: ElementType[]) => `<mtr>${row.map((value) => `<mtd>${evaluator.UnparserMathML(value)}</mtd>`).join('')}</mtr>`;
         const buildMrow = (rows: string) =>
             `<mrow><mo fence="true" stretchy="true">${M.isCell ? '{' : '['}</mo><mtable>${rows}</mtable><mo fence="true" stretchy="true">${M.isCell ? '}' : ']'}</mo></mrow>`;
         if (M.dimension.reduce((p, c) => p * c, 1) === 0) {
@@ -685,19 +772,6 @@ class MultiArray {
      * @returns
      */
     public static readonly firstElement = (value: ElementType): ElementType => {
-        // if (value instanceof MultiArray) {
-        //     /* It is a MultiArray. */
-        //     if (value.dimension.reduce((p: number, c: number) => p * c, 1) > 0) {
-        //         /* Return first element. */
-        //         return value.array[0][0];
-        //     } else {
-        //         /* Some dimension is null. */
-        //         return value;
-        //     }
-        // } else {
-        //     /* It is not a MultiArray. */
-        //     return value;
-        // }
         return value instanceof MultiArray && value.dimension.reduce((p: number, c: number) => p * c, 1) > 0 ? value.array[0][0] : value;
     };
 
@@ -736,7 +810,7 @@ class MultiArray {
      */
     public copy(): MultiArray {
         const result = new MultiArray(this.dimension);
-        result.array = this.array.map((row) => row.map((value) => value!.copy()));
+        result.array = this.array.map((row) => row.map((value: ElementType<ELEMENT>) => (value as any).copy()));
         result.type = this.type;
         return result;
     }
@@ -1184,7 +1258,7 @@ class MultiArray {
      */
     public static readonly rawMap = (M: MultiArray, callback: Function): MultiArray => {
         const result = new MultiArray(M.dimension);
-        result.array = M.array.map((row) => row.map(callback as any));
+        result.array = M.array.map((row) => row.map(callback as (value: ElementType, index: number, array: ElementType[]) => ElementType));
         MultiArray.setType(result);
         return result;
     };
@@ -1301,7 +1375,7 @@ class MultiArray {
      */
     public static readonly divideElementByScalar = (elem: ElementType, scalar: ComplexType): ElementType => {
         if (MultiArray.isInstanceOf(elem)) {
-            return MultiArray.rawMap(elem, (el: ComplexType) => Complex.rdiv(el, scalar));
+            return MultiArray.rawMap(elem, (el: ElementType) => Complex.rdiv(el as ComplexType, scalar));
         } else {
             return Complex.rdiv(elem as ComplexType, scalar);
         }
@@ -1620,37 +1694,45 @@ class MultiArray {
                 throw new RangeError(`=: nonconformant arguments (op1 is ${argsLength.join('x')}, op2 is ${right.dimension.join('x')})`);
             }
             if (typeof nameTable[id] !== 'undefined') {
-                if (nameTable[id] instanceof MultiArray) {
+                if (nameTable[id].node instanceof MultiArray) {
                     if (isLinearIndex) {
-                        if (argsMax[0] > MultiArray.linearLength(nameTable[id])) {
+                        if (argsMax[0] > MultiArray.linearLength(nameTable[id].node)) {
                             throw new RangeError('Invalid resizing operation or ambiguous assignment to an out-of-bounds array element.');
                         }
                     } else {
-                        MultiArray.expand(nameTable[id], argsMax);
+                        MultiArray.expand(nameTable[id].node, argsMax);
                     }
                 } else {
-                    const value = nameTable[id];
+                    const value = nameTable[id].node;
                     const blankValue: ElementType = value instanceof Structure ? Structure.cloneFields(value) : Complex.zero();
                     if (isLinearIndex) {
-                        nameTable[id] = new MultiArray([1, argsMax[0]], blankValue);
+                        nameTable[id] = {
+                            node: new MultiArray([1, argsMax[0]], blankValue),
+                        };
                     } else {
-                        nameTable[id] = new MultiArray(argsMax, blankValue);
+                        nameTable[id] = {
+                            node: new MultiArray(argsMax, blankValue),
+                        };
                     }
-                    nameTable[id].array[0][0] = value;
+                    nameTable[id].node.array[0][0] = value;
                 }
             } else {
                 const blankValue: ElementType = field.length > 0 ? new Structure(field) : Complex.zero();
                 if (isLinearIndex) {
-                    nameTable[id] = new MultiArray([1, argsMax[0]], blankValue);
+                    nameTable[id] = {
+                        node: new MultiArray([1, argsMax[0]], blankValue),
+                    };
                 } else {
-                    nameTable[id] = new MultiArray(argsMax, blankValue);
+                    nameTable[id] = {
+                        node: new MultiArray(argsMax, blankValue),
+                    };
                 }
             }
-            const array: MultiArray = nameTable[id];
+            const array: MultiArray = nameTable[id].node;
             if (field.length > 0) {
                 Structure.setEmptyField(array, field[0]);
             }
-            const dimension: number[] = nameTable[id].dimension.slice();
+            const dimension: number[] = nameTable[id].node.dimension.slice();
             for (let n = 0; n < argsLength.reduce((p, c) => p * c, 1); n++) {
                 const subscript = MultiArray.linearIndexToSubscript(argsLength, n);
                 const subscriptArgs: number[] = subscript.map((s, r) =>
@@ -1688,7 +1770,7 @@ class MultiArray {
         const isNotFunction = isDefinedId && !(nameTable[id] instanceof FunctionHandle);
         const isMultiArray = isNotFunction && nameTable[id] instanceof MultiArray;
         if (isMultiArray) {
-            const array: MultiArray = nameTable[id];
+            const array: MultiArray = nameTable[id].node;
             for (let j = 0, n = 0, r = 0; j < array.dimension[1]; j++) {
                 for (let i = 0; i < array.dimension[0]; i++, r++) {
                     if (test[r]) {
@@ -1797,7 +1879,7 @@ class MultiArray {
                     MultiArray.setType(resultM);
                     MultiArray.setType(indexM);
                     return AST.nodeReturnList(
-                        (evaluated: ReturnHandlerResult, index: number): any => {
+                        (evaluated: ReturnHandlerResult, index: number): ElementType => {
                             if (evaluated.length === 1) return MultiArray.MultiArrayToScalar(resultM);
                             if (evaluated.length === 2) return MultiArray.MultiArrayToScalar(index === 0 ? resultM : indexM);
                             AST.throwErrorIfGreaterThanReturnList(2, evaluated.length);
@@ -1832,7 +1914,7 @@ class MultiArray {
                         MultiArray.setType(resultM);
                         MultiArray.setType(indexM);
                         return AST.nodeReturnList(
-                            (evaluated: ReturnHandlerResult, index: number): any => {
+                            (evaluated: ReturnHandlerResult, index: number): ElementType => {
                                 if (evaluated.length === 1) return MultiArray.MultiArrayToScalar(resultM);
                                 if (evaluated.length === 2) return MultiArray.MultiArrayToScalar(index === 0 ? resultM : indexM);
                                 AST.throwErrorIfGreaterThanReturnList(2, evaluated.length);

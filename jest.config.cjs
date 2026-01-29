@@ -18,6 +18,30 @@ module.exports = {
             },
         },
         {
+            displayName: 'lapack-tests',
+            testEnvironment: 'node',
+            testMatch: ['<rootDir>/src/**/LAPACK.spec.{js,cjs,mjs,ts,cts,mts}'],
+            transform: {
+                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.esm.es2022.json' }],
+            },
+        },
+        {
+            displayName: 'lapack-single-tests',
+            testEnvironment: 'node',
+            testMatch: ['<rootDir>/src/**/LAPACKsingle.spec.{js,cjs,mjs,ts,cts,mts}'],
+            transform: {
+                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.esm.es2022.json' }],
+            },
+        },
+        {
+            displayName: 'evaluator-tests',
+            testEnvironment: 'node',
+            testMatch: ['<rootDir>/src/**/Evaluator.spec.{js,cjs,mjs,ts,cts,mts}'],
+            transform: {
+                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.esm.es2022.json' }],
+            },
+        },
+        {
             displayName: 'node-cjs2015-tests',
             testEnvironment: 'node',
             testMatch: ['<rootDir>/test/node/**/*cjs2015.spec.{js,cjs,mjs,ts,cts,mts}'],

@@ -7,7 +7,7 @@
  * ([repository](https://github.com/MathJSLab/mathjslab)) -
  * [MIT License](https://opensource.org/license/mit).
  *
- * Copyright © 2016-2025 [Sergio Lindau](mailto:sergiolindau@gmail.com)
+ * Copyright © 2016-2026 [Sergio Lindau](mailto:sergiolindau@gmail.com)
  *
  * homepage: [mathjslab.com](https://mathjslab.com/)
  *
@@ -142,7 +142,7 @@ type KeyOfFormatRegistryUnion<T extends string = string, K = any> = keyof Format
  * ([repository](https://github.com/MathJSLab/mathjslab)) -
  * [MIT License](https://opensource.org/license/mit).
  *
- * Copyright © 2016-2025 [Sergio Lindau](mailto:sergiolindau@gmail.com)
+ * Copyright © 2016-2026 [Sergio Lindau](mailto:sergiolindau@gmail.com)
  *
  * homepage: [mathjslab.com](https://mathjslab.com/)
  *

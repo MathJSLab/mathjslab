@@ -36,11 +36,11 @@ import { AST } from './AST';
  * A parser that recognizes a language syntax like MATLAB®/Octave written in TypeScript.
  *
  * ## References
- * * [MATLAB Operator Precedence](https://www.mathworks.com/help/matlab/matlab_prog/operator-precedence.html)
- * * [Octave lexer](https://github.com/gnu-octave/octave/blob/default/libinterp/parse-tree/lex.ll)
- * * [Octave parser](https://github.com/gnu-octave/octave/blob/default/libinterp/parse-tree/oct-parse.yy)
- * * [An ANTLR4 grammar for MATLAB files.](https://github.com/antlr/grammars-v4/tree/master/matlab)
- * * [mparser](https://www.mathworks.com/matlabcentral/fileexchange/32769-mparser)
+ * - [MATLAB Operator Precedence](https://www.mathworks.com/help/matlab/matlab_prog/operator-precedence.html)
+ * - [Octave lexer](https://github.com/gnu-octave/octave/blob/default/libinterp/parse-tree/lex.ll)
+ * - [Octave parser](https://github.com/gnu-octave/octave/blob/default/libinterp/parse-tree/oct-parse.yy)
+ * - [An ANTLR4 grammar for MATLAB files.](https://github.com/antlr/grammars-v4/tree/master/matlab)
+ * - [mparser](https://www.mathworks.com/matlabcentral/fileexchange/32769-mparser)
  */
 
 export default class MathJSLabParser extends Parser {

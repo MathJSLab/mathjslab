@@ -79,7 +79,7 @@ All [MathJSLab](https://mathjslab.com/)
 [interpreter](<https://en.wikipedia.org/wiki/Interpreter_(computing)>)
 operations, functions and commands are documented in the
 [demo Web application's](https://github.com/MathJSLab/mathjslab-app) command
-`help NAME`. Its in
+`help NAME`. It's in
 [english](https://github.com/MathJSLab/mathjslab-app/tree/main/help/en),
 [portuguese](https://github.com/MathJSLab/mathjslab-app/tree/main/help/pt) and
 [spanish](https://github.com/MathJSLab/mathjslab-app/tree/main/help/es). It can
@@ -356,7 +356,7 @@ Common arrays (not only cell arrays) can hold any type of element.
 
 > [MIT License](https://opensource.org/license/mit)
 >
-> Copyright &copy; 2016-2025 [Sergio Lindau](mailto:sergiolindau@gmail.com),
+> Copyright &copy; 2016-2026 [Sergio Lindau](mailto:sergiolindau@gmail.com),
 > [mathjslab.com](https://mathjslab.com/),
 > [ISBN 978-65-00-82338-7](https://grp.isbn-international.org/search/piid_solr?keys=978-65-00-82338-7).
 >

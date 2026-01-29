@@ -3,6 +3,75 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 1.9.1
+
+- The function `Complex.atan2` was created.
+- We have begun implementing the `eig` function. Several functions have been
+  created in the `BLAS` and `LAPACK` classes, which have not yet been fully
+  tested. Unused functions have been grouped into the `BLASunused.ts` and
+  `LAPACKunused.ts` files. For now, the `eig` function only returns correct
+  values for symmetric real matrices. The functions `det`, `mtimes`, `inv`, and
+  `lu` were implemented based on the functions defined in `BLAS` and `LAPACK`.
+- The `ldivFactory` function was created in the `ComplexInterface.ts` file to
+  support left division operations. The wrapper function
+  `MathOperation.mldivide` was created, which implements the `\` operator in
+  the MATLAB/Octave language. This function uses the dispatcher
+  `LAPACK.mldivide`.
+- The `LAPACK.spec.ts` file was enhanced with approximately 170 tests of the
+  `BLAS` and `LAPACK` functions, becoming the development basis for the
+  functions and testing the contracts between them.
+- The functions `cross`, `kron`, `dot` and `diag` have been implemented.
+- The `ElementType` type and the `MultiArray` class were typed with the
+  `ELEMENT` parameter.
+- The `Evaluator` class has been modified in several ways:
+    - The `EvaluatorInterface` was created, which the `Evaluator` class
+      implements.
+    - The `Evaluator.Unparse` function has been adjusted to work similarly to
+      the `Evaluator.UnparseMathML` function, removing unnecessary parentheses.
+      The `unparseFactory` function in the `ComplexInterface.ts` file has also
+      been modified to work similarly to `unparseMathMLFactory`. The dynamic
+      `unparse` method has been removed from classes that represent literals,
+      such as `CharString`, `ComplexNumber`, `ComplexDecimal`,
+      `FunctionHandle`, `MultiArray`, and `Structure`. In these classes, the
+      dynamic `toString` method has been created, replacing the old `unparse`
+      method.
+    - Properties have been protected by making them private and accessible via
+      setters and getters. These have been given the name of the property, and
+      the property name has been prefixed with an underscore (`_`).
+    - The `response` property has been made static.
+    - The `undefinedReferenceTable` property has been created, and the
+      `nameTable` table (now called `_nameTable`) has been modified to contain
+      the undefined value in each entry when evaluating it before storing it in
+      the table.
+    - The `Execute` method was created, which simply executes the `Parse` and
+      `Evaluate` methods on an input string, returning the computed result.
+    - Bug fix: During assignments, the `Evaluator` function executed the
+      right-hand side of the assignment twice. This was corrected by
+      eliminating unnecessary calls to the `Evaluator` function.
+    - Bug fix: The parser failed with malformed matrices, with extra spaces
+      between the sign and the number of the imaginary part when there was a
+      real part, for example, the syntax `A = [2+ 3i 4-5i]` produced the error:
+      "SyntaxError: no viable alternative at input '[2+ ' (1:7)". This was
+      corrected in the `SPACE_OR_CONTINUATION` rule in the `MathJSLabLexer.g4`
+      file.
+- The dynamic method `unparse` from classes that represent literals, such as
+  `CharString`, `ComplexNumber`, `ComplexDecimal`, `FunctionHandle`,
+  `MultiArray`, and `Structure` has been removed. The `toString` method was
+  created in its place for debugging purposes.
+- The `build.config.json` file was modified to configure the bundle
+  `"web.es2022"` as the development version. Therefore, the production build
+  compiles all 6 bundles, and the development build compiles only the
+  `"web.es2022"` version. The `webpack.config.ts` file was not modified. The
+  production build takes approximately 55 to 65 seconds, and the development
+  build takes approximately 10 seconds.
+- Bug fix: Matrix multiplication was not throwing an error when the operands
+  had incompatible dimensions. The `LinearAlgebra.mul` function had been
+  removed, and `BLAS.gemm` was being used directly in `MathOperation.mtimes`.
+  `LinearAlgebra.mul` was responsible for the dimension check, and even then it
+  was still producing an error. It was restored, corrected, and recoded using
+  `BLAS.gemm`.
+- Dependencies updated.
+
 ## 1.9.0
 
 - The `dot` and `cross` functions (`LinearAlgebra.dot`) have been implemented.

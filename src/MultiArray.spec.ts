@@ -11,7 +11,7 @@ const testExtension = __filenameMatch[2];
 
 describe(`${unitName} unit test (.${testExtension} test file).`, () => {
     beforeEach(async () => {
-        evaluator = new Evaluator();
+        evaluator = Evaluator.Create();
     });
 
     it('ComplexDecimal should be defined', () => {
@@ -25,6 +25,15 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
     it('Evaluator should be defined', () => {
         expect(Evaluator).toBeDefined();
     }, 100);
+
+    it('MultiArray.haveAnyComplex — complex matrix detection', () => {
+        const A = evaluator.Execute('[1,2,3;4,5,6;7,8,9]').list[0] as MultiArray;
+        expect(MultiArray.haveAnyComplex(A)).toBe(false);
+        const B = evaluator.Execute(`[ 1+2i,   2,        3;
+                                          4,   5- i,     6;
+                                          7,   8,    10+3i ]`).list[0] as MultiArray;
+        expect(MultiArray.haveAnyComplex(B)).toBe(true);
+    });
 
     it('The determinant must be correctly calculated', () => {
         let tree: any;

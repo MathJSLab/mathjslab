@@ -1,17 +1,21 @@
 import path from 'node:path';
 import { Evaluator } from './Evaluator';
 
-let evaluator: Evaluator;
 const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.sep}]+)\\.spec\\.([cm]?[jt]s)\$`))!;
 const unitName = __filenameMatch[1];
 const testExtension = __filenameMatch[2];
 
+/**
+ * Evaluator instance.
+ */
+let evaluator: Evaluator;
+
 describe(`${unitName} unit test (.${testExtension} test file).`, () => {
     beforeAll(() => {
-        evaluator = new Evaluator();
+        evaluator = Evaluator.Create();
     });
 
-    it(`${unitName} should be defined.`, () => {
+    it(`${unitName} should be defined and instantiated.`, () => {
         expect(Evaluator).toBeDefined();
         expect(evaluator).toBeInstanceOf(Evaluator);
     });
@@ -22,5 +26,5 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         const unparsed = evaluator.Unparse(tree);
         expect(value.list[0].re.toNumber()).toBe(7);
         expect(unparsed === '1+2*3\n').toBe(true);
-    }, 10000);
+    });
 });

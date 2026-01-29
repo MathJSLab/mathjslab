@@ -122,7 +122,7 @@ module.exports = [
     {
         ...js.configs.recommended,
         files: ['src/**/*.{,c,m}ts'],
-        ignores: ['src/MathJSLabLexer.ts', 'src/MathJSLabParser.ts', 'src/**/*.spec.ts'],
+        ignores: ['src/MathJSLabLexer.ts', 'src/MathJSLabParser.ts', 'src/.antlr/**', 'src/**/*.spec.ts'],
         languageOptions: {
             parser: tsParser,
             parserOptions: {

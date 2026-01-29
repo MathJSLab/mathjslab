@@ -477,7 +477,7 @@ export default class MathJSLabLexer extends Lexer {
     /**
      * Reserved keywords.
      */
-    public static keywordNames: (string | null)[] = [
+    public static readonly keywordNames: (string | null)[] = [
         null,
         'global',
         'persistent',
@@ -524,7 +524,7 @@ export default class MathJSLabLexer extends Lexer {
     /**
      * Reserved keywords token types.
      */
-    public static keywordTypes: number[] = [
+    public static readonly keywordTypes: number[] = [
         NaN,
         MathJSLabLexer.GLOBAL,
         MathJSLabLexer.PERSISTENT,
@@ -569,15 +569,66 @@ export default class MathJSLabLexer extends Lexer {
         MathJSLabLexer.ARGUMENTS,
     ];
     /**
-     * Word-list commands
+     * Word-list commands.
      */
     public commandNames: string[] = [];
     /**
+     * Expression marks that indicate non-termination.
+     */
+    public static readonly nonTerminalSign: number[] = [
+        MathJSLabLexer.PLUS,
+        MathJSLabLexer.MINUS,
+        MathJSLabLexer.MUL,
+        MathJSLabLexer.DIV,
+        MathJSLabLexer.EQ,
+        MathJSLabLexer.DOT,
+        MathJSLabLexer.TILDE,
+        MathJSLabLexer.EXCLAMATION,
+        MathJSLabLexer.COMMAT,
+        MathJSLabLexer.LPAREN,
+        MathJSLabLexer.LBRACKET,
+        MathJSLabLexer.LCURLYBR,
+        MathJSLabLexer.LEFTDIV,
+        MathJSLabLexer.ADD_EQ,
+        MathJSLabLexer.SUB_EQ,
+        MathJSLabLexer.MUL_EQ,
+        MathJSLabLexer.DIV_EQ,
+        MathJSLabLexer.LEFTDIV_EQ,
+        MathJSLabLexer.POW_EQ,
+        MathJSLabLexer.EMUL_EQ,
+        MathJSLabLexer.EDIV_EQ,
+        MathJSLabLexer.ELEFTDIV_EQ,
+        MathJSLabLexer.EPOW_EQ,
+        MathJSLabLexer.AND_EQ,
+        MathJSLabLexer.OR_EQ,
+        MathJSLabLexer.EXPR_AND_AND,
+        MathJSLabLexer.EXPR_OR_OR,
+        MathJSLabLexer.EXPR_AND,
+        MathJSLabLexer.EXPR_OR,
+        MathJSLabLexer.EXPR_LT,
+        MathJSLabLexer.EXPR_LE,
+        MathJSLabLexer.EXPR_EQ,
+        MathJSLabLexer.EXPR_NE,
+        MathJSLabLexer.EXPR_GE,
+        MathJSLabLexer.EXPR_GT,
+        MathJSLabLexer.EMUL,
+        MathJSLabLexer.EDIV,
+        MathJSLabLexer.ELEFTDIV,
+        MathJSLabLexer.PLUS_PLUS,
+        MathJSLabLexer.MINUS_MINUS,
+        MathJSLabLexer.POW,
+        MathJSLabLexer.EPOW,
+    ];
+    /**
      * Lexer context.
      */
+    /* Type of previous token. */
     public previousTokenType: number = Token.EOF;
+    /* Open parenthesis count. */
     public parenthesisCount: number = 0;
+    /* Matrix reading context stack. */
     public matrixContext: number[] = [];
+    /* String accumulator. */
     public quotedString: string = '';
 
     constructor(input: CharStream) {
@@ -1290,7 +1341,8 @@ export default class MathJSLabLexer extends Lexer {
                     this.previousTokenType !== MathJSLabLexer.LBRACKET &&
                     this.previousTokenType !== MathJSLabLexer.COMMA &&
                     this.previousTokenType !== MathJSLabLexer.SEMICOLON &&
-                    this.matrixContext[this.matrixContext.length - 1] !== MathJSLabLexer.LPAREN
+                    this.matrixContext[this.matrixContext.length - 1] !== MathJSLabLexer.LPAREN &&
+                    MathJSLabLexer.nonTerminalSign.indexOf(this.previousTokenType) < 0
                 ) {
                     this._type = this.previousTokenType = MathJSLabLexer.WSPACE;
                 } else {

@@ -105,6 +105,8 @@ class ComplexDecimal implements TypeOfComplex.ComplexInterface<Decimal, number, 
     public static readonly from = (obj: ComplexDecimal): ComplexDecimal => new ComplexDecimal(obj.re, obj.im, obj.type, obj.parent);
     public static readonly real = (z: ComplexDecimal): ComplexDecimal => new ComplexDecimal(z.re);
     public static readonly imag = (z: ComplexDecimal): ComplexDecimal => new ComplexDecimal(z.im);
+    public static readonly isComplexValue = (z: ComplexDecimal): boolean => !z.im.isZero();
+    public static readonly isRealValue = (z: ComplexDecimal): boolean => z.im.isZero();
     public static readonly realIsInteger = (z: ComplexDecimal): boolean => z.re.isInteger();
     public static readonly imagIsInteger = (z: ComplexDecimal): boolean => z.im.isInteger();
     public static readonly realIsFinite = (z: ComplexDecimal): boolean => z.re.isFinite();
@@ -118,6 +120,7 @@ class ComplexDecimal implements TypeOfComplex.ComplexInterface<Decimal, number, 
     public static readonly realIsPositive = (z: ComplexDecimal): boolean => z.re.isPositive();
     public static readonly imagIsPositive = (z: ComplexDecimal): boolean => z.im.isPositive();
     public static readonly realToNumber = (z: ComplexDecimal): number => z.re.toNumber();
+    public static readonly toBoolean = (z: ComplexDecimal): boolean => (z.type === ComplexDecimal.LOGICAL ? Boolean(z.re.toNumber()) : Boolean(z.re.toNumber()) || Boolean(z.im.toNumber()));
     public static readonly imagToNumber = (z: ComplexDecimal): number => z.im.toNumber();
     public static readonly realLessThan = (z: ComplexDecimal, value: Decimal.Value): boolean => z.re.lt(value);
     public static readonly imagLessThan = (z: ComplexDecimal, value: Decimal.Value): boolean => z.im.lt(value);
@@ -131,27 +134,22 @@ class ComplexDecimal implements TypeOfComplex.ComplexInterface<Decimal, number, 
     public static readonly imagGreaterThan = (z: ComplexDecimal, value: Decimal.Value): boolean => z.im.gt(value);
 
     public static readonly parse: TypeOfComplex.ParseComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.parseFactory<Decimal, ComplexDecimal, number, unknown>(ComplexDecimal);
-    public static readonly unparseValue: TypeOfComplex.UnparseValueComplexHandler<Decimal> = TypeOfComplex.unparseValueFactory<Decimal, ComplexDecimal>(Decimal, ComplexDecimal);
-    public static readonly unparse: TypeOfComplex.UnparseComplexHandler<Decimal, ComplexDecimal, number> = TypeOfComplex.unparseFactory<Decimal, ComplexDecimal, number, unknown>(
+    public static readonly precedence: TypeOfComplex.PrecedenceComplexHandler<Decimal, ComplexDecimal, Evaluator, number> = TypeOfComplex.precedenceFactory<Decimal, ComplexDecimal, number>(
         ComplexDecimal,
     );
-
-    public unparse(): string {
-        return ComplexDecimal.unparse(this, 0);
+    public static readonly unparseValue: TypeOfComplex.UnparseValueComplexHandler<Decimal> = TypeOfComplex.unparseValueFactory<Decimal, ComplexDecimal>(Decimal, ComplexDecimal);
+    public static readonly unparse: TypeOfComplex.UnparseComplexHandler<Decimal, ComplexDecimal, Evaluator, number> = TypeOfComplex.unparseFactory<Decimal, ComplexDecimal, number, unknown>(
+        ComplexDecimal,
+    );
+    public static readonly toString: TypeOfComplex.ToStringComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.toStringFactory<Decimal, ComplexDecimal, number, unknown>(ComplexDecimal);
+    public toString(): string {
+        return ComplexDecimal.toString(this);
     }
-
     public static readonly unparseMathMLValue: TypeOfComplex.UnparseValueComplexHandler<Decimal> = TypeOfComplex.unparseMathMLValueFactory<Decimal, ComplexDecimal>(Decimal, ComplexDecimal);
-    public static readonly precedence: TypeOfComplex.PrecedenceComplexHandler<Decimal, ComplexDecimal, Evaluator, number> = TypeOfComplex.precedenceFactory<
+    public static readonly unparseMathML: TypeOfComplex.UnparseComplexHandler<Decimal, ComplexDecimal, Evaluator, number> = TypeOfComplex.unparseMathMLFactory<
         Decimal,
         ComplexDecimal,
-        number,
-        unknown
-    >(ComplexDecimal);
-    public static readonly unparseMathML: TypeOfComplex.UnparseMathMLComplexHandler<Decimal, ComplexDecimal, Evaluator, number> = TypeOfComplex.unparseMathMLFactory<
-        Decimal,
-        ComplexDecimal,
-        number,
-        unknown
+        number
     >(ComplexDecimal);
 
     public static copy: TypeOfComplex.OneArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.copyFactory<Decimal, ComplexDecimal>(ComplexDecimal);
@@ -234,9 +232,7 @@ class ComplexDecimal implements TypeOfComplex.ComplexInterface<Decimal, number, 
     public static mul: TypeOfComplex.TwoArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.mulFactory<Decimal, ComplexDecimal>(Decimal, ComplexDecimal);
     public static mulAndSumTo: TypeOfComplex.ThreeArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.mulAndSumToFactory<Decimal, ComplexDecimal>(Decimal, ComplexDecimal);
     public static rdiv: TypeOfComplex.TwoArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.rdivFactory<Decimal, ComplexDecimal>(Decimal, ComplexDecimal);
-
-    public static ldiv: TypeOfComplex.TwoArgComplexHandler<Decimal, ComplexDecimal> = ComplexDecimal.rdiv;
-
+    public static ldiv: TypeOfComplex.TwoArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.ldivFactory<Decimal, ComplexDecimal>(Decimal, ComplexDecimal);
     public static inv: TypeOfComplex.OneArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.invFactory<Decimal, ComplexDecimal>(Decimal, ComplexDecimal);
     public static power: TypeOfComplex.TwoArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.powerFactory<Decimal, ComplexDecimal>(Decimal, ComplexDecimal);
     public static root: TypeOfComplex.TwoArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.rootFactory<Decimal, ComplexDecimal>(ComplexDecimal);
@@ -279,6 +275,7 @@ class ComplexDecimal implements TypeOfComplex.ComplexInterface<Decimal, number, 
     public static acos: TypeOfComplex.OneArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.acosFactory<Decimal, ComplexDecimal>(ComplexDecimal);
     public static acosd: TypeOfComplex.OneArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.acosdFactory<Decimal, ComplexDecimal>(ComplexDecimal);
     public static atan: TypeOfComplex.OneArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.atanFactory<Decimal, ComplexDecimal>(ComplexDecimal);
+    public static atan2: TypeOfComplex.TwoArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.atan2Factory<Decimal, ComplexDecimal>(Decimal, ComplexDecimal);
     public static atand: TypeOfComplex.OneArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.atandFactory<Decimal, ComplexDecimal>(ComplexDecimal);
     public static acsc: TypeOfComplex.OneArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.acscFactory<Decimal, ComplexDecimal>(ComplexDecimal);
     public static acscd: TypeOfComplex.OneArgComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.acscdFactory<Decimal, ComplexDecimal>(ComplexDecimal);

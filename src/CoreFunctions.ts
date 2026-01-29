@@ -926,7 +926,7 @@ abstract class CoreFunctions {
     /**
      * User functions.
      */
-    public static functions: { [F in keyof typeof CoreFunctions | string]: Function } = {
+    public static readonly functions: { [F in keyof typeof CoreFunctions | string]: Function } = {
         isempty: CoreFunctions.isempty,
         isscalar: CoreFunctions.isscalar,
         ismatrix: CoreFunctions.ismatrix,

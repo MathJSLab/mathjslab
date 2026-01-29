@@ -7,7 +7,7 @@
         }
     },
     "development": {
-        "bundle": ["cjs.dev"],
+        "bundle": ["web.esm2022"],
         "analyzer": false
     }
 }

@@ -1,9 +1,8 @@
-import { Complex, ComplexType } from './Complex';
+import { type ComplexType, Complex } from './Complex';
 import { type ElementType, MultiArray } from './MultiArray';
 import { BLAS } from './BLAS';
 import { LAPACK } from './LAPACK';
-import { CoreFunctions } from './CoreFunctions';
-import { type NodeExpr, type NodeReturnList, AST, CharString, ReturnHandlerResult } from './AST';
+import { type NodeExpr, type NodeReturnList, AST, ReturnHandlerResult } from './AST';
 
 /**
  * `LinearAlgebra` configuration options type.
@@ -96,16 +95,75 @@ abstract class LinearAlgebra {
                 rows = MultiArray.testIndex(args[0] as ComplexType);
                 columns = MultiArray.testIndex(args[1] as ComplexType);
             } else {
-                throw new SyntaxError(`Invalid call to eye. Type 'help eye' to see correct usage.`);
+                AST.throwInvalidCallError('eye');
             }
         } else {
-            throw new SyntaxError(`Invalid call to eye. Type 'help eye' to see correct usage.`);
+            AST.throwInvalidCallError('eye');
         }
         const result = new MultiArray([rows, columns], Complex.zero());
         for (let n = 0; n < Math.min((result as MultiArray).dimension[0], (result as MultiArray).dimension[1]); n++) {
             (result as MultiArray).array[n][n] = Complex.one();
         }
         return result;
+    };
+
+    /**
+     * Return a diagonal matrix with vector V on diagonal K.
+     * @param args
+     * @returns
+     */
+    public static readonly diag = (...args: MultiArray[] | ComplexType[]): MultiArray => {
+        let result: MultiArray;
+        if (args.length > 0 && args.length <= 3) {
+            if (MultiArray.isInstanceOf(args[0])) {
+                if (args[0].dimension.length !== 2) {
+                    throw new Error('Matrix must be 2-dimensional');
+                }
+                if (args.length === 1) {
+                    if (args[0].dimension[0] === 1 && args[0].dimension[1] > 1) {
+                        const n = args[0].dimension[1];
+                        result = new MultiArray([n, n]);
+                        result.array = LAPACK.diag(args[0].array[0] as ComplexType[]);
+                    } else if (args[0].dimension[1] === 1 && args[0].dimension[0] > 1) {
+                        const n = args[0].dimension[0];
+                        result = new MultiArray([n, n]);
+                        result.array = LAPACK.diag(args[0].array.map((row) => row[0]) as ComplexType[]);
+                    } else {
+                        result = MultiArray.toColumnVector(LAPACK.from_diag(args[0].array as ComplexType[][]));
+                    }
+                } else if (args.length === 2) {
+                    const k = Math.floor(Complex.realToNumber(MultiArray.firstElement(args[1]) as ComplexType));
+                    if (args[0].dimension[0] === 1 && args[0].dimension[1] > 1) {
+                        const n = args[0].dimension[1];
+                        result = new MultiArray([n, n]);
+                        result.array = LAPACK.diag(args[0].array[0] as ComplexType[], k);
+                    } else if (args[0].dimension[1] === 1 && args[0].dimension[0] > 1) {
+                        const n = args[0].dimension[0];
+                        result = new MultiArray([n, n]);
+                        result.array = LAPACK.diag(args[0].array.map((row) => row[0]) as ComplexType[], k);
+                    } else {
+                        result = MultiArray.toColumnVector(LAPACK.from_diag(args[0].array as ComplexType[][], k));
+                    }
+                } else {
+                    const m = Math.floor(Complex.realToNumber(MultiArray.firstElement(args[1]) as ComplexType));
+                    const n = Math.floor(Complex.realToNumber(MultiArray.firstElement(args[2]) as ComplexType));
+                    result = new MultiArray([m, n]);
+                    result.array = LAPACK.diag(args[0].array[0] as ComplexType[], 0, [m, n]);
+                    if (args[0].dimension[0] === 1 && args[0].dimension[1] > 1) {
+                        result.array = LAPACK.diag(args[0].array[0] as ComplexType[], 0, m, n);
+                    } else if (args[0].dimension[1] === 1 && args[0].dimension[0] > 1) {
+                        result.array = LAPACK.diag(args[0].array.map((row) => row[0]) as ComplexType[], 0, m, n);
+                    } else {
+                        throw new Error('diag: V must be a vector');
+                    }
+                }
+            } else {
+                result = new MultiArray([1, 1], args[0].copy());
+            }
+        } else {
+            AST.throwInvalidCallError('diag');
+        }
+        return result!;
     };
 
     /**
@@ -159,6 +217,32 @@ abstract class LinearAlgebra {
     public static readonly ctranspose = (M: MultiArray): MultiArray => {
         return LinearAlgebra.applyTranspose(M, (value: ComplexType) => Complex.conj(value));
     };
+
+    /**
+     * Matrix product.
+     * @param left Matrix.
+     * @param right Matrix.
+     * @returns left * right.
+     */
+    public static mul(left: MultiArray, right: MultiArray): MultiArray {
+        if (left.dimension[1] !== right.dimension[0] || left.dimension.length !== 2 || right.dimension.length !== 2) {
+            throw new EvalError(`operator *: nonconformant arguments (op1 is ${left.dimension.join('x')}, op2 is ${right.dimension.join('x')}).`);
+        } else {
+            const result = new MultiArray([left.dimension[0], right.dimension[1]]);
+            BLAS.gemm(
+                Complex.one(),
+                left.array as ComplexType[][],
+                left.dimension[0],
+                left.dimension[1],
+                right.array as ComplexType[][],
+                right.dimension[1],
+                Complex.zero(),
+                result.array as ComplexType[][],
+            );
+            MultiArray.setType(result);
+            return result;
+        }
+    }
 
     /**
      * Matrix power (multiple multiplication).
@@ -240,17 +324,18 @@ abstract class LinearAlgebra {
      * * https://rosettacode.org/wiki/LU_decomposition#JavaScript
      */
     public static readonly luDecomposition = (A: MultiArray): { L: MultiArray; U: MultiArray; P: MultiArray; swaps: number } => {
-        // Factorization (modifies A)
-        const { LU, piv, swaps } = LAPACK.getrf_blocked(A as MultiArray);
+        const Acopy = MultiArray.copy(A);
+        // Factorization (modifies Acopy)
+        const { LU, piv, swaps } = LAPACK.getrf_blocked(Acopy.array as ComplexType[][]);
         // Construct L, U, P (MATLAB style) - simple wrapper.
-        const m = A.dimension[0];
-        const n = A.dimension[1];
+        const m = Acopy.dimension[0];
+        const n = Acopy.dimension[1];
         const minmn = Math.min(m, n);
         // P: identity then apply pivots
         const P = LinearAlgebra.eye(Complex.create(m)) as MultiArray;
         for (let i = 0; i < minmn; i++) {
             if (piv[i] !== i) {
-                LAPACK.laswp_rows(P as MultiArray, i, piv[i]);
+                LAPACK.laswp_rows(P.array as ComplexType[][], P.dimension, i, piv[i]);
             }
         }
         // Build L and U explicitly if needed (as you had before)
@@ -259,14 +344,14 @@ abstract class LinearAlgebra {
         for (let i = 0; i < m; i++) {
             for (let j = 0; j < n; j++) {
                 if (i > j) {
-                    L.array[i][j] = A.array[i][j] as any;
+                    L.array[i][j] = Acopy.array[i][j] as any;
                     U.array[i][j] = Complex.zero();
                 } else if (i === j) {
                     L.array[i][j] = Complex.one();
-                    U.array[i][j] = A.array[i][j] as any;
+                    U.array[i][j] = Acopy.array[i][j] as any;
                 } else {
                     L.array[i][j] = Complex.zero();
-                    U.array[i][j] = A.array[i][j] as any;
+                    U.array[i][j] = Acopy.array[i][j] as any;
                 }
             }
         }
@@ -319,7 +404,7 @@ abstract class LinearAlgebra {
         // shallow copy to avoid modifying user's matrix
         const Acopy = MultiArray.copy(A) as MultiArray;
         // perform LU (blocked)
-        const { LU, piv, info, swaps } = LAPACK.getrf_blocked(Acopy);
+        const { LU, piv, info, swaps } = LAPACK.getrf_blocked(Acopy.array as ComplexType[][]);
         // if singular (info != 0) follow MATLAB-like behavior: return Inf matrix
         if (info !== 0) {
             const n = A.dimension[0];
@@ -335,9 +420,12 @@ abstract class LinearAlgebra {
         } else {
             // Otherwise compute inverse by solving A * X = I
             const n = A.dimension[0];
-            const I = LinearAlgebra.eye(Complex.create(n)) as MultiArray; // ensure returns MultiArray n x n
+            // const I = LinearAlgebra.eye(Complex.create(n)) as MultiArray; // ensure returns MultiArray n x n
+            const I = LAPACK.eye([n, n]);
             // Solve LU * X = P * I  -> we use getrs: X = inv(A)
-            const result = LAPACK.getrs(LU, piv, I);
+            const getrsResult = LAPACK.getrs(LU as ComplexType[][], piv, I);
+            const result = new MultiArray([getrsResult.length, getrsResult[0].length]);
+            result.array = getrsResult;
             MultiArray.setType(result);
             return result;
         }
@@ -710,6 +798,160 @@ abstract class LinearAlgebra {
         }
     };
 
+    // public static readonly lqPhaseNormalize = (
+    //     phis: ComplexType[],
+    //     L: MultiArray,
+    //     Q?: MultiArray
+    // ): void => {
+    //     const kmax = Math.min(L.dimension[0], L.dimension[1]);
+
+    //     for (let k = 0; k < kmax; k++) {
+    //         const Lkk = L.array[k][k] as ComplexType;
+    //         if (Complex.realIsZero(Complex.abs(Lkk))) continue;
+
+    //         // phi = -phase(L[k,k])
+    //         const phi = Complex.neg(phis[k]);
+
+    //         // Divide column k of L by phi: L[:,k] := L[:,k] / phi
+    //         for (let i = k; i < L.dimension[0]; i++) {
+    //             L.array[i][k] = Complex.rdiv(L.array[i][k] as ComplexType, phi);
+    //         }
+
+    //         if (typeof Q !== 'undefined') {
+    //             // Multiply row k of Q by phi: Q[k,:] := Q[k,:] * phi
+    //             for (let j = 0; j < Q.dimension[1]; j++) {
+    //                 Q.array[k][j] = Complex.mul(Q.array[k][j] as ComplexType, phi);
+    //             }
+    //         }
+    //     }
+
+    //     // Sanity checks (simétricos ao QR)
+    //     if (
+    //         Complex.imagGreaterThan(
+    //             Complex.abs(L.array[0][0] as ComplexType),
+    //             LinearAlgebra.settings.qrPhaseEpsilon
+    //         )
+    //     ) {
+    //         throw new Error('Phase normalization error: L(1,1) should be real.');
+    //     }
+
+    //     // Canonical sign: L(1,1) should be negative real (same convention as QR)
+    //     if (Complex.realGreaterThan(L.array[0][0] as ComplexType, 0)) {
+    //         // L(:,1) *= -1
+    //         for (let i = 0; i < L.dimension[0]; i++) {
+    //             L.array[i][0] = Complex.neg(L.array[i][0] as ComplexType);
+    //         }
+
+    //         if (typeof Q !== 'undefined') {
+    //             // Q(1,:) *= -1
+    //             for (let j = 0; j < Q.dimension[1]; j++) {
+    //                 Q.array[0][j] = Complex.neg(Q.array[0][j] as ComplexType);
+    //             }
+    //         }
+    //     }
+    // };
+
+    // public static readonly lqPhaseNormalize = (
+    //     phis: ComplexType[],
+    //     L: MultiArray,
+    //     Q?: MultiArray
+    // ): void => {
+    //     const kmax = Math.min(L.dimension[0], L.dimension[1]);
+
+    //     for (let k = 0; k < kmax; k++) {
+    //         const Lkk = L.array[k][k] as ComplexType;
+    //         if (Complex.realIsZero(Complex.abs(Lkk))) continue;
+
+    //         // phi = -phase(L[k,k])
+    //         const phi = Complex.neg(phis[k]);
+
+    //         // ✅ FIX 1: divide *entire* column k of L
+    //         for (let i = 0; i < L.dimension[0]; i++) {
+    //             L.array[i][k] = Complex.rdiv(L.array[i][k] as ComplexType, phi);
+    //         }
+
+    //         if (typeof Q !== 'undefined') {
+    //             // Multiply row k of Q by phi
+    //             for (let j = 0; j < Q.dimension[1]; j++) {
+    //                 Q.array[k][j] = Complex.mul(Q.array[k][j] as ComplexType, phi);
+    //             }
+    //         }
+    //     }
+
+    //     // ✅ FIX 2: correct sanity check
+    //     if (
+    //         Complex.imagGreaterThan(
+    //             L.array[0][0] as ComplexType,
+    //             LinearAlgebra.settings.qrPhaseEpsilon
+    //         )
+    //     ) {
+    //         throw new Error('Phase normalization error: L(1,1) should be real.');
+    //     }
+
+    //     // Canonical sign (engine convention)
+    //     if (Complex.realGreaterThan(L.array[0][0] as ComplexType, 0)) {
+    //         // L(:,1) *= -1
+    //         for (let i = 0; i < L.dimension[0]; i++) {
+    //             L.array[i][0] = Complex.neg(L.array[i][0] as ComplexType);
+    //         }
+
+    //         if (typeof Q !== 'undefined') {
+    //             // Q(1,:) *= -1
+    //             for (let j = 0; j < Q.dimension[1]; j++) {
+    //                 Q.array[0][j] = Complex.neg(Q.array[0][j] as ComplexType);
+    //             }
+    //         }
+    //     }
+    // };
+
+    // public static readonly lqPhaseNormalize = (
+    //     phis: ComplexType[],
+    //     L: MultiArray,
+    //     Q?: MultiArray
+    // ): void => {
+    //     const kmax = Math.min(L.dimension[0], L.dimension[1]);
+
+    //     for (let k = 0; k < kmax; k++) {
+    //         const phi = phis[k];
+    //         if (Complex.realIsZero(Complex.abs(phi))) continue;
+
+    //         // ✅ LQ: phase acts on ROW k of L
+    //         for (let j = 0; j < L.dimension[1]; j++) {
+    //             L.array[k][j] = Complex.mul(L.array[k][j] as ComplexType, phi);
+    //         }
+
+    //         if (Q) {
+    //             const phiConj = Complex.conj(phi);
+    //             // ✅ and on COLUMN k of Q
+    //             for (let i = 0; i < Q.dimension[0]; i++) {
+    //                 Q.array[i][k] = Complex.mul(Q.array[i][k] as ComplexType, phiConj);
+    //             }
+    //         }
+    //     }
+    // };
+
+    public static readonly lqPhaseNormalize = (phis: ComplexType[], L: MultiArray, Q?: MultiArray): void => {
+        const kmax = Math.min(L.dimension[0], L.dimension[1]);
+
+        for (let k = 0; k < kmax; k++) {
+            const phi = phis[k];
+            if (Complex.realIsZero(Complex.abs(phi))) continue;
+
+            // 🔧 APPLY PHASE ONLY FROM DIAGONAL TO THE RIGHT
+            for (let j = k; j < L.dimension[1]; j++) {
+                L.array[k][j] = Complex.mul(L.array[k][j] as ComplexType, phi);
+            }
+
+            if (Q) {
+                const phiConj = Complex.conj(phi);
+                // ✅ APPLY TO COLUMN k OF Q
+                for (let i = 0; i < Q.dimension[0]; i++) {
+                    Q.array[i][k] = Complex.mul(Q.array[i][k] as ComplexType, phiConj);
+                }
+            }
+        }
+    };
+
     /**
      *
      * @param A
@@ -808,10 +1050,297 @@ abstract class LinearAlgebra {
     };
 
     /**
+     * Eigenvalue decomposition wrapper - similar à qrDecomposition.
+     * Retorno varia com o parâmetro `result`:
+     *   1 → λ
+     *   2 → V, λ
+     *   3 → V, λ, T (tridiagonal)
+     */
+    /**
+     * eigDecomposition - wrapper that performs eigen decomposition using blocked tridiagonalization.
+     *
+     * Returns object depending on `result`:
+     *  1 -> { values: MultiArray }            (column vector n x 1)
+     *  2 -> { values: MultiArray, vectors: MultiArray }  (vectors columns = eigenvectors)
+     *  3 -> { values: MultiArray, vectors: MultiArray, T: MultiArray } (T = tridiagonal matrix)
+     *
+     * Uses:
+     *  - LAPACK.sytrd_blocked_w(Acopy, nb) -> { diag: ComplexType[], offdiag: ComplexType[], taus: ComplexType[] }
+     *  - LAPACK.steqr_values(diag, offdiag) -> ComplexType[]
+     *  - LAPACK.steqr_vectors(diag, offdiag) -> { D: ComplexType[], V: MultiArray }
+     *  - LAPACK.orgtr_blocked_w(Acopy, taus, nb) -> MultiArray Q0
+     *  - BLAS.gemm_block(Q0, Z, Vout, Complex.one(), Complex.zero(), nb)
+     */
+    /**
+     * eigDecomposition - wrapper that performs eigen decomposition using blocked tridiagonalization.
+     *
+     * Returns object depending on `result`:
+     *  1 -> { values: MultiArray }                          (column vector n x 1)
+     *  2 -> { values: MultiArray, vectors: MultiArray }     (vectors columns = eigenvectors)
+     *  3 -> { values: MultiArray, vectors: MultiArray, T: MultiArray } (T = tridiagonal matrix)
+     *
+     * Uses:
+     *  - LAPACK.sytrd_blocked_w(Acopy, nb) -> { diag: ComplexType[], offdiag: ComplexType[], taus: ComplexType[] }
+     *  - LAPACK.steqr_values(diag, offdiag) -> ComplexType[]
+     *  - LAPACK.steqr_vectors(diag, offdiag) -> { D: ComplexType[], V: MultiArray }
+     *  - LAPACK.orgtr_blocked_w(Acopy, taus, nb) -> MultiArray Q0
+     *  - BLAS.gemm_block(Q0, Z, Vout, Complex.one(), Complex.zero(), nb)
+     */
+    /**
+     * eigDecomposition - updated to use steqr_values/steqr_vectors returning MultiArray
+     *
+     * Returns:
+     *  result === 1 -> { values: MultiArray }
+     *  result === 2 -> { values: MultiArray, vectors: MultiArray }
+     *  result === 3 -> { values: MultiArray, vectors: MultiArray, T: MultiArray }
+     */
+    public static readonly eigDecomposition_original = (
+        A: MultiArray,
+        result: 1 | 2 | 3,
+        nb: number = 32,
+        order: 'asc' | 'desc' | 'none' = 'asc',
+    ): { values: MultiArray; vectors?: MultiArray; T?: MultiArray } => {
+        // basic validation
+        if (!A || !A.dimension || A.dimension.length !== 2) {
+            throw new Error('eigDecomposition: A must be a 2D MultiArray');
+        }
+        const n: number = A.dimension[0];
+        if (n !== A.dimension[1]) throw new Error('eigDecomposition: A must be square');
+
+        // Work on a copy because sytrd modifies in-place
+        const Acopy = MultiArray.copy(A) as MultiArray;
+
+        // 1) Reduce to tridiagonal: diag (ComplexType[]), offdiag (ComplexType[]), taus
+        const { diag, offdiag, taus } = LAPACK.sytrd_blocked_w(Acopy, nb);
+        if (!Array.isArray(diag) || !Array.isArray(offdiag)) {
+            throw new Error('eigDecomposition: sytrd_blocked_w did not return diag/offdiag arrays');
+        }
+
+        // ---------------------------
+        // CASE 1: only eigenvalues
+        // ---------------------------
+        if (result === 1) {
+            const D_col = MultiArray.toColumnVector(LAPACK.steqr_values(diag, offdiag));
+            if (!D_col || !D_col.array || D_col.dimension[0] !== n) {
+                throw new Error('eigDecomposition: steqr_values returned invalid MultiArray');
+            }
+
+            // If no sorting requested, return directly
+            if (order === 'none') {
+                MultiArray.setType(D_col);
+                return { values: D_col };
+            }
+
+            // otherwise build index array and sort by numeric real part
+            const Draw: ComplexType[] = new Array(n);
+            for (let i = 0; i < n; i++) Draw[i] = D_col.array[i][0] as ComplexType;
+
+            const idx = Array.from({ length: n }, (_, i) => i).sort((a, b) => {
+                const ai = Complex.realToNumber(Draw[a]);
+                const bi = Complex.realToNumber(Draw[b]);
+                return order === 'asc' ? ai - bi : bi - ai;
+            });
+
+            // build sorted MultiArray column using helper
+            const D_sorted_vals: ComplexType[] = idx.map((i) => Draw[i]);
+            const D_sorted = MultiArray.toColumnVector(D_sorted_vals);
+            MultiArray.setType(D_sorted);
+            return { values: D_sorted };
+        } else {
+            // CASE 2 or 3: need eigenvectors too
+            const tridiagRes = LAPACK.steqr_vectors(diag, offdiag);
+            // tridiagRes.D is a MultiArray [n x 1], tridiagRes.V is MultiArray [n x n]
+            if (!tridiagRes || !tridiagRes.D || !tridiagRes.V) {
+                throw new Error('eigDecomposition: steqr_vectors returned invalid result');
+            }
+            const Dcol_raw: MultiArray = MultiArray.toDiagonalMatrix(tridiagRes.D);
+            const Z: MultiArray = new MultiArray([tridiagRes.V.length, tridiagRes.V[0].length]);
+            Z.array = tridiagRes.V;
+
+            if (Dcol_raw.dimension[0] !== n) {
+                throw new Error('eigDecomposition: steqr_vectors returned D of unexpected size');
+            }
+            if (Z.dimension[0] !== n || Z.dimension[1] !== n) {
+                throw new Error('eigDecomposition: steqr_vectors returned V of unexpected shape');
+            }
+
+            // Reconstruct Q0 and form Vout = Q0 * Z
+            const Q0 = LAPACK.orgtr_blocked_w(Acopy, taus, nb); // MultiArray n x n
+            const Vout = new MultiArray([n, n]);
+            // init zeros (defensive)
+            for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) Vout.array[i][j] = Complex.zero();
+
+            BLAS.gemm_block(Q0.array as ComplexType[][], Z.array as ComplexType[][], Vout.array as ComplexType[][], Complex.one(), Complex.zero(), nb);
+            MultiArray.setType(Vout);
+
+            // extract eigenvalue list from Dcol_raw
+            const Draw2: ComplexType[] = new Array(n);
+            for (let i = 0; i < n; i++) Draw2[i] = Dcol_raw.array[i][0] as ComplexType;
+
+            // sorting indices
+            const idx =
+                order === 'none'
+                    ? Array.from({ length: n }, (_, i) => i)
+                    : Array.from({ length: n }, (_, i) => i).sort((a, b) => {
+                          const ai = Complex.realToNumber(Draw2[a]);
+                          const bi = Complex.realToNumber(Draw2[b]);
+                          return order === 'asc' ? ai - bi : bi - ai;
+                      });
+
+            // Build D_sorted and V_sorted
+            const D_sorted_vals: ComplexType[] = idx.map((i) => Draw2[i]);
+            const D_sorted = MultiArray.toColumnVector(D_sorted_vals);
+            const V_sorted = new MultiArray([n, n]);
+            // fill V_sorted column-wise so column k is eigenvector for D_sorted[k]
+            for (let col = 0; col < n; col++) {
+                const s = idx[col];
+                for (let row = 0; row < n; row++) {
+                    V_sorted.array[row][col] = Vout.array[row][s];
+                }
+            }
+            MultiArray.setType(D_sorted);
+            MultiArray.setType(V_sorted);
+
+            if (result === 2) {
+                return { values: D_sorted, vectors: V_sorted };
+            } else {
+                // result === 3 -> build tridiagonal T from diag/offdiag
+                const T = new MultiArray([n, n]);
+                for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) T.array[i][j] = Complex.zero();
+                for (let i = 0; i < n; i++) {
+                    T.array[i][i] = diag[i];
+                    if (i < n - 1) {
+                        T.array[i][i + 1] = offdiag[i];
+                        T.array[i + 1][i] = Complex.conj(offdiag[i]);
+                    }
+                }
+                MultiArray.setType(T);
+                return { values: D_sorted, vectors: V_sorted, T };
+            }
+        }
+    };
+
+    public static readonly eigDecomposition = (
+        A: MultiArray,
+        result: 1 | 2 | 3,
+        order: 'asc' | 'desc' | 'none' = 'asc',
+        blockSize?: number,
+    ): { values: MultiArray; vectors?: MultiArray; T?: MultiArray } => {
+        const maxIter = 10000;
+        const n: number = A.dimension[0];
+        const Acopy = MultiArray.copy(A);
+        const { diag, offdiag, taus } = LAPACK.sytrd(Acopy, LAPACK.larf_left);
+        if (result === 1) {
+            const { D } = LAPACK.steqr_vectors(diag, offdiag, maxIter);
+            // const Draw: ComplexType[] = new Array(n);
+            // for (let i = 0; i < n; i++) Draw[i] = D[i] as ComplexType;
+            const idx = Array.from({ length: n }, (_, i) => i).sort((a, b) => {
+                const ai = Complex.realToNumber(D[a]);
+                const bi = Complex.realToNumber(D[b]);
+                return order === 'asc' ? ai - bi : bi - ai;
+            });
+            const D_sorted_vals: ComplexType[] = idx.map((i) => D[i]);
+            const D_sorted = MultiArray.toColumnVector(D_sorted_vals);
+            MultiArray.setType(D_sorted);
+            return { values: D_sorted };
+        } else {
+            // CASE 2 or 3: need eigenvectors too
+            // const { D, V } = LAPACK.steqr_vectors(diag, offdiag, maxIter);
+            const { D, V } = LAPACK.steqr_vectors_tridiagonal(diag, offdiag, maxIter);
+            const Vresult = new MultiArray([V.length, V[0].length]);
+            Vresult.array = V;
+            return { values: MultiArray.toDiagonalMatrix(D), vectors: Vresult };
+        }
+    };
+
+    /**
+     * Wrapper MATLAB/Octave-style para eig.
+     * Permite múltiplos retornos via AST.nodeReturnList + handler.
+     */
+    public static eig = (M: MultiArray): NodeReturnList => {
+        return AST.nodeReturnList(
+            (evaluated: ReturnHandlerResult, index: number): NodeExpr | undefined => {
+                if (evaluated.length === 1) {
+                    if (index === 0) {
+                        return evaluated.values;
+                    }
+                } else if (evaluated.length === 2) {
+                    if (index === 0) {
+                        return evaluated.vectors;
+                    } else if (index === 1) {
+                        return evaluated.values;
+                    }
+                } else if (evaluated.length === 3) {
+                    if (index === 0) {
+                        return evaluated.vectors;
+                    } else if (index === 1) {
+                        return evaluated.values;
+                    } else if (index === 2) {
+                        return evaluated.T; // tridiagonal, para debug/inspeção
+                    }
+                }
+                // se index inválido, undefined (ou erro, conforme convenção)
+                return undefined;
+            },
+            (length: number): ReturnHandlerResult => {
+                AST.throwErrorIfGreaterThanReturnList(3, length);
+                if (length === 1) {
+                    const { D } = LAPACK.eig_hermitian(M);
+                    return { length, values: D };
+                } else if (length === 2) {
+                    const { D, V } = LAPACK.eig_hermitian(M, true);
+                    return { length, values: D, vectors: V };
+                } else {
+                    const { values, vectors, T } = LinearAlgebra.eigDecomposition(M, 3);
+                    return { length, values, vectors, T };
+                }
+            },
+        );
+    };
+
+    public static test(A: MultiArray) {
+        return AST.nodeReturnList(
+            (evaluated: ReturnHandlerResult, index: number): NodeExpr | undefined => {
+                if (evaluated.length === 1) {
+                    if (index === 0) {
+                        return Complex.zero();
+                    }
+                } else if (evaluated.length === 2) {
+                    if (index === 0) {
+                        return Complex.zero();
+                    } else if (index === 1) {
+                        return Complex.one();
+                    }
+                } else if (evaluated.length === 3) {
+                    if (index === 0) {
+                        return Complex.zero();
+                    } else if (index === 1) {
+                        return Complex.one();
+                    } else if (index === 2) {
+                        return Complex.two();
+                    }
+                }
+                // se index inválido, undefined (ou erro, conforme convenção)
+                return undefined;
+            },
+            (length: number): ReturnHandlerResult => {
+                if (length === 1) {
+                    return { length };
+                } else if (length === 2) {
+                    return { length };
+                } else {
+                    return { length };
+                }
+            },
+        );
+    }
+
+    /**
      * LinearAlgebra functions.
      */
-    public static functions: { [F in keyof LinearAlgebra]: Function } = {
+    public static readonly functions: { [F in keyof LinearAlgebra]: Function } = {
         eye: LinearAlgebra.eye,
+        diag: LinearAlgebra.diag,
         trace: LinearAlgebra.trace,
         det: LinearAlgebra.det,
         inv: LinearAlgebra.inv,
@@ -821,6 +1350,8 @@ abstract class LinearAlgebra {
         cross: LinearAlgebra.cross,
         kron: LinearAlgebra.kron,
         qr: LinearAlgebra.qr,
+        eig: LinearAlgebra.eig,
+        test: LinearAlgebra.test,
     };
 }
 
