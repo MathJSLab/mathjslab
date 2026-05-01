@@ -2134,68 +2134,6 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
     });
 
-    describe('LAPACK.larfg', () => {
-        it('larfg — trivial vector (length 1)', () => {
-            evaluator.Execute('x = [3]');
-            const x = evaluator.Execute('x').list[0].array.map((r: any[]) => r[0]);
-            const { tau, v, alpha } = LAPACK.larfg_original(x);
-            expect(Complex.toBoolean(Complex.eq(tau, Complex.zero()))).toBe(true);
-            expect(v.length).toBe(1);
-            expect(Complex.toBoolean(Complex.eq(v[0], Complex.one()))).toBe(true);
-            expect(Complex.toBoolean(Complex.eq(alpha, x[0]))).toBe(true);
-        });
-
-        it('larfg — real vector with zero tail (sigma = 0)', () => {
-            evaluator.Execute('x = [5; 0; 0]');
-            const x = evaluator.Execute('x').list[0].array.map((r: any[]) => r[0]);
-            const { tau, v, alpha } = LAPACK.larfg_original(x);
-            expect(Complex.toBoolean(Complex.eq(tau, Complex.zero()))).toBe(true);
-            expect(v.length).toBe(3);
-            expect(Complex.toBoolean(Complex.eq(v[0], Complex.one()))).toBe(true);
-            expect(Complex.toBoolean(Complex.eq(v[1], Complex.zero()))).toBe(true);
-            expect(Complex.toBoolean(Complex.eq(v[2], Complex.zero()))).toBe(true);
-            expect(Complex.toBoolean(Complex.eq(alpha, x[0]))).toBe(true);
-        });
-
-        it('larfg — real vector (general case)', () => {
-            evaluator.Execute('x = [4; 3]');
-            const x = evaluator.Execute('x').list[0].array.map((r: any[]) => r[0]);
-            const { tau, v, alpha } = LAPACK.larfg_original(x);
-            // ||x|| = 5
-            expect(Complex.imagToNumber(alpha)).toBeCloseTo(0);
-            expect(Complex.realToNumber(alpha)).toBeCloseTo(-5);
-            expect(Complex.toBoolean(Complex.ne(tau, Complex.zero()))).toBe(true);
-            expect(v.length).toBe(2);
-            expect(Complex.toBoolean(Complex.eq(v[0], Complex.one()))).toBe(true);
-        });
-
-        it('larfg — complex vector (general case)', () => {
-            evaluator.Execute('x = [1+i; 2]');
-            const x = evaluator.Execute('x').list[0].array.map((r: any[]) => r[0]);
-            const { tau, v, alpha } = LAPACK.larfg_original(x);
-            // alpha should be real-negative times phase
-            expect(Complex.toBoolean(Complex.ne(tau, Complex.zero()))).toBe(true);
-            expect(v.length).toBe(2);
-            expect(Complex.toBoolean(Complex.eq(v[0], Complex.one()))).toBe(true);
-            // alpha magnitude equals ||x||
-            const norm = Math.sqrt(1 * 1 + 1 * 1 + 4);
-            expect(Complex.realToNumber(Complex.abs(alpha))).toBeCloseTo(norm);
-        });
-
-        it('larfg — resulting reflector annihilates tail', () => {
-            evaluator.Execute('x = [3; 4]');
-            const x = evaluator.Execute('x').list[0].array.map((r: any[]) => r[0]);
-            const { tau, v, alpha } = LAPACK.larfg_original(x);
-            // Form H = I - tau * v * vᴴ
-            const vx = BLAS.dotc(v, x);
-            const y0 = Complex.sub(x[0], Complex.mul(tau, Complex.mul(v[0], vx)));
-            const y1 = Complex.sub(x[1], Complex.mul(tau, Complex.mul(v[1], vx)));
-            expect(Complex.imagToNumber(y1)).toBeCloseTo(0);
-            expect(Math.abs(Complex.realToNumber(y1))).toBeLessThan(EXPECT_TOL);
-            expect(Complex.realToNumber(y0)).toBeCloseTo(Complex.realToNumber(alpha));
-        });
-    });
-
     describe('BLAS.gemv', () => {
         it('gemv — real matrix and vectors', () => {
             const A = evaluator.Execute('[1,2; 3,4]').list[0] as MultiArray;

@@ -677,6 +677,14 @@ export default class MathJSLabParser extends Parser {
                 this.state = 114;
                 this.statement();
 
+                localctx.statement(localctx.i).node.start = {
+                    line: localctx.statement(localctx.i).start.line,
+                    column: localctx.statement(localctx.i).start.column,
+                };
+                localctx.statement(localctx.i).node.stop = {
+                    line: this._input.LT(1).column > 0 ? this._input.LT(1).line : this._input.LT(1).line - 1,
+                    column: this._input.LT(1).column > 0 ? this._input.LT(1).column - 1 : Infinity,
+                };
                 localctx.node = AST.nodeListFirst(localctx.statement(localctx.i++).node);
 
                 this.state = 122;
@@ -691,6 +699,14 @@ export default class MathJSLabParser extends Parser {
                                 this.state = 117;
                                 this.statement();
 
+                                localctx.statement(localctx.i).node.start = {
+                                    line: localctx.statement(localctx.i).start.line,
+                                    column: localctx.statement(localctx.i).start.column,
+                                };
+                                localctx.statement(localctx.i).node.stop = {
+                                    line: this._input.LT(1).column > 0 ? this._input.LT(1).line : this._input.LT(1).line - 1,
+                                    column: this._input.LT(1).column > 0 ? this._input.LT(1).column - 1 : Infinity,
+                                };
                                 if (localctx.sep(localctx.i - 1).getText()[0] === ';') {
                                     localctx.node.list[localctx.node.list.length - 1].omitOutput = true;
                                 }
@@ -864,7 +880,6 @@ export default class MathJSLabParser extends Parser {
                         this.match(MathJSLabParser.STRING);
 
                         const str = localctx.STRING().getText();
-                        // localctx.node = AST.nodeString(str.substring(1, str.length - 1), str.at(0));
                         localctx.node = AST.nodeString(str.substring(1, str.length - 1), str[0] as StringQuoteCharacter);
                     }
                     break;
@@ -928,7 +943,7 @@ export default class MathJSLabParser extends Parser {
                 this.state = 164;
                 this.match(MathJSLabParser.ENDRANGE);
 
-                localctx.node = AST.nodeLiteral('ENDRANGE');
+                localctx.node = AST.nodeEndRange();
             }
         } catch (re) {
             if (re instanceof RecognitionException) {
@@ -1381,7 +1396,7 @@ export default class MathJSLabParser extends Parser {
                         this.state = 270;
                         this.match(MathJSLabParser.RPAREN);
 
-                        localctx.node = AST.nodeOp('()', localctx.expression().node);
+                        localctx.node = AST.nodeOperation('()', localctx.expression().node);
                     }
                     break;
                 default:
@@ -1410,7 +1425,7 @@ export default class MathJSLabParser extends Parser {
                 this.state = 275;
                 this.match(MathJSLabParser.COLON);
 
-                localctx.node = AST.nodeLiteral(':');
+                localctx.node = AST.nodeColon();
             }
         } catch (re) {
             if (re instanceof RecognitionException) {
@@ -1435,7 +1450,7 @@ export default class MathJSLabParser extends Parser {
                 this.state = 278;
                 this.match(MathJSLabParser.TILDE);
 
-                localctx.node = AST.nodeLiteral('<~>');
+                localctx.node = AST.nodeIgnoredTarget();
             }
         } catch (re) {
             if (re instanceof RecognitionException) {
@@ -1600,7 +1615,7 @@ export default class MathJSLabParser extends Parser {
                             this.state = 308;
                             this.oper_expr(4);
 
-                            localctx.node = AST.nodeOp((localctx._op.text + '_') as OperatorType, localctx.oper_expr(0).node);
+                            localctx.node = AST.nodeOperation((localctx._op.text + '_') as OperatorType, localctx.oper_expr(0).node);
                         }
                         break;
                     case 54:
@@ -1618,7 +1633,7 @@ export default class MathJSLabParser extends Parser {
                             this.state = 312;
                             this.oper_expr(3);
 
-                            localctx.node = AST.nodeOp(localctx._op.text as OperatorType, localctx.oper_expr(0).node);
+                            localctx.node = AST.nodeOperation(localctx._op.text as OperatorType, localctx.oper_expr(0).node);
                         }
                         break;
                     default:
@@ -1658,7 +1673,7 @@ export default class MathJSLabParser extends Parser {
                                         this.state = 319;
                                         this.oper_expr(3);
 
-                                        localctx.node = AST.nodeOp(localctx._op.text as OperatorType, localctx.oper_expr(0).node, localctx.oper_expr(1).node);
+                                        localctx.node = AST.nodeOperation(localctx._op.text as OperatorType, localctx.oper_expr(0).node, localctx.oper_expr(1).node);
                                     }
                                     break;
                                 case 2:
@@ -1681,7 +1696,7 @@ export default class MathJSLabParser extends Parser {
                                         this.state = 324;
                                         this.oper_expr(2);
 
-                                        localctx.node = AST.nodeOp(localctx._op.text as OperatorType, localctx.oper_expr(0).node, localctx.oper_expr(1).node);
+                                        localctx.node = AST.nodeOperation(localctx._op.text as OperatorType, localctx.oper_expr(0).node, localctx.oper_expr(1).node);
                                     }
                                     break;
                                 case 3:
@@ -1702,7 +1717,7 @@ export default class MathJSLabParser extends Parser {
                                             this.consume();
                                         }
 
-                                        localctx.node = AST.nodeOp(('_' + localctx._op.text) as OperatorType, localctx.oper_expr(0).node);
+                                        localctx.node = AST.nodeOperation(('_' + localctx._op.text) as OperatorType, localctx.oper_expr(0).node);
                                     }
                                     break;
                                 case 4:
@@ -1785,7 +1800,7 @@ export default class MathJSLabParser extends Parser {
                                             this.consume();
                                         }
 
-                                        localctx.node = AST.nodeOp(localctx._op.text as OperatorType, localctx.oper_expr(0).node);
+                                        localctx.node = AST.nodeOperation(localctx._op.text as OperatorType, localctx.oper_expr(0).node);
                                     }
                                     break;
                                 case 7:
@@ -1844,7 +1859,7 @@ export default class MathJSLabParser extends Parser {
                                         this.state = 360;
                                         this.power_expr(0);
 
-                                        localctx.node = AST.nodeOp(localctx._op.text as OperatorType, localctx.oper_expr(0).node, localctx.power_expr().node);
+                                        localctx.node = AST.nodeOperation(localctx._op.text as OperatorType, localctx.oper_expr(0).node, localctx.power_expr().node);
                                     }
                                     break;
                             }
@@ -1924,7 +1939,7 @@ export default class MathJSLabParser extends Parser {
                             this.state = 373;
                             this.power_expr(2);
 
-                            localctx.node = AST.nodeOp((localctx._op.text + '_') as OperatorType, localctx.power_expr().node);
+                            localctx.node = AST.nodeOperation((localctx._op.text + '_') as OperatorType, localctx.power_expr().node);
                         }
                         break;
                     case 54:
@@ -1942,7 +1957,7 @@ export default class MathJSLabParser extends Parser {
                             this.state = 377;
                             this.power_expr(1);
 
-                            localctx.node = AST.nodeOp(localctx._op.text as OperatorType, localctx.power_expr().node);
+                            localctx.node = AST.nodeOperation(localctx._op.text as OperatorType, localctx.power_expr().node);
                         }
                         break;
                     default:
@@ -1980,7 +1995,7 @@ export default class MathJSLabParser extends Parser {
                                             this.consume();
                                         }
 
-                                        localctx.node = AST.nodeOp(('_' + localctx._op.text) as OperatorType, localctx.power_expr().node);
+                                        localctx.node = AST.nodeOperation(('_' + localctx._op.text) as OperatorType, localctx.power_expr().node);
                                     }
                                     break;
                                 case 2:
@@ -2221,7 +2236,7 @@ export default class MathJSLabParser extends Parser {
                                         this.state = 435;
                                         this.simple_expr(6);
 
-                                        localctx.node = AST.nodeOp(localctx._op.text as OperatorType, localctx.simple_expr(0).node, localctx.simple_expr(1).node);
+                                        localctx.node = AST.nodeOperation(localctx._op.text as OperatorType, localctx.simple_expr(0).node, localctx.simple_expr(1).node);
                                     }
                                     break;
                                 case 2:
@@ -2237,7 +2252,7 @@ export default class MathJSLabParser extends Parser {
                                         this.state = 440;
                                         this.simple_expr(5);
 
-                                        localctx.node = AST.nodeOp(localctx._op.text as OperatorType, localctx.simple_expr(0).node, localctx.simple_expr(1).node);
+                                        localctx.node = AST.nodeOperation(localctx._op.text as OperatorType, localctx.simple_expr(0).node, localctx.simple_expr(1).node);
                                     }
                                     break;
                                 case 3:
@@ -2253,7 +2268,7 @@ export default class MathJSLabParser extends Parser {
                                         this.state = 445;
                                         this.simple_expr(4);
 
-                                        localctx.node = AST.nodeOp(localctx._op.text as OperatorType, localctx.simple_expr(0).node, localctx.simple_expr(1).node);
+                                        localctx.node = AST.nodeOperation(localctx._op.text as OperatorType, localctx.simple_expr(0).node, localctx.simple_expr(1).node);
                                     }
                                     break;
                                 case 4:
@@ -2269,7 +2284,7 @@ export default class MathJSLabParser extends Parser {
                                         this.state = 450;
                                         this.simple_expr(3);
 
-                                        localctx.node = AST.nodeOp(localctx._op.text as OperatorType, localctx.simple_expr(0).node, localctx.simple_expr(1).node);
+                                        localctx.node = AST.nodeOperation(localctx._op.text as OperatorType, localctx.simple_expr(0).node, localctx.simple_expr(1).node);
                                     }
                                     break;
                                 case 5:
@@ -2285,7 +2300,7 @@ export default class MathJSLabParser extends Parser {
                                         this.state = 455;
                                         this.simple_expr(2);
 
-                                        localctx.node = AST.nodeOp(localctx._op.text as OperatorType, localctx.simple_expr(0).node, localctx.simple_expr(1).node);
+                                        localctx.node = AST.nodeOperation(localctx._op.text as OperatorType, localctx.simple_expr(0).node, localctx.simple_expr(1).node);
                                     }
                                     break;
                             }
@@ -2344,7 +2359,7 @@ export default class MathJSLabParser extends Parser {
                         this.state = 468;
                         this.expression();
 
-                        localctx.node = AST.nodeOp(localctx._op.text as OperatorType, localctx.simple_expr().node, localctx.expression().node);
+                        localctx.node = AST.nodeOperation(localctx._op.text as OperatorType, localctx.simple_expr().node, localctx.expression().node);
                     }
                     break;
                 case 3:
@@ -2509,7 +2524,7 @@ export default class MathJSLabParser extends Parser {
                         this.state = 505;
                         this.expression();
 
-                        localctx.node = AST.nodeOp('=', localctx.identifier().node, localctx.expression().node);
+                        localctx.node = AST.nodeOperation('=', localctx.identifier().node, localctx.expression().node);
                     }
                     break;
             }
@@ -3011,7 +3026,7 @@ export default class MathJSLabParser extends Parser {
                     this.consume();
                 }
 
-                localctx.node = AST.nodeFunction(
+                localctx.node = AST.nodeFunctionDefinition(
                     localctx.identifier().node,
                     localctx.return_list() ? localctx.return_list().node : AST.nodeListFirst(),
                     localctx.param_list() ? localctx.param_list().node : AST.nodeListFirst(),

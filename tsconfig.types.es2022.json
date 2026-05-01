@@ -2,10 +2,16 @@
     "extends": "./tsconfig.build.json",
     "compilerOptions": {
         "target": "ES2022" /* Set the JavaScript language version for emitted JavaScript and include compatible library declarations. */,
-        "module": "ES2022" /* Specify what module code is generated. */,
-        "moduleResolution": "node" /* Specify how TypeScript looks up a file from a given module specifier. */,
+        "module": "ESNext" /* Specify what module code is generated. */,
+        "rootDir": "./src" /* Specify the root folder within your source files. */,
+        "moduleResolution": "bundler" /* Specify how TypeScript looks up a file from a given module specifier. */,
+        "types": ["node"] /* Specify type package names to be included without being referenced in a source file. */,
         "declaration": true /* Generate .d.ts files from TypeScript and JavaScript files in your project. */,
-        "emitDeclarationOnly": true /* Only output d.ts files and not JavaScript files. */
+        "emitDeclarationOnly": true /* Only output d.ts files and not JavaScript files. */,
+        "declarationDir": "./lib/types" /* Specify the output directory for generated declaration files. */,
+        "stripInternal": true /* Disable emitting declarations that have '@internal' in their JSDoc comments. */,
+        "allowJs": false /* Allow JavaScript files to be a part of your program. Use the 'checkJS' option to get errors from these files. */,
+        "skipLibCheck": true /* Skip type checking all .d.ts files. */
     },
     "exclude": ["node_modules", "eslint.config.*", "jest.config.*", "webpack.config.*", "**/*spec.*", "lib", "report", "res", "script", "test"]
 }

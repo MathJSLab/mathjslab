@@ -8,7 +8,26 @@ import MathJSLabLexer from './MathJSLabLexer';
 import MathJSLabParser from './MathJSLabParser';
 import { LexerErrorListener } from './LexerErrorListener';
 import { ParserErrorListener } from './ParserErrorListener';
-import type { OperatorType, NodeInput, NodeExpr, NodeIdentifier, NodeIndexExpr, ReturnHandlerResult, NodeReturnList, NodeType } from './AST';
+import type {
+    ElementType,
+    OperatorType,
+    NodeInput,
+    NodeExpr,
+    NodeIdentifier,
+    NodeIndexExpr,
+    ReturnHandlerResult,
+    NodeReturnList,
+    NodeType,
+    NodeFunctionDefinition,
+    NodeBuiltInFunction,
+    NameEntry,
+    NameTable,
+    FunctionTable,
+    AliasNameTable,
+    BuiltInFunctionTable,
+    CommandWordListTable,
+    UndefinedReferenceTable,
+} from './AST';
 import { AST, CharString, Complex, ComplexType, MultiArray, Structure, FunctionHandle } from './AST';
 import type { MathObject, MathOperationType, UnaryMathOperation, BinaryMathOperation, KeyOfTypeOfMathOperation } from './MathOperation';
 import { MathOperation } from './MathOperation';
@@ -16,80 +35,1125 @@ import { substSymbol } from './substSymbol';
 import { CoreFunctions } from './CoreFunctions';
 import { LinearAlgebra } from './LinearAlgebra';
 import { Configuration } from './Configuration';
-import { SymbolTable } from './SymbolTable';
 import { MathML } from './MathML';
-
-/**
- * `aliasNameTable` type.
- */
-type AliasNameTable = Record<string, RegExp>;
-
-/**
- * `aliasNameFunction` type.
- */
-type AliasNameFunction = (name: string) => string;
-
-/**
- * `builtInFunctionTable` entry type.
- */
-type BuiltInFunctionTableEntry = {
-    type: 'BUILTIN';
-    mapper: boolean;
-    ev: boolean[];
-    func: Function;
-    UnparserMathML?: (tree: NodeInput) => string;
-};
-
-/**
- * `builtInFunctionTable` type.
- */
-type BuiltInFunctionTable = Record<string, BuiltInFunctionTableEntry>;
-
-/**
- * `localTable` type.
- */
-type LocalTable = Record<string, NodeInput>;
-
-/**
- * `nameTable` entry type.
- */
-type NameTableEntry = {
-    undefined?: string;
-    node: NodeExpr;
-};
-
-/**
- * `nameTable` type.
- */
-type NameTable = Record<string, NameTableEntry>;
-
-/**
- * `undefinedReferenceTable` type.
- */
-type UndefinedReferenceTable = Record<string, string[]>;
-
-/**
- * `commandWordListTable` function type.
- */
-type CommandWordListFunction = (...args: string[]) => any;
-
-/**
- * `commandWordListTable` entry type.
- */
-type CommandWordListTableEntry = {
-    func: CommandWordListFunction;
-};
-
-/**
- * `commandWordListTable` type.
- */
-type CommandWordListTable = Record<string, CommandWordListTableEntry>;
 
 /**
  * `response` type
  */
 type ExitStatus = number;
 type ExitStatusValues = Record<string, ExitStatus>;
+
+/**
+ * # Scope
+ *
+ * Represents a **lexical scope**.
+ *
+ * A `Scope` stores:
+ * - variable bindings (`nameTable`)
+ * - function bindings (`functionTable`)
+ * - unresolved references for forward reference resolution (`undefinedReferenceTable`)
+ *
+ * Scopes are organized in a **parent chain**, forming a lexical environment.
+ *
+ * ---
+ *
+ * ## Resolution Model
+ *
+ * Name and function resolution follow this order:
+ *
+ * 1. Current scope
+ * 2. Parent scope
+ * 3. Recursively upward
+ *
+ * ---
+ *
+ * ## Mutation Semantics
+ *
+ * - `define*` → affects **current scope only**
+ * - `remove*` → removes from **current scope only**
+ * - `clear*` → removes from **entire scope chain**
+ *
+ * ---
+ *
+ * ## Notes
+ *
+ * - Tables use `Object.create(null)` to avoid prototype pollution.
+ * - Resolution is read-only (no mutation).
+ * - Supports shadowing (local overrides parent).
+ */
+class Scope {
+    /**
+     * Private constructor.
+     *
+     * Use {@link Scope.create}.
+     *
+     * @param parent - Parent scope (optional)
+     * @param nameTable - Variable table
+     * @param functionTable - Function table
+     * @param undefinedReferenceTable - Undefined references table
+     */
+    private constructor(
+        public parent?: Scope,
+        public nameTable: NameTable = Object.create(null),
+        public functionTable: FunctionTable = Object.create(null),
+        public undefinedReferenceTable: UndefinedReferenceTable = Object.create(null),
+    ) {}
+
+    /**
+     * Factory method for creating a new scope.
+     *
+     * @param parent - Parent scope (optional)
+     * @returns New Scope instance
+     */
+    public static readonly create = (parent?: Scope) => new Scope(parent);
+
+    /**
+     * Defines a variable in the current scope.
+     *
+     * Overwrites existing local definition if present.
+     *
+     * @param name - Identifier
+     * @param node - Value node
+     * @param undefinedReference - Optional unresolved reference tag
+     * @returns Created/updated entry
+     */
+    public defineName(name: string, node: NodeInput, undefinedReference?: string): NameEntry {
+        return undefinedReference ? (this.nameTable[name] = { undefinedReference, node }) : (this.nameTable[name] = { node });
+    }
+
+    /**
+     * Defines multiple variables in the current scope.
+     *
+     * @param table - Map of name → node
+     */
+    public defineNameTable(table: Record<string, NodeInput>): void {
+        for (const name in table) {
+            this.nameTable[name] = { node: table[name] };
+        }
+    }
+
+    /**
+     * Resolves a variable using lexical lookup.
+     *
+     * @param name - Identifier
+     * @returns First matching entry or `undefined`
+     */
+    public resolveName(name: string): NameEntry | undefined {
+        const entry = this.nameTable[name];
+        return entry ? entry : this.parent ? this.parent.resolveName(name) : undefined;
+    }
+
+    /**
+     * Checks if a variable exists in the current scope.
+     *
+     * @param name - Identifier
+     * @returns `true` if exists locally
+     */
+    public hasLocalName(name: string): boolean {
+        return name in this.nameTable;
+    }
+
+    /**
+     * Removes a variable from the current scope only.
+     *
+     * @param name - Identifier
+     */
+    public removeName(name: string): void {
+        delete this.nameTable[name];
+    }
+
+    /**
+     * Removes a variable from the entire scope chain.
+     *
+     * @param name - Identifier
+     */
+    public clearName(name: string): void {
+        let scope: Scope | undefined = this;
+        while (scope) {
+            delete scope.nameTable[name];
+            scope = scope.parent;
+        }
+    }
+
+    /**
+     * Defines a function in the current scope.
+     *
+     * @param name - Function name
+     * @param func - Function definition
+     * @returns Stored function
+     */
+    public defineFunction(name: string, func: NodeFunctionDefinition): NodeFunctionDefinition {
+        return (this.functionTable[name] = func);
+    }
+
+    /**
+     * Defines multiple functions in the current scope.
+     *
+     * @param table - Function table
+     */
+    public defineFunctionTable(table: FunctionTable): void {
+        Object.assign(this.functionTable, table);
+    }
+
+    /**
+     * Resolves a function using lexical lookup.
+     *
+     * @param name - Function name
+     * @returns Function or `undefined`
+     */
+    public resolveFunction(name: string): NodeFunctionDefinition | NodeBuiltInFunction | undefined {
+        const entry = this.functionTable[name];
+        return entry ? entry : this.parent ? this.parent.resolveFunction(name) : undefined;
+    }
+
+    /**
+     * Checks if a function exists in the current scope.
+     *
+     * @param name - Function name
+     * @returns `true` if exists locally
+     */
+    public hasLocalFunction(name: string): boolean {
+        return name in this.functionTable;
+    }
+
+    /**
+     * Removes a function from the current scope only.
+     *
+     * @param name - Function name
+     */
+    public removeFunction(name: string): void {
+        delete this.functionTable[name];
+    }
+
+    /**
+     * Removes a function from the entire scope chain.
+     *
+     * @param name - Function name
+     */
+    public clearFunction(name: string): void {
+        let scope: Scope | undefined = this;
+        while (scope) {
+            delete scope.functionTable[name];
+            scope = scope.parent;
+        }
+    }
+
+    /**
+     * Binds parameters to arguments in the current scope.
+     *
+     * No validation is performed.
+     *
+     * @param names - Parameter names
+     * @param args - Argument expressions
+     */
+    public bindParameters(names: string[], args: NodeExpr[]): void {
+        for (let i = 0; i < names.length; i++) {
+            this.defineName(names[i], args[i]);
+        }
+    }
+
+    /**
+     * Binds parameters to arguments with arity checking.
+     *
+     * Throws an error if the number of arguments does not match
+     * the number of parameters.
+     *
+     * @param names - Parameter names
+     * @param args - Argument expressions
+     * @throws Error if arity mismatch
+     */
+    public bindParametersChecked(names: string[], args: NodeExpr[]): void {
+        if (names.length !== args.length) {
+            throw new Error(`Arity mismatch: expected ${names.length} argument(s), got ${args.length}`);
+        }
+
+        this.bindParameters(names, args);
+    }
+
+    /**
+     * Registers an unresolved reference (forward reference).
+     *
+     * @param name - Identifier
+     * @param undefinedReference - Reference id
+     * @returns Updated reference list
+     */
+    public defineUndefinedReference(name: string, undefinedReference: string) {
+        const entry = this.resolveUndefinedReference(name);
+
+        if (entry) {
+            if (!entry.includes(undefinedReference)) {
+                entry.push(undefinedReference);
+            }
+            return entry;
+        } else {
+            return (this.undefinedReferenceTable[name] = [undefinedReference]);
+        }
+    }
+
+    /**
+     * Resolves unresolved references using lexical lookup.
+     *
+     * @param name - Identifier
+     * @returns Array of references or `undefined`
+     */
+    public resolveUndefinedReference(name: string): string[] | undefined {
+        const entry = this.undefinedReferenceTable[name];
+        return entry ? entry : this.parent ? this.parent.resolveUndefinedReference(name) : undefined;
+    }
+
+    /**
+     * Removes unresolved references from the current scope only.
+     *
+     * @param name - Identifier
+     */
+    public removeUndefinedReference(name: string): void {
+        delete this.undefinedReferenceTable[name];
+    }
+
+    /**
+     * Removes unresolved references from the entire scope chain.
+     *
+     * @param name - Identifier
+     */
+    public clearUndefinedReference(name: string): void {
+        let scope: Scope | undefined = this;
+        while (scope) {
+            delete scope.undefinedReferenceTable[name];
+            scope = scope.parent;
+        }
+    }
+}
+
+/**
+ * # Callable
+ *
+ * Discriminated union representing any **callable entity** in the engine.
+ *
+ * A callable is anything that can be invoked during evaluation.
+ *
+ * ---
+ *
+ * ## Variants
+ *
+ * - `BUILTIN` → Built-in function implemented in the runtime
+ * - `LAMBDA` → Anonymous function (function handle with expression)
+ * - `FCNDEF` → User-defined function (declared with `function`)
+ *
+ * ---
+ *
+ * ## Design Notes
+ *
+ * This abstraction allows the evaluator to treat all callable entities
+ * uniformly, while preserving their specific execution semantics.
+ *
+ * Each variant wraps a different underlying AST/runtime representation.
+ */
+type Callable = BuiltinCallable | LambdaCallable | FunctionDefinitionCallable;
+
+/**
+ * Represents a **built-in callable function**.
+ *
+ * Built-in functions are implemented directly in the runtime
+ * (e.g., `sin`, `cos`, `exp`).
+ */
+interface BuiltinCallable {
+    /**
+     * Discriminator tag.
+     */
+    type: 'BUILTIN';
+
+    /**
+     * AST node representing the built-in function.
+     */
+    node: NodeBuiltInFunction;
+}
+
+/**
+ * Represents an **anonymous function (lambda)**.
+ *
+ * This wraps a {@link FunctionHandle} whose `id` is `undefined`
+ * and contains:
+ * - parameter list
+ * - expression body
+ * - optional closure
+ */
+interface LambdaCallable {
+    /**
+     * Discriminator tag.
+     */
+    type: 'LAMBDA';
+
+    /**
+     * Function handle representing the lambda.
+     */
+    node: FunctionHandle & { id: undefined };
+}
+
+/**
+ * Represents a **defined function**.
+ *
+ * Typically declared using a function definition construct.
+ */
+interface FunctionDefinitionCallable {
+    /**
+     * Discriminator tag.
+     */
+    type: 'FCNDEF';
+
+    /**
+     * AST node representing the function definition.
+     */
+    node: NodeFunctionDefinition;
+}
+
+/**
+ * # CallFrame
+ *
+ * Represents a **function call frame** in the evaluation stack ({@link EvaluatorWorkspace.callStack}).
+ *
+ * A call frame encapsulates:
+ * - the **execution scope** for the call
+ * - the **callable being executed**
+ * - a link to the **caller frame** (stack chain)
+ *
+ * ---
+ *
+ * ## Role in Evaluation
+ *
+ * During function invocation, a new `CallFrame` is created:
+ *
+ * 1. A new `Scope` is created (child of the defining scope or global scope)
+ * 2. Parameters are bound in that scope
+ * 3. The callable is associated with the frame
+ * 4. The frame is pushed onto the call stack
+ *
+ * This enables:
+ * - proper lexical scoping
+ * - recursion
+ * - nested calls
+ * - stack trace reconstruction
+ *
+ * ---
+ *
+ * ## Stack Structure
+ *
+ * Frames form a linked structure:
+ *
+ * ```text
+ * currentFrame → parentFrame → parentFrame → ...
+ * ```
+ *
+ * ---
+ *
+ * ## Debugging Support
+ *
+ * Additional metadata is stored to support stack traces:
+ *
+ * - `callSite` → AST node where the call occurred
+ * - `name` → human-readable function name
+ *
+ * ---
+ *
+ * ## Notes
+ *
+ * - `func` may be `undefined` for temporary frames
+ * - `parentFrame` should be consistent with the call stack array
+ */
+class CallFrame {
+    /**
+     * Creates a new call frame.
+     *
+     * @param scope - Execution {@link Scope} for this frame
+     * @param func - Callable associated with this frame (optional)
+     * @param parentFrame - Caller frame (optional)
+     * @param callSite - {@link AST} node representing the call site (optional)
+     * @param name - Human-readable function name (optional)
+     */
+    public constructor(
+        /**
+         * Execution {@link Scope} for this frame.
+         */
+        public scope: Scope,
+
+        /**
+         * {@link Callable} being executed in this frame.
+         */
+        public func?: Callable,
+
+        /**
+         * AST node where the function call originated.
+         *
+         * Useful for error reporting (line/column in future).
+         */
+        public callSite?: NodeExpr,
+
+        /**
+         * Human-readable function name.
+         *
+         * Examples:
+         * - "sin"
+         * - "f"
+         * - "@(x)x^2"
+         */
+        public name?: string,
+
+        /**
+         * Parent frame in the call stack.
+         */
+        public parentFrame?: CallFrame,
+    ) {}
+}
+
+/**
+ * # EvaluatorError
+ *
+ * Base class for all evaluation-related errors.
+ *
+ * This class extends the native `Error` and adds optional
+ * support for stack trace frames (`CallFrame[]`), enabling
+ * MATLAB/Octave-like error reporting.
+ *
+ * ---
+ *
+ * ## Design Goals
+ *
+ * - Backward compatible with existing `throw new Error(...)`
+ * - Allows incremental adoption of stack traces
+ * - Provides a unified error hierarchy
+ *
+ * ---
+ *
+ * ## Notes
+ *
+ * - `stackFrames` is optional to support legacy code paths
+ * - Formatting is deferred to `toString()` / `format()`
+ */
+class EvaluatorError extends Error {
+    /**
+     * Optional call stack snapshot.
+     *
+     * Top frame should be the first element.
+     */
+    public readonly stackFrames?: CallFrame[];
+
+    /**
+     * Creates a new EvaluatorError.
+     *
+     * @param message - Error message
+     * @param stackFrames - Optional stack trace snapshot
+     */
+    public constructor(message: string, stackFrames?: CallFrame[]) {
+        super(message);
+        this.name = 'EvaluatorError';
+        this.stackFrames = stackFrames;
+    }
+
+    /**
+     * Formats the error message with optional stack trace.
+     *
+     * @returns Formatted error string
+     */
+    public format(): string {
+        let result = `Error: ${this.message}`;
+
+        if (!this.stackFrames || this.stackFrames.length === 0) {
+            return result;
+        }
+
+        const lines: string[] = [];
+
+        for (const frame of this.stackFrames) {
+            const name = this.getFrameName(frame);
+
+            // 🔴 ignora frame global vazio
+            if (!name || name === '<anonymous>') continue;
+
+            let lineInfo = '';
+
+            const site = frame.callSite;
+
+            if (site?.start) {
+                const { line, column } = site.start;
+
+                if (line !== undefined && column !== undefined) {
+                    lineInfo = ` (line ${line}, column ${column})`;
+                } else if (line !== undefined) {
+                    lineInfo = ` (line ${line})`;
+                }
+            }
+
+            lines.push(`Error in ${name}${lineInfo}`);
+        }
+
+        if (lines.length > 0) {
+            result += '\n' + lines.join('\n');
+        }
+
+        return result;
+    }
+
+    /**
+     * Derives a human-readable name for a frame.
+     */
+    protected getFrameName(frame: CallFrame): string {
+        if (frame.name) return frame.name;
+
+        const func = frame.func;
+
+        if (!func) return '';
+
+        switch (func.type) {
+            case 'BUILTIN':
+                return func.node.id ?? '<builtin>';
+
+            case 'LAMBDA':
+                return '@anonymous';
+
+            case 'FCNDEF':
+                return func.node.id ?? '<function>';
+
+            default:
+                return '<unknown>';
+        }
+    }
+
+    /**
+     * Default string representation.
+     */
+    public toString(): string {
+        return this.format();
+    }
+}
+
+/**
+ * # EvalError
+ *
+ * Represents a general runtime evaluation error.
+ *
+ * Examples:
+ * - invalid operations
+ * - domain errors
+ */
+class EvalError extends EvaluatorError {
+    public constructor(message: string, stackFrames?: CallFrame[]) {
+        super(message, stackFrames);
+        this.name = 'EvalError';
+    }
+}
+
+/**
+ * # ReferenceError
+ *
+ * Represents errors related to undefined identifiers.
+ *
+ * Examples:
+ * - undefined variable
+ * - undefined function
+ */
+class ReferenceError extends EvaluatorError {
+    public constructor(message: string, stackFrames?: CallFrame[]) {
+        super(message, stackFrames);
+        this.name = 'ReferenceError';
+    }
+}
+
+/**
+ * # SyntaxError
+ *
+ * Represents syntax-related errors detected during parsing or preprocessing.
+ */
+class SyntaxError extends EvaluatorError {
+    public constructor(message: string, stackFrames?: CallFrame[]) {
+        super(message, stackFrames);
+        this.name = 'SyntaxError';
+    }
+}
+
+class EvaluatorWorkspace {
+    /**
+     *
+     * @param globalScope
+     * @param callStack
+     */
+    public loadEvaluatorWorkspace(globalScope?: Scope, callStack?: CallFrame[]): void {
+        if (globalScope) {
+            this.globalScope = globalScope;
+        } else {
+            this.globalScope = Scope.create();
+            this.globalScope.nameTable = Object.create(null);
+            this.globalScope.functionTable = Object.create(null);
+            this.globalScope.undefinedReferenceTable = Object.create(null);
+        }
+        this.callStack = callStack ?? [new CallFrame(this.globalScope)];
+    }
+
+    /**
+     * Private constructor (only used by `create` static method).
+     * @param globalScope Optional global scope reference.
+     * @param callStack Optional function call stack reference.
+     */
+    private constructor(
+        /**
+         * Evaluator instance associated to this workspace.
+         */
+        public evaluator?: Evaluator,
+        /**
+         * Global scope.
+         */
+        public globalScope?: Scope,
+        /**
+         * Function call stack.
+         */
+        public callStack: CallFrame[] = [],
+        /**
+         * Built-in function table.
+         */
+        public builtInFunctionTable: Record<string, NodeBuiltInFunction> = Object.create(null),
+        /**
+         * Allow forward reference flag.
+         */
+        public allowForwardReference: boolean = false,
+    ) {
+        this.loadEvaluatorWorkspace(globalScope, callStack);
+    }
+    /**
+     * Create {@link EvaluatorWorkspace} object.
+     * @param globalScope Optional global scope reference.
+     * @param callStack Optional function call stack reference.
+     * @returns
+     */
+    public static readonly create = (evaluator?: Evaluator, globalScope?: Scope, callStack?: CallFrame[]): EvaluatorWorkspace => new EvaluatorWorkspace(evaluator, globalScope, callStack);
+    /**
+     * Native name table. It's inserted in nameTable when Evaluator constructor executed.
+     */
+    public nativeNameTable: Record<string, ComplexType>;
+    /**
+     * Native name table list.
+     */
+    public nativeNameTableList: string[];
+    /**
+     * Alias name table.
+     */
+    private aliasNameTable: AliasNameTable;
+    /**
+     * Alias name function. This property is set at Evaluator instantiation.
+     * @param name Alias name.
+     * @returns Canonical name.
+     */
+    public aliasNameFunction = (name: string): string => name;
+    /**
+     * Alias table setup
+     * @param aliasNameTable
+     */
+    public setAliasNameTable(aliasNameTable?: AliasNameTable): void {
+        if (aliasNameTable) {
+            this.aliasNameTable = aliasNameTable;
+            this.aliasNameFunction = (name: string): string => {
+                let result = false;
+                let aliasname = '';
+                for (const i in this.aliasNameTable) {
+                    if (this.aliasNameTable[i].test(name)) {
+                        result = true;
+                        aliasname = i;
+                        break;
+                    }
+                }
+                if (result) {
+                    return aliasname;
+                } else {
+                    return name;
+                }
+            };
+        } else {
+            this.aliasNameFunction = (name: string): string => name;
+        }
+    }
+    /**
+     * Get a list of names of defined functions in builtInFunctionTable.
+     */
+    public get builtInFunctionList(): string[] {
+        return Object.keys(this.builtInFunctionTable);
+    }
+    /**
+     * Current frame (top of call stack) getter.
+     */
+    public get currentFrame(): CallFrame | undefined {
+        return this.callStack[this.callStack.length - 1];
+    }
+    /**
+     * Current scope (top of call stack) getter.
+     */
+    public get currentScope(): Scope {
+        return this.currentFrame!.scope;
+    }
+    /**
+     * Name resolver.
+     * @param name
+     * @returns
+     */
+    public resolveName(name: string): NameEntry | undefined {
+        return this.currentScope.resolveName(name);
+    }
+    public resolveFunction(name: string): NodeFunctionDefinition | NodeBuiltInFunction | undefined {
+        const canonical = this.aliasNameFunction(name);
+        const func = this.currentScope.resolveFunction(canonical);
+        if (func) return func;
+        return this.builtInFunctionTable[canonical];
+    }
+    public assignName(name: string, value: NodeInput) {
+        this.currentScope.defineName(name, value);
+    }
+    public assignFunction(name: string, func: NodeFunctionDefinition) {
+        this.currentScope.defineFunction(name, func);
+    }
+    public createChildScope(parent: Scope = this.currentScope): Scope {
+        return Scope.create(parent);
+    }
+    public resolveCallable(expr: NodeExpr): Callable | undefined {
+        /* =========================
+           FUNCTION HANDLE
+           ========================= */
+        if (FunctionHandle.isInstanceOf(expr)) {
+            /* CASO 1: handle nomeado (@sin) */
+            if (expr.id) {
+                const func = this.resolveFunction(expr.id);
+                if (!func) {
+                    throw new ReferenceError(`'${expr.id}' undefined.`);
+                }
+                if (func.type === 'BUILTIN') {
+                    return { type: 'BUILTIN', node: func };
+                }
+                if (func.type === 'FCNDEF') {
+                    return { type: 'FCNDEF', node: func };
+                }
+            }
+            /* CASO 2: lambda @(x)x^2 */
+            return {
+                type: 'LAMBDA',
+                node: expr as FunctionHandle & { id: undefined },
+            };
+        }
+        return undefined;
+    }
+    public resolveIdentifier(tree: NodeInput, scope: Scope): NodeExpr {
+        const name = tree.id;
+        /* 1. variável */
+        const entry = scope.resolveName(name);
+        if (entry && entry.node) {
+            entry.node.parent = tree;
+            return entry.node;
+        }
+        /* 2. função */
+        const func = this.resolveFunction(name);
+        if (func) {
+            /* 👇 PERMITE se estiver sendo chamado */
+            if (tree.parent && tree.parent.type === 'IDX') {
+                const handle = FunctionHandle.create(name);
+                handle.parent = tree;
+                return handle;
+            }
+            /* 👇 caso contrário: erro MATLAB-like */
+            AST.throwInvalidCallError(name);
+        }
+        /* 3. erro */
+        // throw new ReferenceError(`'${name}' undefined.`);
+        this.error(`'${name}' undefined.`);
+    }
+    private evaluateArgs(args: NodeExpr[], parent: NodeInput, mode: 'all' | boolean[]): NodeExpr[] {
+        return args.map((arg: NodeExpr, i: number) => {
+            arg.parent = parent;
+            arg.index = i;
+            if (mode === 'all') {
+                return AST.reduceToFirstIfReturnList(this.evaluator!.Evaluator(arg, this.currentScope));
+            }
+            const ev = mode;
+            return ev.length > 0 && i < ev.length && !ev[i] ? arg : AST.reduceToFirstIfReturnList(this.evaluator!.Evaluator(arg, this.currentScope));
+        });
+    }
+    private error(message: string): never {
+        throw new EvalError(message, this.getStackTrace());
+    }
+    private resolveCallSite(node: NodeInput | undefined): NodeExpr | undefined {
+        let current: any = node;
+        while (current) {
+            if (current.start) return current;
+            current = current.parent;
+        }
+        return undefined;
+    }
+    callCallable(callable: Callable, args: NodeExpr[], parent: NodeInput): NodeExpr {
+        switch (callable.type) {
+            case 'BUILTIN': {
+                const node = callable.node;
+                const alias = this.aliasNameFunction(node.id);
+                const evaluatedArgs = this.evaluateArgs(args, parent, node.ev);
+                /* 🔥 PUSH FRAME */
+                this.pushCallStackFrame(new CallFrame(this.currentScope, callable, this.resolveCallSite(parent), node.id));
+                try {
+                    if (node.mapper && evaluatedArgs.length !== 1) {
+                        this.error(`Invalid call to ${alias}.`);
+                    }
+                    return node.mapper && evaluatedArgs.length === 1 && MultiArray.isInstanceOf(evaluatedArgs[0])
+                        ? MultiArray.rawMap(evaluatedArgs[0], node.func)
+                        : node.func(...evaluatedArgs);
+                } finally {
+                    /* 🔥 POP FRAME */
+                    this.popCallStackFrame();
+                }
+            }
+            case 'LAMBDA': {
+                const lambda = callable.node;
+                if (lambda.parameter.length !== args.length) {
+                    this.error(`invalid number of arguments.`);
+                }
+                const lambdaScope = Scope.create(lambda.closure ?? this.currentScope);
+                for (let i = 0; i < args.length; i++) {
+                    args[i].parent = parent;
+                    args[i].index = i;
+                    const value = AST.reduceToFirstIfReturnList(this.evaluator!.Evaluator(args[i], this.currentScope));
+                    lambdaScope.defineName(lambda.parameter[i].id, value);
+                }
+                this.pushCallStackFrame(new CallFrame(lambdaScope, callable, this.resolveCallSite(parent), FunctionHandle.toString(lambda)));
+                try {
+                    const result = AST.reduceToFirstIfReturnList(this.evaluator!.Evaluator(lambda.expression, lambdaScope));
+                    return result;
+                } finally {
+                    this.popCallStackFrame();
+                }
+            }
+            case 'FCNDEF': {
+                const func = callable.node;
+                const paramCount = func.parameter.list.length;
+                if (paramCount !== args.length) {
+                    this.error(`invalid number of arguments in function ${func.id}`);
+                }
+                /* criar escopo (já preparado para closure futura) */
+                const functionScope = Scope.create(func.definingScope ?? this.currentScope);
+                /* bind parâmetros */
+                for (let i = 0; i < paramCount; i++) {
+                    args[i].parent = parent;
+                    args[i].index = i;
+                    const value = AST.reduceToFirstIfReturnList(this.evaluator!.Evaluator(args[i], this.currentScope));
+                    const paramName = func.parameter.list[i].id;
+                    functionScope.defineName(paramName, value);
+                }
+                /* call stack */
+                this.pushCallStackFrame(new CallFrame(functionScope, callable, this.resolveCallSite(parent), func.id));
+                let result: NodeExpr;
+                try {
+                    /* execute body */
+                    if (func.statements.list.length > 0) {
+                        this.evaluator!.Evaluator(func.statements, functionScope);
+                    }
+                    /* return */
+                    if (func.return.list.length > 0) {
+                        const names = func.return.list.map((r) => r.id);
+                        result = AST.nodeReturnList(
+                            (evaluated, index) => {
+                                const key = names[index];
+                                const value = evaluated[key];
+                                if (value === undefined) {
+                                    throw new EvalError(`Undefined return value '${key}'`);
+                                }
+                                return value;
+                            },
+                            (length: number) => {
+                                const out: any = { length };
+                                for (let i = 0; i < length; i++) {
+                                    const name = names[i];
+                                    const entry = functionScope.resolveName(name);
+                                    if (!entry || !entry.node) {
+                                        throw new EvalError(`Undefined return variable '${name}'`);
+                                    }
+                                    out[name] = entry.node as NodeExpr;
+                                }
+                                return out;
+                            },
+                        );
+                    } else {
+                        result = AST.nodeVoid();
+                    }
+                } finally {
+                    this.popCallStackFrame();
+                }
+                return result;
+            }
+            default:
+                throw new Error('Invalid callable.');
+        }
+    }
+    apply(expr: NodeExpr, args: NodeExpr[], parent: NodeInput): NodeExpr {
+        /* DEBUG GUARDRAIL */
+        if (this.evaluator!.debug) {
+            console.log('[APPLY]', {
+                exprType: expr?.type,
+                isFunctionHandle: FunctionHandle.isInstanceOf(expr),
+                exprId: (expr as any)?.id,
+                delim: parent.delim,
+                argsCount: args.length,
+            });
+        }
+        /* TRY FUNCTION CALL */
+        const callable = this.resolveCallable(expr);
+        if (this.evaluator!.debug) {
+            console.log('[CALLABLE]', callable?.type ?? 'NONE');
+        }
+        /* 🔒 Guardrail estrutural */
+        if (!callable && FunctionHandle.isInstanceOf(expr)) {
+            throw new Error('Unexpected non-callable FunctionHandle.');
+        }
+        if (callable) {
+            return this.callCallable(callable, args, parent);
+        }
+        /* INDEXING */
+        if (this.evaluator!.debug) {
+            console.warn('[FALLBACK → INDEX]', {
+                exprType: expr?.type,
+                exprId: (expr as any)?.id,
+            });
+        }
+        if (parent.delim === '{}' && !(MultiArray.isInstanceOf(expr) && expr.isCell)) {
+            throw new EvalError('matrix cannot be indexed with {');
+        }
+        const array = MultiArray.scalarOrCellToMultiArray(expr);
+        const evaluatedArgs = this.evaluateArgs(args, parent, 'all');
+        const result = MultiArray.getElements(array, parent.expr.id, [], evaluatedArgs);
+        result!.parent = parent;
+        if (array.isCell && parent.delim === '()') {
+            (result as MultiArray).isCell = true;
+            return result;
+        }
+        return MultiArray.MultiArrayToScalar(result);
+    }
+
+    /**
+     * Define function in builtInFunctionTable.
+     * @param id Name of function.
+     * @param func Function body.
+     * @param map `true` if function is a mapper function.
+     * @param ev A `boolean` array indicating which function argument should
+     * be evaluated before executing the function. If array is zero-length all
+     * arguments are evaluated.
+     */
+    public defineBuiltInFunction(id: string, func: Function, mapper: boolean = false, ev: boolean[] = []): void {
+        this.builtInFunctionTable[id] = { type: 'BUILTIN', id, mapper, ev, func, definingScope: this.globalScope! };
+    }
+
+    /**
+     *
+     * @param table
+     */
+    public assignBuiltInFunctionTable(table?: Record<string, NodeBuiltInFunction>): void {
+        if (table) {
+            Object.assign(this.builtInFunctionTable, table);
+        }
+    }
+
+    /**
+     * Define unary operator function in builtInFunctionTable.
+     * @param id Name of function.
+     * @param func Function body.
+     */
+    public defineUnaryOperatorFunction(id: KeyOfTypeOfMathOperation, func: UnaryMathOperation): void {
+        this.builtInFunctionTable[id] = {
+            type: 'BUILTIN',
+            id,
+            mapper: false,
+            ev: [],
+            func: (...operand: NodeExpr) => {
+                if (operand.length === 1) {
+                    return func(operand[0]);
+                } else {
+                    throw new EvalError(`Invalid call to ${name}. Type 'help ${name}' to see correct usage.`);
+                }
+            },
+            definingScope: this.globalScope!,
+        };
+    }
+
+    /**
+     * Define binary operator function in builtInFunctionTable.
+     * @param id Name of function.
+     * @param func Function body.
+     */
+    public defineBinaryOperatorFunction(id: KeyOfTypeOfMathOperation, func: BinaryMathOperation): void {
+        this.builtInFunctionTable[id] = {
+            type: 'BUILTIN',
+            id,
+            mapper: false,
+            ev: [],
+            func: (left: NodeExpr, ...right: NodeExpr) => {
+                if (right.length === 1) {
+                    return func(left, right[0]);
+                } else {
+                    throw new EvalError(`Invalid call to ${id}. Type 'help ${id}' to see correct usage.`);
+                }
+            },
+            definingScope: this.globalScope!,
+        };
+    }
+
+    /**
+     * Define define two-or-more operand function in builtInFunctionTable.
+     * @param name
+     * @param func
+     */
+    public defineLeftAssociativeMultipleOperationFunction(id: KeyOfTypeOfMathOperation, func: BinaryMathOperation): void {
+        this.builtInFunctionTable[id] = {
+            type: 'BUILTIN',
+            id,
+            mapper: false,
+            ev: [],
+            func: (left: NodeExpr, ...right: NodeExpr) => {
+                if (right.length === 1) {
+                    return func(left, right[0]);
+                } else if (right.length > 1) {
+                    let result = func(left, right[0]);
+                    for (let i = 1; i < right.length; i++) {
+                        result = func(result, right[i]);
+                    }
+                    return result;
+                } else {
+                    throw new EvalError(`Invalid call to ${id}. Type 'help ${id}' to see correct usage.`);
+                }
+            },
+            definingScope: this.globalScope!,
+        };
+    }
+
+    /**
+     * Push a new frame onto the call stack.
+     *
+     * @param frame - CallFrame to push
+     */
+    public pushCallStackFrame(frame: CallFrame): void {
+        const parent = this.currentFrame;
+        frame.parentFrame = parent;
+        this.callStack.push(frame);
+    }
+
+    /**
+     * Pop the current frame from the call stack.
+     *
+     * @returns Removed frame
+     */
+    public popCallStackFrame(): CallFrame | undefined {
+        return this.callStack.pop();
+    }
+
+    /**
+     * Returns a snapshot of the current stack trace.
+     *
+     * Top frame is the first element.
+     */
+    private getStackTrace(): CallFrame[] {
+        /* remove frame global (without func) */
+        return this.callStack
+            .filter((f) => f.func !== undefined)
+            .slice()
+            .reverse(); /* internal → external */
+    }
+}
 
 /**
  * EvaluatorConfig type.
@@ -110,17 +1174,13 @@ type IncDecOperator = (tree: NodeIdentifier) => MathObject;
  */
 interface EvaluatorInterface {
     debug: boolean;
-    nativeNameTableList: string[];
-    nameTable: NameTable;
-    builtInFunctionList: string[];
-    localTable: LocalTable;
+    workspace: EvaluatorWorkspace;
     exitStatus: ExitStatus;
     precedenceTable: { [key: string]: number };
-    aliasNameFunction: AliasNameFunction;
     Parse(input: string): NodeInput;
     Restart(): void;
     Clear(...names: string[]): void;
-    Evaluator(tree: NodeInput, local?: boolean, fname?: string): NodeInput;
+    Evaluator(tree: NodeInput, scope?: Scope): NodeInput;
     Evaluate(tree: NodeInput): NodeInput;
     Unparse(tree: NodeInput, parentPrecedence?: number): string;
     UnparserMathML(tree: NodeInput, parentPrecedence: number): string;
@@ -144,7 +1204,6 @@ class Evaluator implements EvaluatorInterface {
         PARSER_ERROR: 2,
         EVAL_ERROR: 3,
     };
-
     /**
      * Private debug flag.
      */
@@ -161,81 +1220,10 @@ class Evaluator implements EvaluatorInterface {
     public set debug(value: boolean) {
         this._debug = value;
     }
-
     /**
-     * Native name table. It's inserted in nameTable when Evaluator constructor executed.
+     * Evaluator workspace.
      */
-    private nativeNameTable: Record<string, ComplexType>;
-
-    /**
-     * Native name table list.
-     */
-    private _nativeNameTableList: string[];
-
-    /**
-     * Native name table list getter.
-     */
-    public get nativeNameTableList(): string[] {
-        return this._nativeNameTableList;
-    }
-
-    /**
-     * Alias name table.
-     */
-    private aliasNameTable: AliasNameTable;
-
-    // /**
-    //  * Symbol table.
-    //  */
-    // private _symbolTable: SymbolTable;
-
-    // /**
-    //  * Symbol table getter.
-    //  */
-    // public get symbolTable(): SymbolTable {
-    //     return this._symbolTable;
-    // }
-
-    /**
-     * Name table.
-     */
-    private _nameTable: NameTable = {};
-
-    /**
-     * Name table getter.
-     */
-    public get nameTable(): NameTable {
-        return this._nameTable;
-    }
-
-    /**
-     * Undefined Reference table.
-     */
-    private undefinedReferenceTable: UndefinedReferenceTable = {};
-
-    /**
-     * Built-in function table.
-     */
-    private builtInFunctionTable: BuiltInFunctionTable = {};
-
-    /**
-     * Get a list of names of defined functions in builtInFunctionTable.
-     */
-    public get builtInFunctionList(): string[] {
-        return Object.keys(this.builtInFunctionTable);
-    }
-
-    /**
-     * Local table.
-     */
-    private _localTable: LocalTable = {};
-
-    /**
-     * Local table getter.
-     */
-    public get localTable(): LocalTable {
-        return this._localTable;
-    }
+    public workspace: EvaluatorWorkspace;
 
     /**
      * Command word list table.
@@ -266,8 +1254,8 @@ class Evaluator implements EvaluatorInterface {
         __builtins__: {
             /* eslint-disable-next-line  @typescript-eslint/no-unused-vars */
             func: (...args: string[]): MultiArray => {
-                const result = new MultiArray([this.builtInFunctionList.length, 1], null, true);
-                result.array = this.builtInFunctionList.sort().map((name) => [new CharString(name)]);
+                const result = new MultiArray([this.workspace.builtInFunctionList.length, 1], null, true);
+                result.array = this.workspace.builtInFunctionList.sort().map((name) => [new CharString(name)]);
                 return result;
             },
         },
@@ -313,9 +1301,10 @@ class Evaluator implements EvaluatorInterface {
         if (pre) {
             return (tree: NodeIdentifier): MathObject => {
                 if (tree.type === 'IDENT') {
-                    if (typeof this._nameTable[tree.id] !== 'undefined') {
-                        this._nameTable[tree.id].node = MathOperation[operation](this._nameTable[tree.id].node, Complex.one());
-                        return this._nameTable[tree.id].node;
+                    const variable = this.workspace.resolveName(tree.id);
+                    if (variable) {
+                        variable.node = MathOperation[operation](variable.node, Complex.one());
+                        return variable.node;
                     } else {
                         throw new EvalError(`in ${operation === 'plus' ? '++' : '--'}${tree.id}, ${tree.id} must be defined first.`);
                     }
@@ -326,9 +1315,10 @@ class Evaluator implements EvaluatorInterface {
         } else {
             return (tree: NodeIdentifier): MathObject => {
                 if (tree.type === 'IDENT') {
-                    if (typeof this._nameTable[tree.id] !== 'undefined') {
-                        const value = MathOperation.copy(this._nameTable[tree.id].node);
-                        this._nameTable[tree.id].node = MathOperation[operation](this._nameTable[tree.id].node, Complex.one());
+                    const variable = this.workspace.resolveName(tree.id);
+                    if (variable) {
+                        const value = MathOperation.copy(variable.node);
+                        variable.node = MathOperation[operation](variable.node, Complex.one());
                         return value;
                     } else {
                         throw new EvalError(`in ${tree.id}${operation === 'plus' ? '++' : '--'}, ${tree.id} must be defined first.`);
@@ -375,6 +1365,9 @@ class Evaluator implements EvaluatorInterface {
         '_--': this.incDecOpFactory(false, 'minus'),
     };
 
+    /**
+     * Precedence definitions.
+     */
     private static readonly precedence: string[][] = [
         ['min', '=', '+=', '-=', '*=', '/=', '\\='],
         ['||'],
@@ -393,33 +1386,7 @@ class Evaluator implements EvaluatorInterface {
     /**
      * Operator precedence table.
      */
-    private _precedenceTable: { [key: string]: number };
-
-    /**
-     * Operator precedence table getter.
-     */
-    public get precedenceTable(): { [key: string]: number } {
-        return this._precedenceTable;
-    }
-
-    /**
-     * Load precedence table.
-     */
-    private loadPrecedenceTable() {
-        this._precedenceTable = {};
-        Evaluator.precedence.forEach((list, precedence) => {
-            list.forEach((field) => {
-                this._precedenceTable[field] = precedence + 1;
-            });
-        });
-        /* Set precedenceTable aliases */
-        this._precedenceTable['**'] = this._precedenceTable['^'];
-        this._precedenceTable['.**'] = this._precedenceTable['.^'];
-        this._precedenceTable['_**'] = this._precedenceTable['_^'];
-        this._precedenceTable['_.**'] = this._precedenceTable['_.^'];
-        this._precedenceTable['~='] = this._precedenceTable['!='];
-        this._precedenceTable['~'] = this._precedenceTable['!'];
-    }
+    public precedenceTable: { [key: string]: number };
 
     /**
      * Get tree node precedence.
@@ -432,17 +1399,19 @@ class Evaluator implements EvaluatorInterface {
             if (Complex.isInstanceOf(tree)) {
                 return Complex.precedence(tree, this);
             } else {
-                return this._precedenceTable.max;
+                return this.precedenceTable.max;
             }
         } else if (tree.type === 'IDX') {
-            const aliasTreeName = this._aliasNameFunction(tree.expr.id);
-            return tree.expr.type === 'IDENT' && aliasTreeName in this.builtInFunctionTable && (!!this.builtInFunctionTable[aliasTreeName].UnparserMathML || aliasTreeName in MathML.format)
-                ? this._precedenceTable.max
-                : this._precedenceTable.preMax;
+            const aliasTreeName = this.workspace.aliasNameFunction(tree.expr.id);
+            return tree.expr.type === 'IDENT' &&
+                aliasTreeName in this.workspace.builtInFunctionTable &&
+                (!!this.workspace.builtInFunctionTable[aliasTreeName].UnparserMathML || aliasTreeName in MathML.format)
+                ? this.precedenceTable.max
+                : this.precedenceTable.preMax;
         } else if (tree.type === 'RANGE') {
-            return tree.start_ && tree.stop_ ? this._precedenceTable.min : this._precedenceTable.max;
+            return tree.start_ && tree.stop_ ? this.precedenceTable.min : this.precedenceTable.max;
         } else {
-            return this._precedenceTable[tree.type] || 0;
+            return this.precedenceTable[tree.type] || 0;
         }
     }
 
@@ -459,28 +1428,28 @@ class Evaluator implements EvaluatorInterface {
     private readonly unparseMathMLFunctions: Record<string, (tree: NodeIndexExpr) => string> = {
         logb: (tree: NodeIndexExpr): string => {
             let unparseArgument = this.UnparserMathML(tree.args[1]);
-            if (this.nodePrecedence(tree.args[1]) < this._precedenceTable.max) {
+            if (this.nodePrecedence(tree.args[1]) < this.precedenceTable.max) {
                 unparseArgument = MathML.format['()']('(', unparseArgument, ')');
             }
             return MathML.format['logb'](this.UnparserMathML(tree.args[0]), unparseArgument);
         },
         log2: (tree: NodeIndexExpr): string => {
             let unparseArgument = this.UnparserMathML(tree.args[0]);
-            if (this.nodePrecedence(tree.args[0]) < this._precedenceTable.max) {
+            if (this.nodePrecedence(tree.args[0]) < this.precedenceTable.max) {
                 unparseArgument = MathML.format['()']('(', unparseArgument, ')');
             }
             return MathML.format['log2'](unparseArgument);
         },
         log10: (tree: NodeIndexExpr): string => {
             let unparseArgument = this.UnparserMathML(tree.args[0]);
-            if (this.nodePrecedence(tree.args[0]) < this._precedenceTable.max) {
+            if (this.nodePrecedence(tree.args[0]) < this.precedenceTable.max) {
                 unparseArgument = MathML.format['()']('(', unparseArgument, ')');
             }
             return MathML.format['log10'](unparseArgument);
         },
         factorial: (tree: NodeIndexExpr): string => {
             let unparseArgument = this.UnparserMathML(tree.args[0]);
-            if (this.nodePrecedence(tree.args[0]) < this._precedenceTable.max) {
+            if (this.nodePrecedence(tree.args[0]) < this.precedenceTable.max) {
                 unparseArgument = MathML.format['()']('(', unparseArgument, ')');
             }
             return MathML.format['factorial'](unparseArgument);
@@ -488,119 +1457,97 @@ class Evaluator implements EvaluatorInterface {
     };
 
     /**
-     * Alias name function. This property is set at Evaluator instantiation.
-     * @param name Alias name.
-     * @returns Canonical name.
-     */
-    private _aliasNameFunction: AliasNameFunction = (name: string): string => name;
-
-    /**
-     * Alias name function setter.
-     */
-    public set aliasNameFunction(func: AliasNameFunction) {
-        this._aliasNameFunction = func;
-    }
-
-    /**
-     * Alias name function getter.
-     */
-    public get aliasNameFunction(): AliasNameFunction {
-        return this._aliasNameFunction;
-    }
-
-    /**
      * Load the `Evaluator`.
      * @param config
      */
     private loadEvaluator(config?: EvaluatorConfig) {
         this._exitStatus = Evaluator.response.OK;
-        this._nameTable = {};
-        this.undefinedReferenceTable = {};
-        this._localTable = {};
-        this.loadNativeNameTable();
         AST.reload();
+        this.workspace.loadEvaluatorWorkspace();
+        this.workspace.nativeNameTable = Evaluator.nativeNameTableFactory();
+        this.workspace.nativeNameTableList = Object.keys(this.workspace.nativeNameTable);
+        this.workspace.globalScope!.defineNameTable(this.workspace.nativeNameTable);
         /* Define Evaluator functions */
         for (const func in this.functions) {
-            this.defineFunction(func, this.functions[func]);
+            this.workspace.defineBuiltInFunction(func, this.functions[func]);
         }
         /* Define function operators */
         for (const func in MathOperation.leftAssociativeMultipleOperations) {
-            this.defineLeftAssociativeMultipleOperationFunction(func as KeyOfTypeOfMathOperation, MathOperation.leftAssociativeMultipleOperations[func as KeyOfTypeOfMathOperation]!);
+            this.workspace.defineLeftAssociativeMultipleOperationFunction(
+                func as KeyOfTypeOfMathOperation,
+                MathOperation.leftAssociativeMultipleOperations[func as KeyOfTypeOfMathOperation]!,
+            );
         }
         for (const func in MathOperation.binaryOperations) {
-            this.defineBinaryOperatorFunction(func as KeyOfTypeOfMathOperation, MathOperation.binaryOperations[func as KeyOfTypeOfMathOperation]!);
+            this.workspace.defineBinaryOperatorFunction(func as KeyOfTypeOfMathOperation, MathOperation.binaryOperations[func as KeyOfTypeOfMathOperation]!);
         }
         for (const func in MathOperation.unaryOperations) {
-            this.defineUnaryOperatorFunction(func as KeyOfTypeOfMathOperation, MathOperation.unaryOperations[func as KeyOfTypeOfMathOperation]!);
+            this.workspace.defineUnaryOperatorFunction(func as KeyOfTypeOfMathOperation, MathOperation.unaryOperations[func as KeyOfTypeOfMathOperation]!);
         }
         /* Define function mappers */
         for (const func in Complex.mapFunction) {
-            this.defineFunction(func, Complex.mapFunction[func], true);
+            this.workspace.defineBuiltInFunction(func, Complex.mapFunction[func], true);
         }
         /* Define other functions */
         for (const func in Complex.twoArgFunction) {
-            this.defineFunction(func, Complex.twoArgFunction[func]);
+            this.workspace.defineBuiltInFunction(func, Complex.twoArgFunction[func]);
         }
         /* Define Configuration functions */
         for (const func in Configuration.functions) {
-            this.defineFunction(func, Configuration.functions[func]);
+            this.workspace.defineBuiltInFunction(func, Configuration.functions[func]);
         }
         /* Define CoreFunctions functions */
         for (const func in CoreFunctions.functions) {
-            this.defineFunction(func, CoreFunctions.functions[func]);
+            this.workspace.defineBuiltInFunction(func, CoreFunctions.functions[func]);
         }
         /* Define LinearAlgebra functions */
         for (const func in LinearAlgebra.functions) {
-            this.defineFunction(func, LinearAlgebra.functions[func as keyof LinearAlgebra]);
+            this.workspace.defineBuiltInFunction(func, LinearAlgebra.functions[func as keyof LinearAlgebra]);
         }
         /* Load UnparserMathML for special functions */
         for (const func in this.unparseMathMLFunctions) {
-            this.builtInFunctionTable[func].UnparserMathML = this.unparseMathMLFunctions[func];
+            this.workspace.builtInFunctionTable[func].UnparserMathML = this.unparseMathMLFunctions[func];
         }
         if (config) {
-            if (config.aliasNameTable) {
-                this.aliasNameTable = config.aliasNameTable;
-                this._aliasNameFunction = (name: string): string => {
-                    let result = false;
-                    let aliasname = '';
-                    for (const i in this.aliasNameTable) {
-                        if (this.aliasNameTable[i].test(name)) {
-                            result = true;
-                            aliasname = i;
-                            break;
-                        }
-                    }
-                    if (result) {
-                        return aliasname;
-                    } else {
-                        return name;
-                    }
-                };
-            } else {
-                this._aliasNameFunction = (name: string): string => name;
-            }
-            if (config.externalFunctionTable) {
-                Object.assign(this.builtInFunctionTable, config.externalFunctionTable);
-            }
+            this.workspace.setAliasNameTable(config.aliasNameTable);
+            this.workspace.assignBuiltInFunctionTable(config.externalFunctionTable);
             if (config.externalCmdWListTable) {
                 Object.assign(this.commandWordListTable, config.externalCmdWListTable);
             }
         } else {
-            this._aliasNameFunction = (name: string): string => name;
+            this.workspace.aliasNameFunction = (name: string): string => name;
         }
-        // this.symbolTable = new SymbolTable(this.builtInFunctionTable, this._aliasNameFunction);
     }
 
     /**
      * `Evaluator` object private constructor
      */
-    private constructor(config?: EvaluatorConfig) {
+    private constructor(config?: EvaluatorConfig, workspace?: EvaluatorWorkspace) {
         /* Set opTable aliases */
         this.opTable['**'] = this.opTable['^'];
         this.opTable['.**'] = this.opTable['.^'];
         this.opTable['~='] = this.opTable['!='];
         this.opTable['~'] = this.opTable['!'];
-        this.loadPrecedenceTable();
+        /* Load precedence table */
+        this.precedenceTable = {};
+        Evaluator.precedence.forEach((list, precedence) => {
+            list.forEach((field) => {
+                this.precedenceTable[field] = precedence + 1;
+            });
+        });
+        /* Set precedenceTable aliases */
+        this.precedenceTable['**'] = this.precedenceTable['^'];
+        this.precedenceTable['.**'] = this.precedenceTable['.^'];
+        this.precedenceTable['_**'] = this.precedenceTable['_^'];
+        this.precedenceTable['_.**'] = this.precedenceTable['_.^'];
+        this.precedenceTable['~='] = this.precedenceTable['!='];
+        this.precedenceTable['~'] = this.precedenceTable['!'];
+        if (workspace) {
+            this.workspace = workspace;
+            this.workspace.evaluator = this;
+        } else {
+            this.workspace = EvaluatorWorkspace.create(this);
+        }
         this.loadEvaluator(config);
     }
 
@@ -609,7 +1556,7 @@ class Evaluator implements EvaluatorInterface {
      * @param config
      * @returns
      */
-    public static readonly Create = (config?: EvaluatorConfig): Evaluator => new Evaluator(config);
+    public static readonly Create = (config?: EvaluatorConfig, workspace?: EvaluatorWorkspace): Evaluator => new Evaluator(config, workspace);
 
     /**
      * Parse input string.
@@ -617,19 +1564,19 @@ class Evaluator implements EvaluatorInterface {
      * @returns Abstract syntax tree of input.
      */
     public Parse(input: string): NodeInput {
-        // Give the lexer the input as a stream of characters.
+        /* Give the lexer the input as a stream of characters. */
         const inputStream = CharStreams.fromString(input);
         const lexer = new MathJSLabLexer(inputStream);
 
-        // Set word-list commands in lexer.
+        /* Set word-list commands in lexer. */
         lexer.commandNames = Object.keys(this.commandWordListTable);
 
-        // Create a stream of tokens and give it to the parser. Set parser to construct a parse tree.
+        /* Create a stream of tokens and give it to the parser. Set parser to construct a parse tree. */
         const tokenStream = new CommonTokenStream(lexer);
         const parser = new MathJSLabParser(tokenStream);
         parser.buildParseTrees = true;
 
-        // Remove error listeners and add LexerErrorListener and ParserErrorListener.
+        /* Remove error listeners and add LexerErrorListener and ParserErrorListener. */
         lexer.removeErrorListeners();
         lexer.addErrorListener(new LexerErrorListener());
         parser.removeErrorListeners();
@@ -641,36 +1588,28 @@ class Evaluator implements EvaluatorInterface {
             // parser._interp.predictionMode = PredictionMode.LL_EXACT_AMBIG_DETECTION;
         }
 
-        // Parse input and return AST.
+        /* Parse input and return AST. */
         return parser.input().node;
     }
 
     /**
-     * Load native name table in the name table.
+     * Native name table factory.
+     * @returns Native name table with actual `Complex` facade.
      */
-    private loadNativeNameTable(): void {
-        this.nativeNameTable = {
-            false: Complex.false(),
-            true: Complex.true(),
-            i: Complex.onei(),
-            I: Complex.onei(),
-            j: Complex.onei(),
-            J: Complex.onei(),
-            e: Complex.e(),
-            pi: Complex.pi(),
-            inf: Complex.inf_0(),
-            Inf: Complex.inf_0(),
-            nan: Complex.NaN_0(),
-            NaN: Complex.NaN_0(),
-        };
-        this._nativeNameTableList = Object.keys(this.nativeNameTable);
-        /* Insert nativeNameTable in nameTable */
-        for (const name in this.nativeNameTable) {
-            this._nameTable[name] = {
-                node: this.nativeNameTable[name],
-            };
-        }
-    }
+    private static readonly nativeNameTableFactory = () => ({
+        false: Complex.false(),
+        true: Complex.true(),
+        i: Complex.onei(),
+        I: Complex.onei(),
+        j: Complex.onei(),
+        J: Complex.onei(),
+        e: Complex.e(),
+        pi: Complex.pi(),
+        inf: Complex.inf_0(),
+        Inf: Complex.inf_0(),
+        nan: Complex.NaN_0(),
+        NaN: Complex.NaN_0(),
+    });
 
     /**
      * Restart evaluator.
@@ -685,15 +1624,15 @@ class Evaluator implements EvaluatorInterface {
      */
     public Clear(...names: string[]): void {
         if (names.length === 0) {
+            if (this._debug) {
+                console.clear();
+            }
             this.Restart();
         } else {
             names.forEach((name) => {
-                delete this._nameTable[name];
-                delete this.builtInFunctionTable[name];
-                if (this._nativeNameTableList.includes(name)) {
-                    this._nameTable[name] = {
-                        node: this.nativeNameTable[name],
-                    };
+                this.workspace.currentScope.removeName(name);
+                if (this.workspace.nativeNameTableList.includes(name)) {
+                    this.workspace.globalScope!.defineName(name, this.workspace.nativeNameTable[name]);
                 }
             });
         }
@@ -705,13 +1644,12 @@ class Evaluator implements EvaluatorInterface {
      * @param shallow True if tree is a left root of assignment.
      * @returns An object with four properties: `left`, `id`, `args` and `field`.
      */
-    private validateAssignment(tree: NodeExpr, shallow: boolean, local: boolean, fname: string): { id: string; index: NodeExpr[]; field: string[] }[] {
+    private validateAssignment(tree: NodeExpr, shallow: boolean, scope: Scope = this.workspace.currentScope): { id: string; index?: NodeExpr[]; field: string[] }[] {
         const invalidLeftAssignmentMessage = 'invalid left hand side of assignment';
         if (tree.type === 'IDENT') {
             return [
                 {
                     id: tree.id,
-                    index: [],
                     field: [],
                 },
             ];
@@ -728,7 +1666,7 @@ class Evaluator implements EvaluatorInterface {
                 if (typeof field === 'string') {
                     return field;
                 } else {
-                    const result = AST.reduceToFirstIfReturnList(this.Evaluator(field, local, fname));
+                    const result = AST.reduceToFirstIfReturnList(this.Evaluator(field, scope));
                     if (CharString.isInstanceOf(result)) {
                         return result.str;
                     } else {
@@ -740,7 +1678,6 @@ class Evaluator implements EvaluatorInterface {
                 return [
                     {
                         id: tree.obj.id,
-                        index: [],
                         field,
                     },
                 ];
@@ -759,94 +1696,14 @@ class Evaluator implements EvaluatorInterface {
             return [
                 {
                     id: '~',
-                    index: [],
                     field: [],
                 },
             ];
         } else if (shallow && MultiArray.isRowVector(tree)) {
-            return tree.array[0].map((left: NodeExpr) => this.validateAssignment(left, false, local, fname)[0]);
+            return tree.array[0].map((left: NodeExpr) => this.validateAssignment(left, false, scope)[0]);
         } else {
             throw new EvalError(`${invalidLeftAssignmentMessage}.`);
         }
-    }
-
-    /**
-     * Define function in builtInFunctionTable.
-     * @param name Name of function.
-     * @param func Function body.
-     * @param map `true` if function is a mapper function.
-     * @param ev A `boolean` array indicating which function argument should
-     * be evaluated before executing the function. If array is zero-length all
-     * arguments are evaluated.
-     */
-    private defineFunction(name: string, func: Function, mapper: boolean = false, ev: boolean[] = []): void {
-        this.builtInFunctionTable[name] = { type: 'BUILTIN', mapper, ev, func };
-    }
-
-    /**
-     * Define unary operator function in builtInFunctionTable.
-     * @param name Name of function.
-     * @param func Function body.
-     */
-    private defineUnaryOperatorFunction(name: KeyOfTypeOfMathOperation, func: UnaryMathOperation): void {
-        this.builtInFunctionTable[name] = {
-            type: 'BUILTIN',
-            mapper: false,
-            ev: [],
-            func: (...operand: NodeExpr) => {
-                if (operand.length === 1) {
-                    return func(operand[0]);
-                } else {
-                    throw new EvalError(`Invalid call to ${name}. Type 'help ${name}' to see correct usage.`);
-                }
-            },
-        };
-    }
-
-    /**
-     * Define binary operator function in builtInFunctionTable.
-     * @param name Name of function.
-     * @param func Function body.
-     */
-    private defineBinaryOperatorFunction(name: KeyOfTypeOfMathOperation, func: BinaryMathOperation): void {
-        this.builtInFunctionTable[name] = {
-            type: 'BUILTIN',
-            mapper: false,
-            ev: [],
-            func: (left: NodeExpr, ...right: NodeExpr) => {
-                if (right.length === 1) {
-                    return func(left, right[0]);
-                } else {
-                    throw new EvalError(`Invalid call to ${name}. Type 'help ${name}' to see correct usage.`);
-                }
-            },
-        };
-    }
-
-    /**
-     * Define define two-or-more operand function in builtInFunctionTable.
-     * @param name
-     * @param func
-     */
-    private defineLeftAssociativeMultipleOperationFunction(name: KeyOfTypeOfMathOperation, func: BinaryMathOperation): void {
-        this.builtInFunctionTable[name] = {
-            type: 'BUILTIN',
-            mapper: false,
-            ev: [],
-            func: (left: NodeExpr, ...right: NodeExpr) => {
-                if (right.length === 1) {
-                    return func(left, right[0]);
-                } else if (right.length > 1) {
-                    let result = func(left, right[0]);
-                    for (let i = 1; i < right.length; i++) {
-                        result = func(result, right[i]);
-                    }
-                    return result;
-                } else {
-                    throw new EvalError(`Invalid call to ${name}. Type 'help ${name}' to see correct usage.`);
-                }
-            },
-        };
     }
 
     /**
@@ -867,61 +1724,56 @@ class Evaluator implements EvaluatorInterface {
      *
      * @param id
      */
-    private solveUndefined(id: string): void {
-        if (typeof this.undefinedReferenceTable[id] !== 'undefined') {
-            /* Remove duplicates and undefined. */
-            this.undefinedReferenceTable[id] = this.undefinedReferenceTable[id].filter((value, index, self) => value && self.indexOf(value) === index);
-            /* Create a copy. */
-            let undefinedReferenceEntry = this.undefinedReferenceTable[id].slice();
-            /* Stores resolved references. */
-            const solvedReference: string[] = [];
-            this.undefinedReferenceTable[id].forEach((ref, index) => {
-                if (typeof this._nameTable[ref] !== 'undefined') {
-                    try {
-                        this._nameTable[ref].node = AST.reduceToFirstIfReturnList(this.Evaluator(this._nameTable[ref].node));
-                        delete this._nameTable[ref].undefined;
-                        undefinedReferenceEntry[index] = undefined as unknown as string;
-                        solvedReference.push(ref);
-                    } catch (e: unknown) {
-                        if (e instanceof ReferenceError) {
-                            const match = e.message.match(/^'([^']+)'\s+undefined\.?$/);
-                            if (match) {
-                                undefinedReferenceEntry[index] = match[1];
-                                this._nameTable[ref].undefined = match[1];
+    private solveUndefined(id: string, scope: Scope = this.workspace.currentScope): void {
+        if (this.workspace.allowForwardReference) {
+            if (typeof scope.undefinedReferenceTable[id] !== 'undefined') {
+                /* Remove duplicates and undefined. */
+                scope.undefinedReferenceTable[id] = scope.undefinedReferenceTable[id].filter((value, index, self) => value && self.indexOf(value) === index);
+                /* Create a copy. */
+                let undefinedReferenceEntry = scope.undefinedReferenceTable[id].slice();
+                /* Stores resolved references. */
+                const solvedReference: string[] = [];
+                scope.undefinedReferenceTable[id].forEach((ref, index) => {
+                    if (typeof scope.nameTable[ref] !== 'undefined') {
+                        try {
+                            scope.nameTable[ref].node = AST.reduceToFirstIfReturnList(this.Evaluator(scope.nameTable[ref].node, scope));
+                            delete scope.nameTable[ref].undefinedReference;
+                            undefinedReferenceEntry[index] = undefined as unknown as string;
+                            solvedReference.push(ref);
+                        } catch (e: unknown) {
+                            if (e instanceof ReferenceError) {
+                                const match = e.message.match(/^'([^']+)'\s+undefined\.?$/);
+                                if (match) {
+                                    undefinedReferenceEntry[index] = match[1];
+                                    scope.nameTable[ref].undefinedReference = match[1];
+                                }
                             }
                         }
+                    } else {
+                        undefinedReferenceEntry[index] = undefined as unknown as string;
                     }
-                } else {
-                    undefinedReferenceEntry[index] = undefined as unknown as string;
-                }
-            });
-            this.undefinedReferenceTable[id] = undefinedReferenceEntry.filter((value) => value);
-            solvedReference.forEach((ref) => this.solveUndefined(ref));
+                });
+                scope.undefinedReferenceTable[id] = undefinedReferenceEntry.filter((value) => value);
+                solvedReference.forEach((ref) => this.solveUndefined(ref, scope));
+            }
         }
     }
 
     /**
      * Expression tree recursive evaluator.
      * @param tree Expression to evaluate.
-     * @param local Set `true` if evaluating function.
-     * @param fname Function name if evaluating function.
+     * @param scope Scope of execution.
      * @returns Expression `tree` evaluated.
      */
-    public Evaluator(tree: NodeInput, local: boolean = false, fname: string = ''): NodeInput {
+    public Evaluator(tree: NodeInput, scope: Scope = this.workspace.currentScope): NodeInput {
         if (this._debug) {
-            console.log(
-                `Evaluator(\ntree:${JSON.stringify(
-                    tree,
-                    (key: string, value: NodeInput) => (key !== 'parent' ? value : value === null ? 'root' : true),
-                    2,
-                )},\nlocal:${local},\nfname:${fname});`,
-            );
+            console.log(`Evaluator(\ntree:${JSON.stringify(tree, (key: string, value: NodeInput) => (key !== 'parent' ? value : value === null ? 'root' : true), 2)},\n);`);
         }
         if (tree) {
             if (Complex.isInstanceOf(tree) || FunctionHandle.isInstanceOf(tree) || CharString.isInstanceOf(tree) || Structure.isInstanceOf(tree)) {
                 return tree;
             } else if (MultiArray.isInstanceOf(tree)) {
-                return MultiArray.evaluate(tree, this, local, fname);
+                return MultiArray.evaluate(tree, this, scope);
             } else {
                 switch (tree.type) {
                     case '+':
@@ -950,18 +1802,18 @@ class Evaluator implements EvaluatorInterface {
                         tree.left.parent = tree;
                         tree.right.parent = tree;
                         return (this.opTable[tree.type] as BinaryMathOperation)(
-                            AST.reduceToFirstIfReturnList(this.Evaluator(tree.left, local, fname)),
-                            AST.reduceToFirstIfReturnList(this.Evaluator(tree.right, local, fname)),
+                            AST.reduceToFirstIfReturnList(this.Evaluator(tree.left, scope)),
+                            AST.reduceToFirstIfReturnList(this.Evaluator(tree.right, scope)),
                         );
                     case '()':
                         tree.right.parent = tree;
-                        return AST.reduceToFirstIfReturnList(this.Evaluator(tree.right, local, fname));
+                        return AST.reduceToFirstIfReturnList(this.Evaluator(tree.right, scope));
                     case '!':
                     case '~':
                     case '+_':
                     case '-_':
                         tree.right.parent = tree;
-                        return (this.opTable[tree.type] as UnaryMathOperation)(AST.reduceToFirstIfReturnList(this.Evaluator(tree.right, local, fname)));
+                        return (this.opTable[tree.type] as UnaryMathOperation)(AST.reduceToFirstIfReturnList(this.Evaluator(tree.right, scope)));
                     case '++_':
                     case '--_':
                         tree.right.parent = tree;
@@ -969,7 +1821,7 @@ class Evaluator implements EvaluatorInterface {
                     case ".'":
                     case "'":
                         tree.left.parent = tree;
-                        return (this.opTable[tree.type] as UnaryMathOperation)(AST.reduceToFirstIfReturnList(this.Evaluator(tree.left, local, fname)));
+                        return (this.opTable[tree.type] as UnaryMathOperation)(AST.reduceToFirstIfReturnList(this.Evaluator(tree.left, scope)));
                     case '_++':
                     case '_--':
                         tree.left.parent = tree;
@@ -992,7 +1844,7 @@ class Evaluator implements EvaluatorInterface {
                         /* `tree` is an assignment */
                         tree.left.parent = tree;
                         tree.right.parent = tree;
-                        const assignment = this.validateAssignment(tree.left, true, local, fname);
+                        const assignment = this.validateAssignment(tree.left, true, scope);
                         const op: OperatorType | '' = tree.type.substring(0, tree.type.length - 1);
                         if (assignment.length > 1 && op.length > 0) {
                             throw new EvalError('computed multiple assignment not allowed.');
@@ -1001,19 +1853,18 @@ class Evaluator implements EvaluatorInterface {
                         let undefinedReference: string | undefined;
                         let error: Error | undefined;
                         try {
-                            right = this.Evaluator(tree.right, false, fname);
+                            right = MathOperation.copy(this.Evaluator(tree.right, scope));
                         } catch (e: unknown) {
                             error = e as Error;
-                            right = tree.right;
-                            if (e instanceof ReferenceError) {
+                            right = MathOperation.copy(tree.right);
+                            if (e instanceof Error) {
                                 const match = e.message.match(/^'([^']+)'\s+undefined\.?$/);
                                 if (match) {
                                     undefinedReference = match[1];
                                 }
                             }
-
-                            /* Convert `right` to `'RETLIST'` if the node is not already of that type. */
                         }
+                        /* Convert `right` to `'RETLIST'` if the node is not already of that type. */
                         if (right.type !== 'RETLIST') {
                             const result = right;
                             right = AST.nodeReturnList((evaluated: ReturnHandlerResult, index: number) => {
@@ -1030,135 +1881,35 @@ class Evaluator implements EvaluatorInterface {
                             const { id, index, field } = assignment[n];
                             if (id !== '~') {
                                 /* Do assignment */
-                                if (index.length === 0) {
-                                    /* Name definition. */
-                                    const rightN = (right as NodeReturnList).selector(evaluated, n);
-                                    rightN.parent = tree.right;
-                                    const expr = op.length
-                                        ? typeof error !== 'undefined'
-                                            ? AST.nodeOp(op as OperatorType, AST.nodeIdentifier(id), rightN)
-                                            : this.Evaluator(AST.nodeOp(op as OperatorType, AST.nodeIdentifier(id), rightN))
-                                        : rightN;
-                                    try {
-                                        if (field.length > 0) {
-                                            if (typeof this._nameTable[id] === 'undefined') {
-                                                this._nameTable[id] = {
-                                                    node: new Structure({}),
-                                                };
-                                            }
-                                            if (Structure.isInstanceOf(this._nameTable[id].node)) {
-                                                Structure.setNewField(this._nameTable[id].node, field, AST.reduceToFirstIfReturnList(expr));
-                                            } else {
-                                                throw new EvalError('in indexed assignment.');
-                                            }
-                                            AST.appendNodeList(resultList, AST.nodeOp('=', AST.nodeIdentifier(id), this._nameTable[id].node));
-                                        } else {
-                                            if (undefinedReference) {
-                                                if (typeof this.undefinedReferenceTable[undefinedReference] !== 'undefined') {
-                                                    this.undefinedReferenceTable[undefinedReference].push(id);
-                                                } else {
-                                                    this.undefinedReferenceTable[undefinedReference] = [id];
-                                                }
-                                                this._nameTable[id] = {
-                                                    undefined: undefinedReference,
-                                                    node: AST.reduceToFirstIfReturnList(expr),
-                                                };
-                                            } else {
-                                                this._nameTable[id] = {
-                                                    node: AST.reduceToFirstIfReturnList(expr),
-                                                };
-                                            }
-                                            this.solveUndefined(id);
-                                            AST.appendNodeList(resultList, AST.nodeOp('=', AST.nodeIdentifier(id), this._nameTable[id].node));
-                                            if (error) throw error;
-                                        }
-                                    } catch (e: unknown) {
-                                        this._nameTable[id] = {
-                                            node: expr,
-                                        };
-                                        throw e as Error;
-                                    }
-                                } else {
+                                if (index) {
                                     /* Function definition or indexed matrix reference. */
                                     if (op) {
-                                        if (typeof this._nameTable[id] !== 'undefined') {
-                                            if (!FunctionHandle.isInstanceOf(this._nameTable[id].node)) {
+                                        const entry = scope.resolveName(id);
+                                        if (typeof entry !== 'undefined') {
+                                            if (!FunctionHandle.isInstanceOf(entry.node)) {
                                                 /* Indexed matrix reference on left hand side with operator. */
-                                                if (index.length === 1) {
-                                                    /* Test logical indexing. */
-                                                    const arg0 = AST.reduceToFirstIfReturnList(this.Evaluator(index[0], local, fname));
-                                                    if (MultiArray.isInstanceOf(arg0) && arg0.type === Complex.LOGICAL) {
-                                                        /* Logical indexing. */
-                                                        MultiArray.setElementsLogical(
-                                                            this._nameTable,
-                                                            id,
-                                                            field,
-                                                            MultiArray.linearize(arg0) as ComplexType[],
-                                                            MultiArray.scalarToMultiArray(
-                                                                AST.reduceToFirstIfReturnList(
-                                                                    this.Evaluator(
-                                                                        AST.nodeOp(
-                                                                            op,
-                                                                            MultiArray.getElementsLogical(this._nameTable[id].node, id, field, arg0),
-                                                                            MultiArray.scalarToMultiArray(
-                                                                                AST.reduceToFirstIfReturnList(this.Evaluator((right as NodeReturnList).selector(evaluated, n))),
-                                                                            ),
-                                                                        ),
-                                                                        false,
-                                                                        fname,
+                                                MultiArray.setElements(
+                                                    scope,
+                                                    id,
+                                                    field,
+                                                    index.map((arg: NodeExpr) => AST.reduceToFirstIfReturnList(this.Evaluator(arg))),
+                                                    MultiArray.scalarToMultiArray(
+                                                        AST.reduceToFirstIfReturnList(
+                                                            this.Evaluator(
+                                                                AST.nodeOperation(
+                                                                    op,
+                                                                    MultiArray.getElements(entry.node, id, field, index),
+                                                                    MultiArray.scalarToMultiArray(
+                                                                        AST.reduceToFirstIfReturnList(this.Evaluator((right as NodeReturnList).selector(evaluated, n))),
                                                                     ),
                                                                 ),
-                                                            ),
-                                                        );
-                                                    } else {
-                                                        /* Not logical indexing. */
-                                                        MultiArray.setElements(
-                                                            this._nameTable,
-                                                            id,
-                                                            field,
-                                                            [arg0],
-                                                            MultiArray.scalarToMultiArray(
-                                                                AST.reduceToFirstIfReturnList(
-                                                                    this.Evaluator(
-                                                                        AST.nodeOp(
-                                                                            op,
-                                                                            MultiArray.getElements(this._nameTable[id].node, id, field, [arg0]),
-                                                                            MultiArray.scalarToMultiArray(
-                                                                                AST.reduceToFirstIfReturnList(this.Evaluator((right as NodeReturnList).selector(evaluated, n))),
-                                                                            ),
-                                                                        ),
-                                                                        false,
-                                                                        fname,
-                                                                    ),
-                                                                ),
-                                                            ),
-                                                        );
-                                                    }
-                                                } else {
-                                                    MultiArray.setElements(
-                                                        this._nameTable,
-                                                        id,
-                                                        field,
-                                                        index.map((arg: NodeExpr) => AST.reduceToFirstIfReturnList(this.Evaluator(arg))),
-                                                        MultiArray.scalarToMultiArray(
-                                                            AST.reduceToFirstIfReturnList(
-                                                                this.Evaluator(
-                                                                    AST.nodeOp(
-                                                                        op,
-                                                                        MultiArray.getElements(this._nameTable[id].node, id, field, index),
-                                                                        MultiArray.scalarToMultiArray(
-                                                                            AST.reduceToFirstIfReturnList(this.Evaluator((right as NodeReturnList).selector(evaluated, n))),
-                                                                        ),
-                                                                    ),
-                                                                    false,
-                                                                    fname,
-                                                                ),
+                                                                scope,
                                                             ),
                                                         ),
-                                                    );
-                                                }
-                                                AST.appendNodeList(resultList, AST.nodeOp('=', AST.nodeIdentifier(id), this._nameTable[id].node));
-                                                continue;
+                                                    ),
+                                                );
+                                                AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), entry.node));
+                                                continue; // TODO: It's needed? Or it's a eficiency improvement?
                                             } else {
                                                 throw new EvalError(`can't perform indexed assignment for function handle type.`);
                                             }
@@ -1167,44 +1918,61 @@ class Evaluator implements EvaluatorInterface {
                                         }
                                     } else {
                                         /* Indexed matrix reference on left hand side. */
-                                        if (index.length === 1) {
-                                            /* Test logical indexing. */
-                                            index[0].parent = tree.left;
-                                            index[0].index = 0;
-                                            const arg0 = AST.reduceToFirstIfReturnList(this.Evaluator(index[0], local, fname));
-                                            if (MultiArray.isInstanceOf(arg0) && arg0.type === Complex.LOGICAL) {
-                                                /* Logical indexing. */
-                                                MultiArray.setElementsLogical(
-                                                    this._nameTable,
-                                                    id,
-                                                    field,
-                                                    MultiArray.linearize(arg0) as ComplexType[],
-                                                    MultiArray.scalarToMultiArray(AST.reduceToFirstIfReturnList(this.Evaluator((right as NodeReturnList).selector(evaluated, n)))),
-                                                );
-                                            } else {
-                                                /* Not logical indexing. */
-                                                MultiArray.setElements(
-                                                    this._nameTable,
-                                                    id,
-                                                    field,
-                                                    [arg0],
-                                                    MultiArray.scalarToMultiArray(AST.reduceToFirstIfReturnList(this.Evaluator((right as NodeReturnList).selector(evaluated, n)))),
-                                                );
+                                        MultiArray.setElements(
+                                            scope,
+                                            id,
+                                            field,
+                                            index.map((arg: NodeExpr, i: number) => {
+                                                arg.parent = tree.left;
+                                                arg.index = i;
+                                                return AST.reduceToFirstIfReturnList(this.Evaluator(arg));
+                                            }),
+                                            MultiArray.scalarToMultiArray(AST.reduceToFirstIfReturnList(this.Evaluator((right as NodeReturnList).selector(evaluated, n)))),
+                                        );
+                                        AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), scope.resolveName(id)!.node));
+                                    }
+                                } else {
+                                    /* Name definition. */
+                                    const rightN = (right as NodeReturnList).selector(evaluated, n);
+                                    rightN.parent = tree.right;
+                                    const expr = op.length
+                                        ? typeof error !== 'undefined'
+                                            ? AST.nodeOperation(op as OperatorType, AST.nodeIdentifier(id), rightN)
+                                            : this.Evaluator(AST.nodeOperation(op as OperatorType, AST.nodeIdentifier(id), rightN))
+                                        : rightN;
+                                    try {
+                                        if (field.length > 0) {
+                                            let entry = scope.resolveName(id);
+                                            if (typeof entry === 'undefined') {
+                                                entry = scope.defineName(id, new Structure({}));
                                             }
+                                            if (Structure.isInstanceOf(entry.node)) {
+                                                Structure.setNewField(entry.node, field, AST.reduceToFirstIfReturnList(expr));
+                                            } else {
+                                                throw new EvalError('in indexed assignment.');
+                                            }
+                                            AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), entry.node));
                                         } else {
-                                            MultiArray.setElements(
-                                                this._nameTable,
-                                                id,
-                                                field,
-                                                index.map((arg: NodeExpr, i: number) => {
-                                                    arg.parent = tree.left;
-                                                    arg.index = i;
-                                                    return AST.reduceToFirstIfReturnList(this.Evaluator(arg));
-                                                }),
-                                                MultiArray.scalarToMultiArray(AST.reduceToFirstIfReturnList(this.Evaluator((right as NodeReturnList).selector(evaluated, n)))),
-                                            );
+                                            let entry: NameEntry;
+                                            if (undefinedReference) {
+                                                if (this.workspace.allowForwardReference) {
+                                                    scope.defineUndefinedReference(undefinedReference, id);
+                                                    entry = scope.defineName(id, AST.reduceToFirstIfReturnList(expr), undefinedReference);
+                                                } else {
+                                                    throw new ReferenceError(`'${undefinedReference}' undefined.`);
+                                                }
+                                            } else {
+                                                entry = scope.defineName(id, AST.reduceToFirstIfReturnList(expr));
+                                            }
+                                            this.solveUndefined(id, scope);
+                                            AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), entry.node));
+                                            if (error) throw error;
                                         }
-                                        AST.appendNodeList(resultList, AST.nodeOp('=', AST.nodeIdentifier(id), this._nameTable[id].node));
+                                    } catch (e: unknown) {
+                                        if (this.workspace.allowForwardReference) {
+                                            scope.defineName(id, expr);
+                                        }
+                                        throw e as Error;
                                     }
                                 }
                             }
@@ -1224,30 +1992,24 @@ class Evaluator implements EvaluatorInterface {
                         }
                     }
                     case 'IDENT':
-                        if (local && this._localTable[fname] && this._localTable[fname][tree.id]) {
-                            /* Defined in _localTable. */
-                            this._localTable[fname][tree.id].parent = tree;
-                            return this._localTable[fname][tree.id];
-                        } else if (typeof this._nameTable[tree.id] !== 'undefined') {
-                            /* Defined in nameTable. */
-                            this._nameTable[tree.id].node.parent = tree;
-                            return this._nameTable[tree.id].node;
-                        } else if (this._aliasNameFunction(tree.id) in this.builtInFunctionTable) {
-                            /* Defined as built-in function */
-                            const func = FunctionHandle.create(tree.id);
-                            func.parent = tree;
-                            return func;
-                        } else {
-                            throw new ReferenceError(`'${tree.id}' undefined.`);
-                        }
+                        return this.workspace.resolveIdentifier(tree, scope);
+                    case 'FCNDEF': {
+                        const func = tree as NodeFunctionDefinition;
+                        /* Register function in the current scope. */
+                        scope.defineFunction(func.id, func);
+                        /* Optional: store definition scope (light closure). */
+                        func.definingScope = scope;
+                        /* MATLAB-like behavior: function definition does not execute anything. */
+                        return AST.nodeVoid();
+                    }
                     case '.': {
                         const result = Structure.getFields(
-                            AST.reduceToFirstIfReturnList(this.Evaluator(tree.obj, local, fname)),
+                            AST.reduceToFirstIfReturnList(this.Evaluator(tree.obj, scope)),
                             tree.field.map((field: NodeExpr) => {
                                 if (typeof field === 'string') {
                                     return field;
                                 } else {
-                                    const result = AST.reduceToFirstIfReturnList(this.Evaluator(field, local, fname));
+                                    const result = AST.reduceToFirstIfReturnList(this.Evaluator(field, scope));
                                     if (CharString.isInstanceOf(result)) {
                                         return result.str;
                                     } else {
@@ -1268,42 +2030,47 @@ class Evaluator implements EvaluatorInterface {
                             list: new Array(tree.list.length),
                             parent: tree.parent === null ? null : tree,
                         };
-                        for (let i = 0, n = 0; i < tree.list.length; i++, n++) {
+                        let n = 0;
+                        for (let i = 0; i < tree.list.length; i++) {
                             /* Convert undefined name, defined in word-list command, to word-list command.
                              * (Null length word-list command) */
-                            if (
-                                tree.list[i].type === 'IDENT' &&
-                                !(local && this._localTable[fname] && this._localTable[fname][tree.list[i].id]) &&
-                                !(tree.list[i].id in this._nameTable) &&
-                                Object.keys(this.commandWordListTable).indexOf(tree.list[i].id) >= 0
-                            ) {
+                            if (tree.list[i].type === 'IDENT' && !scope.resolveName(tree.list[i].id) && Object.keys(this.commandWordListTable).indexOf(tree.list[i].id) >= 0) {
                                 tree.list[i].type = 'CMDWLIST';
                                 tree.list[i]['args'] = [];
                             }
+                            /* PHASE 1: Prepare input node. */
                             tree.list[i].parent = result;
-                            tree.list[i].index = n;
-                            const item = AST.reduceToFirstIfReturnList(this.Evaluator(tree.list[i], local, fname));
-                            // const item = AST.reduceToFirstIfReturnList(tree.list[i]);
+                            tree.list[i].index = i;
+                            /* Evaluate */
+                            const item = AST.reduceToFirstIfReturnList(this.Evaluator(tree.list[i], scope));
                             if (item.type === 'LIST') {
-                                for (let j = 0; j < item.list.length; j++, n++) {
+                                /* Flatten list. */
+                                for (let j = 0; j < item.list.length; j++) {
+                                    const sub = item.list[j];
+                                    if (sub.type === 'VOID') continue;
+                                    /* PHASE 2: Adjust evaluated node. */
                                     item.list[j].parent = result;
                                     item.list[j].index = n;
-                                    result.list[n] = item.list[j];
-                                    if (tree.parent === null && !AST.omitAnswer(result.list[n])) {
-                                        this._nameTable['ans'] = {
-                                            node: result.list[n],
-                                        };
+                                    result.list[n] = sub;
+                                    if (tree.parent === null && !sub.omitAnswer) {
+                                        scope.defineName('ans', sub);
                                     }
+                                    n++;
                                 }
                             } else {
-                                result.list[n] = item;
-                                if (tree.parent === null && !AST.omitAnswer(result.list[n])) {
-                                    this._nameTable['ans'] = {
-                                        node: result.list[n],
-                                    };
+                                if (item.type !== 'VOID') {
+                                    /* PHASE 2: Adjust evaluated node. */
+                                    item.parent = result;
+                                    item.index = n;
+                                    result.list[n] = item;
+                                    if (tree.parent === null && !item.omitAnswer) {
+                                        scope.defineName('ans', item);
+                                    }
+                                    n++;
                                 }
                             }
                         }
+                        result.list.length = n;
                         return result;
                     }
                     case 'RANGE':
@@ -1313,9 +2080,9 @@ class Evaluator implements EvaluatorInterface {
                             tree.stride_.parent = tree;
                         }
                         return MultiArray.expandRange(
-                            AST.reduceToFirstIfReturnList(this.Evaluator(tree.start_, local, fname)),
-                            AST.reduceToFirstIfReturnList(this.Evaluator(tree.stop_, local, fname)),
-                            tree.stride_ ? AST.reduceToFirstIfReturnList(this.Evaluator(tree.stride_, local, fname)) : null,
+                            AST.reduceToFirstIfReturnList(this.Evaluator(tree.start_, scope)),
+                            AST.reduceToFirstIfReturnList(this.Evaluator(tree.stop_, scope)),
+                            tree.stride_ ? AST.reduceToFirstIfReturnList(this.Evaluator(tree.stride_, scope)) : null,
                         );
                     case 'ENDRANGE': {
                         let parent = tree.parent;
@@ -1326,7 +2093,7 @@ class Evaluator implements EvaluatorInterface {
                             parent = parent.parent;
                         }
                         if (parent && parent.type === 'IDX') {
-                            const expr = AST.reduceToFirstIfReturnList(this.Evaluator(parent.expr, local, fname));
+                            const expr = AST.reduceToFirstIfReturnList(this.Evaluator(parent.expr, scope));
                             if (MultiArray.isInstanceOf(expr)) {
                                 return parent.args.length === 1 ? Complex.create(MultiArray.linearLength(expr)) : Complex.create(MultiArray.getDimension(expr, index));
                             } else {
@@ -1338,7 +2105,7 @@ class Evaluator implements EvaluatorInterface {
                     }
                     case ':':
                         if (tree.parent.type === 'IDX') {
-                            const expr = AST.reduceToFirstIfReturnList(this.Evaluator(tree.parent.expr, local, fname));
+                            const expr = AST.reduceToFirstIfReturnList(this.Evaluator(tree.parent.expr, scope));
                             if (MultiArray.isInstanceOf(expr)) {
                                 return tree.parent.args.length === 1
                                     ? MultiArray.expandColon(MultiArray.linearLength(expr))
@@ -1350,89 +2117,12 @@ class Evaluator implements EvaluatorInterface {
                             throw new SyntaxError('indeterminate colon. The colon to refer a range is valid only in indexing.');
                         }
                     case 'IDX': {
-                        if (typeof tree.expr === 'undefined') {
-                            // TODO: It's needed?
+                        if (!tree.expr) {
                             throw new ReferenceError(`'${tree.id}' undefined.`);
                         }
                         tree.expr.parent = tree;
-                        const expr = AST.reduceToFirstIfReturnList(this.Evaluator(tree.expr, local, fname));
-                        if (FunctionHandle.isInstanceOf(expr)) {
-                            if (expr.id) {
-                                const aliasTreeName = this._aliasNameFunction(expr.id as string);
-                                const argumentsList = tree.args.map((arg: NodeExpr, i: number) => {
-                                    arg.parent = tree;
-                                    arg.index = i;
-                                    return this.builtInFunctionTable[aliasTreeName].ev.length > 0 &&
-                                        i < this.builtInFunctionTable[aliasTreeName].ev.length &&
-                                        !this.builtInFunctionTable[aliasTreeName].ev[i]
-                                        ? arg
-                                        : AST.reduceToFirstIfReturnList(this.Evaluator(arg, local, fname));
-                                });
-                                /* Error if mapper and #arguments!==1 (Invalid call). */
-                                if (this.builtInFunctionTable[aliasTreeName].mapper && argumentsList.length !== 1) {
-                                    throw new EvalError(`Invalid call to ${aliasTreeName}. Type 'help ${expr.id}' to see correct usage.`);
-                                }
-                                /* If function is mapper and called with one parameter of type MultiArray, apply map to array. Else call function with argumentsList */
-                                return this.builtInFunctionTable[aliasTreeName].mapper && argumentsList.length === 1 && MultiArray.isInstanceOf(argumentsList[0])
-                                    ? MultiArray.rawMap(argumentsList[0], this.builtInFunctionTable[aliasTreeName].func)
-                                    : this.builtInFunctionTable[aliasTreeName].func(...argumentsList);
-                            } else {
-                                if (expr.parameter.length !== tree.args.length) {
-                                    throw new EvalError(`invalid number of arguments in function ${tree.expr.id}.`);
-                                }
-                                /* Create _localTable entry. */
-                                const new_fname = tree.expr.id + '_' + globalThis.crypto.randomUUID();
-                                this._localTable[new_fname] = {};
-                                for (let i = 0; i < tree.args.length; i++) {
-                                    /* Evaluate defined function arguments list. */
-                                    tree.args[i].parent = tree;
-                                    tree.args[i].index = i;
-                                    this._localTable[new_fname][expr.parameter[i].id] = AST.reduceToFirstIfReturnList(this.Evaluator(tree.args[i], true, fname));
-                                }
-                                const temp = AST.reduceToFirstIfReturnList(this.Evaluator(expr.expression, true, new_fname));
-                                /* Delete _localTable entry. */
-                                delete this._localTable[new_fname];
-                                return temp;
-                            }
-                        } else {
-                            /* Defined indexed matrix reference. */
-                            if (tree.delim === '{}' && !(MultiArray.isInstanceOf(expr) && expr.isCell)) {
-                                throw new EvalError('matrix cannot be indexed with {');
-                            }
-                            let result: MathObject;
-                            const array = MultiArray.scalarOrCellToMultiArray(expr);
-                            if (tree.args.length === 1) {
-                                /* Test logical indexing. */
-                                tree.args[0].parent = tree;
-                                tree.args[0].index = 0;
-                                const arg0 = AST.reduceToFirstIfReturnList(this.Evaluator(tree.args[0], local, fname));
-                                if (MultiArray.isInstanceOf(arg0) && arg0.type === Complex.LOGICAL) {
-                                    /* Logical indexing. */
-                                    result = MultiArray.getElementsLogical(array, tree.expr.id, [], arg0);
-                                } else {
-                                    /* Not logical indexing. */
-                                    result = MultiArray.getElements(array, tree.expr.id, [], [arg0]);
-                                }
-                            } else {
-                                result = MultiArray.getElements(
-                                    array,
-                                    tree.expr.id,
-                                    [],
-                                    tree.args.map((arg: NodeExpr, i: number) => {
-                                        arg.parent = tree;
-                                        arg.index = i;
-                                        return AST.reduceToFirstIfReturnList(this.Evaluator(arg, local, fname));
-                                    }),
-                                );
-                            }
-                            result!.parent = tree;
-                            if (array.isCell && tree.delim === '()') {
-                                (result as MultiArray).isCell = true;
-                                return result;
-                            } else {
-                                return MultiArray.MultiArrayToScalar(result);
-                            }
-                        }
+                        const expr = AST.reduceToFirstIfReturnList(this.Evaluator(tree.expr, scope));
+                        return this.workspace.apply(expr, tree.args, tree);
                     }
                     case 'CMDWLIST': {
                         const result = this.commandWordListTable[tree.id].func(...tree.args.map((word: CharString) => word.str));
@@ -1441,17 +2131,17 @@ class Evaluator implements EvaluatorInterface {
                     case 'IF': {
                         for (let ifTest = 0; ifTest < tree.expression.length; ifTest++) {
                             tree.expression[ifTest].parent = tree;
-                            if (this.toBoolean(AST.reduceToFirstIfReturnList(this.Evaluator(tree.expression[ifTest], local, fname)))) {
+                            if (this.toBoolean(AST.reduceToFirstIfReturnList(this.Evaluator(tree.expression[ifTest], scope)))) {
                                 tree.then[ifTest].parent = tree;
-                                return AST.reduceToFirstIfReturnList(this.Evaluator(tree.then[ifTest], local, fname));
+                                return AST.reduceToFirstIfReturnList(this.Evaluator(tree.then[ifTest], scope));
                             }
                         }
-                        // No one then clause.
+                        /* No one `then` clause. */
                         if (tree.else) {
                             tree.else.parent = tree;
-                            return AST.reduceToFirstIfReturnList(this.Evaluator(tree.else, local, fname));
+                            return AST.reduceToFirstIfReturnList(this.Evaluator(tree.else, scope));
                         }
-                        // Return null NodeList.
+                        /* Return null NodeList. */
                         return {
                             type: 'LIST',
                             list: [],
@@ -1636,6 +2326,9 @@ class Evaluator implements EvaluatorInterface {
                             }
                             ifstr += 'ENDIF';
                             return ifstr;
+                        case 'FCNDEF':
+                        case 'VOID':
+                            return '';
                         default:
                             return '<INVALID>';
                     }
@@ -1722,7 +2415,7 @@ class Evaluator implements EvaluatorInterface {
                             return MathML.format[tree.type](this.UnparserMathML(tree.left), this.UnparserMathML(tree.right));
                         case '**':
                         case '^':
-                            return MathML.format[tree.type](this.UnparserMathML(tree.left, this._precedenceTable['_' + tree.type]), this.UnparserMathML(tree.right));
+                            return MathML.format[tree.type](this.UnparserMathML(tree.left, this.precedenceTable['_' + tree.type]), this.UnparserMathML(tree.right));
                         case '!':
                         case '~':
                         case '+_':
@@ -1734,7 +2427,7 @@ class Evaluator implements EvaluatorInterface {
                         case '_--':
                         case ".'":
                         case "'":
-                            return MathML.format[tree.type](this.UnparserMathML(tree.left, this._precedenceTable['_' + tree.type]));
+                            return MathML.format[tree.type](this.UnparserMathML(tree.left, this.precedenceTable['_' + tree.type]));
                         case 'IDENT':
                             return MathML.format['IDENT'](substSymbol(tree.id));
                         case '.':
@@ -1766,10 +2459,10 @@ class Evaluator implements EvaluatorInterface {
                             } else {
                                 let unparse;
                                 if (tree.expr.type === 'IDENT') {
-                                    const aliasTreeName = this._aliasNameFunction(tree.expr.id);
-                                    if (aliasTreeName in this.builtInFunctionTable && this.builtInFunctionTable[aliasTreeName].UnparserMathML) {
-                                        unparse = this.builtInFunctionTable[aliasTreeName].UnparserMathML(tree);
-                                    } else if (aliasTreeName in this.builtInFunctionTable && aliasTreeName in MathML.format) {
+                                    const aliasTreeName = this.workspace.aliasNameFunction(tree.expr.id);
+                                    if (aliasTreeName in this.workspace.builtInFunctionTable && this.workspace.builtInFunctionTable[aliasTreeName].UnparserMathML) {
+                                        unparse = this.workspace.builtInFunctionTable[aliasTreeName].UnparserMathML(tree);
+                                    } else if (aliasTreeName in this.workspace.builtInFunctionTable && aliasTreeName in MathML.format) {
                                         unparse = MathML.format[aliasTreeName](...tree.args.map((arg: NodeExpr) => this.UnparserMathML(arg)));
                                     } else {
                                         unparse = MathML.format['IDX'](
@@ -1805,6 +2498,9 @@ class Evaluator implements EvaluatorInterface {
                             );
                             const ifElse = tree.else ? `<mtr><mtd><mo><b>else</b></mo></mtd></mtr><mtr><mtd></mtd><mtd>${this.UnparserMathML(tree.else)}</mtd></mtr>` : '';
                             return `<mtable>${ifThenArray.join('')}${ifElse}<mtr><mtd><mo><b>endif</b></mo></mtd></mtr></mtable>`;
+                        case 'FCNDEF':
+                        case 'VOID':
+                            return MathML.format['VOID']();
                         default:
                             return MathML.format['INVALID']();
                     }
@@ -1846,17 +2542,6 @@ class Evaluator implements EvaluatorInterface {
     }
 }
 
-export type {
-    AliasNameTable,
-    AliasNameFunction,
-    BuiltInFunctionTableEntry,
-    BuiltInFunctionTable,
-    NameTable,
-    CommandWordListFunction,
-    CommandWordListTableEntry,
-    CommandWordListTable,
-    EvaluatorConfig,
-    IncDecOperator,
-};
-export { Evaluator };
-export default { Evaluator };
+export type { EvaluatorConfig, IncDecOperator };
+export { Scope, CallFrame, EvaluatorError, EvaluatorWorkspace, Evaluator };
+export default { Scope, CallFrame, EvaluatorError, EvaluatorWorkspace, Evaluator };

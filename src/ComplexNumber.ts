@@ -51,7 +51,12 @@ class ComplexNumber implements TypeOfComplex.ComplexInterface<number, number, un
     public static readonly defaultSettings: TypeOfComplex.ComplexConfig = Object.assign({}, defaultSettings as TypeOfComplex.ComplexConfig);
     public static readonly settings: TypeOfComplex.ComplexConfig = this.defaultSettings;
 
-    public static readonly isInstanceOf: TypeOfComplex.IsInstanceOfComplexHandler<ComplexNumber> = (value: unknown): value is ComplexNumber => value instanceof ComplexNumber;
+    /**
+     * Test if an object is an instance of `ComplexNumber`.
+     * @param obj Object to test.
+     * @returns `true` if `obj` is an instance of `ComplexNumber`. `false` otherwise.
+     */
+    public static readonly isInstanceOf: TypeOfComplex.IsInstanceOfComplexHandler<ComplexNumber> = (obj: unknown): obj is ComplexNumber => obj instanceof ComplexNumber;
 
     public static readonly set = (config: Partial<TypeOfComplex.ComplexConfig>): void => {};
 

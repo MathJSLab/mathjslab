@@ -61,8 +61,10 @@ abstract class MathOperation {
             return CharString.copy(value as CharString);
         } else if (Structure.isInstanceOf(value)) {
             return Structure.copy(value as Structure);
-        } else {
+        } else if (FunctionHandle.isInstanceOf(value)) {
             return FunctionHandle.copy(value as FunctionHandle);
+        } else {
+            return value;
         }
     };
 

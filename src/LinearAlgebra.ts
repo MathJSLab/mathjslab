@@ -193,7 +193,7 @@ abstract class LinearAlgebra {
                     result.array[i][j] = func(M.array[j][i]).copy();
                 }
             }
-            MultiArray.setType(result);
+            result.type = M.type;
             return result;
         } else {
             throw new Error('transpose not defined for N-D objects');

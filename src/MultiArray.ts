@@ -1,17 +1,16 @@
 import type { TUnaryOperationLeftName, TBinaryOperationName } from './ComplexInterface';
 import { Complex, ComplexType } from './Complex';
 import { CharString } from './CharString';
-import { Evaluator, NameTable } from './Evaluator';
-import { FunctionHandle } from './FunctionHandle';
 import { Structure } from './Structure';
+import { FunctionHandle } from './FunctionHandle';
 import { AST, NodeReturnList, ReturnHandlerResult } from './AST';
+import { Evaluator, Scope } from './Evaluator';
 
 /**
  * MultiArray Element type.
  */
 type Elements = ComplexType | CharString | Structure | FunctionHandle;
 type ElementType<ELEMENT = Elements> = MultiArray | ELEMENT | null | undefined;
-// type ElementType = MultiArray | ComplexType | CharString | Structure | FunctionHandle | null | undefined;
 
 /**
  * Reduce factory function types.
@@ -55,7 +54,12 @@ class MultiArray<ELEMENT = Elements> {
      */
     public type: number;
 
-    public static readonly isInstanceOf = (value: unknown): value is MultiArray => value instanceof MultiArray;
+    /**
+     * Test if an object is a instance of `MultiArray`.
+     * @param obj Object to test.
+     * @returns `true` if `obj` is an instance of `MultiArray`. `false` otherwise.
+     */
+    public static readonly isInstanceOf = (obj: unknown): obj is MultiArray => obj instanceof MultiArray;
 
     public static readonly LOGICAL = Complex.LOGICAL;
     public static readonly REAL = Complex.REAL;
@@ -179,6 +183,20 @@ class MultiArray<ELEMENT = Elements> {
     public static readonly fromColumnVector = (vector: MultiArray): ElementType[] => vector.array.map((row) => row[0]);
 
     /**
+     * Check if a MultiArray is a row vector or a column vector.
+     * @param array MultiArray to test.
+     * @returns `true` if `array` is a vector (column vector or row vector), otherwise `false`.
+     */
+    public static readonly arrayIsVector = (array: MultiArray): boolean => array.dimension.length === 2 && (array.dimension[0] === 1 || array.dimension[1] === 1);
+
+    /**
+     * Check if object is a MultiArray and it is a row vector or a column vector.
+     * @param obj Any object.
+     * @returns `true` if object is a row vector or a column vector. false otherwise.
+     */
+    public static readonly isVector = (obj: unknown): boolean => obj instanceof MultiArray && obj.dimension.length === 2 && (obj.dimension[0] === 1 || obj.dimension[1] === 1);
+
+    /**
      * * Converts a vector of type `ElementType[]` into a diagonal matrix of type `MultiArray`.
      * @param vector
      * @returns
@@ -188,13 +206,6 @@ class MultiArray<ELEMENT = Elements> {
         result.array.map((_, i, array) => (array[i][i] = vector[i]));
         return result;
     };
-
-    /**
-     * Check if object is a MultiArray and it is a row vector or a column vector.
-     * @param obj Any object.
-     * @returns `true` if object is a row vector or a column vector. false otherwise.
-     */
-    public static readonly isVector = (obj: unknown): boolean => obj instanceof MultiArray && obj.dimension.length === 2 && (obj.dimension[0] === 1 || obj.dimension[1] === 1);
 
     /**
      * Check if object is a scalar or a 2-D MultiArray.
@@ -577,6 +588,9 @@ class MultiArray<ELEMENT = Elements> {
     public static readonly firstRow = (row: ElementType[], iscell?: boolean): MultiArray => {
         const result = new MultiArray([1, row.length]);
         result.array[0] = row;
+        result.array[0].forEach((element: ElementType) => {
+            element!.parent = result;
+        });
         result.isCell = iscell ?? false;
         return result;
     };
@@ -589,6 +603,9 @@ class MultiArray<ELEMENT = Elements> {
      * @returns MultiArray with row appended.
      */
     public static readonly appendRow = (M: MultiArray, row: ElementType[]): MultiArray => {
+        row.forEach((element: ElementType) => {
+            element!.parent = M;
+        });
         M.array.push(row);
         M.dimension[0]++;
         return M;
@@ -623,9 +640,14 @@ class MultiArray<ELEMENT = Elements> {
         }
     };
 
+    /**
+     * Create a string simple representation for a MultiArray (only dimensions).
+     * @returns
+     */
     public toString(): string {
         return `array ${this.dimension.join('x')}`;
     }
+
     /**
      * Unparse MultiArray as MathML language.
      * @param M MultiArray object.
@@ -1541,7 +1563,7 @@ class MultiArray<ELEMENT = Elements> {
      * @param M
      * @returns
      */
-    private static splitLastDimension(M: MultiArray): MultiArray[] {
+    private static readonly splitLastDimension = (M: MultiArray): MultiArray[] => {
         const result = [];
         const lastDim = M.dimension[M.dimension.length - 1];
         for (let i = 0; i < lastDim; i++) {
@@ -1551,7 +1573,7 @@ class MultiArray<ELEMENT = Elements> {
             result.push(array);
         }
         return result;
-    }
+    };
 
     /**
      * Calls `splitLastDimension` and recursively calls `evaluate` for each
@@ -1564,19 +1586,19 @@ class MultiArray<ELEMENT = Elements> {
      * @param fname Function name (context).
      * @returns Evaluated MultiArray object.
      */
-    private static evaluateRecursive(M: MultiArray, evaluator?: Evaluator | null | undefined, local: boolean = false, fname: string = ''): MultiArray {
+    private static readonly evaluateRecursive = (M: MultiArray, evaluator: Evaluator | null | undefined, scope?: Scope): MultiArray => {
         if (M.dimension.length > 2) {
-            return MultiArray.concatenate(M.dimension.length - 1, 'evaluate', ...MultiArray.splitLastDimension(M).map((S) => MultiArray.evaluate(S)));
+            return MultiArray.concatenate(M.dimension.length - 1, 'evaluate', ...MultiArray.splitLastDimension(M).map((S) => MultiArray.evaluate(S, evaluator, scope)));
         } else {
             return MultiArray.concatenate(
                 0,
                 'evaluate',
                 ...M.array.map((row) =>
-                    MultiArray.concatenate(1, 'evaluate', ...row.map((element) => MultiArray.scalarToMultiArray(evaluator ? evaluator.Evaluator(element, local, fname) : element))),
+                    MultiArray.concatenate(1, 'evaluate', ...row.map((element) => MultiArray.scalarToMultiArray(evaluator ? evaluator.Evaluator(element, scope) : element))),
                 ),
             );
         }
-    }
+    };
 
     /**
      * Wrapper to not pass the null array to `MultiArray.evaluatorRecursive`.
@@ -1586,11 +1608,11 @@ class MultiArray<ELEMENT = Elements> {
      * @param fname Function name (context).
      * @returns Evaluated MultiArray object.
      */
-    public static readonly evaluate = (M: MultiArray, evaluator?: Evaluator | null | undefined, local: boolean = false, fname: string = ''): MultiArray => {
+    public static readonly evaluate = (M: MultiArray, evaluator?: Evaluator | null | undefined, scope?: Scope): MultiArray => {
         if (MultiArray.isEmpty(M)) {
             return M;
         } else {
-            const result = MultiArray.evaluateRecursive(M, evaluator, local, fname);
+            const result = MultiArray.evaluateRecursive(M, evaluator, scope);
             result.isCell = M.isCell;
             MultiArray.setType(result);
             return result;
@@ -1598,80 +1620,1390 @@ class MultiArray<ELEMENT = Elements> {
     };
 
     /**
-     * Get selected items from MultiArray by linear indices or subscripts.
-     * @param M MultiArray.
-     * @param id Identifier.
-     * @param indexList Linear index or subscript.
-     * @returns MultiArray of selected items.
+     * # MATLAB/Octave Array Indexing - Complete Rules (Concise Specification)
+     *
+     * This document synthesizes the official rules of MATLAB/Octave array indexing,
+     * based on MathWorks documentation and related references. It defines how arrays
+     * are accessed, reshaped, and modified under all indexing modes.
+     *
+     * ## 1. Core Concepts
+     *
+     * - Arrays use **1-based indexing**.
+     * - Storage and traversal follow **column-major order**.
+     * - Indexing modes:
+     *   - **Linear indexing** (single index)
+     *   - **Subscript indexing** (multiple indices)
+     *   - **Logical indexing**
+     *
+     * ## 2. Linear Indexing
+     *
+     * ```matlab
+     * A(k)
+     * ```
+     *
+     * - Treats `A` as a single column vector in column-major order.
+     * - Accesses elements sequentially down columns.
+     * - Result:
+     *   - Same number of elements as index
+     *   - Orientation follows index (row vs column)
+     *
+     * ### Special Case: `(:)`
+     *
+     * ```matlab
+     * A(:)
+     * ```
+     *
+     * - Returns all elements as a **column vector**
+     * - Equivalent to full linearization
+     *
+     * ## 3. Subscript (Multidimensional) Indexing
+     *
+     * ```matlab
+     * A(i,j,k,...)
+     * ```
+     *
+     * - Each index corresponds to one dimension.
+     * - Indices may be scalars, vectors, or `:`.
+     * - Result size:
+     *
+     * ```text
+     * size(A(i,j,k,...)) = [numel(i), numel(j), numel(k), ...]
+     * ```
+
+     *
+     * - Colon `:` selects all elements in that dimension.
+     *
+     * ## 4. Index Vectors and Shape Rules
+     *
+     * - For `A(id)`:
+     *   - Result has same number of elements as `id`
+     *   - Orientation follows `A` if both are vectors
+     *
+     * - For `A(id1,id2)`:
+     *   - Result is a matrix of size:
+     *
+     * ```text
+     * [numel(id1), numel(id2)]
+     * ```
+
+     *
+     * - General case:
+     *
+     * ```text
+     * size = [numel(id1), numel(id2), ..., numel(idn)]
+     * ```
+     *
+     * ## 5. Fewer Indices Than Dimensions (Dimension Folding)
+     *
+     * If fewer indices are provided than dimensions:
+     *
+     * ```matlab
+     * A(i,j)   % A is N-D
+     * ```
+     *
+     * - MATLAB **folds all remaining dimensions into the last index**.
+     * - Equivalent to reshaping:
+     *
+     * ```matlab
+     * reshape(A, dim1, dim2*dim3*...)
+     * ```
+
+     *
+     * ### Consequences
+     *
+     * - `A(:, :)` flattens higher dimensions into columns
+     * - `A(i,:)` traverses across all higher dimensions
+     * - `A(:,j)` does **not** traverse higher dimensions
+     *
+     * ## 6. Colon Operator (`:`)
+     *
+     * - Selects full dimension:
+     *
+     * ```matlab
+     * A(:,j)
+     * A(i,:)
+     * ```
+     *
+     * - Equivalent to `1:end` in that dimension
+     *
+     * - Also used to generate ranges:
+     *
+     * ```matlab
+     * a:b
+     * a:s:b
+     * ```
+     *
+     * ## 7. Logical Indexing
+     *
+     * ```matlab
+     * A(mask)
+     * ```
+     *
+     * - `mask` is evaluated in **linear order**
+     * - Must not exceed `numel(A)`
+     * - Result:
+     *   - Column vector of selected elements
+     *
+     * ## 8. The `end` Keyword
+     *
+     * - Refers to last index of a dimension:
+     *
+     * ```matlab
+     * A(end)
+     * A(1:end)
+     * A(:,end)
+     * ```
+     *
+     * - Evaluated independently per dimension
+     *
+     * ## 9. Indexed Assignment
+     *
+     * ```matlab
+     * A(I) = B
+     * ```
+     *
+     * ### Rules
+     *
+     * - If `B` is scalar → scalar expansion
+     * - Otherwise:
+     *
+     * ```text
+     * numel(B) == numel(I)
+     * ```
+     *
+     * - Indices may be repeated (last assignment wins)
+     * - Colon selects full dimension
+     *
+     * ## 10. Deletion via Empty Array
+     *
+     * ```matlab
+     * A(I) = []
+     * ```
+     *
+     * ### Rules
+     *
+     * - Removes elements along **one dimension only**
+     * - Valid when indexing selects:
+     *   - Entire rows
+     *   - Entire columns
+     *   - Entire slices of a single dimension
+     *
+     * - Invalid if assignment would produce irregular shape
+     *
+     * ## 11. Array Expansion
+     *
+     * ```matlab
+     * A(10) = 5
+     * ```
+     *
+     * - Array automatically grows
+     * - Missing elements filled with default values (e.g., `0`)
+     *
+     * ## 12. Linear vs Subscript Distinction
+     *
+     * ```matlab
+     * A(2)    % linear
+     * A(2,:)  % subscript
+     * ```
+     *
+     * - These operations are **fundamentally different**
+     * - Linear indexing ignores dimensions
+     * - Subscript indexing respects dimensional structure
+     *
+     * ## 13. Evaluation Order
+     *
+     * 1. Index expressions evaluated
+     * 2. Converted to subscripts or linear indices
+     * 3. Bounds checked
+     * 4. Elements accessed or assigned
+     *
+     * ## 14. Key Behavioral Summary
+     *
+     * - Column-major order governs all indexing
+     * - `(:)` always returns a column vector
+     * - Logical indexing returns column vectors
+     * - Subscript indexing defines output shape explicitly
+     * - Fewer indices ⇒ dimension folding
+     * - Assignment enforces size compatibility or scalar expansion
+     * - Deletion is restricted to one dimension
+     *
+     * ## 15. MathJSLab Engine Implementation Notes
+     *
+     * This section documents how the MathJSLab engine concretely implements
+     * the indexing semantics described above. While fully aligned with MATLAB
+     * behavior, the engine introduces a **unified linear-index pipeline**
+     * to simplify execution and ensure consistency across all operations.
+     *
+     * ### 15.1 Unified Index Resolution
+     *
+     * All indexing modes (linear, subscript, logical) are internally reduced to:
+     *
+     * ```text
+     * → a list of 0-based linear indices
+     * ```
+     *
+     * This is performed by:
+     *
+     * ```ts
+     * resolveLinearIndices(...)
+     * ```
+     *
+     * Responsibilities:
+     * - Detect logical vs numeric indexing
+     * - Normalize scalar logicals (`true` → `[1]`, `false` → `[]`)
+     * - Delegate numeric interpretation to:
+     *   - `computeIndexingStructure`
+     *   - `iterateWithLinearIndex`
+     *
+     * This guarantees a **single source of truth** for index resolution.
+     *
+     *
+     * ### 15.2 Index Normalization Pipeline
+     *
+     * The engine separates indexing into three distinct phases:
+     *
+     * 1. **Structure normalization**
+     *    ```ts
+     *    computeIndexingStructure(...)
+     *    ```
+     *    - Expands missing dimensions with `:`
+     *    - Linearizes all index arguments
+     *    - Computes total iteration size
+     *
+     * 2. **Index evaluation**
+     *    ```ts
+     *    iterateWithLinearIndex(...)
+     *    ```
+     *    - Resolves `end`
+     *    - Converts subscripts → linear indices
+     *    - Performs bounds validation via `parseSubscript`
+     *
+     * 3. **Collection**
+     *    ```ts
+     *    collectLinearIndices(...)
+     *    ```
+     *    - Produces final linear index list
+     *
+     *
+     * ### 15.3 Selection Pipeline
+     *
+     * Element access follows:
+     *
+     * ```text
+     * indices → applyLinearSelection → shape reconstruction
+     * ```
+     *
+     * - `applyLinearSelection(...)`
+     *   - Retrieves elements using `getElementByLinearIndex`
+     *
+     * - Shape reconstruction:
+     *   - Logical indexing → column vector (or mask-shaped vector)
+     *   - Linear indexing:
+     *     - `(:)` → column vector
+     *     - otherwise → row vector
+     *   - Subscript indexing:
+     *     - Uses `computeIndexingStructure`
+     *     - Uses `resolveIndexPlan`
+     *     - Final adjustment via `collapseResult`
+     *
+     *
+     * ### 15.4 Assignment Pipeline
+     *
+     * Assignment is centralized via:
+     *
+     * ```ts
+     * applyLinearAssignment(...)
+     * ```
+     *
+     * Features:
+     * - Scalar expansion
+     * - Strict size validation
+     * - Field-aware assignment (structures supported)
+     * - Deterministic overwrite (last index wins)
+     *
+     * High-level flow:
+     *
+     * ```text
+     * resolve indices → expand target → assign values
+     * ```
+     *
+     * Expansion rules:
+     * - Linear growth allowed only for vectors
+     * - Multidimensional growth uses `expand(...)`
+     *
+     *
+     * ### 15.5 Deletion Semantics
+     *
+     * Deletion is handled in two layers:
+     *
+     * - High-level:
+     *   ```ts
+     *   deleteElements(...)
+     *   ```
+     *   - Enforces MATLAB rule:
+     *     → exactly one non-colon dimension
+     *
+     * - Low-level:
+     *   ```ts
+     *   applyDeletionFromIndices(...)
+     *   ```
+     *   - Removes elements using linear filtering
+     *   - Preserves vector orientation when applicable
+     *
+     *
+     * ### 15.6 Logical Indexing Implementation
+     *
+     * Logical indexing is treated as a specialization of linear indexing:
+     *
+     * ```text
+     * mask → logicalToLinearIndices → linear pipeline
+     * ```
+     *
+     * Rules:
+     * - Mask is always linearized
+     * - `true` selects index
+     * - `false` skips index
+     * - Scalar logical:
+     *   - `true` → first element
+     *   - `false` → empty result
+     *
+     * Output shape:
+     * - Always column vector unless mask is a vector (row preserved)
+     *
+     *
+     * ### 15.7 Shape Resolution Strategy
+     *
+     * Shape is **not derived from indices directly**, but from a plan:
+     *
+     * ```ts
+     * resolveIndexPlan(...)
+     * ```
+     *
+     * This determines:
+     * - Linear vs multidimensional behavior
+     * - Full slice detection (`:`)
+     * - Scalar vs vector indexing
+     * - Active dimensions
+     * - Whether collapse is required
+     *
+     * Final shape adjustments:
+     * - `collapseResult(...)`
+     *   - Handles dimension folding
+     *   - Preserves MATLAB-compatible edge cases:
+     *     - `A(:,j)`
+     *     - `A(i,:)`
+     *     - N-D flattening
+     *
+     *
+     * ### 15.8 Design Principles
+     *
+     * The implementation follows strict architectural rules:
+     *
+     * - **Single responsibility**
+     *   - Index resolution, selection, assignment, and shape are separated
+     *
+     * - **Linear-first execution model**
+     *   - All operations operate on linear indices internally
+     *
+     * - **MATLAB compatibility as constraint**
+     *   - Edge cases explicitly preserved
+     *
+     * - **Deterministic behavior**
+     *   - No ambiguity in index interpretation
+     *
+     * - **Extensibility**
+     *   - Logical, numeric, and future index types share the same pipeline
+     *
+     *
+     * ### 15.9 Summary
+     *
+     * The MathJSLab engine implements MATLAB indexing through:
+     *
+     * ```text
+     * Normalize → Resolve → Linearize → Apply → Reshape
+     * ```
+     *
+     * This unified model ensures:
+     * - Correctness
+     * - Maintainability
+     * - Full compatibility with MATLAB semantics
+     *
+     * while keeping the internal execution model simple and robust.
+     *
+     * ## Sources
+     *
+     * - [MathWorks - Matrix Indexing in MATLAB](https://www.mathworks.com/company/technical-articles/matrix-indexing-in-matlab.html)
+     * - [MathWorks - Array Indexing](https://www.mathworks.com/help/matlab/math/array-indexing.html)
+     * - [MathWorks - Detailed Rules About Array Indexing](https://www.mathworks.com/help/matlab/learn_matlab/array-indexing.html)
+     * - [MathWorks - Indexed Assignment](https://www.mathworks.com/help/matlab/math/detailed-rules-about-array-indexing.html)
+     * - [MathWorks - Learn MATLAB: Array Indexing](https://www.mathworks.com/help/matlab/math/indexed-assignment.html)
+     * - [TutorialsPoint - MATLAB Array Indexing](https://www.tutorialspoint.com/matlab/matlab_array_indexing.htm)
      */
-    public static readonly getElements = (M: MultiArray, id: string, field: string[], indexList: (ComplexType | MultiArray)[]): ElementType => {
-        let result: MultiArray;
+
+    private static colon(n: number): MultiArray {
+        const arr = new MultiArray([1, n], Complex.zero());
+        for (let i = 0; i < n; i++) {
+            arr.array[0][i] = Complex.create(i + 1);
+        }
+        return arr;
+    }
+
+    /**
+     * Normalize an indexing expression into a canonical structure used by
+     * MultiArray get/set/delete operations.
+     *
+     * This function is the entry point for interpreting MATLAB-like indexing.
+     * It converts the raw `indexList` (which may contain scalars, vectors,
+     * or MultiArray objects) into a uniform representation that can be used
+     * by iteration and linear index resolution.
+     *
+     * Behavior:
+     * - Detects linear indexing when a single index argument is provided.
+     * - Expands missing dimensions with implicit colon (:) to match the
+     *   number of dimensions of the target array.
+     * - Linearizes all index arguments into flat arrays.
+     * - Computes the total number of indexed elements (cartesian product).
+     *
+     * Notes:
+     * - This function does NOT validate bounds or apply indexing; it only
+     *   prepares structural information.
+     * - Logical indexing is NOT handled here and must be intercepted before
+     *   calling this function.
+     *
+     * @param dimension Shape of the target MultiArray (e.g. [m, n, ...]).
+     * @param indexList Raw index arguments as provided by the evaluator.
+     *
+     * @returns An object describing the normalized indexing plan:
+     * - isLinear: true if indexing uses a single argument (linear indexing)
+     * - originalIndexCount: number of indices provided by the user
+     * - args: array of linearized index arrays (one per dimension)
+     * - argsLength: length of each index array
+     * - total: total number of indexed elements (product of argsLength)
+     *
+     * @throws RangeError if indexList is empty
+     */
+    private static readonly computeIndexingStructure = (
+        dimension: number[],
+        indexList: (ComplexType | MultiArray)[],
+    ): {
+        isLinear: boolean;
+        originalIndexCount: number;
+        args: ElementType[][];
+        argsLength: number[];
+        total: number;
+    } => {
         if (indexList.length === 0) {
-            return M;
-        } else {
-            const args = indexList.map((index) => MultiArray.linearize(index));
-            const argsLength = args.map((arg) => arg.length);
-            if (indexList.length === 1 && indexList[0] instanceof MultiArray) {
-                result = new MultiArray(indexList[0].dimension);
-            } else {
-                result = new MultiArray(argsLength.length > 1 ? argsLength : [argsLength[0], 1]);
+            throw new RangeError('invalid empty index list.');
+        }
+        const nd = dimension.length;
+        const originalIndexCount = indexList.length;
+        /* Linear case */
+        if (indexList.length === 1) {
+            const arg = MultiArray.linearize(indexList[0]);
+            return {
+                isLinear: true,
+                originalIndexCount,
+                args: [arg],
+                argsLength: [arg.length],
+                total: arg.length,
+            };
+        }
+        /* Fill dimensions with ":"" */
+        const indexListFull = indexList.slice();
+        while (indexListFull.length < nd) {
+            indexListFull.push(MultiArray.colon(dimension[indexListFull.length]));
+        }
+        /* Linearize */
+        const args = indexListFull.map((index) => MultiArray.linearize(index));
+        const argsLength = args.map((arg) => arg.length);
+        const total = argsLength.reduce((p, c) => p * c, 1);
+        return {
+            isLinear: false,
+            originalIndexCount,
+            args,
+            argsLength,
+            total,
+        };
+    };
+
+    /**
+     * Iterate over a normalized indexing structure and resolve each position
+     * into a linear index of the target MultiArray.
+     *
+     * This function bridges the gap between:
+     * - The cartesian product of index arguments (produced by computeIndexingStructure)
+     * - The actual linear indices used to access elements in memory
+     *
+     * Behavior:
+     * - Iterates over all combinations of indices (cartesian product)
+     * - Converts each iteration step `n` into a multi-dimensional subscript
+     *   relative to the index arguments (not the target array)
+     * - Maps those subscripts into actual index values (subscriptArgs)
+     * - Resolves each subscriptArgs into a linear index using MATLAB rules
+     *   (including support for `end` via parseSubscript)
+     * - Invokes the callback with:
+     *   - subscriptArgs: the resolved indices per dimension (1-based)
+     *   - linearIndex: the corresponding linear index in the target array (0-based)
+     *   - n: the iteration counter (0-based)
+     *
+     * Notes:
+     * - This function assumes `idx` was produced by computeIndexingStructure.
+     * - Bounds checking and `end` resolution are delegated to parseSubscript.
+     * - The iteration order follows column-major semantics (MATLAB-compatible).
+     * - This function does NOT perform any read/write; it only drives iteration.
+     *
+     * @param idx Normalized indexing structure (args, argsLength, total).
+     * @param dimension Shape of the target MultiArray.
+     * @param callback Function invoked for each indexed element.
+     * @param input Optional input string (used for error reporting).
+     * @param evaluator Optional evaluator (used for resolving expressions like `end`).
+     */
+    private static readonly iterateWithLinearIndex = (
+        idx: {
+            args: ElementType[][];
+            argsLength: number[];
+            total: number;
+        },
+        dimension: number[],
+        callback: (subscriptArgs: ComplexType[], linearIndex: number, n: number) => void,
+        input?: string,
+        evaluator?: Evaluator,
+    ): void => {
+        for (let n = 0; n < idx.total; n++) {
+            const subscript = MultiArray.linearIndexToSubscript(idx.argsLength, n);
+            const subscriptArgs: ComplexType[] = subscript.map((s, r) => idx.args[r][s - 1] as ComplexType);
+            const linearIndex = MultiArray.parseSubscript(dimension, subscriptArgs, input, evaluator);
+            callback(subscriptArgs, linearIndex, n);
+        }
+    };
+
+    /**
+     * Resolve the structural "indexing plan" for a given indexing operation.
+     *
+     * This function analyzes the normalized indexing structure and extracts
+     * semantic information about how the result should be shaped and interpreted.
+     *
+     * It does NOT perform indexing itself. Instead, it provides metadata used by:
+     * - getElements → to shape the output (row/column/folding)
+     * - collapseResult → to decide dimensional reduction
+     *
+     * The plan captures both:
+     * 1. Legacy compatibility flags (MATLAB-like behavior)
+     * 2. Structural semantics per dimension (more expressive and future-proof)
+     *
+     * ------------------------------------------------------------
+     * CONCEPTUAL MODEL
+     * ------------------------------------------------------------
+     *
+     * Each dimension is classified as:
+     * - full slice   → ":" (entire dimension selected)
+     * - scalar index → single position (dimension collapses)
+     * - partial      → subset of elements
+     *
+     * From this, we derive:
+     * - activeDimensions → dimensions that are actually being restricted
+     * - isFullSlice      → per-dimension ":" detection
+     * - isScalarIndex    → per-dimension scalar selection
+     *
+     * ------------------------------------------------------------
+     * SPECIAL CASE: LINEAR INDEXING
+     * ------------------------------------------------------------
+     *
+     * When idx.isLinear === true:
+     * - The operation ignores multi-dimensional structure
+     * - The array is treated as a column-major linear vector
+     * - activeDimensions is reduced to a single conceptual dimension
+     *
+     * ------------------------------------------------------------
+     * COMPATIBILITY FLAGS (LEGACY BEHAVIOR)
+     * ------------------------------------------------------------
+     *
+     * These flags preserve MATLAB-like shaping behavior:
+     *
+     * - isColonOnly:
+     *   True when linear indexing selects the entire array (A(:))
+     *
+     * - isRowSelection:
+     *   Detects A(1,:) pattern → result should be a row vector
+     *
+     * - isColumnSelection:
+     *   Detects A(:,1) pattern → result should be a column vector
+     *
+     * - requiresCollapse:
+     *   True when fewer indices than dimensions were provided.
+     *   This triggers dimensional folding (e.g., A(2,:) on 3D arrays)
+     *
+     * ------------------------------------------------------------
+     * NOTES
+     * ------------------------------------------------------------
+     *
+     * - Dimension padding with ":" is applied implicitly before classification.
+     * - This function is purely analytical (no data access or mutation).
+     * - The returned plan is consumed downstream by shape resolution logic.
+     *
+     * @param dimension Shape of the target MultiArray.
+     * @param idx Normalized indexing structure from computeIndexingStructure.
+     *
+     * @returns Indexing plan describing structural semantics of the operation.
+     */
+    private static readonly resolveIndexPlan = (
+        dimension: number[],
+        idx: {
+            isLinear: boolean;
+            originalIndexCount: number;
+            args: ElementType[][];
+            argsLength: number[];
+            total: number;
+        },
+    ): {
+        isLinear: boolean;
+        isColonOnly: boolean;
+        isRowSelection: boolean;
+        isColumnSelection: boolean;
+        requiresCollapse: boolean;
+        /* real structural semantics */
+        activeDimensions: number[];
+        isFullSlice: boolean[];
+        isScalarIndex: boolean[];
+    } => {
+        const nd = dimension.length;
+        /* Linear case */
+        if (idx.isLinear) {
+            const totalLength = dimension.reduce((p, c) => p * c, 1);
+            return {
+                isLinear: true,
+                isColonOnly: idx.argsLength[0] === totalLength,
+                isRowSelection: false,
+                isColumnSelection: false,
+                requiresCollapse: false,
+                activeDimensions: [0],
+                isFullSlice: [idx.argsLength[0] === totalLength],
+                isScalarIndex: [idx.argsLength[0] === 1],
+            };
+        }
+        /* Normalize dimensions (implicit padding with :) */
+        const fullArgsLength = idx.argsLength.slice();
+        while (fullArgsLength.length < nd) {
+            fullArgsLength.push(dimension[fullArgsLength.length]);
+        }
+        /* Classification by dimension. */
+        const isFullSlice: boolean[] = [];
+        const isScalarIndex: boolean[] = [];
+        const activeDimensions: number[] = [];
+        for (let d = 0; d < nd; d++) {
+            const len = fullArgsLength[d];
+            const dim = dimension[d];
+            const full = len === dim;
+            const scalar = len === 1;
+            isFullSlice.push(full);
+            isScalarIndex.push(scalar);
+            /* active dimension = not complete ":" */
+            if (!full) {
+                activeDimensions.push(d);
             }
-            for (let n = 0; n < argsLength.reduce((p, c) => p * c, 1); n++) {
-                const subscriptM = MultiArray.linearIndexToSubscript(argsLength, n).map((s, r) => args[r][s - 1]) as ComplexType[];
-                const linearM = MultiArray.parseSubscript(M.dimension, subscriptM, id);
-                const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(M.dimension[0], M.dimension[1], linearM);
-                const [p, q] = MultiArray.linearIndexToMultiArrayRowColumn(result.dimension[0], result.dimension[1], n);
-                if (field.length > 0) {
-                    result.array[p][q] = Structure.getField(M.array[i][j], field);
-                } else {
-                    result.array[p][q] = M.array[i][j];
+        }
+        /* Flags */
+        const isRowSelection = idx.originalIndexCount === 2 && idx.argsLength[0] === 1;
+        const isColumnSelection = idx.originalIndexCount === 2 && idx.argsLength[1] === 1;
+        const requiresCollapse = idx.originalIndexCount < nd;
+        /* Result */
+        return {
+            isLinear: false,
+            isColonOnly: false,
+            isRowSelection,
+            isColumnSelection,
+            requiresCollapse,
+            activeDimensions,
+            isFullSlice,
+            isScalarIndex,
+        };
+    };
+
+    /**
+     * Retrieve an element from a MultiArray using a 0-based linear index.
+     *
+     * This method provides a unified access path for both plain values and
+     * structured field access. It converts the linear index into (row, column)
+     * coordinates assuming column-major order (MATLAB semantics), then retrieves
+     * the corresponding element.
+     *
+     * If a non-empty `field` path is provided, the access is delegated to
+     * Structure.getField, allowing nested field resolution (e.g., A(i).field.subfield).
+     *
+     * @param M Source MultiArray.
+     * @param linearIndex Zero-based linear index (column-major order).
+     * @param field Structure field access path. If empty, returns the raw element.
+     * @returns The selected element or nested field value.
+     *
+     * @throws RangeError If the linear index is out of bounds (indirectly via index conversion).
+     *
+     * @remarks
+     * - Assumes that `linearIndex` has already been validated.
+     * - This function is intentionally minimal and side-effect free.
+     * - Used as the core primitive by higher-level selection helpers such as
+     *   `applyLinearSelection` and indexing pipelines.
+     */
+    private static readonly getElementByLinearIndex = (M: MultiArray, linearIndex: number, field: string[]): ElementType => {
+        const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(M.dimension[0], M.dimension[1], linearIndex);
+        return field.length > 0 ? Structure.getField(M.array[i][j], field) : M.array[i][j];
+    };
+
+    /**
+     * Set element in a MultiArray using a linear index (column-major order).
+     *
+     * This function is the write counterpart of `getElementByLinearIndex` and
+     * centralizes all element assignment at the lowest level of the indexing pipeline.
+     *
+     * The linear index is assumed to be **0-based** and mapped to (row, column)
+     * coordinates according to MATLAB/Octave column-major semantics.
+     *
+     * If a field path is provided, the assignment is performed on a nested
+     * structure field instead of directly replacing the element.
+     *
+     * @param M Target MultiArray.
+     * @param linearIndex Zero-based linear index in column-major order.
+     * @param value Value to assign at the specified position.
+     * @param field Optional structure field access path.
+     *
+     * @throws RangeError If the linear index is out of bounds (indirectly via index conversion).
+     * @throws Error If field access is invalid for the target element.
+     */
+    private static readonly setElementByLinearIndex = (M: MultiArray, linearIndex: number, value: ElementType, field: string[]): void => {
+        const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(M.dimension[0], M.dimension[1], linearIndex);
+        if (field.length > 0) {
+            Structure.setField(M.array[i][j] as Structure, field, value);
+        } else {
+            M.array[i][j] = value;
+        }
+    };
+
+    /**
+     * Collapse an intermediate indexing result to its final shape according to MATLAB rules.
+     *
+     * After element selection, the intermediate result (`resultFull`) is typically constructed
+     * as a full N-dimensional array. This function applies MATLAB's post-processing rules
+     * to determine the final output shape, including dimension collapsing and vector orientation.
+     *
+     * Behavior:
+     *
+     * 1) No collapse required:
+     *    - If the number of index arguments matches the array dimensionality,
+     *      the result is returned as-is.
+     *
+     * 2) Special 2D cases (highest priority, MATLAB-compatible):
+     *    - Column selection: A(:, j)
+     *        → returns a column vector (n×1)
+     *
+     *    - Row selection: A(i, :)
+     *        → returns a row vector (1×n)
+     *        → also applies to higher dimensions with implicit folding
+     *
+     * 3) General MATLAB folding rule:
+     *    - When indexing reduces dimensionality (partial indexing),
+     *      higher dimensions are folded into columns.
+     *    - Result becomes a 2D matrix:
+     *        rows = size along first dimension
+     *        cols = total elements / rows
+     *
+     *    - Elements are filled in column-major order (MATLAB layout).
+     *
+     * 4) Default:
+     *    - If none of the above applies, the intermediate result is returned unchanged.
+     *
+     * Notes:
+     * - This function enforces MATLAB-compatible shape semantics after indexing.
+     * - It does not modify element values, only their arrangement.
+     * - The `plan` parameter encodes structural properties of the indexing operation,
+     *   but only a subset is currently used for collapse decisions.
+     *
+     * @param resultFull Intermediate full result (before collapse).
+     * @param originalDimension Original dimensions of the source array.
+     * @param idx Indexing structure (argument counts and shapes).
+     * @param plan Precomputed indexing plan describing selection semantics.
+     *
+     * @returns Final MultiArray with correct MATLAB-compatible shape.
+     */
+    private static readonly collapseResult = (
+        resultFull: MultiArray,
+        originalDimension: number[],
+        idx: {
+            originalIndexCount: number;
+            argsLength: number[];
+        },
+        plan: {
+            isLinear: boolean;
+            isColonOnly: boolean;
+            isRowSelection: boolean;
+            isColumnSelection: boolean;
+            requiresCollapse: boolean;
+
+            activeDimensions: number[];
+            isFullSlice: boolean[];
+            isScalarIndex: boolean[];
+        },
+    ): MultiArray => {
+        /* No collapse */
+        if (!plan.requiresCollapse) {
+            return resultFull;
+        }
+        const linear = MultiArray.linearize(resultFull);
+        /* Classic cases */
+        /* A(:,3) → column vector */
+        if (idx.originalIndexCount === 2 && idx.argsLength[1] === 1) {
+            const rows = idx.argsLength[0];
+            const result = new MultiArray([rows, 1]);
+            for (let i = 0; i < rows; i++) {
+                result.array[i][0] = resultFull.array[i][0];
+            }
+            MultiArray.setType(result);
+            return result;
+        }
+        /* A(2,:) → row vector (includes 3D folding) */
+        if (idx.originalIndexCount === 2 && idx.argsLength[0] === 1) {
+            const result = MultiArray.toRowVector(linear);
+            MultiArray.setType(result);
+            return result;
+        }
+        /* General MATLAB case → Folding to 2D */
+        if (resultFull.dimension.length > 2) {
+            const rows = resultFull.dimension[0];
+            const cols = linear.length / rows;
+            const result = new MultiArray([rows, cols]);
+            let k = 0;
+            for (let j = 0; j < cols; j++) {
+                for (let i = 0; i < rows; i++) {
+                    result.array[i][j] = linear[k++];
                 }
             }
             MultiArray.setType(result);
             return result;
         }
+        return resultFull;
     };
 
     /**
-     * Get selected items from MultiArray by logical indexing.
-     * @param M MultiArray.
-     * @param id Identifier.
-     * @param items Logical index.
-     * @returns MultiArray of selected items.
+     * Convert a logical mask into a list of linear indices (0-based).
+     *
+     * MATLAB semantics:
+     * - Logical indexing is interpreted in linear (column-major) order.
+     * - The mask is first linearized, then applied element-wise to the
+     *   linearized target array.
+     * - Each `true` value selects the corresponding linear position.
+     * - `false` values are ignored.
+     *
+     * Validation rules:
+     * - The mask length must not exceed the number of elements in `M`.
+     * - If the mask is shorter than `M`, it is applied only to the
+     *   corresponding leading elements (MATLAB-compatible behavior).
+     *
+     * Notes:
+     * - Returned indices are 0-based (internal engine convention).
+     * - The returned list may be empty (e.g., when mask is all false).
+     * - This function does NOT handle scalar logicals; those must be
+     *   normalized beforehand by the caller (e.g., via `scalarToMultiArray`).
+     *
+     * @param M Target MultiArray being indexed.
+     * @param items Logical mask as a MultiArray.
+     * @param id Optional identifier (used for error messages).
+     * @returns Array of selected linear indices (0-based).
+     *
+     * @throws EvalError If the mask length exceeds the number of elements in `M`.
      */
-    public static readonly getElementsLogical = (M: MultiArray, id: string, field: string[], items: MultiArray): ElementType => {
-        const result = new MultiArray();
-        const linM = MultiArray.linearize(M);
-        const test = (MultiArray.linearize(items) as ComplexType[]).map((value: ComplexType) => Complex.realToNumber(value));
-        const itemsIsRowVector = MultiArray.isRowVector(items);
-        if (itemsIsRowVector) {
-            result.array[0] = [];
+    private static readonly logicalToLinearIndices = (M: MultiArray, items: MultiArray, id?: string): number[] => {
+        const linearM = MultiArray.linearize(M);
+        const mask = MultiArray.linearize(items) as ComplexType[];
+        if (mask.length > linearM.length) {
+            throw new EvalError(`${id ?? ''}(${mask.length}): out of bound ${linearM.length} (dimensions are ${M.dimension.join('x')})`);
         }
-        if (test.length > linM.length) {
-            throw new EvalError(`${id}(${test.length}): out of bound ${linM.length} (dimensions are ${M.dimension.join('x')})`);
-        }
-        for (let n = 0; n < linM.length; n++) {
-            if (test[n]) {
-                if (itemsIsRowVector) {
-                    result.array[0].push(linM[n]);
-                } else {
-                    result.array.push([linM[n]]);
-                }
+        const result: number[] = [];
+        for (let i = 0; i < mask.length; i++) {
+            if (Complex.realToNumber(mask[i])) {
+                result.push(i); // 🔥 índice linear 0-based
             }
         }
-        result.dimension = itemsIsRowVector ? [1, result.array[0].length] : [result.array.length, 1];
         return result;
     };
 
     /**
-     * Set selected items from MultiArray by linear index or subscripts.
-     * @param nameTable Name Table.
-     * @param id Identifier.
-     * @param args Linear indices or subscripts.
-     * @param right Value to assign.
+     * Normalize logical indexing input into a list of linear indices (0-based).
+     *
+     * This is a thin wrapper around {@link logicalToLinearIndices}, introduced to:
+     * - Provide a stable abstraction point for logical index resolution
+     * - Allow future extensions (e.g., scalar logical handling, special cases)
+     * - Keep dispatcher and high-level indexing code decoupled from low-level logic
+     *
+     * The logical mask is interpreted in linear (column-major) order, following
+     * MATLAB semantics:
+     * - True values select corresponding linear positions
+     * - False values are ignored
+     * - Mask length must not exceed the number of elements in `M`
+     *
+     * @param M Target MultiArray being indexed.
+     * @param items Logical mask as a MultiArray.
+     * @param id Identifier (used for error reporting).
+     * @returns Array of selected linear indices (0-based).
      */
-    public static readonly setElements = (
-        nameTable: NameTable,
+    private static logicalMaskToIndexList = (M: MultiArray, items: MultiArray, id: string): number[] => {
+        return MultiArray.logicalToLinearIndices(M, items, id);
+    };
+
+    /**
+     * Determine whether an argument represents logical indexing.
+     *
+     * This function identifies both supported forms of logical indices:
+     *
+     * 1) Logical MultiArray
+     *    - e.g., A([true false true])
+     *
+     * 2) Logical scalar (Complex)
+     *    - e.g., A(true), A(false)
+     *
+     * This distinction is important because scalar logicals behave differently
+     * from numeric scalars:
+     * - A(true)  → selects the first element (linear index 1 in MATLAB)
+     * - A(false) → selects no elements (returns empty array)
+     *
+     * Notes:
+     * - This function is used by indexing dispatchers to route execution
+     *   into the logical indexing pipeline.
+     * - It does not validate shape or size compatibility; it only detects type.
+     * - Scalar logicals must be normalized (e.g., via scalarToMultiArray)
+     *   before further processing.
+     *
+     * @param arg Index argument (scalar or MultiArray).
+     * @returns True if the argument should be treated as logical indexing.
+     */
+    private static isLogicalIndex(arg: any): boolean {
+        return (MultiArray.isInstanceOf(arg) && arg.type === Complex.LOGICAL) || (Complex.isInstanceOf(arg) && arg.type === Complex.LOGICAL);
+    }
+
+    /**
+     * Apply linear selection on a MultiArray and return the extracted elements.
+     *
+     * This function performs the core data extraction step of the indexing pipeline:
+     * given a list of linear indices (0-based), it retrieves the corresponding
+     * elements from the source array in order.
+     *
+     * Selection follows MATLAB semantics:
+     * - Indices refer to positions in column-major (linearized) order
+     * - The output preserves the order of `indices`
+     * - No reshaping is performed here (result is always a flat array)
+     *
+     * If a field path is provided, each selected element is resolved through
+     * structure field access instead of returning the raw element.
+     *
+     * @param M Source MultiArray.
+     * @param indices Linear indices (0-based, column-major order).
+     * @param field Optional structure field access path.
+     * @returns Flat array of selected elements, in the same order as `indices`.
+     *
+     * @remarks
+     * - This function is side-effect free.
+     * - It assumes indices have already been validated.
+     * - Shape/orientation (row/column/matrix) is handled later in the pipeline
+     *   (e.g., in getElements and collapseResult).
+     * - Acts as the core primitive for both numeric and logical indexing.
+     */
+    private static applyLinearSelection = (M: MultiArray, indices: number[], field: string[]): ElementType[] => {
+        const result: ElementType[] = [];
+        for (const lin of indices) {
+            result.push(MultiArray.getElementByLinearIndex(M, lin, field));
+        }
+        return result;
+    };
+
+    /**
+     * Apply linear assignment on a MultiArray using a list of linear indices.
+     *
+     * This function performs the core write operation of the indexing pipeline.
+     * Given a set of linear indices (0-based), it assigns values to the corresponding
+     * positions in the target array, following MATLAB assignment semantics.
+     *
+     * Behavior:
+     *
+     * 1) Scalar expansion (broadcast):
+     *    - If `values` contains a single element, it is assigned to all indices.
+     *
+     * 2) Element-wise assignment:
+     *    - If `values.length > 1`, its length must match `indices.length`.
+     *    - Each value is assigned to the corresponding index in order.
+     *
+     * 3) Structure field assignment:
+     *    - If a non-empty `field` path is provided, assignment is delegated to
+     *      nested structure fields instead of replacing the element itself.
+     *
+     * Validation:
+     * - Throws if the number of values does not match the number of indices
+     *   (unless scalar expansion applies).
+     *
+     * @param M Target MultiArray.
+     * @param indices Linear indices (0-based, column-major order).
+     * @param values Linearized right-hand side values.
+     * @param field Optional structure field access path.
+     *
+     * @throws EvalError If dimensions are nonconformant.
+     *
+     * @remarks
+     * - This function does not handle deletion (A(I) = []); that is handled upstream.
+     * - Assumes indices are already validated and within bounds.
+     * - Does not perform resizing or expansion of `M`; that is also handled upstream.
+     * - Acts as the unified assignment primitive for both numeric and logical indexing.
+     */
+    private static applyLinearAssignment = (M: MultiArray, indices: number[], values: ElementType[], field: string[]): void => {
+        const isScalar = values.length === 1;
+        if (!isScalar && values.length !== indices.length) {
+            throw new EvalError(`=: nonconformant arguments (op1 is ${indices.length}x1, op2 is ${values.length}x1)`);
+        }
+        for (let n = 0; n < indices.length; n++) {
+            const value = isScalar ? values[0] : values[n];
+            MultiArray.setElementByLinearIndex(M, indices[n], value, field);
+        }
+    };
+
+    /**
+     * Resolve an index list (logical or numeric) into linear indices (0-based).
+     *
+     * This function is the core of the indexing engine. It normalizes all supported
+     * indexing modes into a unified representation: a list of linear indices in
+     * column-major order.
+     *
+     * It does NOT perform element access or assignment — only index resolution.
+     *
+     * Supported indexing modes:
+     *
+     * 1) Logical indexing:
+     *    - Triggered when a single logical argument is provided.
+     *    - Accepts both logical MultiArray and logical scalar.
+     *    - Scalar logicals are normalized:
+     *        true  → selects first element
+     *        false → selects no elements
+     *    - The mask is applied in linear (column-major) order.
+     *
+     * 2) Numeric indexing:
+     *    - Supports linear indexing (single argument)
+     *    - Supports multi-dimensional indexing (A(i,j,...))
+     *    - Supports colon (:) and range expressions
+     *    - Supports `end` keyword via evaluator
+     *
+     * Processing steps (numeric case):
+     *    a) Normalize index structure via `computeIndexingStructure`
+     *    b) Iterate over all index combinations
+     *    c) Convert each subscript tuple into a linear index using `parseSubscript`
+     *
+     * Output:
+     * - A flat array of 0-based linear indices
+     * - Order matches MATLAB evaluation order (column-major traversal)
+     *
+     * @param M Target MultiArray being indexed.
+     * @param id Identifier (used for error reporting and `end` resolution).
+     * @param indexList Raw index arguments (scalars, arrays, or logical masks).
+     * @param evaluator Optional evaluator used to resolve dynamic expressions (e.g., `end`).
+     *
+     * @returns Array of linear indices (0-based).
+     *
+     * @throws EvalError or RangeError for invalid indices or out-of-bounds access.
+     *
+     * @remarks
+     * - This function unifies logical and numeric indexing into a single pipeline.
+     * - It is side-effect free.
+     * - It guarantees that downstream operations (selection or assignment)
+     *   operate only on validated linear indices.
+     *
+     * - The returned indices may:
+     *     * be empty (e.g., a(false))
+     *     * contain duplicates (allowed in MATLAB)
+     *     * be unordered (depending on index expressions)
+     *
+     * - Shape/orientation semantics are handled separately (e.g., in getElements
+     *   and collapseResult).
+     */
+    private static resolveLinearIndices = (M: MultiArray, id: string, indexList: (ComplexType | MultiArray)[], evaluator?: Evaluator): number[] => {
+        /* Logical indexing */
+        if (indexList.length === 1 && MultiArray.isLogicalIndex(indexList[0])) {
+            let mask: MultiArray;
+            const arg0 = indexList[0];
+            if (Complex.isInstanceOf(arg0)) {
+                mask = MultiArray.scalarToMultiArray(arg0);
+            } else {
+                mask = arg0 as MultiArray;
+            }
+            return MultiArray.logicalToLinearIndices(M, mask, id);
+        }
+        /* Numerical indexing */
+        const idx = MultiArray.computeIndexingStructure(M.dimension, indexList);
+        const indices: number[] = [];
+        MultiArray.iterateWithLinearIndex(
+            idx,
+            M.dimension,
+            (_, linearIndex) => {
+                indices.push(linearIndex);
+            },
+            id,
+            evaluator,
+        );
+        return indices;
+    };
+
+    /**
+     * Collect linear indices from a normalized indexing structure.
+     *
+     * This is a convenience wrapper around {@link iterateWithLinearIndex} that
+     * gathers all computed linear indices into a flat array.
+     *
+     * It is used in numeric indexing to convert a precomputed indexing structure
+     * (`idx`) into a list of linear indices (0-based), ready for selection or
+     * assignment.
+     *
+     * Behavior:
+     * - Iterates over all index combinations defined in `idx`
+     * - Converts each subscript tuple into a linear index
+     * - Preserves iteration order (column-major traversal)
+     *
+     * @param idx Normalized indexing structure (from computeIndexingStructure).
+     * @param dimension Target array dimensions.
+     * @param input Optional input string (used for error reporting).
+     * @param evaluator Optional evaluator (used to resolve dynamic expressions such as `end`).
+     *
+     * @returns Array of linear indices (0-based).
+     *
+     * @remarks
+     * - This function is side-effect free.
+     * - It does not perform validation; assumes `idx` is already normalized.
+     * - Equivalent to manually accumulating results from iterateWithLinearIndex.
+     * - Used to simplify and centralize index collection logic.
+     */
+    private static collectLinearIndices = (idx: any, dimension: number[], input?: string, evaluator?: Evaluator): number[] => {
+        const indices: number[] = [];
+        MultiArray.iterateWithLinearIndex(
+            idx,
+            dimension,
+            (_, linearIndex) => {
+                indices.push(linearIndex);
+            },
+            input,
+            evaluator,
+        );
+        return indices;
+    };
+
+    /**
+     * Apply deletion on a MultiArray using a list of linear indices.
+     *
+     * This function performs linear deletion (A(I) = []) by removing the elements
+     * at the specified linear indices and compacting the remaining data.
+     *
+     * Behavior:
+     * - The array is first linearized (column-major order)
+     * - Elements at positions in `indices` are removed
+     * - The remaining elements are compacted into a new linear sequence
+     *
+     * Shape reconstruction:
+     * - If the original array is a vector:
+     *     • Row vector → result remains a row vector
+     *     • Column vector → result remains a column vector
+     *
+     * - If the original array is not a vector:
+     *     • The result is converted to a column vector
+     *     • This matches MATLAB behavior for ambiguous linear deletions
+     *
+     * Notes:
+     * - Indices are assumed to be 0-based and already validated
+     * - Duplicate indices are ignored (set semantics)
+     * - Order of remaining elements is preserved
+     *
+     * @param M Target MultiArray (modified in-place).
+     * @param indices Linear indices to remove (0-based).
+     *
+     * @remarks
+     * - This function implements the core of logical and linear deletion.
+     * - It does not validate index correctness or dimensional constraints;
+     *   such checks must be performed upstream.
+     * - Multi-dimensional structural deletions (e.g., A(:,2) = []) are handled
+     *   elsewhere (e.g., in deleteElements).
+     */
+    private static applyDeletionFromIndices = (M: MultiArray, indices: number[]): void => {
+        const linear = MultiArray.linearize(M);
+        const removeSet = new Set(indices);
+        const resultLinear = linear.filter((_, i) => !removeSet.has(i));
+        let result: MultiArray;
+        if (MultiArray.arrayIsVector(M)) {
+            result = MultiArray.isRowVector(M) ? MultiArray.toRowVector(resultLinear) : MultiArray.toColumnVector(resultLinear);
+        } else {
+            /* Safe fallback (MATLAB tends to collapse to column in ambiguous linear deletions) */
+            result = MultiArray.toColumnVector(resultLinear);
+        }
+        M.array = result.array;
+        M.dimension = result.dimension;
+    };
+
+    /**
+     * Retrieve elements from a MultiArray using MATLAB-like indexing semantics.
+     *
+     * This is the main entry point for element access (RHS indexing). It supports
+     * both logical and numeric indexing, including multi-dimensional access,
+     * linear indexing, colon expressions, and `end`.
+     *
+     * The indexing pipeline is divided into three stages:
+     *
+     * 1) Index resolution:
+     *    - All index expressions are normalized into linear indices (0-based)
+     *    - Performed by {@link resolveLinearIndices}
+     *
+     * 2) Element selection:
+     *    - Elements are extracted in column-major order
+     *    - Performed by {@link applyLinearSelection}
+     *
+     * 3) Shape reconstruction:
+     *    - Result is reshaped according to MATLAB rules
+     *    - Includes special handling for logical indexing and partial indexing
+     *
+     * Supported indexing modes:
+     *
+     * - Logical indexing:
+     *     A(mask)
+     *     • mask may be a logical array or scalar
+     *     • scalar true  → selects first element
+     *     • scalar false → returns empty array
+     *     • result shape follows mask orientation:
+     *         - vector mask → preserves row/column orientation
+     *         - matrix mask → result is a column vector
+     *
+     * - Linear indexing:
+     *     A(I)
+     *     • returns row vector unless I is ":" (full selection)
+     *     • A(:) → column vector
+     *
+     * - Multi-dimensional indexing:
+     *     A(i,j,...)
+     *     • supports colon (:), ranges, and `end`
+     *     • result shape determined by MATLAB collapsing rules
+     *
+     * @param M Source MultiArray.
+     * @param id Identifier (used for error reporting and `end` resolution).
+     * @param field Optional structure field access path.
+     * @param indexList Index arguments (numeric or logical).
+     * @param evaluator Optional evaluator (used for dynamic expressions such as `end`).
+     *
+     * @returns Resulting element(s), as a MultiArray or scalar.
+     *
+     * @throws EvalError or RangeError for invalid indexing operations.
+     *
+     * @remarks
+     * - This function is side-effect free.
+     * - Logical indexing is handled as a special case due to its distinct
+     *   shape semantics.
+     * - Numeric indexing follows a unified pipeline using index structures
+     *   and index plans.
+     *
+     * - Internally, all indexing is reduced to linear index operations,
+     *   ensuring a consistent and extensible implementation.
+     */
+    public static readonly getElements = (M: MultiArray, id: string, field: string[], indexList: (ComplexType | MultiArray)[], evaluator?: Evaluator): ElementType => {
+        if (indexList.length === 0) {
+            return M;
+        }
+        /* Solve indexes (unified) */
+        const indices = MultiArray.resolveLinearIndices(M, id, indexList, evaluator);
+        const selected = MultiArray.applyLinearSelection(M, indices, field);
+        /* Logical case → special shape */
+        if (indexList.length === 1 && MultiArray.isLogicalIndex(indexList[0])) {
+            let mask: MultiArray;
+            const arg0 = indexList[0];
+            if (Complex.isInstanceOf(arg0)) {
+                mask = MultiArray.scalarToMultiArray(arg0);
+            } else {
+                mask = arg0 as MultiArray;
+            }
+            let result: MultiArray;
+            if (MultiArray.arrayIsVector(mask)) {
+                result = MultiArray.isRowVector(mask) ? MultiArray.toRowVector(selected) : MultiArray.toColumnVector(selected);
+            } else {
+                result = MultiArray.toColumnVector(selected);
+            }
+            MultiArray.setType(result);
+            return result;
+        }
+        /* Numerical case → original shape pipeline */
+        const idx = MultiArray.computeIndexingStructure(M.dimension, indexList);
+        const plan = MultiArray.resolveIndexPlan(M.dimension, idx);
+        /* Linear */
+        if (idx.isLinear) {
+            const result = plan.isColonOnly ? MultiArray.toColumnVector(selected) : MultiArray.toRowVector(selected);
+            MultiArray.setType(result);
+            return result;
+        }
+        /* N-D */
+        const resultFull = new MultiArray(idx.argsLength);
+        for (let n = 0; n < selected.length; n++) {
+            const [p, q] = MultiArray.linearIndexToMultiArrayRowColumn(resultFull.dimension[0], resultFull.dimension[1], n);
+            resultFull.array[p][q] = selected[n];
+        }
+        MultiArray.setType(resultFull);
+        return MultiArray.collapseResult(resultFull, M.dimension, idx, plan);
+    };
+
+    /**
+     * Assign values to elements of a MultiArray using numerical (non-logical) indexing.
+     *
+     * This method implements MATLAB-compatible assignment semantics, including:
+     *
+     * • Linear indexing:
+     *   A(I) = V
+     *
+     * • Subscript indexing:
+     *   A(i, j, k, ...) = V
+     *
+     * • Scalar expansion (broadcasting):
+     *   A(I) = scalar → scalar is replicated to match target size
+     *
+     * • Shape conformity:
+     *   numel(V) must be either 1 or equal to the number of indexed elements
+     *
+     * • Automatic array expansion:
+     *   - Vectors grow when indexed beyond current bounds
+     *   - N-D arrays expand per-dimension when valid
+     *
+     * • Deletion via empty assignment:
+     *   A(I) = []
+     *   - Only allowed when exactly one index is non-colon
+     *   - Delegated to deleteElements()
+     *
+     * Internal pipeline:
+     *
+     * 1. Linearize RHS → `linearizedRight`
+     * 2. Handle deletion case early
+     * 3. Normalize indexing via computeIndexingStructure()
+     * 4. Validate RHS conformity
+     * 5. Resolve or create target array (including expansion)
+     * 6. Collect linear indices via collectLinearIndices()
+     *    → fully supports `end` and N-D indexing
+     * 7. Apply assignment via applyLinearAssignment()
+     *
+     * Notes:
+     *
+     * • Index validation and bounds checking are delegated to:
+     *   - testIndex()
+     *   - parseSubscript()
+     *
+     * • This function does NOT handle logical indexing.
+     *   Logical indexing is resolved upstream via resolveLinearIndices().
+     *
+     * • Deletion logic is intentionally separated to preserve MATLAB constraints.
+     *
+     *
+     * @param scope Execution scope (symbol table)
+     * @param id Target variable name
+     * @param field Structure field access path (empty if none)
+     * @param indexList Raw index expressions (already evaluated)
+     * @param right Right-hand side MultiArray
+     * @param input Optional original expression (for error reporting / `end`)
+     * @param evaluator Evaluator instance (used for `end` resolution)
+     *
+     * @throws RangeError If indexing is invalid or nonconformant
+     * @throws EvalError If assignment dimensions are incompatible
+     */
+    private static readonly setElementsNumerical = (
+        scope: Scope,
         id: string,
         field: string[],
         indexList: (ComplexType | MultiArray)[],
@@ -1679,113 +3011,281 @@ class MultiArray<ELEMENT = Elements> {
         input?: string,
         evaluator?: Evaluator,
     ): void => {
+        const linearizedRight = MultiArray.linearize(right);
+        /* Deletion (A(I) = []) */
+        if (linearizedRight.length === 0) {
+            const entry = scope.resolveName(id);
+            if (!entry) {
+                throw new RangeError(`A(I) = []: index out of bounds: value ${MultiArray.firstElement(indexList[0])} out of bound 0`);
+            }
+            let nonColon = 0;
+            for (let i = 0; i < indexList.length; i++) {
+                const linearizedIndex = MultiArray.linearize(indexList[i]);
+                if (Complex.realToNumber(linearizedIndex[0] as ComplexType) !== 1 || linearizedIndex.length !== entry.node.dimension[i]) {
+                    nonColon++;
+                }
+            }
+            if (nonColon !== 1) {
+                throw new RangeError('a null assignment can only have one non-colon index');
+            }
+            MultiArray.deleteElements(entry.node, indexList, input, evaluator);
+            return;
+        }
+        /* Basic validation */
         if (indexList.length === 0) {
             throw new RangeError('invalid empty index list.');
-        } else {
-            const linright = MultiArray.linearize(right);
-            const isLinearIndex = indexList.length === 1;
-            const args = indexList.map((index) => MultiArray.linearize(index));
-            const argsLength = args.map((arg) => arg.length);
-            const argsParsed = args.map((arg) =>
-                arg.map((i) => MultiArray.testIndex(i as ComplexType, `${input ? input : ''}${evaluator ? '(' + args.map((arg) => arg.map((i) => evaluator.Unparse(i))).join() + ')' : ''}`)),
-            );
-            const argsMax = argsParsed.map((arg) => Math.max(...arg));
-            if (linright.length !== 1 && linright.length !== argsLength.reduce((p, c) => p * c, 1)) {
-                throw new RangeError(`=: nonconformant arguments (op1 is ${argsLength.join('x')}, op2 is ${right.dimension.join('x')})`);
-            }
-            if (typeof nameTable[id] !== 'undefined') {
-                if (nameTable[id].node instanceof MultiArray) {
-                    if (isLinearIndex) {
-                        if (argsMax[0] > MultiArray.linearLength(nameTable[id].node)) {
+        }
+        const entryOriginal = scope.resolveName(id);
+        const idx = MultiArray.computeIndexingStructure(entryOriginal?.node?.dimension ?? [1], indexList);
+        /* RHS compliance */
+        const isScalar = linearizedRight.length === 1;
+        if (!isScalar && linearizedRight.length !== idx.total) {
+            throw new RangeError(`=: nonconformant arguments (op1 is ${idx.argsLength.join('x')}, op2 is ${right.dimension.join('x')})`);
+        }
+        /* Resolve target array (expansion) */
+        let entry = entryOriginal;
+        const argsMax = idx.args.map((arg) => Math.max(...arg.map((v) => MultiArray.testIndex(v as ComplexType))));
+        if (entry) {
+            if (entry.node instanceof MultiArray) {
+                if (idx.isLinear) {
+                    if (argsMax[0] > MultiArray.linearLength(entry.node)) {
+                        if (MultiArray.arrayIsVector(entry.node)) {
+                            if (entry.node.dimension[0] === 1) {
+                                MultiArray.expand(entry.node, [1, argsMax[0]]);
+                            } else {
+                                MultiArray.expand(entry.node, [argsMax[0], 1]);
+                            }
+                        } else {
                             throw new RangeError('Invalid resizing operation or ambiguous assignment to an out-of-bounds array element.');
                         }
-                    } else {
-                        MultiArray.expand(nameTable[id].node, argsMax);
                     }
                 } else {
-                    const value = nameTable[id].node;
-                    const blankValue: ElementType = value instanceof Structure ? Structure.cloneFields(value) : Complex.zero();
-                    if (isLinearIndex) {
-                        nameTable[id] = {
-                            node: new MultiArray([1, argsMax[0]], blankValue),
-                        };
-                    } else {
-                        nameTable[id] = {
-                            node: new MultiArray(argsMax, blankValue),
-                        };
-                    }
-                    nameTable[id].node.array[0][0] = value;
+                    MultiArray.expand(entry.node, argsMax);
                 }
             } else {
-                const blankValue: ElementType = field.length > 0 ? new Structure(field) : Complex.zero();
-                if (isLinearIndex) {
-                    nameTable[id] = {
-                        node: new MultiArray([1, argsMax[0]], blankValue),
-                    };
+                const value = entry.node;
+                const blankValue: ElementType = value instanceof Structure ? Structure.cloneFields(value) : Complex.zero();
+                if (idx.isLinear) {
+                    entry = scope.defineName(id, new MultiArray([1, argsMax[0]], blankValue));
                 } else {
-                    nameTable[id] = {
-                        node: new MultiArray(argsMax, blankValue),
-                    };
+                    entry = scope.defineName(id, new MultiArray(argsMax, blankValue));
                 }
+                entry.node.array[0][0] = value;
             }
-            const array: MultiArray = nameTable[id].node;
-            if (field.length > 0) {
-                Structure.setEmptyField(array, field[0]);
-            }
-            const dimension: number[] = nameTable[id].node.dimension.slice();
-            for (let n = 0; n < argsLength.reduce((p, c) => p * c, 1); n++) {
-                const subscript = MultiArray.linearIndexToSubscript(argsLength, n);
-                const subscriptArgs: number[] = subscript.map((s, r) =>
-                    MultiArray.testIndex(
-                        args[r][s - 1] as ComplexType,
-                        `${input ? input : ''}${evaluator ? '(' + subscript.map((i) => evaluator.Unparse(Complex.create(i))).join() + ')' : ''}`,
-                    ),
-                );
-                const indexLinear = MultiArray.subscriptToLinearIndex(dimension, subscriptArgs);
-                const [p, q] = MultiArray.linearIndexToMultiArrayRowColumn(dimension[0], dimension[1], indexLinear);
-                if (field.length > 0) {
-                    Structure.setField(array.array[p][q] as Structure, field, linright.length === 1 ? linright[0] : linright[n]);
-                } else {
-                    array.array[p][q] = linright.length === 1 ? linright[0] : linright[n];
-                }
+        } else {
+            const blankValue: ElementType = field.length > 0 ? new Structure(field) : Complex.zero();
+            if (idx.isLinear) {
+                entry = scope.defineName(id, new MultiArray([1, argsMax[0]], blankValue));
+            } else {
+                entry = scope.defineName(id, new MultiArray(argsMax, blankValue));
             }
         }
+        const M: MultiArray = entry.node;
+        if (field.length > 0) {
+            Structure.setEmptyField(M, field[0]);
+        }
+        const dimension = M.dimension.slice();
+        /* Collect linear indices (with `end` support) */
+        const indices = MultiArray.collectLinearIndices(idx, dimension, input, evaluator);
+        /* Centralized assignment */
+        MultiArray.applyLinearAssignment(M, indices, linearizedRight, field);
     };
 
     /**
-     * Set selected items from MultiArray by logical indexing.
-     * @param nameTable Name Table.
-     * @param id Identifier.
-     * @param arg Logical index.
-     * @param right Value to assign.
+     * Unified assignment entry point for MultiArray.
+     *
+     * Dispatches between logical indexing and numerical indexing semantics,
+     * implementing MATLAB-compatible behavior.
+     *
+     * Supported assignment modes:
+     * - Logical indexing:     A(mask) = value
+     * - Linear indexing:      A(I) = value
+     * - Subscript indexing:   A(i,j,k,...) = value
+     *
+     * Logical indexing behavior:
+     * - The mask is interpreted in linear (column-major) order
+     * - Scalar logicals are promoted to a 1-element mask:
+     *     - true  → selects first element
+     *     - false → selects no elements
+     * - Deletion is supported: A(mask) = []
+     * - Shape of the mask does not need to match M exactly (linear semantics)
+     *
+     * Numerical indexing behavior:
+     * - Delegated to setElementsNumerical
+     * - Supports:
+     *     - multi-dimensional indexing
+     *     - `end` keyword (via evaluator)
+     *     - scalar expansion (broadcasting)
+     *     - automatic array expansion
+     *     - deletion via []
+     *
+     * Deletion semantics:
+     * - Logical deletion: handled here via linear filtering
+     * - Numerical deletion: delegated to deleteElements (MATLAB constraints apply)
+     *
+     * Structure field assignment:
+     * - If `field` is provided, assignment targets nested structure fields
+     *
+     * Error handling:
+     * - Invalid variable or non-MultiArray target → EvalError
+     * - Conformance and bounds errors are delegated to lower-level helpers
+     *
+     * @param scope     Execution scope (variable resolution)
+     * @param id        Target variable name
+     * @param field     Structure field access path (empty for direct assignment)
+     * @param indexList Raw index expressions (logical or numeric)
+     * @param right     Right-hand side value (MultiArray)
+     * @param input     Optional source string (used for error reporting / `end`)
+     * @param evaluator Optional evaluator for dynamic expressions (e.g., `end`)
      */
-    public static readonly setElementsLogical = (nameTable: NameTable, id: string, field: string[], arg: ComplexType[], right: MultiArray): void => {
-        const linright = MultiArray.linearize(right);
-        const test = arg.map((value: ComplexType) => Complex.realToNumber(value));
-        const testCount = test.reduce((p, c) => p + c, 0);
-        if (testCount !== linright.length) {
-            throw new EvalError(`=: nonconformant arguments (op1 is ${testCount}x1, op2 is ${right.dimension[0]}x${right.dimension[1]})`);
-        }
-        const isDefinedId = typeof nameTable[id] !== 'undefined';
-        const isNotFunction = isDefinedId && !(nameTable[id] instanceof FunctionHandle);
-        const isMultiArray = isNotFunction && nameTable[id] instanceof MultiArray;
-        if (isMultiArray) {
-            const array: MultiArray = nameTable[id].node;
-            for (let j = 0, n = 0, r = 0; j < array.dimension[1]; j++) {
-                for (let i = 0; i < array.dimension[0]; i++, r++) {
-                    if (test[r]) {
-                        if (field.length > 0) {
-                            Structure.setField(array.array[i][j] as Structure, field, linright[n]);
-                        } else {
-                            array.array[i][j] = linright[n];
-                        }
-                        n++;
-                    }
-                }
+    public static readonly setElements = (
+        scope: Scope,
+        id: string,
+        field: string[],
+        indexList: (ComplexType | MultiArray)[],
+        right: MultiArray,
+        input?: string,
+        evaluator?: Evaluator,
+    ): void => {
+        /* Logical indexing (single argument) */
+        if (indexList.length === 1 && MultiArray.isLogicalIndex(indexList[0])) {
+            let mask: MultiArray;
+            const arg0 = indexList[0];
+            /* logical scalar → turn into a MultiArray */
+            if (Complex.isInstanceOf(arg0)) {
+                mask = MultiArray.scalarToMultiArray(arg0);
+            } else {
+                mask = arg0 as MultiArray;
             }
-        } else {
-            throw new EvalError(`${id}(_): invalid matrix indexing.`);
+            const entry = scope.resolveName(id);
+            if (!entry || !(entry.node instanceof MultiArray)) {
+                throw new EvalError(`${id}(_): invalid matrix indexing.`);
+            }
+            const M = entry.node;
+            const indices = MultiArray.logicalMaskToIndexList(M, mask, id);
+            const values = MultiArray.linearize(right);
+            const isDelete = values.length === 0;
+            /* Logical deletion */
+            if (isDelete) {
+                const linear = MultiArray.linearize(M);
+                const removeSet = new Set(indices);
+                const resultLinear = linear.filter((_, i) => !removeSet.has(i));
+                let result: MultiArray;
+                if (MultiArray.isRowVector(M)) {
+                    result = MultiArray.toRowVector(resultLinear);
+                } else {
+                    result = MultiArray.toColumnVector(resultLinear);
+                }
+                M.array = result.array;
+                M.dimension = result.dimension;
+                return;
+            }
+            /* Assignment (uses unified helper) */
+            MultiArray.applyLinearAssignment(M, indices, values, field);
+            return;
         }
+        /* Numerical indexing (standard) */
+        MultiArray.setElementsNumerical(scope, id, field, indexList, right, input, evaluator);
+    };
+
+    /**
+     * Delete elements from a MultiArray using MATLAB-compatible semantics.
+     *
+     * This function implements deletion via empty assignment:
+     *   A(I) = []
+     *
+     * Supported modes:
+     *
+     * 1) Linear deletion
+     *    - Triggered when a single index is provided (A(I))
+     *    - Indices are resolved in column-major linear order
+     *    - Result is a vector:
+     *        - Preserves orientation if A is already a vector
+     *        - Falls back to column vector otherwise
+     *
+     * 2) Dimension-based deletion (subscript indexing)
+     *    Examples:
+     *        A(:, j)   → remove columns
+     *        A(i, :)   → remove rows
+     *        A(:, :, k) → remove slices (N-D)
+     *
+     *    Rules (MATLAB-compatible):
+     *    - Exactly ONE dimension may differ from a full slice (:)
+     *    - All other dimensions must be complete (i.e., ":" behavior)
+     *    - The size of the affected dimension is reduced accordingly
+     *
+     * Behavior details:
+     * - Indices are first normalized via computeIndexingStructure
+     * - Subscripts (including "end") are resolved via parseSubscript
+     * - Linear indices are collected through iterateWithLinearIndex
+     * - Deletion is performed by filtering the linearized data and rebuilding
+     *   the array with updated dimensions
+     *
+     * Error conditions:
+     * - Empty index list → RangeError
+     * - More than one non-colon dimension → RangeError
+     * - No effective deletion dimension → RangeError
+     *
+     * Notes:
+     * - Linear deletion is delegated to applyDeletionFromIndices
+     * - N-D deletion reconstructs the array in column-major order
+     * - Structure fields are preserved during deletion
+     *
+     * @param M Target MultiArray (modified in-place)
+     * @param indexList Raw index expressions (logical or numeric)
+     * @param input Optional original input string (used for error context)
+     * @param evaluator Optional evaluator (used to resolve expressions like "end")
+     */
+    public static readonly deleteElements = (M: MultiArray, indexList: (ComplexType | MultiArray)[], input?: string, evaluator?: Evaluator): void => {
+        if (indexList.length === 0) {
+            throw new RangeError('invalid empty index list.');
+        }
+        const idx = MultiArray.computeIndexingStructure(M.dimension, indexList);
+        /* Linear case → direct delegation */
+        if (idx.isLinear) {
+            const indices = MultiArray.collectLinearIndices(idx, M.dimension, input, evaluator);
+            MultiArray.applyDeletionFromIndices(M, indices);
+            return;
+        }
+        /* MATLAB validation: only one dimension can not be ":" */
+        let nonColonDim = -1;
+        for (let d = 0; d < idx.argsLength.length; d++) {
+            if (idx.argsLength[d] !== M.dimension[d]) {
+                if (nonColonDim !== -1) {
+                    throw new RangeError('a null assignment can only have one non-colon index');
+                }
+                nonColonDim = d;
+            }
+        }
+        if (nonColonDim === -1) {
+            throw new RangeError('a null assignment can only have one non-colon index');
+        }
+        /* Collect linear indices */
+        const indices = MultiArray.collectLinearIndices(idx, M.dimension, input, evaluator);
+        const removeSet = new Set(indices);
+        /* Reconstruct array (N-D) */
+        const newDimension = M.dimension.slice();
+        newDimension[nonColonDim] = 0;
+        const linear = MultiArray.linearize(M);
+        const kept: ElementType[] = [];
+        for (let i = 0; i < linear.length; i++) {
+            if (!removeSet.has(i)) {
+                kept.push(linear[i]);
+            }
+        }
+        /* Rebuild dimension */
+        const sliceSize = linear.length / M.dimension[nonColonDim];
+        const newSize = kept.length / sliceSize;
+        newDimension[nonColonDim] = newSize;
+        const result = new MultiArray(newDimension);
+        let k = 0;
+        for (let i = 0; i < kept.length; i++) {
+            const [p, q] = MultiArray.linearIndexToMultiArrayRowColumn(result.dimension[0], result.dimension[1], i);
+            result.array[p][q] = kept[k++];
+        }
+        MultiArray.setType(result);
+        M.array = result.array;
+        M.dimension = result.dimension;
     };
 
     /**
@@ -1933,7 +3433,6 @@ class MultiArray<ELEMENT = Elements> {
                             const B = args[1];
                             /* If the second argument is a real scalar → treat it as a dimension. */
                             if (MultiArray.isScalar(B)) {
-                                /* const dim = Complex.realToNumber(B as ComplexType) - 1; */
                                 const dim = MultiArray.testInteger(B as ComplexType, 'reduceFactory', 'dimension', [1, Infinity]) - 1;
                                 return minMaxAlongDimension(A, dim);
                             }
@@ -1942,7 +3441,7 @@ class MultiArray<ELEMENT = Elements> {
                             return MultiArray.elementWiseOperation((op + 'Wise') as TBinaryOperationName, A, Bm);
                         }
                         case 3: {
-                            /* min(A, [], dim) */
+                            /* min(M, [], dim) */
                             if (!MultiArray.isEmpty(args[1])) {
                                 throw new Error(`${op}: second argument must be [] or omitted`);
                             }

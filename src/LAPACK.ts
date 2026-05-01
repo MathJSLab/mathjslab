@@ -61,7 +61,7 @@ abstract class LAPACK {
      * @param M Matrix in row-major order (ComplexType[][])
      * @returns true if Hermitian within tolerance
      */
-    public static readonly isHermitian = (M: ComplexType[][]): boolean => {
+    public static readonly is_hermitian = (M: ComplexType[][]): boolean => {
         const n = M.length;
         if (n === 0) return true;
         if (M[0].length !== n) return false;
@@ -92,12 +92,12 @@ abstract class LAPACK {
      * @param M Hermitian matrix (ComplexType[][])
      * @returns true if positive definite
      */
-    public static readonly isPositiveDefinite = (M: ComplexType[][]): boolean => {
+    public static readonly is_positive_definite = (M: ComplexType[][]): boolean => {
         const n = M.length;
         if (n === 0) return true;
         if (M[0].length !== n) return false;
         // Must be Hermitian first
-        if (!LAPACK.isHermitian(M)) return false;
+        if (!LAPACK.is_hermitian(M)) return false;
         const tol = EXPECT_TOL;
         // Local copy (we must not overwrite input)
         const A: ComplexType[][] = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => Complex.copy(M[i][j])));
@@ -571,175 +571,6 @@ abstract class LAPACK {
     };
 
     /**
-     * Generate a Householder reflector for a vector x (length m).
-     * Produces tau, v (with v[0] = 1) and alpha (the value to write at x[0]).
-     *
-     * This is the vector-version of larfg. It does NOT read or write a matrix:
-     * it only uses the vector x (ComplexType[]) and returns the reflector data.
-     *
-     * Conventions match LAPACK ZLARFG: alpha = -phi * ||x||, tau = (alpha - x0)/alpha,
-     * v[0] = 1, v[i] = x[i] / (x0 - alpha) for i>=1. If sigma == 0 then tau = 0.
-     */
-    public static readonly larfg_original = (x: ComplexType[]): { tau: ComplexType; v: ComplexType[]; phi: ComplexType; alpha: ComplexType } => {
-        const m = x.length;
-        if (m === 0) {
-            return { tau: Complex.zero(), v: [], phi: Complex.one(), alpha: Complex.zero() };
-        }
-        // x0 = x[0]
-        const x0 = x[0];
-        // sigma = sum_{i=1..m-1} |x[i]|^2
-        let sigma = Complex.zero();
-        for (let i = 1; i < m; i++) {
-            const ai = Complex.abs(x[i]);
-            Complex.mulAndSumTo(sigma, ai, ai); // sigma += |x[i]|^2
-        }
-        const absx0 = Complex.abs(x0);
-        const phi = Complex.realIsZero(absx0) ? Complex.one() : Complex.rdiv(x0, absx0);
-        if (m === 1 || Complex.realIsZero(Complex.abs(sigma))) {
-            // trivial reflector
-            const tau = Complex.zero();
-            const v: ComplexType[] = new Array(m);
-            v[0] = Complex.one();
-            for (let i = 1; i < m; i++) v[i] = Complex.zero();
-            return { tau, v, phi, alpha: x0 };
-        } else {
-            // norm = sqrt(|x0|^2 + sigma)
-            const norm = Complex.sqrt(Complex.add(Complex.mul(x0, Complex.conj(x0)), sigma));
-            const alpha = Complex.mul(Complex.neg(phi), norm);
-            const tau = Complex.rdiv(Complex.sub(alpha, x0), alpha);
-            const denom = Complex.sub(x0, alpha);
-            const v: ComplexType[] = new Array(m);
-            v[0] = Complex.one();
-            for (let i = 1; i < m; i++) {
-                v[i] = Complex.rdiv(x[i], denom);
-            }
-            return { tau, v, phi, alpha };
-        }
-    };
-
-    /**
-     * ## LAPACK.larfg (complex)
-     * Construct a complex Householder reflector H = I - tau * v * vᴴ
-     * such that:
-     *
-     *      H * [ alpha ] = [ beta ]
-     *          [   x   ]   [  0   ]
-     *
-     * v is stored as:
-     *      v[0] = 1
-     *      v[1:] overwrites x
-     *
-     * This implementation is faithful to LAPACK ZLARFG.
-     *
-     * @param alpha Complex scalar (modified in-place to beta)
-     * @param x Vector below alpha (modified in-place to v[1:])
-     * @returns beta as alpha and tau both Complex scalar
-     */
-    // public static larfg_complex(
-    //     alpha: ComplexType,
-    //     x: ComplexType[]
-    // ): {
-    //     alpha: ComplexType,
-    //     tau: ComplexType
-    // } {
-    //     const n = x.length;
-    //     // Compute ||x||₂
-    //     let xnorm = Complex.zero();
-    //     for (let i = 0; i < n; i++) {
-    //         const xi = x[i];
-    //         const abs = Complex.abs(xi);
-    //         Complex.mulAndSumTo(xnorm, abs, abs);
-    //     }
-    //     xnorm = Complex.sqrt(xnorm);
-
-    //     // If x is zero and alpha is real, reflector is identity
-    //     if (Complex.realIsZero(xnorm) && Complex.imagIsZero(alpha)) {
-    //         return { alpha, tau: Complex.zero() };
-    //     }
-
-    //     const alphaAbs = Complex.abs(alpha);
-
-    //     // beta = -exp(i*arg(alpha)) * sqrt(|alpha|^2 + ||x||^2)
-    //     const norm = Complex.sqrt(Complex.add(Complex.mul(alphaAbs, alphaAbs), Complex.mul(xnorm, xnorm)));
-
-    //     let beta: ComplexType;
-    //     if (Complex.realIsZero(alphaAbs)) {
-    //         // alpha = 0 → beta = -norm
-    //         beta = Complex.real(Complex.neg(norm));
-    //     } else {
-    //         // exp(i*arg(alpha)) = alpha / |alpha|
-    //         const phase = Complex.rdiv(alpha, Complex.real(alphaAbs));
-    //         beta = Complex.mul(Complex.neg(phase), Complex.real(norm));
-    //     }
-
-    //     // tau = (beta - alpha) / beta
-    //     const tau = Complex.rdiv(
-    //         Complex.sub(beta, alpha),
-    //         beta
-    //     );
-
-    //     // Scale x ← x / (alpha - beta)
-    //     const denom = Complex.sub(alpha, beta);
-    //     for (let i = 0; i < n; i++) {
-    //         x[i] = Complex.rdiv(x[i], denom);
-    //     }
-
-    //     // Returns beta in alpha
-    //     return { alpha: beta, tau };
-    // }
-
-    public static larfg_complex(
-        alpha: ComplexType,
-        x: ComplexType[],
-    ): {
-        alpha: ComplexType;
-        tau: ComplexType;
-    } {
-        const n = x.length;
-
-        // ||x||₂
-        let xnorm2 = Complex.zero();
-        for (let i = 0; i < n; i++) {
-            const absxi = Complex.abs(x[i]);
-            Complex.mulAndSumTo(xnorm2, absxi, absxi);
-        }
-        const xnorm = Complex.sqrt(xnorm2);
-
-        // Caso trivial: x = 0 e alpha real
-        if (Complex.realIsZero(xnorm) && Complex.imagIsZero(alpha)) {
-            return { alpha, tau: Complex.zero() };
-        }
-
-        const alphaAbs = Complex.abs(alpha);
-        const alphaAbs2 = Complex.mul(alphaAbs, alphaAbs);
-
-        // norm = sqrt(|alpha|^2 + ||x||^2)
-        const norm = Complex.sqrt(Complex.add(alphaAbs2, Complex.mul(xnorm, xnorm)));
-
-        // beta = − sign(alpha) * norm
-        let beta: ComplexType;
-        if (Complex.realIsZero(alphaAbs)) {
-            // alpha = 0 → beta = −norm (real)
-            beta = Complex.neg(norm);
-        } else {
-            const sign = Complex.rdiv(alpha, alphaAbs); // COMPLEXO
-            beta = Complex.neg(Complex.mul(sign, norm));
-        }
-
-        // tau = (beta − alpha) / beta
-        const tau = Complex.rdiv(Complex.sub(beta, alpha), beta);
-
-        // x ← x / (alpha − beta)
-        const denom = Complex.sub(alpha, beta);
-        for (let i = 0; i < n; i++) {
-            x[i] = Complex.rdiv(x[i], denom);
-        }
-
-        // alpha retorna como beta
-        return { alpha: beta, tau };
-    }
-
-    /**
      * Computes the Hermitian dot product of the tail of a column of A with itself.
      *
      * Evaluates:
@@ -792,216 +623,9 @@ abstract class LAPACK {
         }
     };
 
-    /**
-     * ## `LAPACK.larfg_left`
-     * LAPACK-style LARFG - Compute Householder vector and tau for complex
-     * vectors `x = A[k:m-1, k]`. It's a complex householder generator for
-     * left-side application. Generates `tau`, `v`, `phi` and `alpha` for
-     * `H = I - tau*v*vᴴ`.
-     * ### Notes:
-     * - Uses `BLAS.dotc_col(A, k, k)` to compute `sigma = sum_{i>k} |x_i|^2`.
-     * - Follows the ZLARFG convention (`alpha = -phi * ||x||`, with `phi = x0/|x0|` when `x0!=0`).
-     *
-     * NOTE: v is returned unscaled; callers (geqr2/geqp2/geqp3) are responsible for storing tau * v if needed.
-     *
-     * @param A Target MultiArray (only used for shape reference).
-     * @param m Number of rows
-     * @param k Start index of reflector
-     * @returns object { tau, v, phi, alpha } where:
-     * - `v` is a ComplexType[] with `v[0] = 1` and `length = m-k`.
-     * - `tau` is ComplexType.
-     * - `phi` is ComplexType.
-     * - `alpha` is the resulting leading value (the value that replaces `A[k,k]`)
-     */
-    public static readonly larfg_left = (A: MultiArray, dim: number, k: number): { tau: ComplexType; v: ComplexType[]; phi: ComplexType; alpha: ComplexType } => {
-        const len = dim - k;
-        // x0 = A[k,k]
-        const x0 = A.array[k][k] as ComplexType;
-        // sigma = sum |x[i]|^2 for i=k+1..m-1
-        const sigma = LAPACK.dotc_col(A, k, k);
-        // phi = x0 / |x0|  if x0 != 0, otherwise phi = 1 (LAPACK convention)
-        const absx0 = Complex.abs(x0);
-        const phi = Complex.realIsZero(absx0) ? Complex.one() : Complex.rdiv(x0, absx0);
-        if (len === 1 || Complex.realIsZero(Complex.abs(sigma))) {
-            // If sigma == 0 and x0 is real and >=0, tau = 0, v = [1,0,...]
-            const tau = Complex.zero();
-            const v: ComplexType[] = new Array(len);
-            v[0] = Complex.one();
-            for (let i = 1; i < len; i++) {
-                v[i] = Complex.zero();
-            }
-            return { tau, v, phi, alpha: x0 };
-        } else {
-            // norm(x) = sqrt(|x0|^2 + sigma)
-            const normx = Complex.sqrt(Complex.add(Complex.mul(x0, Complex.conj(x0)), sigma));
-            // alpha = - phi * norm(x)
-            const alpha = Complex.mul(Complex.neg(phi), normx);
-            // tau = (alpha - x0) / alpha
-            const tau = Complex.rdiv(Complex.sub(alpha, x0), alpha);
-            // denom = x0 - alpha
-            const denom = Complex.sub(x0, alpha);
-            // v[0]=1, v[i] = A.array[k + i][k] / denom
-            const v: ComplexType[] = new Array(len);
-            v[0] = Complex.one();
-            for (let i = 1; i < len; i++) {
-                v[i] = Complex.rdiv(A.array[k + i][k] as ComplexType, denom);
-            }
-            return { tau, v, phi, alpha };
-        }
-    };
-
-    /**
-     * LAPACK-style LARFG - build a Householder reflector acting **on the right** (row-wise).
-     *
-     * Computes tau, v, phi, alpha for the row vector
-     *    x = A[k, k:n-1]ᵀ
-     *
-     * Generates H = I - tau * v * vᴴ such that H * x = [alpha, 0, ...].
-     *
-     * Householder conventions follow LAPACK ZLARFG:
-     *   - alpha = -phi * ||x||, phi = x0/|x0| if x0!=0, else 1
-     *   - tau = (alpha - x0)/alpha
-     *   - v[0] = 1, v[j>0] = x[j] / (x0 - alpha)
-     *
-     * @param A MultiArray (row-wise target)
-     * @param n number of columns
-     * @param k start index of reflector (column)
-     * @returns { tau, v, phi, alpha }:
-     *   - v: ComplexType[] with v[0]=1, length = n-k
-     *   - tau: ComplexType
-     *   - phi: ComplexType
-     *   - alpha: ComplexType (replaces A[k][k])
-     */
-    public static readonly larfg_right = (A: MultiArray, n: number, k: number): { tau: ComplexType; v: ComplexType[]; phi: ComplexType; alpha: ComplexType } => {
-        const len = n - k;
-        const x0 = A.array[k][k] as ComplexType;
-
-        // sigma = sum_{j>0} |x_j|^2 (row version)
-        let sigma = Complex.zero();
-        for (let j = 1; j < len; j++) {
-            const xj = A.array[k][k + j] as ComplexType;
-            sigma = Complex.add(sigma, Complex.mul(xj, Complex.conj(xj)));
-        }
-
-        // phi = x0/|x0| if x0 != 0, else 1
-        const absx0 = Complex.abs(x0);
-        const phi = Complex.realIsZero(absx0) ? Complex.one() : Complex.rdiv(x0, absx0);
-
-        // Handle special cases: length=1 or sigma=0
-        if (len === 1 || Complex.realIsZero(Complex.abs(sigma))) {
-            const tau = Complex.zero();
-            const v: ComplexType[] = new Array(len).fill(Complex.zero());
-            v[0] = Complex.one();
-            return { tau, v, phi, alpha: x0 };
-        }
-
-        // General case
-        const normx = Complex.sqrt(Complex.add(Complex.mul(x0, Complex.conj(x0)), sigma));
-        const alpha = Complex.mul(Complex.neg(phi), normx);
-        const tau = Complex.rdiv(Complex.sub(alpha, x0), alpha);
-
-        // Build v
-        const v: ComplexType[] = new Array(len);
-        v[0] = Complex.one();
-        const denom = Complex.sub(x0, alpha);
-        for (let j = 1; j < len; j++) {
-            v[j] = Complex.rdiv(A.array[k][k + j] as ComplexType, denom);
-        }
-
-        return { tau, v, phi, alpha };
-    };
-
-    /**
-     * ## LAPACK.larfg
-     *
-     * Generates a LAPACK-style Householder reflector H such that:
-     *
-     *   H = I - tau * v * vᴴ
-     *
-     * where:
-     *   - For side = 'L' (left):  H * x = [alpha, 0, ..., 0]ᵀ
-     *   - For side = 'R' (right): x * H = [alpha, 0, ..., 0]
-     *
-     * The vector x is extracted from matrix A starting at index `k`:
-     *   - side = 'L': x = A[k:m-1, k] (column)
-     *   - side = 'R': x = A[k, k:n-1] (row)
-     *
-     * The Householder vector `v` is returned as a 1D array (ComplexType[]).
-     * It is the caller's responsibility to interpret it as a column or row vector:
-     *   - side = 'L' → v is conceptually a column vector
-     *   - side = 'R' → v is conceptually a row vector
-     *
-     * ### LAPACK ZLARFG conventions
-     * - phi = x0 / |x0|   if x0 != 0, else 1
-     * - alpha = -phi * ||x||_2
-     * - tau = (alpha - x0) / alpha
-     * - v[0] = 1
-     *
-     * Special case:
-     * - If the tail of x is zero (sigma = 0), tau = 0 and H = I (identity reflector)
-     *
-     * @param side 'L' for left (column-wise) or 'R' for right (row-wise) application
-     * @param A Target matrix (MultiArray)
-     * @param dim Dimension of the subvector (m for 'L', n for 'R')
-     * @param k Start index of the reflector in A
-     * @returns Object containing:
-     *   - `tau` (ComplexType): scalar factor of the reflector
-     *   - `v` (ComplexType[]): Householder vector with v[0] = 1
-     *   - `phi` (ComplexType): phase factor used to define alpha
-     *   - `alpha` (ComplexType): resulting leading element after applying H
-     *
-     * ### Notes
-     * - `v` is always normalized such that v[0] = 1; the remaining entries are scaled accordingly.
-     * - The caller decides whether `v` is treated as a column or row vector when constructing H.
-     * - Follows LAPACK-style handling of complex vectors.
-     */
-    public static readonly larfg_old = (side: 'L' | 'R', A: MultiArray, dim: number, k: number): { tau: ComplexType; v: ComplexType[]; phi: ComplexType; alpha: ComplexType } => {
-        const len = dim - k;
-        // x0 = A[k,k]
-        const x0 = A.array[k][k] as ComplexType;
-        // phi = x0 / |x0|  if x0 != 0, otherwise phi = 1 (LAPACK convention)
-        const absx0 = Complex.abs(x0);
-        const phi = Complex.realIsZero(absx0) ? Complex.one() : Complex.rdiv(x0, absx0);
-        const sigma =
-            side === 'L'
-                ? // sigma = sum |x[i]|^2 for i=k+1..m-1
-                  LAPACK.dotc_col(A, k, k)
-                : // sigma = sum_{j>0} |x_j|^2
-                  LAPACK.dotc_row(A, k, k);
-        if (len === 1 || Complex.realIsZero(Complex.abs(sigma))) {
-            // If sigma == 0 and x0 is real and >=0, tau = 0, v = [1,0,...]
-            const tau = Complex.zero();
-            const v: ComplexType[] = new Array(len).fill(Complex.zero());
-            v[0] = Complex.one();
-            return { tau, v, phi, alpha: x0 };
-        }
-        // norm(x) = sqrt(|x0|^2 + sigma)
-        const normx = Complex.sqrt(Complex.add(Complex.mul(x0, Complex.conj(x0)), sigma));
-        // alpha = - phi * norm(x)
-        const alpha = Complex.mul(Complex.neg(phi), normx);
-        // tau = (alpha - x0) / alpha
-        const tau = Complex.rdiv(Complex.sub(alpha, x0), alpha);
-        // denom = x0 - alpha
-        const denom = Complex.sub(x0, alpha);
-        // v[0]=1, v[i] = A.array[k + i][k] / denom
-        const v: ComplexType[] = new Array(len);
-        v[0] = Complex.one();
-        if (side === 'L') {
-            for (let i = 1; i < len; i++) {
-                v[i] = Complex.rdiv(A.array[k + i][k] as ComplexType, denom);
-            }
-        } else {
-            for (let j = 1; j < len; j++) {
-                v[j] = Complex.rdiv(A.array[k][k + j] as ComplexType, denom);
-            }
-        }
-        return { tau, v, phi, alpha };
-    };
-
     public static readonly larfg = (side: 'L' | 'R', A: MultiArray, dim: number, k: number): { tau: ComplexType; v: ComplexType[]; phi: ComplexType; alpha: ComplexType } => {
         const len = dim - k;
-
-        // 1) Extrai x como vetor coluna (SEMPRE)
+        // 1) Extract x as a column vector (always).
         const x: ComplexType[] = new Array(len);
         x[0] = A.array[k][k] as ComplexType;
         if (side === 'L') {
@@ -1013,19 +637,65 @@ abstract class LAPACK {
                 x[j] = A.array[k][k + j] as ComplexType;
             }
         }
-
         // 2) x0, phi
         const x0 = x[0];
         const absx0 = Complex.abs(x0);
         const phi = Complex.realIsZero(absx0) ? Complex.one() : Complex.rdiv(x0, absx0);
-
         // 3) sigma = sum |x[i]|^2, i>=1
         let sigma = Complex.zero();
         for (let i = 1; i < len; i++) {
             sigma = Complex.add(sigma, Complex.mul(x[i], Complex.conj(x[i])));
         }
+        // 4) Degenerate cases
+        if (len === 1 || Complex.realIsZero(Complex.abs(sigma))) {
+            const tau = Complex.zero();
+            const v = new Array(len).fill(Complex.zero());
+            v[0] = Complex.one();
+            return { tau, v, phi, alpha: x0 };
+        }
+        // 5) Norms and coefficients
+        const normx = Complex.sqrt(Complex.add(Complex.mul(x0, Complex.conj(x0)), sigma));
+        const alpha = Complex.mul(Complex.neg(phi), normx);
+        const tau = Complex.rdiv(Complex.sub(alpha, x0), alpha);
+        const denom = Complex.sub(x0, alpha);
+        // 6) Build v (column vector)
+        const v: ComplexType[] = new Array(len);
+        v[0] = Complex.one();
+        for (let i = 1; i < len; i++) {
+            v[i] = Complex.rdiv(x[i], denom);
+        }
+        return { tau, v, phi, alpha };
+    };
 
-        // 4) Casos degenerados
+    public static readonly larfg_novo = (side: 'L' | 'R', A: MultiArray, dim: number, k: number): { tau: ComplexType; v: ComplexType[]; phi: ComplexType; alpha: ComplexType } => {
+        const len = dim - k;
+
+        // 1) Extract x as a column vector (always)
+        const x: ComplexType[] = new Array(len);
+        x[0] = A.array[k][k] as ComplexType;
+
+        if (side === 'L') {
+            for (let i = 1; i < len; i++) {
+                x[i] = A.array[k + i][k] as ComplexType;
+            }
+        } else {
+            for (let j = 1; j < len; j++) {
+                x[j] = A.array[k][k + j] as ComplexType;
+            }
+        }
+
+        // 2) x0 and phase
+        const x0 = x[0];
+        const absx0 = Complex.abs(x0);
+        const phi = Complex.realIsZero(absx0) ? Complex.one() : Complex.rdiv(x0, absx0);
+
+        // 3) sigma = ||x_tail||²
+        let sigma = Complex.zero();
+        for (let i = 1; i < len; i++) {
+            sigma = Complex.add(sigma, Complex.mul(x[i], Complex.conj(x[i])));
+        }
+
+        // 4) Degenerate case → H = I
         if (len === 1 || Complex.realIsZero(Complex.abs(sigma))) {
             const tau = Complex.zero();
             const v = new Array(len).fill(Complex.zero());
@@ -1033,60 +703,24 @@ abstract class LAPACK {
             return { tau, v, phi, alpha: x0 };
         }
 
-        // 5) Normas e coeficientes
+        // 5) Norm and alpha
         const normx = Complex.sqrt(Complex.add(Complex.mul(x0, Complex.conj(x0)), sigma));
-        const alpha = Complex.mul(Complex.neg(phi), normx);
-        const tau = Complex.rdiv(Complex.sub(alpha, x0), alpha);
-        const denom = Complex.sub(x0, alpha);
 
-        // 6) Constrói v (vetor coluna!)
+        const alpha = Complex.mul(Complex.neg(phi), normx);
+
+        // 6) tau
+        const tau = Complex.rdiv(Complex.sub(alpha, x0), alpha);
+
+        // 7) Build v (column vector)
+        const denom = Complex.sub(x0, alpha);
         const v: ComplexType[] = new Array(len);
         v[0] = Complex.one();
+
         for (let i = 1; i < len; i++) {
             v[i] = Complex.rdiv(x[i], denom);
         }
 
         return { tau, v, phi, alpha };
-    };
-
-    public static readonly larfgLQ = (A: MultiArray, k: number, n: number): { tau: ComplexType; v: ComplexType[]; alpha: ComplexType } => {
-        const len = n - k;
-        const x: ComplexType[] = new Array(len);
-
-        // Extrai linha da matriz
-        x[0] = A.array[k][k] as ComplexType;
-        for (let j = 1; j < len; j++) {
-            x[j] = A.array[k][k + j] as ComplexType;
-        }
-
-        // sigma = sum |x[j]|^2, j>=1
-        let sigma = Complex.zero();
-        for (let j = 1; j < len; j++) {
-            sigma = Complex.add(sigma, Complex.mul(x[j], Complex.conj(x[j])));
-        }
-
-        if (len === 1 || Complex.realIsZero(Complex.abs(sigma))) {
-            // caso degenerado
-            const tau = Complex.zero();
-            const v = new Array(len).fill(Complex.zero());
-            v[0] = Complex.one();
-            return { tau, v, alpha: x[0] };
-        }
-
-        const x0 = x[0];
-        const normx = Complex.sqrt(Complex.add(Complex.mul(x0, Complex.conj(x0)), sigma));
-        // alpha incorpora a fase de x0
-        const alpha = Complex.neg(Complex.mul(x0, Complex.rdiv(normx, Complex.abs(normx))));
-        const tau = Complex.rdiv(Complex.sub(alpha, x0), alpha);
-
-        const denom = Complex.sub(x0, alpha);
-        const v: ComplexType[] = new Array(len);
-        v[0] = Complex.one();
-        for (let j = 1; j < len; j++) {
-            v[j] = Complex.rdiv(x[j], denom);
-        }
-
-        return { tau, v, alpha };
     };
 
     /**
@@ -1156,14 +790,12 @@ abstract class LAPACK {
      * @param i0 Starting row index in C
      * @param j0 Starting column index in C
      */
-    public static larf(side: 'L' | 'R', C: MultiArray, v: ComplexType[], tau: ComplexType, i0: number, j0: number): void {
+    public static readonly larf = (side: 'L' | 'R', C: MultiArray, v: ComplexType[], tau: ComplexType, i0: number, j0: number): void => {
         // If tau == 0, H = I → nothing to do
         if (Complex.realIsZero(Complex.abs(tau))) return;
-
         const m = C.dimension[0];
         const n = C.dimension[1];
         const len = v.length;
-
         if (side === 'L') {
             /*
              * LEFT:
@@ -1173,9 +805,7 @@ abstract class LAPACK {
              *   w := vᴴ * C
              *   C := C - tau * v * w
              */
-
             const w: ComplexType[] = new Array(n - j0).fill(Complex.zero());
-
             // w[j] = sum_i conj(v[i]) * C[i0+i][j0+j]
             for (let j = 0; j < n - j0; j++) {
                 let acc = Complex.zero();
@@ -1185,7 +815,6 @@ abstract class LAPACK {
                 }
                 w[j] = acc;
             }
-
             // C[i,j] -= tau * v[i] * w[j]
             for (let i = 0; i < len; i++) {
                 const vi = v[i];
@@ -1203,96 +832,10 @@ abstract class LAPACK {
              *   w := C * v
              *   C := C - tau * w * vᴴ
              */
-
-            // const w: ComplexType[] = new Array(m - i0).fill(Complex.zero());
-            // // w[i] = sum_j C[i0+i][j0+j] * v[j]
-            // for (let i = 0; i < m - i0; i++) {
-            //     let acc = Complex.zero();
-            //     const Ci = C.array[i0 + i];
-            //     for (let j = 0; j < len; j++) {
-            //         Complex.mulAndSumTo(acc, Ci[j0 + j] as ComplexType, v[j]);
-            //     }
-            //     w[i] = acc;
-            // }
-            // // C[i,j] -= tau * w[i] * conj(v[j])
-            // for (let i = 0; i < m - i0; i++) {
-            //     const wi = w[i];
-            //     const Ci = C.array[i0 + i];
-            //     for (let j = 0; j < len; j++) {
-            //         Ci[j0 + j] = Complex.sub(Ci[j0 + j] as ComplexType, Complex.mul(tau, Complex.mul(wi, Complex.conj(v[j]))));
-            //     }
-            // }
-
-            // // Isso funciona!
-            // for (let i = i0; i < m; i++) {
-            //     // sum = A[i, j0:]*v
-            //     let sum = Complex.zero();
-            //     for (let j = 0; j < len; j++) {
-            //         Complex.mulAndSumTo(sum, C.array[i][j0 + j] as ComplexType, Complex.conj(v[j]));
-            //     }
-            //     sum = Complex.mul(tau, sum);
-            //     if (Complex.realIsZero(Complex.abs(sum))) continue;
-            //     // A[i, j0+j] -= sum * v[j]
-            //     for (let j = 0; j < len; j++) {
-            //         C.array[i][j0 + j] = Complex.sub(C.array[i][j0 + j] as ComplexType, Complex.mul(sum, v[j]));
-            //     }
-            // }
-
-            // const w: ComplexType[] = new Array(m - i0).fill(Complex.zero());
-            // // w[i] = sum_j C[i0+i][j0+j] * v[j]
-            // for (let i = 0; i < m - i0; i++) {
-            //     let acc = Complex.zero();
-            //     const Ci = C.array[i0 + i];
-            //     for (let j = 0; j < len; j++) {
-            //         Complex.mulAndSumTo(acc, Ci[j0 + j] as ComplexType, v[j]);
-            //     }
-            //     w[i] = acc;
-            // }
-            // // C[i,j] -= tau * w[i] * conj(v[j])
-            // for (let i = 0; i < m - i0; i++) {
-            //     const wi = w[i];
-            //     const Ci = C.array[i0 + i];
-            //     for (let j = 0; j < len; j++) {
-            //         Ci[j0 + j] = Complex.sub(Ci[j0 + j] as ComplexType, Complex.mul(tau, Complex.mul(wi, Complex.conj(v[j]))));
-            //     }
-            // }
-
-            // const rows = m - i0;
-            // const cols = v.length;
-
-            // // w = C * v
-            // const w: ComplexType[] = new Array(rows);
-            // for (let i = 0; i < rows; i++) {
-            //     let acc = Complex.zero();
-            //     const Ci = C.array[i0 + i];
-            //     for (let j = 0; j < cols; j++) {
-            //         // NOTE: v is used as-is (NO conjugation here)
-            //         Complex.mulAndSumTo(acc, Ci[j0 + j] as ComplexType, v[j]);
-            //     }
-            //     w[i] = acc;
-            // }
-
-            // // C = C - tau * w * vᴴ
-            // for (let i = 0; i < rows; i++) {
-            //     const wiTau = Complex.mul(tau, w[i]);
-            //     if (Complex.realIsZero(Complex.abs(wiTau))) continue;
-
-            //     const Ci = C.array[i0 + i];
-            //     for (let j = 0; j < cols; j++) {
-            //         // NOTE: conjugation ONLY here
-            //         Ci[j0 + j] = Complex.sub(
-            //             Ci[j0 + j] as ComplexType,
-            //             Complex.mul(wiTau, Complex.conj(v[j]))
-            //         );
-            //     }
-            // }
-
             const rows = m - i0;
             const len = v.length;
-
             // w = C * vᴴ
             const w: ComplexType[] = new Array(rows);
-
             for (let i = 0; i < rows; i++) {
                 let acc = Complex.zero();
                 const Ci = C.array[i0 + i];
@@ -1301,54 +844,14 @@ abstract class LAPACK {
                 }
                 w[i] = acc;
             }
-
             // C -= tau * w * v
             for (let i = 0; i < rows; i++) {
                 const wi = w[i];
                 if (Complex.realIsZero(Complex.abs(wi))) continue;
-
                 const Ci = C.array[i0 + i];
                 for (let j = 0; j < len; j++) {
                     Ci[j0 + j] = Complex.sub(Ci[j0 + j] as ComplexType, Complex.mul(tau, Complex.mul(wi, v[j])));
                 }
-            }
-        }
-    }
-
-    /**
-     * Apply a Householder reflector from the RIGHT:Vamos mapear ZGEMV/ZGERC do LAPACK e alinhar com nosso código.
-     *
-     *  A := A * (I - tau * v * vᴴ)
-     *
-     * Where:
-     *  - A is the target matrix
-     *  - v is the Householder vector (length = block size)
-     *  - tau is the scalar
-     *  - rowStart is the first row of the block
-     *  - colStart is the first column of the block
-     *
-     * This exactly matches LAPACK xLARF(side='R') behavior.
-     */
-    public static readonly larf_right = (C: MultiArray, v: ComplexType[], tau: ComplexType, i0: number, j0: number): void => {
-        if (Complex.realIsZero(Complex.abs(tau))) return;
-
-        const m = C.dimension[0];
-        const len = v.length;
-
-        for (let i = i0; i < m; i++) {
-            // sum = A[i, j0:]*v
-            let sum = Complex.zero();
-            for (let j = 0; j < len; j++) {
-                Complex.mulAndSumTo(sum, C.array[i][j0 + j] as ComplexType, Complex.conj(v[j]));
-            }
-
-            sum = Complex.mul(tau, sum);
-
-            if (Complex.realIsZero(Complex.abs(sum))) continue;
-
-            // A[i, j0+j] -= sum * v[j]
-            for (let j = 0; j < len; j++) {
-                C.array[i][j0 + j] = Complex.sub(C.array[i][j0 + j] as ComplexType, Complex.mul(sum, v[j]));
             }
         }
     };
@@ -1791,38 +1294,6 @@ abstract class LAPACK {
         return { R, taus, phis, jpvt };
     };
 
-    public static readonly gelq2_final = (A: MultiArray): { L: MultiArray; taus: ComplexType[] } => {
-        const L = MultiArray.copy(A);
-        const m = L.dimension[0];
-        const n = L.dimension[1];
-        const kMax = Math.min(m, n);
-        const taus: ComplexType[] = new Array(kMax);
-
-        for (let k = 0; k < kMax; k++) {
-            // === Generate Householder reflector for row k ===
-            const { tau, v, alpha } = LAPACK.larfgLQ(L, k, n);
-
-            // Store alpha in diagonal
-            L.array[k][k] = alpha;
-
-            // Store rest of v in row k, starting from column k+1
-            for (let j = 1; j < v.length; j++) {
-                L.array[k][k + j] = v[j];
-            }
-
-            // Apply reflector H_k to trailing rows
-            if (k + 1 < m && !Complex.realIsZero(Complex.abs(tau))) {
-                LAPACK.larf('R', L, v, tau, k + 1, k);
-            }
-
-            // Save tau
-            taus[k] = tau;
-        }
-
-        MultiArray.setType(L);
-        return { L, taus };
-    };
-
     /**
      * ## `LAPACK.gelq2`
      * LQ factorization without pivoting (LAPACK GELQ2).
@@ -1887,77 +1358,6 @@ abstract class LAPACK {
         return { L: A, taus, phis };
     };
 
-    public static readonly gelq2_nova = (A: MultiArray): { L: MultiArray; taus: ComplexType[] } => {
-        const m = A.dimension[0];
-        const n = A.dimension[1];
-        const kMax = Math.min(m, n);
-        const taus: ComplexType[] = new Array(kMax);
-
-        for (let k = 0; k < kMax; k++) {
-            const len = n - k;
-
-            // --- Build a 1×len temporary row vector ---
-            const X = new MultiArray([1, len]);
-            for (let j = 0; j < len; j++) {
-                X.array[0][j] = A.array[k][k + j] as ComplexType;
-            }
-
-            // --- Generate Householder reflector ---
-            const { tau, v, alpha } = LAPACK.larfg('R', X, len, 0);
-            taus[k] = tau;
-
-            // --- Store alpha ---
-            A.array[k][k] = alpha;
-
-            // --- Store v[1..] in A(k, k+1..) ---
-            for (let j = 1; j < len; j++) {
-                A.array[k][k + j] = v[j];
-            }
-
-            // --- Apply reflector to trailing rows ---
-            if (k + 1 < m && !Complex.realIsZero(Complex.abs(tau))) {
-                LAPACK.larf('R', A, v, tau, k + 1, k);
-            }
-        }
-
-        MultiArray.setType(A);
-        return { L: A, taus };
-    };
-
-    public static readonly gelq2_nao_funciona = (A: MultiArray): { L: MultiArray; taus: ComplexType[] } => {
-        const m = A.dimension[0];
-        const n = A.dimension[1];
-        const kMax = Math.min(m, n);
-        const taus: ComplexType[] = new Array(kMax);
-
-        for (let k = 0; k < kMax; k++) {
-            // 1) Gerar refletor da linha k (lado direito)
-            const { tau, v, alpha } = LAPACK.larfg('R', A, n, k);
-
-            taus[k] = tau; // salvar tau
-            A.array[k][k] = alpha; // salvar alpha na diagonal (L)
-
-            // 2) Armazenar tau*v[1..] na linha, conforme MATLAB/LAPACK
-            for (let j = 1; j < v.length; j++) {
-                // A.array[k][k + j] = Complex.mul(tau, v[j]);
-                A.array[k][k + j] = v[j];
-            }
-
-            // 3) Aplicar refletor H = I - tau*v*vᴴ à submatriz restante
-            if (!Complex.realIsZero(Complex.abs(tau))) {
-                // aplica à linha k e colunas k..n-1
-                LAPACK.larf('R', A, v, tau, k, k);
-                // linhas abaixo de k não precisam ser afetadas porque refletor é linha
-            }
-        }
-
-        // 4) Garantir que L tenha forma trapezoidal inferior
-        LAPACK.tril_inplace(A);
-
-        MultiArray.setType(A);
-        return { L: A, taus };
-    };
-
     /**
      * ## `LAPACK.orgqr`
      * Construct `Q` explicitly from `R` (with MATLAB/Octave-style storage
@@ -2002,15 +1402,6 @@ abstract class LAPACK {
     };
 
     /**
-     * ## LAPACK.orglq (BLAS-based)
-     * Reconstruct unitary matrix Q from L (output de gelq2) e taus[].
-     * Versão baseada em blocos (pseudo-BLAS) para preparar futura implementação BLAS real.
-     * @param L Matriz m×n (retornada por gelq2)
-     * @param taus Array de fatores tau (Householder)
-     * @param blockSize Tamanho de bloco (opcional, padrão 32)
-     * @returns Q unitária n×n
-     */
-    /**
      * ## LAPACK.orglq
      *
      * Reconstrói explicitamente a matriz unitária Q a partir da saída de `gelq2`.
@@ -2025,9 +1416,9 @@ abstract class LAPACK {
      * onde:
      *   H_k = I − tau[k] · v · vᴴ
      *
-     * @param L  matriz retornada por gelq2
-     * @param taus coeficientes de Householder
-     * @returns Q matriz unitária
+     * @param L   Matriz m×n (retornada por gelq2)
+     * @param taus Array de coeficientes de Householder
+     * @returns Q matriz unitária n×n
      */
     public static readonly orglq = (L: MultiArray, taus: ComplexType[]): MultiArray => {
         const n = L.dimension[1];
@@ -2035,7 +1426,7 @@ abstract class LAPACK {
         // Q = I
         const Q = new MultiArray([n, n]);
         Q.array = LAPACK.eye(n, n);
-        // ORDEM REVERSA — ESSENCIAL
+        // reverse order (essential)
         for (let k = kMax - 1; k >= 0; k--) {
             const tau = taus[k];
             if (Complex.realIsZero(Complex.abs(tau))) continue;
@@ -2187,7 +1578,7 @@ abstract class LAPACK {
                     A22_raw.push(rowSlice);
                 }
                 // A22 := A22 - A21 * A12  (matrix multiply)
-                // Use BLAS.gemm with alpha = -1, beta = 1
+                // Use BLAS.gemm with alpha = -1, alpha = 1
                 BLAS.gemm(Complex.neg(Complex.one()), A21_raw, rowsL, kb, A12_raw, colsU, Complex.one(), A22_raw);
                 // Write back A22_raw into A.array
                 for (let i = 0; i < rowsL; i++) {
@@ -2515,9 +1906,9 @@ abstract class LAPACK {
         let info: number;
         let solver: 'posv' | 'sysv' | 'gesv';
         // --- Hermitian path ---
-        if (LAPACK.isHermitian(A.array as ComplexType[][])) {
+        if (LAPACK.is_hermitian(A.array as ComplexType[][])) {
             // --- Positive definite ---
-            if (LAPACK.isPositiveDefinite(A.array as ComplexType[][])) {
+            if (LAPACK.is_positive_definite(A.array as ComplexType[][])) {
                 const posvResult = LAPACK.posv(A.array as ComplexType[][], B.array as ComplexType[][]);
                 X = new MultiArray([posvResult.length, posvResult[0].length]);
                 X.array = posvResult;
@@ -2540,6 +1931,53 @@ abstract class LAPACK {
             solver = 'gesv';
         }
         return { X, info, solver };
+    };
+
+    /**
+     * Generate a Householder reflector for a vector x (length m).
+     * Produces tau, v (with v[0] = 1) and alpha (the value to write at x[0]).
+     *
+     * This is the vector-version of larfg. It does NOT read or write a matrix:
+     * it only uses the vector x (ComplexType[]) and returns the reflector data.
+     *
+     * Conventions match LAPACK ZLARFG: alpha = -phi * ||x||, tau = (alpha - x0)/alpha,
+     * v[0] = 1, v[i] = x[i] / (x0 - alpha) for i>=1. If sigma == 0 then tau = 0.
+     */
+    public static readonly larfg_original = (x: ComplexType[]): { tau: ComplexType; v: ComplexType[]; phi: ComplexType; alpha: ComplexType } => {
+        const m = x.length;
+        if (m === 0) {
+            return { tau: Complex.zero(), v: [], phi: Complex.one(), alpha: Complex.zero() };
+        }
+        // x0 = x[0]
+        const x0 = x[0];
+        // sigma = sum_{i=1..m-1} |x[i]|^2
+        let sigma = Complex.zero();
+        for (let i = 1; i < m; i++) {
+            const ai = Complex.abs(x[i]);
+            Complex.mulAndSumTo(sigma, ai, ai); // sigma += |x[i]|^2
+        }
+        const absx0 = Complex.abs(x0);
+        const phi = Complex.realIsZero(absx0) ? Complex.one() : Complex.rdiv(x0, absx0);
+        if (m === 1 || Complex.realIsZero(Complex.abs(sigma))) {
+            // trivial reflector
+            const tau = Complex.zero();
+            const v: ComplexType[] = new Array(m);
+            v[0] = Complex.one();
+            for (let i = 1; i < m; i++) v[i] = Complex.zero();
+            return { tau, v, phi, alpha: x0 };
+        } else {
+            // norm = sqrt(|x0|^2 + sigma)
+            const norm = Complex.sqrt(Complex.add(Complex.mul(x0, Complex.conj(x0)), sigma));
+            const alpha = Complex.mul(Complex.neg(phi), norm);
+            const tau = Complex.rdiv(Complex.sub(alpha, x0), alpha);
+            const denom = Complex.sub(x0, alpha);
+            const v: ComplexType[] = new Array(m);
+            v[0] = Complex.one();
+            for (let i = 1; i < m; i++) {
+                v[i] = Complex.rdiv(x[i], denom);
+            }
+            return { tau, v, phi, alpha };
+        }
     };
 
     /**
@@ -3598,6 +3036,8 @@ abstract class LAPACK {
     };
 
     public static readonly functions: { [F in keyof LAPACK]: Function } = {
+        is_hermitian: LAPACK.is_hermitian,
+        is_positive_definite: LAPACK.is_positive_definite,
         laswp: LAPACK.laswp,
         laswp_rows: LAPACK.laswp_rows,
         laswp_cols: LAPACK.laswp_cols,
@@ -3613,17 +3053,27 @@ abstract class LAPACK {
         tril_inplace: LAPACK.tril_inplace,
         trsm_left_upper_block: LAPACK.trsm_left_upper_block,
         lapmt_matrix: LAPACK.lapmt_matrix,
+        lapmt_apply: LAPACK.lapmt_apply,
+        dotc_col: LAPACK.dotc_col,
+        dotc_row: LAPACK.dotc_row,
         larfg: LAPACK.larfg,
         larf: LAPACK.larf,
         geqr2: LAPACK.geqr2,
         geqp2: LAPACK.geqp2,
         geqp3: LAPACK.geqp3,
+        gelq2: LAPACK.gelq2,
         orgqr: LAPACK.orgqr,
+        orglq: LAPACK.orglq,
         getf2: LAPACK.getf2,
         getrf: LAPACK.getrf,
-        gemm_blocked: LAPACK.gemm_blocked,
         getrf_blocked: LAPACK.getrf_blocked,
+        gemm_blocked: LAPACK.gemm_blocked,
         getrs: LAPACK.getrs,
+        gesv: LAPACK.gesv,
+        posv: LAPACK.posv,
+        potrf: LAPACK.potrf,
+        sysv: LAPACK.sysv,
+        mldivide: LAPACK.mldivide,
         sytrd: LAPACK.sytrd,
         her2_zhtrd_update: LAPACK.her2_zhtrd_update,
         hetrd: LAPACK.hetrd,
@@ -3638,7 +3088,10 @@ abstract class LAPACK {
         column_pivot: LAPACK.column_pivot,
         normalize_eigenvector_phases: LAPACK.normalize_eigenvector_phases,
         steqr_vectors: LAPACK.steqr_vectors,
+        steqr_vectors_tridiagonal: LAPACK.steqr_vectors_tridiagonal,
         steqr_values: LAPACK.steqr_values,
+        orgtr: LAPACK.orgtr,
+        orgtr_blocked: LAPACK.orgtr_blocked,
         orgtr_blocked_w: LAPACK.orgtr_blocked_w,
         eig_symmetric: LAPACK.eig_symmetric,
         eig_hermitian: LAPACK.eig_hermitian,

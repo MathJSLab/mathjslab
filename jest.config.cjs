@@ -14,7 +14,7 @@ module.exports = {
             testEnvironment: 'node',
             testMatch: ['<rootDir>/src/**/*.spec.{js,cjs,mjs,ts,cts,mts}'],
             transform: {
-                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.esm.es2022.json' }],
+                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.jest.json' }],
             },
         },
         {
@@ -22,7 +22,7 @@ module.exports = {
             testEnvironment: 'node',
             testMatch: ['<rootDir>/src/**/LAPACK.spec.{js,cjs,mjs,ts,cts,mts}'],
             transform: {
-                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.esm.es2022.json' }],
+                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.jest.json' }],
             },
         },
         {
@@ -30,7 +30,7 @@ module.exports = {
             testEnvironment: 'node',
             testMatch: ['<rootDir>/src/**/LAPACKsingle.spec.{js,cjs,mjs,ts,cts,mts}'],
             transform: {
-                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.esm.es2022.json' }],
+                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.jest.json' }],
             },
         },
         {
@@ -38,7 +38,7 @@ module.exports = {
             testEnvironment: 'node',
             testMatch: ['<rootDir>/src/**/Evaluator.spec.{js,cjs,mjs,ts,cts,mts}'],
             transform: {
-                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.esm.es2022.json' }],
+                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.jest.json' }],
             },
         },
         {
@@ -46,7 +46,7 @@ module.exports = {
             testEnvironment: 'node',
             testMatch: ['<rootDir>/test/node/**/*cjs2015.spec.{js,cjs,mjs,ts,cts,mts}'],
             transform: {
-                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.cjs.es2015.json' }],
+                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.jest.json' }],
             },
         },
         {
@@ -54,7 +54,7 @@ module.exports = {
             testEnvironment: 'node',
             testMatch: ['<rootDir>/test/node/**/*cjs2022.spec.{js,cjs,mjs,ts,cts,mts}'],
             transform: {
-                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.cjs.es2022.json' }],
+                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.jest.json' }],
             },
         },
         {
@@ -62,7 +62,7 @@ module.exports = {
             testEnvironment: 'node',
             testMatch: ['<rootDir>/test/node/**/*esm2022.spec.{js,cjs,mjs,ts,cts,mts}'],
             transform: {
-                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.esm.es2022.json' }],
+                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.jest.json' }],
             },
         },
         {
@@ -70,7 +70,7 @@ module.exports = {
             testEnvironment: 'jsdom',
             testMatch: ['<rootDir>/test/web/**/*umd2015.spec.{js,cjs,mjs,ts,cts,mts}'],
             transform: {
-                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.cjs.es2015.json' }],
+                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.jest.json' }],
             },
         },
         {
@@ -78,7 +78,7 @@ module.exports = {
             testEnvironment: 'jsdom',
             testMatch: ['<rootDir>/test/web/**/*umd2022.spec.{js,cjs,mjs,ts,cts,mts}'],
             transform: {
-                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.cjs.es2022.json' }],
+                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.jest.json' }],
             },
         },
         {
@@ -86,7 +86,7 @@ module.exports = {
             testEnvironment: 'jsdom',
             testMatch: ['<rootDir>/test/web/**/*esm2022.spec.{js,cjs,mjs,ts,cts,mts}'],
             transform: {
-                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.esm.es2022.json' }],
+                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.jest.json' }],
             },
         },
     ],

@@ -4,7 +4,6 @@ import { RealTypeDescriptor, Complex, ComplexType } from './Complex';
 import { ElementType, MultiArray } from './MultiArray';
 import { AST } from './AST';
 import { BLAS } from './BLAS';
-import { LinearAlgebra } from './LinearAlgebra';
 
 /**
  * MathJSLab configuration.

@@ -9,7 +9,12 @@ class Structure {
     public field: Record<string, ElementType>;
     private static readonly invalidReferenceMessage = 'value cannot be indexed with .';
 
-    public static isInstanceOf = (value: unknown): value is Structure => value instanceof Structure;
+    /**
+     * Test if an object is a instance of `Structure`.
+     * @param obj Object to test.
+     * @returns `true` if `obj` is an instance of `Structure`. `false` otherwise.
+     */
+    public static isInstanceOf = (obj: unknown): obj is Structure => obj instanceof Structure;
 
     /**
      * Structure constructor. If an object is passed as parameter then create

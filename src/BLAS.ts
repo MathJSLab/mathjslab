@@ -318,7 +318,7 @@ abstract class BLAS {
      * @param startRow starting row (inclusive)
      * @param m number of rows in R (or row limit)
      */
-    // public static readonly nrm2 = (R: MultiArray, col: number, startRow: number, m: number): ComplexType => Complex.sqrt(BLAS.nrm2sq(R, col, startRow, m));
+
     /**
      * BLAS NRM2: Computes the Euclidean norm of a vector using scaling
      * to avoid overflow and underflow.
@@ -401,48 +401,6 @@ abstract class BLAS {
      * @param alpha Scalar multiplier for A*x
      * @param beta  Scalar multiplier for y
      */
-    // public static readonly gemv = (
-    //     A: ComplexType[][],
-    //     m: number,
-    //     n: number,
-    //     rowA: number,
-    //     colA: number,
-    //     x: ComplexType[],
-    //     rowX: number,
-    //     y: ComplexType[],
-    //     rowY: number,
-    //     alpha: ComplexType,
-    //     beta: ComplexType,
-    //     trans: 'N' | 'T' | 'C' = 'N'
-    // ): void => {
-    //     const lenY = (trans === 'N') ? m : n;
-    //     const lenDot = (trans === 'N') ? n : m;
-
-    //     // y := beta * y
-    //     for (let i = 0; i < lenY; i++) {
-    //         y[rowY + i] = Complex.eq(beta, Complex.zero())
-    //             ? Complex.zero()
-    //             : Complex.eq(beta, Complex.one())
-    //                 ? y[rowY + i]
-    //                 : Complex.mul(beta, y[rowY + i]);
-    //     }
-
-    //     // y += alpha * op(A) * x
-    //     for (let i = 0; i < lenY; i++) {
-    //         let acc = Complex.zero();
-    //         for (let j = 0; j < lenDot; j++) {
-    //             const aij =
-    //                 trans === 'N'
-    //                     ? A[rowA + i][colA + j]                     // ok
-    //                     : trans === 'T'
-    //                         ? A[rowA + j][colA + i]                // ✔ corrige índices
-    //                         : Complex.conj(A[rowA + j][colA + i]); // conjugate transpose
-    //             Complex.mulAndSumTo(acc, aij as ComplexType, x[rowX + j]);
-    //         }
-    //         Complex.mulAndSumTo(y[rowY + i], alpha, acc);
-    //     }
-    // };
-
     public static readonly gemv = (
         A: ComplexType[][],
         m: number,

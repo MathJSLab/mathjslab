@@ -6,7 +6,7 @@ import path from 'node:path';
 import webpack from 'webpack';
 import { LicenseWebpackPlugin } from 'license-webpack-plugin';
 import { BundleAnalyzerPlugin } from 'webpack-bundle-analyzer';
-import buildConfig from 'build.config.json';
+import buildConfig from './build.config.json';
 
 /**
  * Build configuration set (production/development/test/etc.).

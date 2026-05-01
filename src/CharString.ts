@@ -75,11 +75,11 @@ class CharString {
     public static readonly create = (str: string, quote: StringQuoteCharacter = '"') => new CharString(str, quote);
 
     /**
-     * Test if value is a instance of `CharString`.
-     * @param value Value to test.
-     * @returns `true` if `value` is instance of `CharString`. `false` otherwise.
+     * Test if an object is a instance of `CharString`.
+     * @param value Object to test.
+     * @returns `true` if `obj` is an instance of `CharString`. `false` otherwise.
      */
-    public static readonly isInstanceOf = (value: unknown): boolean => value instanceof CharString;
+    public static readonly isInstanceOf = (obj: unknown): obj is CharString => obj instanceof CharString;
 
     /**
      * Creates a copy of `CharString` `value`.

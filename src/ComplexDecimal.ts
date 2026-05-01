@@ -49,7 +49,12 @@ class ComplexDecimal implements TypeOfComplex.ComplexInterface<Decimal, number, 
     public static readonly defaultSettings: TypeOfComplex.ComplexConfig = Object.assign({ precisionCompare: 7 }, defaultSettings as TypeOfComplex.ComplexConfig);
     public static readonly settings: TypeOfComplex.ComplexConfig = ComplexDecimal.defaultSettings;
 
-    public static readonly isInstanceOf: TypeOfComplex.IsInstanceOfComplexHandler<ComplexDecimal> = (value: unknown): value is ComplexDecimal => value instanceof ComplexDecimal;
+    /**
+     * Test if an object is an instance of `ComplexDecimal`.
+     * @param obj Object to test.
+     * @returns `true` if `obj` is an instance of `ComplexDecimal`. `false` otherwise.
+     */
+    public static readonly isInstanceOf: TypeOfComplex.IsInstanceOfComplexHandler<ComplexDecimal> = (obj: unknown): obj is ComplexDecimal => obj instanceof ComplexDecimal;
 
     public static readonly set: TypeOfComplex.SetComplexHandler = (config: Partial<TypeOfComplex.ComplexConfig>): void => {
         const decimal: Decimal.Config = {};

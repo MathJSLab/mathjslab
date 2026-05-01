@@ -3,6 +3,51 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 1.9.2
+
+- Bug fix: During assignments where one variable was assigned to another, the
+  previously defined variable was assigned by reference. Changes to the
+  definition of the subsequent variable modified the original variable. This
+  was resolved by making a copy of the literal object during the assignment in
+  the body of the `Evaluator` method using `MathOperation.copy`, which has been
+  improved to handle this case.
+- Bug fix and new features: fully reworked array indexing in the MathJSLab
+  engine to align with MATLAB/Octave semantics. This update fixes multiple
+  inconsistencies in logical indexing, including correct handling of scalar
+  logical indices (`true` and `false`), proper empty selection behavior
+  (`a(false) → []`), and accurate linear indexing resolution. The indexing
+  pipeline is now unified, ensuring consistent behavior across logical, linear,
+  and subscript indexing modes, with correct support for `end`, colon (`:`),
+  and dimension folding. Internally, the engine was refactored to use a
+  centralized linear index resolution model, followed by dedicated helpers for
+  selection, assignment, and deletion. This eliminates duplicated logic paths
+  and improves correctness, maintainability, and extensibility. Deletion
+  semantics (`A(I) = []`) were also standardized and made compliant with MATLAB
+  rules, including dimension constraints. All changes are fully covered by the
+  test suite, which now passes without regressions.
+- Bug fix: Commands like `a() = 3` were interpreted as `a = 3`, not throwing an
+  error. For compatibility with MATLAB/Octave, they now throw an error like
+  'RangeError: invalid empty index list.'
+- Due to dependency updates, it was necessary to include the option
+  `"skipLibCheck": true` in the `tsconfig.types.esm2022` file, and the
+  development dependencies `globals` and `@eslint/js` was installed.
+- Bug fix and build compatibility improvements: updated TypeScript
+  configuration to restore proper Node.js type resolution and modern JavaScript
+  feature support. Replaced `node:`-prefixed imports (e.g., `node:crypto`) with
+  standard module specifiers to ensure compatibility across multiple build
+  targets (CJS, ESM, ES2015, ES2022) and simplify module resolution. Adjusted
+  `tsconfig` settings, including enabling Node types and updating
+  `target`/`lib`, resolving errors related to missing built-in methods and
+  deprecated options. These changes stabilize the build pipeline and improve
+  cross-environment portability.
+- Runtime improvements and new features:
+    - Added support for nested scopes, user-defined functions (FCNDEF), and
+      call stack tracking. Implemented stack traces via EvaluatorError,
+      improved assignment semantics, and introduced multiple return values
+      (RETLIST).
+    - A configurable forward reference mechanism was added, along with several
+      internal improvements to evaluation flow and error handling.
+
 ## 1.9.1
 
 - The function `Complex.atan2` was created.

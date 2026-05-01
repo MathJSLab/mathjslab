@@ -10,7 +10,6 @@ export { LinearAlgebra } from './LinearAlgebra';
 export { MathOperation } from './MathOperation';
 export { CoreFunctions } from './CoreFunctions';
 export { Configuration } from './Configuration';
-export { SymbolTable } from './SymbolTable';
 export { MathML } from './MathML';
 export * from './AST';
 export * from './Evaluator';
