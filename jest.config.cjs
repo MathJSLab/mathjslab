@@ -34,9 +34,9 @@ module.exports = {
             },
         },
         {
-            displayName: 'evaluator-tests',
+            displayName: 'interpreter-tests',
             testEnvironment: 'node',
-            testMatch: ['<rootDir>/src/**/Evaluator.spec.{js,cjs,mjs,ts,cts,mts}'],
+            testMatch: ['<rootDir>/src/**/Interpreter.spec.{js,cjs,mjs,ts,cts,mts}'],
             transform: {
                 '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.jest.json' }],
             },

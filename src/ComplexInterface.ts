@@ -6,7 +6,7 @@
  * * https://mathworld.wolfram.com/ComplexNumber.html
  */
 
-import { Evaluator } from './Evaluator';
+import { Interpreter } from './Interpreter';
 
 export type Rounding = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
@@ -139,11 +139,11 @@ export type TestNumLikeComplexHandler<REAL, COMPLEX extends ComplexInterface<REA
 export type CompareValueComplexHandler<REAL> = (cmp: TCompareOperationName, left: REAL, right: REAL) => boolean;
 export type CmpComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>> = (cmp: TCompareOperationName, left: COMPLEX, right: COMPLEX) => COMPLEX;
 export type ParseComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>> = (value: string) => COMPLEX;
-export type PrecedenceComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>, EVALUATOR = Evaluator, PRECEDENCE = number> = (value: COMPLEX, evaluator: EVALUATOR) => PRECEDENCE;
+export type PrecedenceComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>, INTERPRETER = Interpreter, PRECEDENCE = number> = (value: COMPLEX, interpreter: INTERPRETER) => PRECEDENCE;
 export type UnparseValueComplexHandler<REAL> = (value: REAL) => string;
-export type UnparseComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>, EVALUATOR = Evaluator, PRECEDENCE = number> = (
+export type UnparseComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>, INTERPRETER = Interpreter, PRECEDENCE = number> = (
     value: COMPLEX,
-    evaluator: EVALUATOR,
+    interpreter: INTERPRETER,
     parentPrecedence?: PRECEDENCE,
 ) => string;
 export type ToStringComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>> = (value: COMPLEX) => string;
@@ -483,11 +483,11 @@ export interface ComplexInterfaceStatic<
     readonly imagGreaterThan: (z: COMPLEX, value: NumLike<REAL>) => boolean;
     readonly parse: (value: string) => COMPLEX;
     readonly unparseValue: (value: REAL) => string;
-    readonly unparse: (value: COMPLEX, evaluator: Evaluator, parentPrecedence: PRECEDENCE) => string;
+    readonly unparse: (value: COMPLEX, interpreter: Interpreter, parentPrecedence: PRECEDENCE) => string;
     readonly toString: (value: COMPLEX) => string;
     readonly unparseMathMLValue: (value: REAL) => string;
-    readonly precedence: (value: COMPLEX, evaluator: Evaluator) => PRECEDENCE;
-    readonly unparseMathML: (value: COMPLEX, evaluator: Evaluator, parentPrecedence: PRECEDENCE) => string;
+    readonly precedence: (value: COMPLEX, interpreter: Interpreter) => PRECEDENCE;
+    readonly unparseMathML: (value: COMPLEX, interpreter: Interpreter, parentPrecedence: PRECEDENCE) => string;
     readonly copy: (value: COMPLEX) => COMPLEX;
     /**
      * Reduce precision of real or imaginary part.
@@ -840,31 +840,31 @@ export const parseFactory = <REAL, COMPLEX extends ComplexInterface<REAL, TYPE, 
  */
 export const precedenceFactory = <REAL, COMPLEX extends ComplexInterface<REAL, TYPE, PARENT>, TYPE = number, PARENT = unknown, PRECEDENCE = number, ROUNDING = Rounding, MODULO = Modulo>(
     ctor: ComplexInterfaceStatic<REAL, COMPLEX, TYPE, PARENT, PRECEDENCE, ROUNDING, MODULO>,
-): ((value: COMPLEX, evaluator: Evaluator) => number) => {
+): ((value: COMPLEX, interpreter: Interpreter) => number) => {
     /**
-     * Returns the precedence of a `ctor` `value` by querying the precedence table in `evaluator` object (`Evaluator.ts`).
+     * Returns the precedence of a `ctor` `value` by querying the precedence table in `interpreter` object (`Interpreter.ts`).
      * @param value `ctor` value.
-     * @param evaluator `Evaluator` instance.
+     * @param interpreter `Interpreter` instance.
      * @returns Precedence level.
      */
-    return (value: COMPLEX, evaluator: Evaluator): number => {
+    return (value: COMPLEX, interpreter: Interpreter): number => {
         if (value.type !== ctor.LOGICAL) {
             const value_prec = ctor.toMaxPrecision(value);
             if (!ctor.realIsZero(value_prec) && !ctor.imagIsZero(value_prec)) {
-                return evaluator.precedenceTable['+'];
+                return interpreter.precedenceTable['+'];
             } else if (!ctor.realIsZero(value_prec)) {
-                return ctor.realIsNegative(value_prec) ? evaluator.precedenceTable['-_'] : evaluator.precedenceTable['()'];
+                return ctor.realIsNegative(value_prec) ? interpreter.precedenceTable['-_'] : interpreter.precedenceTable['()'];
             } else if (!ctor.imagIsZero(value_prec)) {
-                return ctor.imagIsNegative(value_prec) ? evaluator.precedenceTable['-_'] : evaluator.precedenceTable['()'];
+                return ctor.imagIsNegative(value_prec) ? interpreter.precedenceTable['-_'] : interpreter.precedenceTable['()'];
             } else if (!ctor.realIsNegative(value_prec) && !ctor.imagIsNegative(value_prec)) {
-                return evaluator.precedenceTable['()'];
+                return interpreter.precedenceTable['()'];
             } else if (ctor.realIsNegative(value_prec) && ctor.imagIsNegative(value_prec)) {
-                return evaluator.precedenceTable['-_'];
+                return interpreter.precedenceTable['-_'];
             } else {
-                return evaluator.precedenceTable['+'];
+                return interpreter.precedenceTable['+'];
             }
         } else {
-            return evaluator.precedenceTable['()'];
+            return interpreter.precedenceTable['()'];
         }
     };
 };
@@ -904,7 +904,7 @@ export const unparseValueFactory =
  */
 export const unparseFactory = <REAL, COMPLEX extends ComplexInterface<REAL, TYPE, PARENT>, TYPE = number, PARENT = unknown, PRECEDENCE = number, ROUNDING = Rounding, MODULO = Modulo>(
     ctor: ComplexInterfaceStatic<REAL, COMPLEX, TYPE, PARENT, PRECEDENCE, ROUNDING, MODULO>,
-): ((value: COMPLEX, evaluator: Evaluator, parentPrecedence?: number) => string) => {
+): ((value: COMPLEX, interpreter: Interpreter, parentPrecedence?: number) => string) => {
     /**
      * Unparse `ctor` value. Show true/false if logical value,
      * otherwise show real and imaginary parts enclosed by parenthesis if
@@ -913,7 +913,7 @@ export const unparseFactory = <REAL, COMPLEX extends ComplexInterface<REAL, TYPE
      * @param value Value to unparse.
      * @returns String of unparsed value.
      */
-    return (value: COMPLEX, evaluator: Evaluator, parentPrecedence: number = 0): string => {
+    return (value: COMPLEX, interpreter: Interpreter, parentPrecedence: number = 0): string => {
         if (value.type !== ctor.LOGICAL) {
             const value_prec = ctor.toMaxPrecision(value);
             if (!ctor.realIsZero(value_prec) && !ctor.imagIsZero(value_prec)) {
@@ -922,21 +922,21 @@ export const unparseFactory = <REAL, COMPLEX extends ComplexInterface<REAL, TYPE
                     (ctor.imagGreaterThan(value_prec, 0) ? '+' : '') +
                     (!ctor.imagEquals(value_prec, 1) ? (!ctor.imagEquals(value_prec, -1) ? ctor.unparseValue(value_prec.im) : '-') : '') +
                     'i';
-                if (parentPrecedence > evaluator.precedenceTable['+']) {
+                if (parentPrecedence > interpreter.precedenceTable['+']) {
                     return '(' + unparsed + ')';
                 } else {
                     return unparsed;
                 }
             } else if (!ctor.realIsZero(value_prec)) {
                 const unparsed = ctor.unparseValue(value_prec.re);
-                if (parentPrecedence > (ctor.realIsNegative(value_prec) ? evaluator.precedenceTable['-_'] : evaluator.precedenceTable['()'])) {
+                if (parentPrecedence > (ctor.realIsNegative(value_prec) ? interpreter.precedenceTable['-_'] : interpreter.precedenceTable['()'])) {
                     return '(' + unparsed + ')';
                 } else {
                     return unparsed;
                 }
             } else if (!ctor.imagIsZero(value_prec)) {
                 const unparsed = (!ctor.imagEquals(value_prec, 1) ? (!ctor.imagEquals(value_prec, -1) ? ctor.unparseValue(value_prec.im) : '-') : '') + 'i';
-                if (parentPrecedence > (ctor.imagIsNegative(value_prec) ? evaluator.precedenceTable['-_'] : evaluator.precedenceTable['()'])) {
+                if (parentPrecedence > (ctor.imagIsNegative(value_prec) ? interpreter.precedenceTable['-_'] : interpreter.precedenceTable['()'])) {
                     return '(' + unparsed + ')';
                 } else {
                     return unparsed;
@@ -945,21 +945,21 @@ export const unparseFactory = <REAL, COMPLEX extends ComplexInterface<REAL, TYPE
                 return '0';
             } else if (ctor.realIsNegative(value_prec) && ctor.imagIsNegative(value_prec)) {
                 const unparsed = '-0';
-                if (parentPrecedence > evaluator.precedenceTable['-_']) {
+                if (parentPrecedence > interpreter.precedenceTable['-_']) {
                     return '(' + unparsed + ')';
                 } else {
                     return unparsed;
                 }
             } else if (ctor.realIsNegative(value_prec) && !ctor.imagIsNegative(value_prec)) {
                 const unparsed = '-0+0i';
-                if (parentPrecedence > evaluator.precedenceTable['+']) {
+                if (parentPrecedence > interpreter.precedenceTable['+']) {
                     return '(' + unparsed + ')';
                 } else {
                     return unparsed;
                 }
             } else {
                 const unparsed = '0-0i';
-                if (parentPrecedence > evaluator.precedenceTable['+']) {
+                if (parentPrecedence > interpreter.precedenceTable['+']) {
                     return '(' + unparsed + ')';
                 } else {
                     return unparsed;
@@ -1064,7 +1064,7 @@ export const unparseMathMLValueFactory =
  */
 export const unparseMathMLFactory = <REAL, COMPLEX extends ComplexInterface<REAL, TYPE, PARENT>, TYPE = number, PARENT = unknown, PRECEDENCE = number, ROUNDING = Rounding, MODULO = Modulo>(
     ctor: ComplexInterfaceStatic<REAL, COMPLEX, TYPE, PARENT, PRECEDENCE, ROUNDING, MODULO>,
-): ((value: COMPLEX, evaluator: Evaluator, parentPrecedence?: number) => string) => {
+): ((value: COMPLEX, interpreter: Interpreter, parentPrecedence?: number) => string) => {
     /**
      * Unparse `ctor` value as MathML language. Show true/false if
      * logical value, otherwise show real and imaginary parts enclosed by
@@ -1073,7 +1073,7 @@ export const unparseMathMLFactory = <REAL, COMPLEX extends ComplexInterface<REAL
      * @param value value to unparse.
      * @returns string of unparsed value.
      */
-    return (value: COMPLEX, evaluator: Evaluator, parentPrecedence: number = 0): string => {
+    return (value: COMPLEX, interpreter: Interpreter, parentPrecedence: number = 0): string => {
         if (value.type !== ctor.LOGICAL) {
             const value_prec = ctor.toMaxPrecision(value);
             if (!ctor.realIsZero(value_prec) && !ctor.imagIsZero(value_prec)) {
@@ -1082,28 +1082,28 @@ export const unparseMathMLFactory = <REAL, COMPLEX extends ComplexInterface<REAL
                     (ctor.imagGreaterThan(value_prec, 0) ? '<mo>+</mo>' : '') +
                     (!ctor.imagEquals(value_prec, 1) ? (!ctor.imagEquals(value_prec, -1) ? ctor.unparseMathMLValue(value_prec.im) : '<mo>-</mo>') : '') +
                     '<mi>i</mi>';
-                if (parentPrecedence > evaluator.precedenceTable['+']) {
+                if (parentPrecedence > interpreter.precedenceTable['+']) {
                     return `<mo fence="true" stretchy="true">(</mo>${unparsed}<mo fence="true" stretchy="true">)</mo>`;
                 } else {
                     return unparsed;
                 }
             } else if (!ctor.realIsZero(value_prec)) {
                 const unparsed = ctor.unparseMathMLValue(value_prec.re);
-                if (parentPrecedence > (ctor.realIsNegative(value_prec) ? evaluator.precedenceTable['-_'] : evaluator.precedenceTable['()'])) {
+                if (parentPrecedence > (ctor.realIsNegative(value_prec) ? interpreter.precedenceTable['-_'] : interpreter.precedenceTable['()'])) {
                     return `<mo fence="true" stretchy="true">(</mo>${unparsed}<mo fence="true" stretchy="true">)</mo>`;
                 } else {
                     return unparsed;
                 }
             } else if (!ctor.imagIsZero(value_prec)) {
                 const unparsed = (!ctor.imagEquals(value_prec, 1) ? (!ctor.imagEquals(value_prec, -1) ? ctor.unparseMathMLValue(value_prec.im) : '<mo>-</mo>') : '') + '<mi>i</mi>';
-                if (parentPrecedence > (ctor.imagIsNegative(value_prec) ? evaluator.precedenceTable['-_'] : evaluator.precedenceTable['()'])) {
+                if (parentPrecedence > (ctor.imagIsNegative(value_prec) ? interpreter.precedenceTable['-_'] : interpreter.precedenceTable['()'])) {
                     return `<mo fence="true" stretchy="true">(</mo>${unparsed}<mo fence="true" stretchy="true">)</mo>`;
                 } else {
                     return unparsed;
                 }
             } else if (!ctor.realIsNegative(value_prec) && !ctor.imagIsNegative(value_prec)) {
                 // const unparsed = '<mn>0</mn>';
-                // if (parentPrecedence > evaluator.precedenceTable['()']) {
+                // if (parentPrecedence > interpreter.precedenceTable['()']) {
                 //     return `<mo fence="true" stretchy="true">(</mo>${unparsed}<mo fence="true" stretchy="true">)</mo>`;
                 // } else {
                 //     return unparsed;
@@ -1111,21 +1111,21 @@ export const unparseMathMLFactory = <REAL, COMPLEX extends ComplexInterface<REAL
                 return '<mn>0</mn>';
             } else if (ctor.realIsNegative(value_prec) && ctor.imagIsNegative(value_prec)) {
                 const unparsed = '<mn>-0</mn>';
-                if (parentPrecedence > evaluator.precedenceTable['-_']) {
+                if (parentPrecedence > interpreter.precedenceTable['-_']) {
                     return `<mo fence="true" stretchy="true">(</mo>${unparsed}<mo fence="true" stretchy="true">)</mo>`;
                 } else {
                     return unparsed;
                 }
             } else if (ctor.realIsNegative(value_prec) && !ctor.imagIsNegative(value_prec)) {
                 const unparsed = '<mn>-0</mn><mo>+</mo><mn>0</mn><mi>i</mi>';
-                if (parentPrecedence > evaluator.precedenceTable['+']) {
+                if (parentPrecedence > interpreter.precedenceTable['+']) {
                     return `<mo fence="true" stretchy="true">(</mo>${unparsed}<mo fence="true" stretchy="true">)</mo>`;
                 } else {
                     return unparsed;
                 }
             } else {
                 const unparsed = '<mn>0</mn><mo>-</mo><mn>0</mn><mi>i</mi>';
-                if (parentPrecedence > evaluator.precedenceTable['+']) {
+                if (parentPrecedence > interpreter.precedenceTable['+']) {
                     return `<mo fence="true" stretchy="true">(</mo>${unparsed}<mo fence="true" stretchy="true">)</mo>`;
                 } else {
                     return unparsed;

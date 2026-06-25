@@ -3,7 +3,7 @@ import { type ElementType, MultiArray } from './MultiArray';
 import { BLAS } from './BLAS';
 import { MathOperation } from './MathOperation';
 import { LinearAlgebra } from './LinearAlgebra';
-import { Evaluator } from './Evaluator';
+import { Interpreter } from './Interpreter';
 import { LAPACK } from './LAPACK';
 import { LAPACKunused } from './LAPACKunused';
 
@@ -127,9 +127,9 @@ abstract class LAPACKtest {
         return Complex.realToNumber(Complex.sqrt(sum));
     };
 
-    public static readonly print_matrix = (M: MultiArray | ComplexType[][], Mid: string = 'M', evaluator = Evaluator.Create()): void => {
+    public static readonly print_matrix = (M: MultiArray | ComplexType[][], Mid: string = 'M', interpreter = Interpreter.Create()): void => {
         M = LAPACKtest.array_to_multiarray(M);
-        console.log(`${Mid} = ${MultiArray.unparse(M, evaluator)}`);
+        console.log(`${Mid} = ${MultiArray.unparse(M, interpreter)}`);
     };
 
     public static array_to_multiarray = (M: MultiArray | ComplexType[][]): MultiArray => {
@@ -417,33 +417,33 @@ abstract class LAPACKtest {
     };
 
     public static start_test_complex_tridiagonal = (): {
-        evaluator: Evaluator;
+        interpreter: Interpreter;
         D_orig: ComplexType[];
         E_orig: ComplexType[];
         n: number;
     } => {
-        const evaluator = Evaluator.Create();
+        const interpreter = Interpreter.Create();
         // --- 1. Tridiagonal hermitiana de teste ---
         const D_orig: ComplexType[] = [Complex.create(2), Complex.create(3), Complex.create(2.5), Complex.create(1.8)];
         const E_orig: ComplexType[] = [Complex.create(0.3, 0.4), Complex.create(0.1, -0.2), Complex.create(-0.2, 0.5)];
         const n = D_orig.length;
-        return { evaluator, D_orig, E_orig, n };
+        return { interpreter, D_orig, E_orig, n };
     };
 
     public static start_test_complex_tridiagonal_hermitian = (): {
-        evaluator: Evaluator;
+        interpreter: Interpreter;
         D_orig: ComplexType[];
         E_orig: ComplexType[];
         n: number;
         T0: MultiArray;
     } => {
-        const { evaluator, D_orig, E_orig, n } = LAPACKtest.start_test_complex_tridiagonal();
+        const { interpreter, D_orig, E_orig, n } = LAPACKtest.start_test_complex_tridiagonal();
         // --- 2. Constrói T original densa ---
         const T0 = new MultiArray([n, n]);
         T0.array = LAPACK.tridiagonal_hermitian_to_dense(D_orig, E_orig);
         console.log('=== Matriz T0 ===');
-        console.log(MultiArray.unparse(T0, evaluator));
-        return { evaluator, D_orig, E_orig, n, T0 };
+        console.log(MultiArray.unparse(T0, interpreter));
+        return { interpreter, D_orig, E_orig, n, T0 };
     };
 
     /**
@@ -451,24 +451,24 @@ abstract class LAPACKtest {
      * @returns
      */
     public static start_test_complex_tridiagonal_hermitian_to_real2n = (): {
-        evaluator: Evaluator;
+        interpreter: Interpreter;
         D_orig: ComplexType[];
         E_orig: ComplexType[];
         n: number;
         T0: MultiArray;
         T: MultiArray;
     } => {
-        const { evaluator, D_orig, E_orig, n, T0 } = LAPACKtest.start_test_complex_tridiagonal_hermitian();
+        const { interpreter, D_orig, E_orig, n, T0 } = LAPACKtest.start_test_complex_tridiagonal_hermitian();
         const T = LAPACK.hermitian_to_real2n(T0.array as ComplexType[][]);
         const T_real = new MultiArray([T.length, T.length]);
         T_real.array = T;
         console.log('=== Matriz T ===');
-        console.log(MultiArray.unparse(T_real, evaluator));
-        return { evaluator, D_orig, E_orig, n, T0, T: T_real };
+        console.log(MultiArray.unparse(T_real, interpreter));
+        return { interpreter, D_orig, E_orig, n, T0, T: T_real };
     };
 
     public static test_jacobi_hermitian_real2n_final = (): void => {
-        const { evaluator, n, T0, T } = LAPACKtest.start_test_complex_tridiagonal_hermitian_to_real2n();
+        const { interpreter, n, T0, T } = LAPACKtest.start_test_complex_tridiagonal_hermitian_to_real2n();
         // --- Jacobi via real 2n×2n com normalização ---
         const { D, Z } = LAPACKunused.numeric_jacobi_hermitian_via_real2n_final(T0, 1000, 1e-12);
         // --- Reconstrução T ≈ Z·D·Zᴴ ---
@@ -477,11 +477,11 @@ abstract class LAPACKtest {
         const Zh = LinearAlgebra.ctranspose(Z);
         const Trec = MathOperation.mtimes(MathOperation.mtimes(Z, Dmat), Zh) as MultiArray;
         console.log('=== T reconstruída via Z·D·Zᴴ ===');
-        console.log(MultiArray.unparse(Trec, evaluator));
+        console.log(MultiArray.unparse(Trec, interpreter));
         // --- Diferença ---
         const diff = MathOperation.minus(Trec, T0) as MultiArray;
         console.log('=== Diferença Trec - T original ===');
-        console.log(MultiArray.unparse(diff, evaluator));
+        console.log(MultiArray.unparse(diff, interpreter));
         // --- Norma Frobenius ---
         let normF_squared = Complex.zero();
         for (let i = 0; i < n; i++) {
@@ -491,7 +491,7 @@ abstract class LAPACKtest {
             }
         }
         const normF = Complex.sqrt(normF_squared);
-        console.log('||T - Z·D·Zᴴ||_F =', Complex.unparse(normF, evaluator));
+        console.log('||T - Z·D·Zᴴ||_F =', Complex.unparse(normF, interpreter));
         // --- Checagem de unitariedade ---
         const ZZh = MathOperation.mtimes(LinearAlgebra.ctranspose(Z), Z) as MultiArray;
         let sum = 0;
@@ -506,7 +506,7 @@ abstract class LAPACKtest {
     };
 
     public static test_jacobi_hermitian_real2n = (): void => {
-        const { evaluator, n, T0 } = LAPACKtest.start_test_complex_tridiagonal_hermitian_to_real2n();
+        const { interpreter, n, T0 } = LAPACKtest.start_test_complex_tridiagonal_hermitian_to_real2n();
         // --- Jacobi via real 2n×2n ---
         const { D, V } = LAPACKunused.jacobi_hermitian_real2n(T0.array as ComplexType[][], 1000, 1e-12);
         // --- Reconstrução ---
@@ -517,11 +517,11 @@ abstract class LAPACKtest {
         const Vh = LinearAlgebra.ctranspose(Vmat);
         const Trec = MathOperation.mtimes(MathOperation.mtimes(Vmat, Dmat), Vh) as MultiArray;
         console.log('=== T reconstruída via V·D·Vᴴ ===');
-        console.log(MultiArray.unparse(Trec, evaluator));
+        console.log(MultiArray.unparse(Trec, interpreter));
         // --- Diferença ---
         const diff = MathOperation.minus(Trec, T0) as MultiArray;
         console.log('=== Diferença Trec - T original ===');
-        console.log(MultiArray.unparse(diff, evaluator));
+        console.log(MultiArray.unparse(diff, interpreter));
         // --- Norma Frobenius ---
         let normF_squared = Complex.zero();
         for (let i = 0; i < n; i++) {
@@ -531,7 +531,7 @@ abstract class LAPACKtest {
             }
         }
         const normF = Complex.sqrt(normF_squared);
-        console.log('||T - V·D·Vᴴ||_F =', Complex.unparse(normF, evaluator));
+        console.log('||T - V·D·Vᴴ||_F =', Complex.unparse(normF, interpreter));
         // --- Unitariedade ---
         const VVh = MathOperation.mtimes(LinearAlgebra.ctranspose(Vmat), Vmat) as MultiArray;
         let sum = 0;
@@ -547,7 +547,7 @@ abstract class LAPACKtest {
 
     public static test_jacobi_hermitian_real2n_direct = (): void => {
         console.log('=== INÍCIO DO TESTE Jacobi (jacobi_hermitian_real2n_direct) ===');
-        const { evaluator, D_orig, E_orig, T0 } = LAPACKtest.start_test_complex_tridiagonal_hermitian_to_real2n();
+        const { interpreter, D_orig, E_orig, T0 } = LAPACKtest.start_test_complex_tridiagonal_hermitian_to_real2n();
         // --- Jacobi via real 2n×2n ---
         const { D, V } = LAPACKunused.jacobi_hermitian_real2n_direct(D_orig, E_orig, 1000, 1e-12);
         const Vmat = new MultiArray([V.length, V.length]);
@@ -559,11 +559,11 @@ abstract class LAPACKtest {
         const Vh = LinearAlgebra.ctranspose(Vmat);
         const Trec = MathOperation.mtimes(MathOperation.mtimes(Vmat, Dmat), Vh) as MultiArray;
         console.log('=== T reconstruída via V·D·Vᴴ ===');
-        console.log(MultiArray.unparse(Trec, evaluator));
+        console.log(MultiArray.unparse(Trec, interpreter));
         // --- Diferença ---
         const diff = MathOperation.minus(Trec, T0) as MultiArray;
         console.log('=== Diferença Trec - T original ===');
-        console.log(MultiArray.unparse(diff, evaluator));
+        console.log(MultiArray.unparse(diff, interpreter));
         // --- Norma Frobenius ---
         let normF_squared = Complex.zero();
         for (let i = 0; i < n; i++) {
@@ -573,7 +573,7 @@ abstract class LAPACKtest {
             }
         }
         const normF = Complex.sqrt(normF_squared);
-        console.log('||T - V·D·Vᴴ||_F =', Complex.unparse(normF, evaluator));
+        console.log('||T - V·D·Vᴴ||_F =', Complex.unparse(normF, interpreter));
         // --- Unitariedade ---
         const VVh = MathOperation.mtimes(LinearAlgebra.ctranspose(Vmat), Vmat) as MultiArray;
         let sum = 0;
@@ -588,7 +588,7 @@ abstract class LAPACKtest {
     };
 
     public static test_jacobi_hermitian_via_real2n = (): void => {
-        const { evaluator, n, T0, T } = LAPACKtest.start_test_complex_tridiagonal_hermitian_to_real2n();
+        const { interpreter, n, T0, T } = LAPACKtest.start_test_complex_tridiagonal_hermitian_to_real2n();
         // --- 1. Executa Jacobi real ---
         const { D, V } = LAPACK.jacobi_real_symmetric_dense(T.array as ComplexType[][], 1000, 1e-12);
         // --- 2. Reconstrói autovetores complexos ---
@@ -600,11 +600,11 @@ abstract class LAPACKtest {
         const Zh = LinearAlgebra.ctranspose(Z);
         const Trec = MathOperation.mtimes(MathOperation.mtimes(Z, Dmat), Zh) as MultiArray;
         console.log('=== T reconstruída via Z·D·Zᴴ ===');
-        console.log(MultiArray.unparse(Trec, evaluator));
+        console.log(MultiArray.unparse(Trec, interpreter));
         // --- 4. Diferença Trec - T0 ---
         const diff = MathOperation.minus(Trec, T0) as MultiArray;
         console.log('=== Diferença Trec - T original ===');
-        console.log(MultiArray.unparse(diff, evaluator));
+        console.log(MultiArray.unparse(diff, interpreter));
         // --- 5. Norma Frobenius da diferença ---
         let normF_squared = Complex.zero();
         for (let i = 0; i < n; i++) {
@@ -614,7 +614,7 @@ abstract class LAPACKtest {
             }
         }
         const normF = Complex.sqrt(normF_squared);
-        console.log('||T - Z·D·Zᴴ||_F =', Complex.unparse(normF, evaluator));
+        console.log('||T - Z·D·Zᴴ||_F =', Complex.unparse(normF, interpreter));
         // --- 6. Checagem de unitariedade ---
         const ZZh = MathOperation.mtimes(LinearAlgebra.ctranspose(Z), Z) as MultiArray;
         console.log(
@@ -747,7 +747,7 @@ abstract class LAPACKtest {
     };
 
     public static test_jacobi_hermitian_full(): void {
-        const evaluator = Evaluator.Create();
+        const interpreter = Interpreter.Create();
         const D = [2, 3, 2.5, 1.8].map((v) => Complex.create(v));
         const E = [Complex.create(0.3, 0.4), Complex.create(0.1, -0.2), Complex.create(-0.2, 0.5)];
         const n = D.length;
@@ -769,7 +769,7 @@ abstract class LAPACKtest {
             }
         }
         const normF = Complex.sqrt(normF2);
-        console.log('||T - Z·D·Zᴴ||_F =', Complex.unparse(normF, evaluator));
+        console.log('||T - Z·D·Zᴴ||_F =', Complex.unparse(normF, interpreter));
         const ZZh = MathOperation.mtimes(Zh, Z) as MultiArray;
         const I = new MultiArray([n, n]);
         I.array = LAPACK.eye(n, n);
@@ -781,11 +781,11 @@ abstract class LAPACKtest {
             }
         }
         const normZ = Complex.sqrt(normZ2);
-        console.log('||ZᴴZ - I||_F =', Complex.unparse(normZ, evaluator));
+        console.log('||ZᴴZ - I||_F =', Complex.unparse(normZ, interpreter));
     }
 
     public static test_numeric_jacobi_hermitian_direct = (): void => {
-        const { evaluator, D_orig, E_orig, n, T0 } = LAPACKtest.start_test_complex_tridiagonal_hermitian();
+        const { interpreter, D_orig, E_orig, n, T0 } = LAPACKtest.start_test_complex_tridiagonal_hermitian();
 
         // --- 3. Jacobi hermitiano direto ---
         const { D_work, Z } = LAPACKunused.numeric_jacobi_hermitian_direct(D_orig, E_orig, 1000, 1e-12);
@@ -799,13 +799,13 @@ abstract class LAPACKtest {
         const Trec = MathOperation.mtimes(MathOperation.mtimes(Z, Dmat), Zh) as MultiArray;
 
         console.log('=== T reconstruída via Z·D·Zᴴ ===');
-        console.log(MultiArray.unparse(Trec, evaluator));
+        console.log(MultiArray.unparse(Trec, interpreter));
 
         // --- 5. Diferença ---
         const diff = MathOperation.minus(Trec, T0) as MultiArray;
 
         console.log('=== Diferença Trec - T original ===');
-        console.log(MultiArray.unparse(diff, evaluator));
+        console.log(MultiArray.unparse(diff, interpreter));
 
         // --- 6. Norma de Frobenius da reconstrução ---
         let errRecSq = Complex.zero();
@@ -815,7 +815,7 @@ abstract class LAPACKtest {
             }
         }
         const errRec = Complex.sqrt(errRecSq);
-        console.log('||T - Z·D·Zᴴ||_F =', Complex.unparse(errRec, evaluator));
+        console.log('||T - Z·D·Zᴴ||_F =', Complex.unparse(errRec, interpreter));
 
         // --- 7. Checagem de unitariedade ---
         const ZZh = MathOperation.mtimes(Zh, Z) as MultiArray;
@@ -834,7 +834,7 @@ abstract class LAPACKtest {
     };
 
     public static test_apply_givens_tridiagonal = (): void => {
-        const { evaluator, D_orig, E_orig, T0 } = LAPACKtest.start_test_complex_tridiagonal_hermitian();
+        const { interpreter, D_orig, E_orig, T0 } = LAPACKtest.start_test_complex_tridiagonal_hermitian();
         const D = D_orig;
         const E = E_orig;
 
@@ -859,11 +859,11 @@ abstract class LAPACKtest {
         const diff = MathOperation.minus(T1, GTG) as MultiArray;
 
         console.log('T1 − Gᴴ·T0·G (deve ser ~0):');
-        console.log(MultiArray.unparse(diff, evaluator));
+        console.log(MultiArray.unparse(diff, interpreter));
     };
 
     public static test_numeric_qr_hermitian_tridiagonal = (): void => {
-        const evaluator = Evaluator.Create();
+        const interpreter = Interpreter.Create();
 
         const D_orig = [2, 3, 2.5, 1.8].map((v) => Complex.create(v));
         const E_orig = [Complex.create(0.3, 0.4), Complex.create(0.1, -0.2), Complex.create(-0.2, 0.5)];
@@ -896,7 +896,7 @@ abstract class LAPACKtest {
             }
         }
 
-        console.log('||T − Z·D·Zᴴ||_F =', Complex.unparse(Complex.sqrt(err2), evaluator));
+        console.log('||T − Z·D·Zᴴ||_F =', Complex.unparse(Complex.sqrt(err2), interpreter));
 
         const ZZh = MathOperation.mtimes(Zh, Z) as MultiArray;
 
@@ -908,11 +908,11 @@ abstract class LAPACKtest {
             }
         }
 
-        console.log('||ZᴴZ − I||_F =', Complex.unparse(Complex.sqrt(unit2), evaluator));
+        console.log('||ZᴴZ − I||_F =', Complex.unparse(Complex.sqrt(unit2), interpreter));
     };
 
     public static test_qr_hermitian_tridiagonal_full(): void {
-        const evaluator = Evaluator.Create();
+        const interpreter = Interpreter.Create();
 
         // === 1. Matriz tridiagonal hermitiana de teste ===
         const D0: ComplexType[] = [Complex.create(2.0), Complex.create(3.0), Complex.create(2.5), Complex.create(1.8)];
@@ -931,7 +931,7 @@ abstract class LAPACKtest {
         T0.array = T0_array;
 
         console.log('=== T original ===');
-        console.log(MultiArray.unparse(T0, evaluator));
+        console.log(MultiArray.unparse(T0, interpreter));
 
         // === 3. Inicializa Z como identidade ===
         const Z = new MultiArray([n, n]);
@@ -952,13 +952,13 @@ abstract class LAPACKtest {
         const Trec = MathOperation.mtimes(MathOperation.mtimes(Z, Dmat), Zh) as MultiArray;
 
         console.log('=== T reconstruída (Z·D·Zᴴ) ===');
-        console.log(MultiArray.unparse(Trec, evaluator));
+        console.log(MultiArray.unparse(Trec, interpreter));
 
         // === 7. Erro Trec − T0 ===
         const diff = MathOperation.minus(Trec, T0) as MultiArray;
 
         console.log('=== Diferença Trec - T original ===');
-        console.log(MultiArray.unparse(diff, evaluator));
+        console.log(MultiArray.unparse(diff, interpreter));
 
         // === 8. Norma de Frobenius do erro ===
         let normF2 = Complex.zero();
@@ -970,7 +970,7 @@ abstract class LAPACKtest {
         }
 
         const normF = Complex.sqrt(normF2);
-        console.log('||T - Z·D·Zᴴ||_F =', Complex.unparse(normF, evaluator));
+        console.log('||T - Z·D·Zᴴ||_F =', Complex.unparse(normF, interpreter));
 
         // === 9. Teste de unitariedade de Z ===
         const ZZh = MathOperation.mtimes(Zh, Z) as MultiArray;
@@ -988,7 +988,7 @@ abstract class LAPACKtest {
         }
 
         const normZ = Complex.sqrt(normZ2);
-        console.log('||ZᴴZ − I||_F =', Complex.unparse(normZ, evaluator));
+        console.log('||ZᴴZ − I||_F =', Complex.unparse(normZ, interpreter));
 
         console.log('=== FIM DO TESTE QR HERMITIANO ===');
     }
@@ -1000,7 +1000,7 @@ abstract class LAPACKtest {
      */
     public static readonly test_tridiagonal_similarity = (D: ComplexType[], E: ComplexType[]) => {
         const n = D.length;
-        const evaluator = Evaluator.Create();
+        const interpreter = Interpreter.Create();
 
         // --- 1. Matriz tridiagonal original ---
         const T0_array = LAPACK.tridiagonal_hermitian_to_dense(D, E);
@@ -1036,15 +1036,15 @@ abstract class LAPACKtest {
 
         // --- 7. Exibe resultados ---
         console.log('T original:');
-        console.log(MultiArray.unparse(T0, evaluator));
+        console.log(MultiArray.unparse(T0, interpreter));
 
         console.log('T reconstruída (Zᴴ·D·Z):');
-        console.log(MultiArray.unparse(T_approx, evaluator));
+        console.log(MultiArray.unparse(T_approx, interpreter));
 
         console.log('Diferença T_approx - T0:');
-        console.log(MultiArray.unparse(diff, evaluator));
+        console.log(MultiArray.unparse(diff, interpreter));
 
-        console.log('Norma Frobenius da diferença:', Complex.unparse(Complex.real(normF), evaluator));
+        console.log('Norma Frobenius da diferença:', Complex.unparse(Complex.real(normF), interpreter));
     };
 
     public static readonly test_orthonormality = (V: MultiArray): { maxOffDiag: number; maxDiagDeviation: number } => {
@@ -1188,7 +1188,7 @@ abstract class LAPACKtest {
     };
 
     public static test_numeric_qr_bulge_chasing_hermitian = (): void => {
-        const evaluator = Evaluator.Create();
+        const interpreter = Interpreter.Create();
 
         // ============================================================
         // 1. Tridiagonal original
@@ -1203,7 +1203,7 @@ abstract class LAPACKtest {
         T0.array = T0_array;
 
         console.log('=== T original ===');
-        console.log(MultiArray.unparse(T0, evaluator));
+        console.log(MultiArray.unparse(T0, interpreter));
 
         // ============================================================
         // 2. Executa QR com bulge chasing
@@ -1229,7 +1229,7 @@ abstract class LAPACKtest {
         const T_approx = MathOperation.mtimes(MathOperation.mtimes(Z, Dmat), Zh) as MultiArray;
 
         console.log('=== T reconstruída (Z·D·Zᴴ) ===');
-        console.log(MultiArray.unparse(T_approx, evaluator));
+        console.log(MultiArray.unparse(T_approx, interpreter));
 
         // ============================================================
         // 4. Erro de reconstrução
@@ -1243,7 +1243,7 @@ abstract class LAPACKtest {
             }
         }
 
-        console.log('||T − Z·D·Zᴴ||_F =', Complex.unparse(Complex.sqrt(errRec2), evaluator));
+        console.log('||T − Z·D·Zᴴ||_F =', Complex.unparse(Complex.sqrt(errRec2), interpreter));
 
         // ============================================================
         // 5. Checagem de unitariedade: ||ZᴴZ − I||_F
@@ -1261,7 +1261,7 @@ abstract class LAPACKtest {
             }
         }
 
-        console.log('||ZᴴZ − I||_F =', Complex.unparse(Complex.sqrt(errUnit2), evaluator));
+        console.log('||ZᴴZ − I||_F =', Complex.unparse(Complex.sqrt(errUnit2), interpreter));
 
         // ============================================================
         // 6. Norma fora da diagonal do T FINAL (via E_work)
@@ -1271,7 +1271,7 @@ abstract class LAPACKtest {
             offDiag2 = Complex.add(offDiag2, Complex.abs2(E_work[i]));
         }
 
-        console.log('||offdiag(T_final)||_2 =', Complex.unparse(Complex.sqrt(offDiag2), evaluator));
+        console.log('||offdiag(T_final)||_2 =', Complex.unparse(Complex.sqrt(offDiag2), interpreter));
 
         // ============================================================
         // 7. T final explícito (diagnóstico visual)
@@ -1282,13 +1282,13 @@ abstract class LAPACKtest {
         Tfinal.array = Tfinal_array;
 
         console.log('=== T final implícito (D_work, E_work) ===');
-        console.log(MultiArray.unparse(Tfinal, evaluator));
+        console.log(MultiArray.unparse(Tfinal, interpreter));
 
         console.log('=== FIM DO TESTE ===');
     };
 
     public static test_complex_givens_unitarity = (): void => {
-        const evaluator = Evaluator.Create();
+        const interpreter = Interpreter.Create();
 
         const x = Complex.create(2, -1);
         const y = Complex.create(0.5, 0.8);
@@ -1306,11 +1306,11 @@ abstract class LAPACKtest {
         const GhG = MathOperation.mtimes(Gh, G) as MultiArray;
 
         console.log('Gᴴ·G (deve ser identidade):');
-        console.log(MultiArray.unparse(GhG, evaluator));
+        console.log(MultiArray.unparse(GhG, interpreter));
     };
 
     public static test_apply_givens_to_Z = (): void => {
-        const evaluator = Evaluator.Create();
+        const interpreter = Interpreter.Create();
 
         const n = 4;
         const Z = new MultiArray([n, n]);
@@ -1324,7 +1324,7 @@ abstract class LAPACKtest {
         const ZZh = MathOperation.mtimes(Zh, Z) as MultiArray;
 
         console.log('Zᴴ·Z após uma rotação:');
-        console.log(MultiArray.unparse(ZZh, evaluator));
+        console.log(MultiArray.unparse(ZZh, interpreter));
     };
 }
 export { type TestOptions, LAPACKtest, EXPECT_TOL, MAX_ITERACTION, DEFAULT_EIG_TOL, defaulTestOptions };

@@ -3,7 +3,7 @@ import { type ElementType, MultiArray } from './MultiArray';
 import { BLAS } from './BLAS';
 import { MathOperation } from './MathOperation';
 import { LinearAlgebra } from './LinearAlgebra';
-import { Evaluator } from './Evaluator';
+import { Interpreter } from './Interpreter';
 import { LAPACK } from './LAPACK';
 
 type larfHandler = (A: MultiArray, v: ComplexType[], tau: ComplexType, rowStart: number, colStart: number) => void;
@@ -2166,8 +2166,8 @@ abstract class LAPACKunused {
         }
 
         console.log('\nMatriz T reconstruída:');
-        const evaluator = Evaluator.Create();
-        console.log(MultiArray.unparse(T, evaluator));
+        const interpreter = Interpreter.Create();
+        console.log(MultiArray.unparse(T, interpreter));
 
         //
         // VALIDAR A = Q * T * Qᵀ  (principal teste numérico!)
@@ -2175,7 +2175,7 @@ abstract class LAPACKunused {
         const QtA = MathOperation.mtimes(LinearAlgebra.transpose(Q), MathOperation.mtimes(Acopy, Q));
 
         console.log('\nMatriz Qᵀ * A * Q =');
-        console.log(MultiArray.unparse(QtA as MultiArray, evaluator));
+        console.log(MultiArray.unparse(QtA as MultiArray, interpreter));
 
         console.log('\nElementos fora da banda tridiagonal (devem ≈ 0):');
         for (let i = 0; i < n; i++)
@@ -4974,8 +4974,8 @@ abstract class LAPACKunused {
 
         MultiArray.setType(V);
 
-        const evaluator = Evaluator.Create();
-        console.log(MultiArray.unparse(A, evaluator));
+        const interpreter = Interpreter.Create();
+        console.log(MultiArray.unparse(A, interpreter));
         console.log(`eigenvalues: [${eigenvalues.map((v) => v.toString()).join(', ')}]`);
         // console.log(`V = ${V.array.map((row) => row.map((z) => Complex.unparse(z as ComplexType, 0))).join(', ')}`);
 

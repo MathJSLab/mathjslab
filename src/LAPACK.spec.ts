@@ -5,7 +5,7 @@ import { MathOperation } from './MathOperation';
 import { BLAS } from './BLAS';
 import { LAPACK } from './LAPACK';
 import { type TestOptions, LAPACKtest, EXPECT_TOL, MAX_ITERACTION, DEFAULT_EIG_TOL, defaulTestOptions } from './LAPACKtest';
-import { Evaluator } from './Evaluator';
+import { Interpreter } from './Interpreter';
 import { MultiArray } from './MultiArray';
 import { LinearAlgebra } from './LinearAlgebra';
 
@@ -14,9 +14,9 @@ const unitName = __filenameMatch[1];
 const testExtension = __filenameMatch[2];
 
 /**
- * Evaluator instance.
+ * Interpreter instance.
  */
-let evaluator: Evaluator;
+let interpreter: Interpreter;
 
 /**
  * Matrix samples.
@@ -135,9 +135,9 @@ function expectHermetianEigenDecomposition(
     D = LAPACKtest.array_or_vector_to_diagonal_multiarray(D);
     if (print) {
         console.log('--- Inputs ---');
-        LAPACKtest.print_matrix(A, Aid, evaluator);
-        LAPACKtest.print_matrix(V, Vid, evaluator);
-        LAPACKtest.print_matrix(D, Did, evaluator);
+        LAPACKtest.print_matrix(A, Aid, interpreter);
+        LAPACKtest.print_matrix(V, Vid, interpreter);
+        LAPACKtest.print_matrix(D, Did, interpreter);
     }
     let result = LAPACKtest.testHermitian(A, options);
     expect(result.norm).toBeLessThanOrEqual(tol!);
@@ -163,12 +163,12 @@ function expectHermetianEigenDecomposition(
  */
 function testHermitianEigenDecomposition(A: string, options: TestOptions = { Aid: 'A' }) {
     options = LAPACKtest.setTestOptions(options);
-    evaluator.Execute('clear');
-    evaluator.Execute(`${options.Aid} = ${A}`);
-    evaluator.Execute(`[V,D] = eig(${options.Aid})`);
-    const Am = evaluator.Execute(options.Aid!).list[0];
-    const Vm = evaluator.Execute('V').list[0];
-    const Dm = evaluator.Execute('D').list[0];
+    interpreter.Execute('clear');
+    interpreter.Execute(`${options.Aid} = ${A}`);
+    interpreter.Execute(`[V,D] = eig(${options.Aid})`);
+    const Am = interpreter.Execute(options.Aid!).list[0];
+    const Vm = interpreter.Execute('V').list[0];
+    const Dm = interpreter.Execute('D').list[0];
     expectHermetianEigenDecomposition(Am, Vm, Dm, options);
 }
 
@@ -210,9 +210,9 @@ function expectJacobiDiagonalization(A: MultiArray | ComplexType[][], options: T
 function testJacobiDiagonalization(A: string, options: TestOptions = { Aid: 'A' }) {
     options = LAPACKtest.setTestOptions(options);
     const { Aid } = options;
-    evaluator.Execute('clear');
-    evaluator.Execute(`${Aid} = ${A}`);
-    const S = evaluator.Execute(Aid!).list[0];
+    interpreter.Execute('clear');
+    interpreter.Execute(`${Aid} = ${A}`);
+    const S = interpreter.Execute(Aid!).list[0];
     expectJacobiDiagonalization(S, options);
 }
 
@@ -326,7 +326,7 @@ function rank1Update(C: MultiArray, w: ComplexType[], v: ComplexType[], tau: Com
  */
 describe(`${unitName} unit test (.${testExtension} test file).`, () => {
     beforeAll(() => {
-        evaluator = Evaluator.Create();
+        interpreter = Interpreter.Create();
     });
 
     it(`${unitName}, BLAS and LAPACKtest should be defined.`, () => {
@@ -337,108 +337,108 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         expect(LAPACKtest).toBeDefined();
     });
 
-    it('Evaluator should be instatiated and should parse, evaluate and unparse a simple real expression (evaluator test).', () => {
-        expect(evaluator).toBeInstanceOf(Evaluator);
-        const tree = evaluator.Parse('1+2*3');
-        const value = evaluator.Evaluate(tree);
-        const unparsed = evaluator.Unparse(tree);
+    it('Interpreter should be instatiated and should parse, evaluate and unparse a simple real expression (interpreter test).', () => {
+        expect(interpreter).toBeInstanceOf(Interpreter);
+        const tree = interpreter.Parse('1+2*3');
+        const value = interpreter.Evaluate(tree);
+        const unparsed = interpreter.Unparse(tree);
         expect(Complex.realToNumber(value.list[0])).toBe(7);
         expect(unparsed === '1+2*3\n').toBe(true);
     });
 
     describe('BLAS.axpy — Y ← alpha * X + Y', () => {
         it('axpy — real matrices, alpha = 2', () => {
-            const X = evaluator.Execute('[1 2; 3 4]').list[0] as MultiArray;
-            const Y = evaluator.Execute('[5 6; 7 8]').list[0] as MultiArray;
-            BLAS.axpy(evaluator.Execute('2').list[0], X.array as ComplexType[][], Y.array as ComplexType[][]);
-            const expected = evaluator.Execute('[7 10; 13 16]').list[0] as MultiArray;
+            const X = interpreter.Execute('[1 2; 3 4]').list[0] as MultiArray;
+            const Y = interpreter.Execute('[5 6; 7 8]').list[0] as MultiArray;
+            BLAS.axpy(interpreter.Execute('2').list[0], X.array as ComplexType[][], Y.array as ComplexType[][]);
+            const expected = interpreter.Execute('[7 10; 13 16]').list[0] as MultiArray;
             expectMatrixClose(Y, expected);
         });
 
         it('axpy — complex matrices, alpha complex', () => {
-            const X = evaluator.Execute('[1+i 2; 3 4-i]').list[0] as MultiArray;
-            const Y = evaluator.Execute('[5 6+i; 7 8]').list[0] as MultiArray;
+            const X = interpreter.Execute('[1+i 2; 3 4-i]').list[0] as MultiArray;
+            const Y = interpreter.Execute('[5 6+i; 7 8]').list[0] as MultiArray;
             BLAS.axpy(Complex.create(2, -1), X.array as ComplexType[][], Y.array as ComplexType[][]);
-            const expected = evaluator.Execute('[8+i 10-i; 13-3i 15-6i]').list[0] as MultiArray;
+            const expected = interpreter.Execute('[8+i 10-i; 13-3i 15-6i]').list[0] as MultiArray;
             expectMatrixClose(Y, expected);
         });
 
         it('axpy — alpha = 0 leaves Y unchanged', () => {
-            const X = evaluator.Execute('[1 2; 3 4]').list[0] as MultiArray;
-            const Y = evaluator.Execute('[5 6; 7 8]').list[0] as MultiArray;
-            const Ycopy = evaluator.Execute('[5 6; 7 8]').list[0] as MultiArray;
-            BLAS.axpy(evaluator.Execute('0').list[0], X.array as ComplexType[][], Y.array as ComplexType[][]);
+            const X = interpreter.Execute('[1 2; 3 4]').list[0] as MultiArray;
+            const Y = interpreter.Execute('[5 6; 7 8]').list[0] as MultiArray;
+            const Ycopy = interpreter.Execute('[5 6; 7 8]').list[0] as MultiArray;
+            BLAS.axpy(interpreter.Execute('0').list[0], X.array as ComplexType[][], Y.array as ComplexType[][]);
             expectMatrixClose(Y, Ycopy);
         });
 
         it('axpy — alpha = 1', () => {
-            const X = evaluator.Execute('[1 2; 3 4]').list[0] as MultiArray;
-            const Y = evaluator.Execute('[5 6; 7 8]').list[0] as MultiArray;
-            BLAS.axpy(evaluator.Execute('1').list[0], X.array as ComplexType[][], Y.array as ComplexType[][]);
-            const expected = evaluator.Execute('[6 8; 10 12]').list[0] as MultiArray;
+            const X = interpreter.Execute('[1 2; 3 4]').list[0] as MultiArray;
+            const Y = interpreter.Execute('[5 6; 7 8]').list[0] as MultiArray;
+            BLAS.axpy(interpreter.Execute('1').list[0], X.array as ComplexType[][], Y.array as ComplexType[][]);
+            const expected = interpreter.Execute('[6 8; 10 12]').list[0] as MultiArray;
             expectMatrixClose(Y, expected);
         });
 
         it('axpy — alpha = -1 (Y ← Y − X)', () => {
-            const X = evaluator.Execute('[1 2; 3 4]').list[0] as MultiArray;
-            const Y = evaluator.Execute('[5 6; 7 8]').list[0] as MultiArray;
-            BLAS.axpy(evaluator.Execute('-1').list[0], X.array as ComplexType[][], Y.array as ComplexType[][]);
-            const expected = evaluator.Execute('[4 4; 4 4]').list[0] as MultiArray;
+            const X = interpreter.Execute('[1 2; 3 4]').list[0] as MultiArray;
+            const Y = interpreter.Execute('[5 6; 7 8]').list[0] as MultiArray;
+            BLAS.axpy(interpreter.Execute('-1').list[0], X.array as ComplexType[][], Y.array as ComplexType[][]);
+            const expected = interpreter.Execute('[4 4; 4 4]').list[0] as MultiArray;
             expectMatrixClose(Y, expected);
         });
 
         it('axpy — rectangular matrices (3x2)', () => {
-            const X = evaluator.Execute('[1 2; 3 4; 5 6]').list[0] as MultiArray;
-            const Y = evaluator.Execute('[6 5; 4 3; 2 1]').list[0] as MultiArray;
-            BLAS.axpy(evaluator.Execute('2').list[0], X.array as ComplexType[][], Y.array as ComplexType[][]);
-            const expected = evaluator.Execute('[8 9; 10 11; 12 13]').list[0] as MultiArray;
+            const X = interpreter.Execute('[1 2; 3 4; 5 6]').list[0] as MultiArray;
+            const Y = interpreter.Execute('[6 5; 4 3; 2 1]').list[0] as MultiArray;
+            BLAS.axpy(interpreter.Execute('2').list[0], X.array as ComplexType[][], Y.array as ComplexType[][]);
+            const expected = interpreter.Execute('[8 9; 10 11; 12 13]').list[0] as MultiArray;
             expectMatrixClose(Y, expected);
         });
 
         it('axpy — zero X leaves Y unchanged', () => {
-            const X = evaluator.Execute('[0 0; 0 0]').list[0] as MultiArray;
-            const Y = evaluator.Execute('[1 2; 3 4]').list[0] as MultiArray;
-            const Ycopy = evaluator.Execute('[1 2; 3 4]').list[0] as MultiArray;
-            BLAS.axpy(evaluator.Execute('5').list[0], X.array as ComplexType[][], Y.array as ComplexType[][]);
+            const X = interpreter.Execute('[0 0; 0 0]').list[0] as MultiArray;
+            const Y = interpreter.Execute('[1 2; 3 4]').list[0] as MultiArray;
+            const Ycopy = interpreter.Execute('[1 2; 3 4]').list[0] as MultiArray;
+            BLAS.axpy(interpreter.Execute('5').list[0], X.array as ComplexType[][], Y.array as ComplexType[][]);
             expectMatrixClose(Y, Ycopy);
         });
     });
 
     describe('BLAS.scal — scale a vector by a scalar (in-place)', () => {
         it('scal — real vector, alpha real', () => {
-            const A = evaluator.Execute('[1; 2; 3]').list[0] as MultiArray;
+            const A = interpreter.Execute('[1; 2; 3]').list[0] as MultiArray;
             const Avec = MultiArray.fromColumnVector(A) as ComplexType[];
             BLAS.scal(Complex.create(2), Avec, 0, 3);
-            const expected = evaluator.Execute('[2; 4; 6]').list[0] as MultiArray;
+            const expected = interpreter.Execute('[2; 4; 6]').list[0] as MultiArray;
             expectMatrixClose(MultiArray.toColumnVector(Avec), expected);
         });
 
         it('scal — complex vector, alpha complex', () => {
-            const A = evaluator.Execute('[1+i; 2; 3-i]').list[0] as MultiArray;
+            const A = interpreter.Execute('[1+i; 2; 3-i]').list[0] as MultiArray;
             const Avec = MultiArray.fromColumnVector(A) as ComplexType[];
             BLAS.scal(Complex.create(2, -1), Avec, 0, 3);
-            const expected = evaluator.Execute('[3+i; 4-2i; 5-5i]').list[0] as MultiArray;
+            const expected = interpreter.Execute('[3+i; 4-2i; 5-5i]').list[0] as MultiArray;
             expectMatrixClose(MultiArray.toColumnVector(Avec), expected);
         });
 
         it('scal — sliced vector (startRow)', () => {
-            const A = evaluator.Execute('[1; 2; 3; 4]').list[0] as MultiArray;
+            const A = interpreter.Execute('[1; 2; 3; 4]').list[0] as MultiArray;
             const Avec = MultiArray.fromColumnVector(A) as ComplexType[];
             BLAS.scal(Complex.create(10), Avec, 1, 3);
-            const expected = evaluator.Execute('[1; 20; 30; 4]').list[0] as MultiArray;
+            const expected = interpreter.Execute('[1; 20; 30; 4]').list[0] as MultiArray;
             expectMatrixClose(MultiArray.toColumnVector(Avec), expected);
         });
 
         it('scal — alpha = 0 zeros the vector slice', () => {
-            const A = evaluator.Execute('[1; 2; 3]').list[0] as MultiArray;
+            const A = interpreter.Execute('[1; 2; 3]').list[0] as MultiArray;
             const Avec = MultiArray.fromColumnVector(A) as ComplexType[];
             BLAS.scal(Complex.zero(), Avec, 0, 3);
-            const expected = evaluator.Execute('[0; 0; 0]').list[0] as MultiArray;
+            const expected = interpreter.Execute('[0; 0; 0]').list[0] as MultiArray;
             expectMatrixClose(MultiArray.toColumnVector(Avec), expected);
         });
 
         it('scal — alpha = 1 leaves vector unchanged', () => {
-            const A = evaluator.Execute('[1+i; 2; 3-i]').list[0] as MultiArray;
+            const A = interpreter.Execute('[1+i; 2; 3-i]').list[0] as MultiArray;
             const Avec = MultiArray.fromColumnVector(A) as ComplexType[];
             BLAS.scal(Complex.one(), Avec, 0, 3);
             expectMatrixClose(MultiArray.toColumnVector(Avec), A);
@@ -447,52 +447,52 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
     describe('BLAS.dotu / BLAS.dotc', () => {
         it('dotu — real vectors', () => {
-            const x = evaluator.Execute('[1; 2; 3]').list[0] as MultiArray;
-            const y = evaluator.Execute('[4; 5; 6]').list[0] as MultiArray;
+            const x = interpreter.Execute('[1; 2; 3]').list[0] as MultiArray;
+            const y = interpreter.Execute('[4; 5; 6]').list[0] as MultiArray;
             const result = BLAS.dotu(x.array.map((r) => r[0]) as ComplexType[], y.array.map((r) => r[0]) as ComplexType[]);
-            const expected = evaluator.Execute('32').list[0] as any;
+            const expected = interpreter.Execute('32').list[0] as any;
             const diff = Complex.sub(result, expected);
             expect(Math.abs(Complex.realToNumber(diff))).toBeLessThan(EXPECT_TOL);
             expect(Math.abs(Complex.imagToNumber(diff))).toBeLessThan(EXPECT_TOL);
         });
 
         it('dotc — real vectors (same as dotu)', () => {
-            const x = evaluator.Execute('[1; 2; 3]').list[0] as MultiArray;
-            const y = evaluator.Execute('[4; 5; 6]').list[0] as MultiArray;
+            const x = interpreter.Execute('[1; 2; 3]').list[0] as MultiArray;
+            const y = interpreter.Execute('[4; 5; 6]').list[0] as MultiArray;
             const result = BLAS.dotc(x.array.map((r) => r[0]) as ComplexType[], y.array.map((r) => r[0]) as ComplexType[]);
-            const expected = evaluator.Execute('32').list[0] as any;
+            const expected = interpreter.Execute('32').list[0] as any;
             const diff = Complex.sub(result, expected);
             expect(Math.abs(Complex.realToNumber(diff))).toBeLessThan(EXPECT_TOL);
             expect(Math.abs(Complex.imagToNumber(diff))).toBeLessThan(EXPECT_TOL);
         });
 
         it('dotu — complex vectors', () => {
-            const x = evaluator.Execute('[1+i; 2; 3-i]').list[0] as MultiArray;
-            const y = evaluator.Execute('[4; 5+i; 6]').list[0] as MultiArray;
+            const x = interpreter.Execute('[1+i; 2; 3-i]').list[0] as MultiArray;
+            const y = interpreter.Execute('[4; 5+i; 6]').list[0] as MultiArray;
             const result = BLAS.dotu(x.array.map((r) => r[0]) as ComplexType[], y.array.map((r) => r[0]) as ComplexType[]);
-            const expected = evaluator.Execute('32 + 0i').list[0] as ComplexType;
+            const expected = interpreter.Execute('32 + 0i').list[0] as ComplexType;
             const diff = Complex.sub(result, expected);
             expect(Math.abs(Complex.realToNumber(diff))).toBeLessThan(EXPECT_TOL);
             expect(Math.abs(Complex.imagToNumber(diff))).toBeLessThan(EXPECT_TOL);
         });
 
         it('dotc — complex vectors (Hermitian dot product)', () => {
-            const x = evaluator.Execute('[1+i; 2; 3-i]').list[0] as MultiArray;
-            const y = evaluator.Execute('[4; 5+i; 6]').list[0] as MultiArray;
+            const x = interpreter.Execute('[1+i; 2; 3-i]').list[0] as MultiArray;
+            const y = interpreter.Execute('[4; 5+i; 6]').list[0] as MultiArray;
             const result = BLAS.dotc(x.array.map((r) => r[0]) as ComplexType[], y.array.map((r) => r[0]) as ComplexType[]);
-            const expected = evaluator.Execute('32 + 4i').list[0] as ComplexType;
+            const expected = interpreter.Execute('32 + 4i').list[0] as ComplexType;
             const diff = Complex.sub(result, expected);
             expect(Math.abs(Complex.realToNumber(diff))).toBeLessThan(EXPECT_TOL);
             expect(Math.abs(Complex.imagToNumber(diff))).toBeLessThan(EXPECT_TOL);
         });
 
         it('dotu vs dotc — difference for complex vectors', () => {
-            const x = evaluator.Execute('[1+i; 2]').list[0] as MultiArray;
-            const y = evaluator.Execute('[3; 4+i]').list[0] as MultiArray;
+            const x = interpreter.Execute('[1+i; 2]').list[0] as MultiArray;
+            const y = interpreter.Execute('[3; 4+i]').list[0] as MultiArray;
             const dotu = BLAS.dotu(x.array.map((r) => r[0]) as ComplexType[], y.array.map((r) => r[0]) as ComplexType[]);
             const dotc = BLAS.dotc(x.array.map((r) => r[0]) as ComplexType[], y.array.map((r) => r[0]) as ComplexType[]);
-            const expectedDotu = evaluator.Execute('11 + 5i').list[0] as any;
-            const expectedDotc = evaluator.Execute('11 - i').list[0] as any;
+            const expectedDotu = interpreter.Execute('11 + 5i').list[0] as any;
+            const expectedDotc = interpreter.Execute('11 - i').list[0] as any;
             const diffDotu = Complex.sub(dotu, expectedDotu);
             expect(Math.abs(Complex.realToNumber(diffDotu))).toBeLessThan(EXPECT_TOL);
             expect(Math.abs(Complex.imagToNumber(diffDotu))).toBeLessThan(EXPECT_TOL);
@@ -502,20 +502,20 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('dotu — zero vector', () => {
-            const x = evaluator.Execute('[0; 0; 0]').list[0] as MultiArray;
-            const y = evaluator.Execute('[1+i; 2; 3]').list[0] as MultiArray;
+            const x = interpreter.Execute('[0; 0; 0]').list[0] as MultiArray;
+            const y = interpreter.Execute('[1+i; 2; 3]').list[0] as MultiArray;
             const result = BLAS.dotu(x.array.map((r) => r[0]) as ComplexType[], y.array.map((r) => r[0]) as ComplexType[]);
-            const expected = evaluator.Execute('0').list[0] as any;
+            const expected = interpreter.Execute('0').list[0] as any;
             const diff = Complex.sub(result, expected);
             expect(Math.abs(Complex.realToNumber(diff))).toBeLessThan(EXPECT_TOL);
             expect(Math.abs(Complex.imagToNumber(diff))).toBeLessThan(EXPECT_TOL);
         });
 
         it('dotc — single element vectors', () => {
-            const x = evaluator.Execute('[1+i]').list[0] as MultiArray;
-            const y = evaluator.Execute('[2-i]').list[0] as MultiArray;
+            const x = interpreter.Execute('[1+i]').list[0] as MultiArray;
+            const y = interpreter.Execute('[2-i]').list[0] as MultiArray;
             const result = BLAS.dotc(x.array.map((r) => r[0]) as ComplexType[], y.array.map((r) => r[0]) as ComplexType[]);
-            const expected = evaluator.Execute('1 - 3i').list[0] as any;
+            const expected = interpreter.Execute('1 - 3i').list[0] as any;
             const diff = Complex.sub(result, expected);
             expect(Math.abs(Complex.realToNumber(diff))).toBeLessThan(EXPECT_TOL);
             expect(Math.abs(Complex.imagToNumber(diff))).toBeLessThan(EXPECT_TOL);
@@ -524,8 +524,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
     describe('BLAS.dot', () => {
         it('dot — real column vectors', () => {
-            const xMat = evaluator.Execute('[1; 2; 3]').list[0] as MultiArray;
-            const yMat = evaluator.Execute('[4; 5; 6]').list[0] as MultiArray;
+            const xMat = interpreter.Execute('[1; 2; 3]').list[0] as MultiArray;
+            const yMat = interpreter.Execute('[4; 5; 6]').list[0] as MultiArray;
             const x = MultiArray.fromColumnVector(xMat) as ComplexType[];
             const y = MultiArray.fromColumnVector(yMat) as ComplexType[];
             const result = BLAS.dot(x, y);
@@ -533,8 +533,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('dot — real row vectors', () => {
-            const xMat = evaluator.Execute('[1, 2, 3]').list[0] as MultiArray;
-            const yMat = evaluator.Execute('[4, 5, 6]').list[0] as MultiArray;
+            const xMat = interpreter.Execute('[1, 2, 3]').list[0] as MultiArray;
+            const yMat = interpreter.Execute('[4, 5, 6]').list[0] as MultiArray;
             const x = MultiArray.fromRowVector(xMat) as ComplexType[];
             const y = MultiArray.fromRowVector(yMat) as ComplexType[];
             const result = BLAS.dot(x, y);
@@ -542,8 +542,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('dot — complex vectors (unconjugated)', () => {
-            const xMat = evaluator.Execute('[1+2i; 3-1i]').list[0] as MultiArray;
-            const yMat = evaluator.Execute('[-2+i; 4]').list[0] as MultiArray;
+            const xMat = interpreter.Execute('[1+2i; 3-1i]').list[0] as MultiArray;
+            const yMat = interpreter.Execute('[-2+i; 4]').list[0] as MultiArray;
             const x = MultiArray.fromColumnVector(xMat) as ComplexType[];
             const y = MultiArray.fromColumnVector(yMat) as ComplexType[];
             const result = BLAS.dot(x, y);
@@ -555,8 +555,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('dot — differs from conjugated inner product (dotc)', () => {
-            const xMat = evaluator.Execute('[1+2i; 3-1i]').list[0] as MultiArray;
-            const yMat = evaluator.Execute('[-2+i; 4]').list[0] as MultiArray;
+            const xMat = interpreter.Execute('[1+2i; 3-1i]').list[0] as MultiArray;
+            const yMat = interpreter.Execute('[-2+i; 4]').list[0] as MultiArray;
             const x = MultiArray.fromColumnVector(xMat) as ComplexType[];
             const y = MultiArray.fromColumnVector(yMat) as ComplexType[];
             const dot = BLAS.dot(x, y);
@@ -567,10 +567,10 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
     describe('Hermitian property checks', () => {
         it('Hermitian property test (complex matrix).', () => {
-            evaluator.Execute('clear');
-            evaluator.Execute(`H = ${matrixSample['complex_hermitian_2x2_01']}`);
-            const H = evaluator.Execute('H').list[0];
-            LAPACKtest.print_matrix(H, 'H', evaluator);
+            interpreter.Execute('clear');
+            interpreter.Execute(`H = ${matrixSample['complex_hermitian_2x2_01']}`);
+            const H = interpreter.Execute('H').list[0];
+            LAPACKtest.print_matrix(H, 'H', interpreter);
             const { norm } = LAPACKtest.testHermitian(H, { tol: EXPECT_TOL });
             expect(norm).toBeLessThanOrEqual(EXPECT_TOL);
         });
@@ -594,15 +594,15 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('Eigenproblem for simple diagonalizable symmetric matrix.', () => {
-            evaluator.Execute('clear');
-            evaluator.Execute(`A = ${matrixSample['real_symmetric_simple_diagonalizable_2x2_01']}`);
-            evaluator.Execute('[V,D] = eig(A)');
-            const A = evaluator.Execute('A').list[0];
-            const V = evaluator.Execute('V').list[0];
-            const D = evaluator.Execute('D').list[0];
-            LAPACKtest.print_matrix(A, 'A', evaluator);
-            LAPACKtest.print_matrix(V, 'V', evaluator);
-            LAPACKtest.print_matrix(D, 'D', evaluator);
+            interpreter.Execute('clear');
+            interpreter.Execute(`A = ${matrixSample['real_symmetric_simple_diagonalizable_2x2_01']}`);
+            interpreter.Execute('[V,D] = eig(A)');
+            const A = interpreter.Execute('A').list[0];
+            const V = interpreter.Execute('V').list[0];
+            const D = interpreter.Execute('D').list[0];
+            LAPACKtest.print_matrix(A, 'A', interpreter);
+            LAPACKtest.print_matrix(V, 'V', interpreter);
+            LAPACKtest.print_matrix(D, 'D', interpreter);
             const options: TestOptions = { frobenius: true };
             // Unitarity test
             let result = LAPACKtest.testUnitarity(V, options);
@@ -612,7 +612,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             result = LAPACKtest.testRealEigenvalues(D);
             expect(result.maxErr).toBeLessThanOrEqual(EXPECT_TOL);
             // Residual test
-            const diff = evaluator.Execute('A*V-V*D').list[0];
+            const diff = interpreter.Execute('A*V-V*D').list[0];
             const norm = LAPACKtest.frobenius_norm(diff);
             console.log(`|| A·V − V·D ||_F = ${norm.toExponential(6)}`);
             // Norm of residual
@@ -620,12 +620,12 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('Jacobi eigensolver — consistency with eig.', () => {
-            evaluator.Execute('clear');
-            evaluator.Execute(`A = rand(5);
+            interpreter.Execute('clear');
+            interpreter.Execute(`A = rand(5);
                 A = (A + A') / 2;`);
-            evaluator.Execute('[V0,D0] = eig(A)');
-            const A = evaluator.Execute('A').list[0];
-            const D0 = evaluator.Execute('D0').list[0];
+            interpreter.Execute('[V0,D0] = eig(A)');
+            const A = interpreter.Execute('A').list[0];
+            const D0 = interpreter.Execute('D0').list[0];
             const { D } = LAPACK.jacobi_real_symmetric_dense(A, 300, EXPECT_TOL);
             const diagJacobi = LAPACK.diag(D);
             const diagEig = LAPACK.diag(D0);
@@ -669,9 +669,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('hetrd — reduces a hermitian matrix to tridiagonal form (structural test).', () => {
-            evaluator.Execute('clear');
-            evaluator.Execute(`A = ${matrixSample['complex_tridiagonal_3x3_01']}`);
-            const A = evaluator.Execute('A').list[0];
+            interpreter.Execute('clear');
+            interpreter.Execute(`A = ${matrixSample['complex_tridiagonal_3x3_01']}`);
+            const A = interpreter.Execute('A').list[0];
             // Perform tridiagonal reduction
             const { diag, offdiag } = LAPACK.hetrd(A);
             // Basic shape checks
@@ -688,9 +688,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('hetrd + ungtr — reconstruct the original Hermitian matrix. (A − Q·T·Qᴴ ≈ 0)', () => {
-            evaluator.Execute('clear');
-            evaluator.Execute(`A = ${matrixSample['complex_tridiagonal_3x3_01']}`);
-            const A0 = evaluator.Execute('A').list[0];
+            interpreter.Execute('clear');
+            interpreter.Execute(`A = ${matrixSample['complex_tridiagonal_3x3_01']}`);
+            const A0 = interpreter.Execute('A').list[0];
             // Working copy (will be overwritten by hetrd)
             const A1 = MultiArray.copy(A0);
             // Tridiagonal reduction
@@ -704,9 +704,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('hetrd — produces a tridiagonal matrix and preserves Hermitian similarity. (A = Q·T·Qᴴ)', () => {
-            evaluator.Execute('clear');
-            evaluator.Execute(`A = ${matrixSample['complex_tridiagonal_3x3_01']}`);
-            const A0 = evaluator.Execute('A').list[0];
+            interpreter.Execute('clear');
+            interpreter.Execute(`A = ${matrixSample['complex_tridiagonal_3x3_01']}`);
+            const A0 = interpreter.Execute('A').list[0];
             // Working copy (will be overwritten by hetrd)
             const A1 = MultiArray.copy(A0);
             // Tridiagonal reduction
@@ -724,10 +724,10 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('steqr — diagonalizes a Hermitian tridiagonal matrix via unitary similarity', () => {
-            evaluator.Execute('clear');
+            interpreter.Execute('clear');
             /* Hermitian tridiagonal matrix (already tridiagonal!) */
-            evaluator.Execute(`T = ${matrixSample['complex_tridiagonal_3x3_01']}`);
-            const T0 = evaluator.Execute('T').list[0] as MultiArray;
+            interpreter.Execute(`T = ${matrixSample['complex_tridiagonal_3x3_01']}`);
+            const T0 = interpreter.Execute('T').list[0] as MultiArray;
             /* Extract diagonal and off-diagonal */
             const diag = LAPACK.from_diag(T0.array as ComplexType[][]);
             const offdiag = LAPACK.from_diag(T0.array as ComplexType[][], 1);
@@ -755,15 +755,15 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('eig — Hermitian eigen-decomposition satisfies A = V·Λ·Vᴴ', () => {
-            evaluator.Execute('clear');
+            interpreter.Execute('clear');
             /* General Hermitian matrix */
-            evaluator.Execute(`A = ${matrixSample['complex_hermitian_4x4_01']}`);
-            evaluator.Execute(`A = ${matrixSample['real_symmetric_rational_4x4_01']}`); // TODO: remove when test pass.
-            const A0 = evaluator.Execute('A').list[0] as MultiArray;
+            interpreter.Execute(`A = ${matrixSample['complex_hermitian_4x4_01']}`);
+            interpreter.Execute(`A = ${matrixSample['real_symmetric_rational_4x4_01']}`); // TODO: remove when test pass.
+            const A0 = interpreter.Execute('A').list[0] as MultiArray;
             /* EIG (Hermitian) */
             const { V, D } = LAPACK.eig_hermitian(A0, true);
-            console.log('D =', MultiArray.unparse(D, evaluator));
-            console.log('V =', MultiArray.unparse(V!, evaluator));
+            console.log('D =', MultiArray.unparse(D, interpreter));
+            console.log('V =', MultiArray.unparse(V!, interpreter));
             /* Build Λ */
             /* 1) Λ must be diagonal */
             const offDiagLambda = LAPACKtest.testTridiagonality(D, {
@@ -788,10 +788,10 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
     describe('LU factorization and linear solve', () => {
         it('getf2 — unblocked LU panel factorization satisfies P·A = L·U', () => {
-            evaluator.Execute('clear');
+            interpreter.Execute('clear');
             /* Test matrix (general complex matrix) */
-            evaluator.Execute(`A = ${matrixSample['complex_general_3x3_01']}`);
-            const A0 = evaluator.Execute('A').list[0] as MultiArray;
+            interpreter.Execute(`A = ${matrixSample['complex_general_3x3_01']}`);
+            const A0 = interpreter.Execute('A').list[0] as MultiArray;
             /* Working copy (modified in-place by getf2) */
             const A1 = MultiArray.copy(A0);
             const n = A0.dimension[0];
@@ -833,10 +833,10 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('getrf — LU factorization with partial pivoting satisfies P·A = L·U', () => {
-            evaluator.Execute('clear');
+            interpreter.Execute('clear');
             /* Test matrix (general complex matrix) */
-            evaluator.Execute(`A = ${matrixSample['complex_general_3x3_01']}`);
-            const A0 = evaluator.Execute('A').list[0] as MultiArray;
+            interpreter.Execute(`A = ${matrixSample['complex_general_3x3_01']}`);
+            const A0 = interpreter.Execute('A').list[0] as MultiArray;
             /* Working copy (will be overwritten by getrf) */
             const A1 = MultiArray.copy(A0);
             /* LU factorization */
@@ -877,12 +877,12 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('getrs — solves A·X = B using LU factorization with partial pivoting', () => {
-            evaluator.Execute('clear');
+            interpreter.Execute('clear');
             /* Hermitian-like but not triangular; pivoting will occur */
-            evaluator.Execute(`A = ${matrixSample['complex_general_3x3_02']}`);
-            evaluator.Execute(`B = ${matrixSample['complex_general_3x2_01']}`);
-            const A0 = evaluator.Execute('A').list[0] as MultiArray;
-            const B0 = evaluator.Execute('B').list[0] as MultiArray;
+            interpreter.Execute(`A = ${matrixSample['complex_general_3x3_02']}`);
+            interpreter.Execute(`B = ${matrixSample['complex_general_3x2_01']}`);
+            const A0 = interpreter.Execute('A').list[0] as MultiArray;
+            const B0 = interpreter.Execute('B').list[0] as MultiArray;
             /* Copies (safety) */
             const A = MultiArray.copy(A0);
             const B = MultiArray.copy(B0);
@@ -904,13 +904,13 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('gesv — solves A·X = B with small residual', () => {
-            evaluator.Execute('clear');
+            interpreter.Execute('clear');
             /* Coefficient matrix A (general complex matrix) */
-            evaluator.Execute(`A = ${matrixSample['complex_general_3x3_01']}`);
-            const A = evaluator.Execute('A').list[0] as MultiArray;
+            interpreter.Execute(`A = ${matrixSample['complex_general_3x3_01']}`);
+            const A = interpreter.Execute('A').list[0] as MultiArray;
             /* Right-hand side B */
-            evaluator.Execute(`B = ${matrixSample['complex_rhs_3x1_01']}`);
-            const B = evaluator.Execute('B').list[0] as MultiArray;
+            interpreter.Execute(`B = ${matrixSample['complex_rhs_3x1_01']}`);
+            const B = interpreter.Execute('B').list[0] as MultiArray;
             // /* Solve A X = B  (MATLAB-style backslash) */
             // const X = MathOperation.mldivide(A, B) as MultiArray;
             // ou, se preferir testar diretamente:
@@ -926,13 +926,13 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('gesv — produces the same solution as getrf + getrs (complex system)', () => {
-            evaluator.Execute('clear');
+            interpreter.Execute('clear');
             /* Coefficient matrix A (general complex matrix) */
-            evaluator.Execute(`A = ${matrixSample['complex_general_3x3_01']}`);
-            const A0 = evaluator.Execute('A').list[0] as MultiArray;
+            interpreter.Execute(`A = ${matrixSample['complex_general_3x3_01']}`);
+            const A0 = interpreter.Execute('A').list[0] as MultiArray;
             /* Right-hand side B */
-            evaluator.Execute(`B = ${matrixSample['complex_rhs_3x1_01']}`);
-            const B0 = evaluator.Execute('B').list[0] as MultiArray;
+            interpreter.Execute(`B = ${matrixSample['complex_rhs_3x1_01']}`);
+            const B0 = interpreter.Execute('B').list[0] as MultiArray;
             /* ---------- Solve using gesv ---------- */
             const X_gesv = LAPACK.gesv(BLAS.copy(A0.array as ComplexType[][]) as ComplexType[][], BLAS.copy(B0.array as ComplexType[][]) as ComplexType[][]);
             const Xmat_gesv = new MultiArray([X_gesv.X.length, X_gesv.X[0].length]);
@@ -950,13 +950,13 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('gesv — matches inv(A) * B (conceptual linear solve equivalence)', () => {
-            evaluator.Execute('clear');
+            interpreter.Execute('clear');
             /* Coefficient matrix A (general complex matrix) */
-            evaluator.Execute(`A = ${matrixSample['complex_general_3x3_01']}`);
-            const A0 = evaluator.Execute('A').list[0] as MultiArray;
+            interpreter.Execute(`A = ${matrixSample['complex_general_3x3_01']}`);
+            const A0 = interpreter.Execute('A').list[0] as MultiArray;
             /* Right-hand side B */
-            evaluator.Execute(`B = ${matrixSample['complex_rhs_3x1_01']}`);
-            const B0 = evaluator.Execute('B').list[0] as MultiArray;
+            interpreter.Execute(`B = ${matrixSample['complex_rhs_3x1_01']}`);
+            const B0 = interpreter.Execute('B').list[0] as MultiArray;
             /* ---------- Solve using gesv ---------- */
             const X_gesv = LAPACK.gesv(BLAS.copy(A0.array as ComplexType[][]) as ComplexType[][], BLAS.copy(B0.array as ComplexType[][]) as ComplexType[][]);
             const Xmat_gesv = new MultiArray([X_gesv.X.length, X_gesv.X[0].length]);
@@ -971,13 +971,13 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('gesv — solution matches inv(A) * B (conceptual consistency test - multiple right-hand sides)', () => {
-            evaluator.Execute('clear');
+            interpreter.Execute('clear');
             /* Coefficient matrix A */
-            evaluator.Execute(`A = ${matrixSample['complex_hermitian_4x4_01']}`);
+            interpreter.Execute(`A = ${matrixSample['complex_hermitian_4x4_01']}`);
             /* RHS matrix B (4 x 2) */
-            evaluator.Execute(`B = ${matrixSample['complex_general_4x2_01']}`);
-            const A0 = evaluator.Execute('A').list[0] as MultiArray;
-            const B0 = evaluator.Execute('B').list[0] as MultiArray;
+            interpreter.Execute(`B = ${matrixSample['complex_general_4x2_01']}`);
+            const A0 = interpreter.Execute('A').list[0] as MultiArray;
+            const B0 = interpreter.Execute('B').list[0] as MultiArray;
             /* ---------- Solve using gesv ---------- */
             const X_gesv = LAPACK.gesv(BLAS.copy(A0.array as ComplexType[][]) as ComplexType[][], BLAS.copy(B0.array as ComplexType[][]) as ComplexType[][]);
             const Xmat_gesv = new MultiArray([X_gesv.X.length, X_gesv.X[0].length]);
@@ -992,13 +992,13 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('gesv — solves A·X = B correctly for multiple right-hand sides', () => {
-            evaluator.Execute('clear');
+            interpreter.Execute('clear');
             /* Coefficient matrix A */
-            evaluator.Execute(`A = ${matrixSample['complex_hermitian_4x4_01']}`);
+            interpreter.Execute(`A = ${matrixSample['complex_hermitian_4x4_01']}`);
             /* Multiple RHS matrix B (4 x 2) */
-            evaluator.Execute(`B = ${matrixSample['complex_general_4x2_01']}`);
-            const A0 = evaluator.Execute('A').list[0] as MultiArray;
-            const B0 = evaluator.Execute('B').list[0] as MultiArray;
+            interpreter.Execute(`B = ${matrixSample['complex_general_4x2_01']}`);
+            const A0 = interpreter.Execute('A').list[0] as MultiArray;
+            const B0 = interpreter.Execute('B').list[0] as MultiArray;
             /* ---------- Solve using gesv ---------- */
             const X_gesv = LAPACK.gesv(BLAS.copy(A0.array as ComplexType[][]) as ComplexType[][], BLAS.copy(B0.array as ComplexType[][]) as ComplexType[][]);
             const Xmat_gesv = new MultiArray([X_gesv.X.length, X_gesv.X[0].length]);
@@ -1013,7 +1013,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
     describe('LAPACK.geqp2 — QR factorization with column pivoting', () => {
         it('geqp2 — real matrix — reconstructs A(:,jpvt) = Q*R', () => {
-            const A = evaluator.Execute(`[ 1,  2,  3;
+            const A = interpreter.Execute(`[ 1,  2,  3;
                                    4,  5,  6;
                                    7,  8, 10 ]`).list[0] as MultiArray;
 
@@ -1035,7 +1035,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('geqp2 — complex matrix — reconstructs A(:,jpvt) = Q*R', () => {
-            const A = evaluator.Execute(`
+            const A = interpreter.Execute(`
         [ 1+2i,  2,      3;
           4,     5- i,   6;
           7,     8,   10+3i ]
@@ -1059,7 +1059,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('geqp2 — R is upper triangular', () => {
-            const A = evaluator.Execute(`
+            const A = interpreter.Execute(`
             [ 3,  1,  1;
               0,  2,  1;
               0,  0,  1 ]
@@ -1075,7 +1075,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('geqp2 — jpvt produces non-increasing column norms', () => {
-            const A = evaluator.Execute(`
+            const A = interpreter.Execute(`
             [ 1,  100,  2;
               1,  100,  2;
               1,  100,  2 ]
@@ -1090,7 +1090,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
     describe('LAPACK.gelq2', () => {
         it('gelq2 — real matrix — reconstructs A = L*Q', () => {
-            const A = evaluator.Execute(`[ 1,  2,  3;
+            const A = interpreter.Execute(`[ 1,  2,  3;
                                            4,  5,  6;
                                            7,  8, 10 ]`).list[0] as MultiArray;
             const A0 = MultiArray.copy(A);
@@ -1121,7 +1121,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('gelq2 — complex matrix — reconstructs A = L*Q', () => {
-            const A = evaluator.Execute(`[ 1+2i,  2,      3;
+            const A = interpreter.Execute(`[ 1+2i,  2,      3;
                                    4,     5- i,   6;
                                    7,     8,   10+3i ]`).list[0] as MultiArray;
             const A0 = MultiArray.copy(A);
@@ -1151,7 +1151,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('gelq2 — real matrix — reconstructs A = L*Q (using orglq)', () => {
-            const A = evaluator.Execute(`[ 1,  2,  3;
+            const A = interpreter.Execute(`[ 1,  2,  3;
                                            4,  5,  6;
                                            7,  8, 10 ]`).list[0] as MultiArray;
             const A0 = MultiArray.copy(A);
@@ -1164,7 +1164,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('gelq2 — complex matrix — reconstructs A = L*Q (using orglq)', () => {
-            const A = evaluator.Execute(`[ 1+2i,  2,      3;
+            const A = interpreter.Execute(`[ 1+2i,  2,      3;
                                            4,     5- i,   6;
                                            7,     8,   10+3i ]`).list[0] as MultiArray;
             const A0 = MultiArray.copy(A);
@@ -1179,7 +1179,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
     describe('LAPACK.orglq', () => {
         it('orglq — reconstructs Q correctly (real matrix)', () => {
-            const A = evaluator.Execute(`[ 1,  2,  3;
+            const A = interpreter.Execute(`[ 1,  2,  3;
                                            4,  5,  6;
                                            7,  8, 10 ]`).list[0] as MultiArray;
 
@@ -1188,35 +1188,35 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const { L, taus } = LAPACK.gelq2(A);
 
             // console.log('L (raw, after gelq2):');
-            // console.log(MultiArray.unparse(L, evaluator));
+            // console.log(MultiArray.unparse(L, interpreter));
 
             const Q = LAPACK.orglq(L, taus);
 
             // console.log('Q (from orglq):');
-            // console.log(MultiArray.unparse(Q, evaluator));
+            // console.log(MultiArray.unparse(Q, interpreter));
 
             const Lmat = MultiArray.copy(L);
             LAPACK.tril_inplace(Lmat);
 
             // console.log('L (after tril_inplace):');
-            // console.log(MultiArray.unparse(Lmat, evaluator));
+            // console.log(MultiArray.unparse(Lmat, interpreter));
 
             const LQ = MathOperation.mtimes(Lmat, Q) as MultiArray;
 
             // console.log('L*Q:');
-            // console.log(MultiArray.unparse(LQ, evaluator));
+            // console.log(MultiArray.unparse(LQ, interpreter));
 
             // console.log('A original:');
-            // console.log(MultiArray.unparse(A0, evaluator));
+            // console.log(MultiArray.unparse(A0, interpreter));
 
             // console.log('L*Q - A:');
-            // console.log(MultiArray.unparse(MathOperation.minus(LQ, A0) as MultiArray, evaluator));
+            // console.log(MultiArray.unparse(MathOperation.minus(LQ, A0) as MultiArray, interpreter));
 
             expectMatrixClose(LQ, A0, EXPECT_TOL);
         });
 
         it('orglq — reconstructs Q correctly (complex matrix)', () => {
-            const A = evaluator.Execute(`
+            const A = interpreter.Execute(`
 [ 1+2i,  2,      3;
   4,      5- i,  6;
   7,      8,   10+3i ]
@@ -1227,35 +1227,35 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const { L, taus } = LAPACK.gelq2(A);
 
             console.log('L (raw, after gelq2):');
-            console.log(MultiArray.unparse(L, evaluator));
+            console.log(MultiArray.unparse(L, interpreter));
 
             const Q = LAPACK.orglq(L, taus);
 
             console.log('Q (from orglq):');
-            console.log(MultiArray.unparse(Q, evaluator));
+            console.log(MultiArray.unparse(Q, interpreter));
 
             const Lmat = MultiArray.copy(L);
             LAPACK.tril_inplace(Lmat);
 
             console.log('L (after tril_inplace):');
-            console.log(MultiArray.unparse(Lmat, evaluator));
+            console.log(MultiArray.unparse(Lmat, interpreter));
 
             const LQ = MathOperation.mtimes(Lmat, Q) as MultiArray;
 
             console.log('L*Q:');
-            console.log(MultiArray.unparse(LQ, evaluator));
+            console.log(MultiArray.unparse(LQ, interpreter));
 
             console.log('A original:');
-            console.log(MultiArray.unparse(A0, evaluator));
+            console.log(MultiArray.unparse(A0, interpreter));
 
             console.log('L*Q - A:');
-            console.log(MultiArray.unparse(MathOperation.minus(LQ, A0) as MultiArray, evaluator));
+            console.log(MultiArray.unparse(MathOperation.minus(LQ, A0) as MultiArray, interpreter));
 
             expectMatrixClose(LQ, A0, EXPECT_TOL);
         });
 
         it('orglq — Q is unitary', () => {
-            const A = evaluator.Execute(`
+            const A = interpreter.Execute(`
 [ 1+2i,  2,      3;
   4,      5- i,  6;
   7,      8,   10+3i ]
@@ -1273,7 +1273,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('orglq — reconstructs Q and unitary Q correctly', () => {
-            const A = evaluator.Execute(`
+            const A = interpreter.Execute(`
 [ 1+2i,  2,      3;
   4,      5- i,  6;
   7,      8,   10+3i ]
@@ -1300,12 +1300,12 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
     describe('QR factorization', () => {
         it('geqr2 — unblocked QR factorization (complex, no pivoting)', () => {
-            evaluator.Execute('clear');
+            interpreter.Execute('clear');
             /* General complex matrix A (m > n) */
-            evaluator.Execute(`A = [ 1+2i,  2-1i;
+            interpreter.Execute(`A = [ 1+2i,  2-1i;
               3+0i, -1+4i;
               0+1i,  2+0i ]`);
-            const A = evaluator.Execute('A').list[0] as MultiArray;
+            const A = interpreter.Execute('A').list[0] as MultiArray;
             /* QR factorization */
             const { R: Rraw, taus } = LAPACK.geqr2(A);
             /* Build explicit Q */
@@ -1325,12 +1325,12 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('orgqr — constructs explicit Q from Householder reflectors (complex)', () => {
-            evaluator.Execute('clear');
+            interpreter.Execute('clear');
             /* General complex matrix A (m > n) */
-            evaluator.Execute(`A = [ 2+0i,  1-1i;
+            interpreter.Execute(`A = [ 2+0i,  1-1i;
                                           1+2i,  3+0i;
                                           0+1i, -1+1i ]`);
-            const A = evaluator.Execute('A').list[0] as MultiArray;
+            const A = interpreter.Execute('A').list[0] as MultiArray;
             /* QR factorization (fixture for orgqr) */
             const { R: Rraw, taus } = LAPACK.geqr2(A);
             /* Explicit Q reconstruction */
@@ -1349,13 +1349,13 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('geqp3 — QR factorization with column pivoting (complex)', () => {
-            evaluator.Execute('clear');
+            interpreter.Execute('clear');
             /* General complex matrix A (m > n, rank-revealing scenario) */
-            evaluator.Execute(`A = [ 1+0i,  2+1i,  0+0i;
+            interpreter.Execute(`A = [ 1+0i,  2+1i,  0+0i;
                                           0+1i,  1+0i,  1+1i;
                                           1+0i,  0+0i,  2+0i;
                                           0+0i,  1-1i,  1+0i ]`);
-            const A = evaluator.Execute('A').list[0] as MultiArray;
+            const A = interpreter.Execute('A').list[0] as MultiArray;
             /* QR with column pivoting */
             const { R: Rraw, taus, jpvt } = LAPACK.geqp3(A);
             /* Explicit Q from reflectors */
@@ -1385,7 +1385,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('lapmt_matrix — builds permutation matrix P from jpvt (LAPACK-style)', () => {
-            evaluator.Execute('clear');
+            interpreter.Execute('clear');
             /*
              * jpvt[j] = row index where column j has its 1
              * This encodes a permutation matrix P such that:
@@ -1407,7 +1407,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
              *   0 0 1
              *   1 0 0 ]
              */
-            const expected = evaluator.Execute(`[ 0, 1, 0;
+            const expected = interpreter.Execute(`[ 0, 1, 0;
                            0, 0, 1;
                            1, 0, 0 ]`).list[0] as MultiArray;
             /* Compare P with expected */
@@ -1416,15 +1416,15 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('lapmt_apply — applies column permutation in-place', () => {
-            evaluator.Execute('clear');
+            interpreter.Execute('clear');
             /* Define a 3x4 test matrix A */
-            evaluator.Execute(`A = [ 1+1i, 2+0i, 3-1i, 4+2i;
+            interpreter.Execute(`A = [ 1+1i, 2+0i, 3-1i, 4+2i;
               5+0i, 6+1i, 7+0i, 8-1i;
               9-1i,10+0i,11+1i,12+0i ]`);
             /* Pivot vector: swap columns 0 and 2, 1 and 3 */
             const jpvt = [2, 3, 0, 1];
             /* Extract MultiArray */
-            const A = evaluator.Execute('A').list[0] as MultiArray;
+            const A = interpreter.Execute('A').list[0] as MultiArray;
             /* Make a copy for reference */
             const Aref = MultiArray.copy(A) as MultiArray;
             /* Apply lapmt_apply */
@@ -1449,13 +1449,13 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('geqp3 + lapmt_apply — full QR with column pivoting (complex)', () => {
-            evaluator.Execute('clear');
+            interpreter.Execute('clear');
             /* Define a 4x3 complex test matrix A */
-            evaluator.Execute(`A = [ 1+0i, 2+1i, 3-1i;
+            interpreter.Execute(`A = [ 1+0i, 2+1i, 3-1i;
               4+1i, 5+0i, 6+2i;
               7-1i, 8+0i, 9+1i;
               0+1i, 1-1i, 2+0i ]`);
-            const A = evaluator.Execute('A').list[0] as MultiArray;
+            const A = interpreter.Execute('A').list[0] as MultiArray;
             /* Step 1: compute QR factorization with pivoting */
             const { R: Rraw, taus, phis, jpvt } = LAPACK.geqp3(A);
             /* Step 2: reconstruct Q explicitly */
@@ -1496,12 +1496,12 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('geqp3 + lapmt_apply — end-to-end QR with column pivoting (complex, MATLAB-style)', () => {
-            evaluator.Execute('clear');
+            interpreter.Execute('clear');
             /* General complex matrix A (m > n) */
-            evaluator.Execute(`A = [ 1+2i,  2-1i, 0+1i;
+            interpreter.Execute(`A = [ 1+2i,  2-1i, 0+1i;
                                            3+0i, -1+4i, 1-1i;
                                            0+1i,  2+0i, 3+0i ]`);
-            const A = evaluator.Execute('A').list[0] as MultiArray;
+            const A = interpreter.Execute('A').list[0] as MultiArray;
             /* QR factorization with column pivoting */
             const { R: Rraw, taus, phis, jpvt } = LAPACK.geqp3(A);
             /* Build explicit Q */
@@ -1520,17 +1520,17 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('geqp3 + lapmt_apply — QR with column pivoting, multiple right-hand sides (nrhs > 1)', () => {
-            evaluator.Execute('clear');
+            interpreter.Execute('clear');
             /* General complex matrix A (3x3) */
-            evaluator.Execute(`A = [ 1+2i,  2-1i, 0+1i;
+            interpreter.Execute(`A = [ 1+2i,  2-1i, 0+1i;
                                            3+0i, -1+4i, 1-1i;
                                            0+1i,  2+0i, 3+0i ]`);
             /* Multiple RHS B (nrhs = 2) */
-            evaluator.Execute(`B = [ 1+0i, 2-1i;
+            interpreter.Execute(`B = [ 1+0i, 2-1i;
                                            0+1i, 1+0i;
                                            3+0i, -1+1i ]`);
-            const A = evaluator.Execute('A').list[0] as MultiArray;
-            const B = evaluator.Execute('B').list[0] as MultiArray;
+            const A = interpreter.Execute('A').list[0] as MultiArray;
+            const B = interpreter.Execute('B').list[0] as MultiArray;
             /* QR with column pivoting */
             const { R: Rraw, taus, jpvt } = LAPACK.geqp3(A);
             /* Explicit Q */
@@ -1553,11 +1553,11 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
     describe('LAPACK.mldivide — Matrix left division (A \ B), LAPACK-style dispatcher', () => {
         it('mldivide — Hermitian positive definite matrix uses posv', () => {
-            evaluator.Execute('clear');
-            evaluator.Execute('A = [4, 1; 1, 3]');
-            evaluator.Execute('B = [1; 2]');
-            const A = evaluator.Execute('A').list[0] as MultiArray;
-            const B = evaluator.Execute('B').list[0] as MultiArray;
+            interpreter.Execute('clear');
+            interpreter.Execute('A = [4, 1; 1, 3]');
+            interpreter.Execute('B = [1; 2]');
+            const A = interpreter.Execute('A').list[0] as MultiArray;
+            const B = interpreter.Execute('B').list[0] as MultiArray;
             const { X, solver, info } = LAPACK.mldivide(A, B);
             expect(info).toBe(0);
             expect(solver).toBe('posv');
@@ -1566,11 +1566,11 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('mldivide — Hermitian indefinite matrix uses sysv', () => {
-            evaluator.Execute('clear');
-            evaluator.Execute('A = [0, 1; 1, 0]');
-            evaluator.Execute('B = [1; 2]');
-            const A = evaluator.Execute('A').list[0] as MultiArray;
-            const B = evaluator.Execute('B').list[0] as MultiArray;
+            interpreter.Execute('clear');
+            interpreter.Execute('A = [0, 1; 1, 0]');
+            interpreter.Execute('B = [1; 2]');
+            const A = interpreter.Execute('A').list[0] as MultiArray;
+            const B = interpreter.Execute('B').list[0] as MultiArray;
             const { X, solver, info } = LAPACK.mldivide(A, B);
             expect(info).toBe(0);
             expect(solver).toBe('sysv');
@@ -1579,11 +1579,11 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('mldivide — general matrix uses gesv', () => {
-            evaluator.Execute('clear');
-            evaluator.Execute('A = [1, 2; 3, 4]');
-            evaluator.Execute('B = [5; 11]');
-            const A = evaluator.Execute('A').list[0] as MultiArray;
-            const B = evaluator.Execute('B').list[0] as MultiArray;
+            interpreter.Execute('clear');
+            interpreter.Execute('A = [1, 2; 3, 4]');
+            interpreter.Execute('B = [5; 11]');
+            const A = interpreter.Execute('A').list[0] as MultiArray;
+            const B = interpreter.Execute('B').list[0] as MultiArray;
             const { X, solver, info } = LAPACK.mldivide(A, B);
             expect(info).toBe(0);
             expect(solver).toBe('gesv');
@@ -1592,11 +1592,11 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('mldivide — complex Hermitian positive definite matrix uses posv', () => {
-            evaluator.Execute('clear');
-            evaluator.Execute('A = [ 4, 1+i; 1-i, 3 ]');
-            evaluator.Execute('B = [ 1+i; 2 ]');
-            const A = evaluator.Execute('A').list[0] as MultiArray;
-            const B = evaluator.Execute('B').list[0] as MultiArray;
+            interpreter.Execute('clear');
+            interpreter.Execute('A = [ 4, 1+i; 1-i, 3 ]');
+            interpreter.Execute('B = [ 1+i; 2 ]');
+            const A = interpreter.Execute('A').list[0] as MultiArray;
+            const B = interpreter.Execute('B').list[0] as MultiArray;
             const { X, solver, info } = LAPACK.mldivide(A, B);
             expect(info).toBe(0);
             expect(solver).toBe('posv');
@@ -1605,11 +1605,11 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('mldivide — complex Hermitian indefinite matrix uses sysv', () => {
-            evaluator.Execute('clear');
-            evaluator.Execute('A = [ 0, 1+i; 1-i, 0 ]');
-            evaluator.Execute('B = [ 1; i ]');
-            const A = evaluator.Execute('A').list[0] as MultiArray;
-            const B = evaluator.Execute('B').list[0] as MultiArray;
+            interpreter.Execute('clear');
+            interpreter.Execute('A = [ 0, 1+i; 1-i, 0 ]');
+            interpreter.Execute('B = [ 1; i ]');
+            const A = interpreter.Execute('A').list[0] as MultiArray;
+            const B = interpreter.Execute('B').list[0] as MultiArray;
             const { X, solver, info } = LAPACK.mldivide(A, B);
             expect(info).toBe(0);
             expect(solver).toBe('sysv');
@@ -1618,11 +1618,11 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('mldivide — general complex matrix uses gesv', () => {
-            evaluator.Execute('clear');
-            evaluator.Execute('A = [ 1+i, 2; 3, 4-i ]');
-            evaluator.Execute('B = [ 5; 6+i ]');
-            const A = evaluator.Execute('A').list[0] as MultiArray;
-            const B = evaluator.Execute('B').list[0] as MultiArray;
+            interpreter.Execute('clear');
+            interpreter.Execute('A = [ 1+i, 2; 3, 4-i ]');
+            interpreter.Execute('B = [ 5; 6+i ]');
+            const A = interpreter.Execute('A').list[0] as MultiArray;
+            const B = interpreter.Execute('B').list[0] as MultiArray;
             const { X, solver, info } = LAPACK.mldivide(A, B);
             expect(info).toBe(0);
             expect(solver).toBe('gesv');
@@ -1631,13 +1631,13 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('mldivide — solves A \\ B with multiple right-hand sides (nrhs > 1)', () => {
-            evaluator.Execute('clear');
+            interpreter.Execute('clear');
             /* General complex matrix A (3x3) */
-            evaluator.Execute(`A = ${matrixSample['complex_general_3x3_03']}`);
+            interpreter.Execute(`A = ${matrixSample['complex_general_3x3_03']}`);
             /* Multiple RHS (nrhs = 2) */
-            evaluator.Execute(`B = ${matrixSample['complex_general_3x2_02']}`);
-            const A = evaluator.Execute('A').list[0] as MultiArray;
-            const B = evaluator.Execute('B').list[0] as MultiArray;
+            interpreter.Execute(`B = ${matrixSample['complex_general_3x2_02']}`);
+            const A = interpreter.Execute('A').list[0] as MultiArray;
+            const B = interpreter.Execute('B').list[0] as MultiArray;
             /* Solve A X = B */
             const { X, info, solver } = LAPACK.mldivide(A, B);
             expect(info).toBe(0);
@@ -1648,17 +1648,17 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('mldivide — Hermitian positive definite matrix with multiple RHS (nrhs > 1, posv)', () => {
-            evaluator.Execute('clear');
+            interpreter.Execute('clear');
             /* Hermitian positive definite matrix A (3x3). Constructed to be strictly HPD */
-            evaluator.Execute(`A = [  4+0i,  1-1i,  0+0i;
+            interpreter.Execute(`A = [  4+0i,  1-1i,  0+0i;
                1+1i,  5+0i,  1-1i;
                0+0i,  1+1i,  3+0i ]`);
             /* Multiple RHS (nrhs = 2) */
-            evaluator.Execute(`B = [  1+0i,  2+0i;
+            interpreter.Execute(`B = [  1+0i,  2+0i;
                0+1i,  1-1i;
                3+0i, -1+0i ]`);
-            const A = evaluator.Execute('A').list[0] as MultiArray;
-            const B = evaluator.Execute('B').list[0] as MultiArray;
+            const A = interpreter.Execute('A').list[0] as MultiArray;
+            const B = interpreter.Execute('B').list[0] as MultiArray;
             /* Solve A X = B */
             const { X, info, solver } = LAPACK.mldivide(A, B);
             expect(info).toBe(0);
@@ -1671,94 +1671,94 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
     describe('BLAS.trsm — Solves a triangular system with multiple right-hand sides', () => {
         it('trsm — left lower unit N', () => {
-            const A_lower = evaluator.Execute(`${matrixSample['trsm_lower_3x3_01']}`).list[0] as MultiArray;
-            const A_upper = evaluator.Execute(`${matrixSample['trsm_upper_3x3_01']}`).list[0] as MultiArray;
-            const B = evaluator.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
+            const A_lower = interpreter.Execute(`${matrixSample['trsm_lower_3x3_01']}`).list[0] as MultiArray;
+            const A_upper = interpreter.Execute(`${matrixSample['trsm_upper_3x3_01']}`).list[0] as MultiArray;
+            const B = interpreter.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
             const X = BLAS.trsm(A_lower.array as ComplexType[][], B.array as ComplexType[][], { side: 'left', uplo: 'lower', unitDiagonal: true, transA: 'N' });
             expectMatrixClose(MathOperation.mtimes(opA(materializeUnitDiagonal(A_lower), 'N'), new MultiArray([X.length, X[0].length], X)) as MultiArray, B);
         });
 
         it('trsm — left lower non-unit N', () => {
-            const A_lower = evaluator.Execute(`${matrixSample['trsm_lower_3x3_01']}`).list[0] as MultiArray;
-            const B = evaluator.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
+            const A_lower = interpreter.Execute(`${matrixSample['trsm_lower_3x3_01']}`).list[0] as MultiArray;
+            const B = interpreter.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
             const X = BLAS.trsm(A_lower.array as ComplexType[][], B.array as ComplexType[][], { side: 'left', uplo: 'lower', unitDiagonal: false, transA: 'N' });
             expectMatrixClose(MathOperation.mtimes(opA(A_lower, 'N'), new MultiArray([X.length, X[0].length], X)) as MultiArray, B);
         });
 
         it('trsm — left lower unit T', () => {
-            const A_lower = evaluator.Execute(`${matrixSample['trsm_lower_3x3_01']}`).list[0] as MultiArray;
-            const B = evaluator.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
+            const A_lower = interpreter.Execute(`${matrixSample['trsm_lower_3x3_01']}`).list[0] as MultiArray;
+            const B = interpreter.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
             const X = BLAS.trsm(A_lower.array as ComplexType[][], B.array as ComplexType[][], { side: 'left', uplo: 'lower', unitDiagonal: true, transA: 'T' });
             expectMatrixClose(MathOperation.mtimes(opA(materializeUnitDiagonal(A_lower), 'T'), new MultiArray([X.length, X[0].length], X)) as MultiArray, B);
         });
 
         it('trsm — left lower non-unit T', () => {
-            const A_lower = evaluator.Execute(`${matrixSample['trsm_lower_3x3_01']}`).list[0] as MultiArray;
-            const B = evaluator.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
+            const A_lower = interpreter.Execute(`${matrixSample['trsm_lower_3x3_01']}`).list[0] as MultiArray;
+            const B = interpreter.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
             const X = BLAS.trsm(A_lower.array as ComplexType[][], B.array as ComplexType[][], { side: 'left', uplo: 'lower', unitDiagonal: false, transA: 'T' });
             expectMatrixClose(MathOperation.mtimes(opA(A_lower, 'T'), new MultiArray([X.length, X[0].length], X)) as MultiArray, B);
         });
 
         it('trsm — left upper unit N', () => {
-            const A_upper = evaluator.Execute(`${matrixSample['trsm_upper_3x3_01']}`).list[0] as MultiArray;
-            const B = evaluator.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
+            const A_upper = interpreter.Execute(`${matrixSample['trsm_upper_3x3_01']}`).list[0] as MultiArray;
+            const B = interpreter.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
             const X = BLAS.trsm(A_upper.array as ComplexType[][], B.array as ComplexType[][], { side: 'left', uplo: 'upper', unitDiagonal: true, transA: 'N' });
             const M = MathOperation.mtimes(opA(materializeUnitDiagonal(A_upper), 'N'), new MultiArray([X.length, X[0].length], X)) as MultiArray;
             expectMatrixClose(M, B);
         });
 
         it('trsm — left upper non-unit T', () => {
-            const A_upper = evaluator.Execute(`${matrixSample['trsm_upper_3x3_01']}`).list[0] as MultiArray;
-            const B = evaluator.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
+            const A_upper = interpreter.Execute(`${matrixSample['trsm_upper_3x3_01']}`).list[0] as MultiArray;
+            const B = interpreter.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
             const X = BLAS.trsm(A_upper.array as ComplexType[][], B.array as ComplexType[][], { side: 'left', uplo: 'upper', unitDiagonal: false, transA: 'T' });
             expectMatrixClose(MathOperation.mtimes(opA(A_upper, 'T'), new MultiArray([X.length, X[0].length], X)) as MultiArray, B);
         });
 
         it('trsm — right lower unit N', () => {
-            const A_lower = evaluator.Execute(`${matrixSample['trsm_lower_2x2_01']}`).list[0] as MultiArray;
-            const B = evaluator.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
+            const A_lower = interpreter.Execute(`${matrixSample['trsm_lower_2x2_01']}`).list[0] as MultiArray;
+            const B = interpreter.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
             const X = BLAS.trsm(A_lower.array as ComplexType[][], B.array as ComplexType[][], { side: 'right', uplo: 'lower', unitDiagonal: true, transA: 'N' });
             expectMatrixClose(MathOperation.mtimes(new MultiArray([X.length, X[0].length], X), opA(A_lower, 'N')) as MultiArray, B);
         });
 
         it('trsm — right lower non-unit N', () => {
-            const A_lower = evaluator.Execute(`${matrixSample['trsm_lower_2x2_01']}`).list[0] as MultiArray;
-            const B = evaluator.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
+            const A_lower = interpreter.Execute(`${matrixSample['trsm_lower_2x2_01']}`).list[0] as MultiArray;
+            const B = interpreter.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
             const X = BLAS.trsm(A_lower.array as ComplexType[][], B.array as ComplexType[][], { side: 'right', uplo: 'lower', unitDiagonal: false, transA: 'N' });
             expectMatrixClose(MathOperation.mtimes(new MultiArray([X.length, X[0].length], X), opA(A_lower, 'N')) as MultiArray, B);
         });
 
         it('trsm — right lower unit T', () => {
-            const A_lower = evaluator.Execute(`${matrixSample['trsm_lower_2x2_01']}`).list[0] as MultiArray;
-            const B = evaluator.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
+            const A_lower = interpreter.Execute(`${matrixSample['trsm_lower_2x2_01']}`).list[0] as MultiArray;
+            const B = interpreter.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
             const X = BLAS.trsm(A_lower.array as ComplexType[][], B.array as ComplexType[][], { side: 'right', uplo: 'lower', unitDiagonal: true, transA: 'T' });
             expectMatrixClose(MathOperation.mtimes(new MultiArray([X.length, X[0].length], X), opA(A_lower, 'T')) as MultiArray, B);
         });
 
         it('trsm — right lower non-unit T', () => {
-            const A_lower = evaluator.Execute(`${matrixSample['trsm_lower_2x2_01']}`).list[0] as MultiArray;
-            const B = evaluator.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
+            const A_lower = interpreter.Execute(`${matrixSample['trsm_lower_2x2_01']}`).list[0] as MultiArray;
+            const B = interpreter.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
             const X = BLAS.trsm(A_lower.array as ComplexType[][], B.array as ComplexType[][], { side: 'right', uplo: 'lower', unitDiagonal: false, transA: 'T' });
             expectMatrixClose(MathOperation.mtimes(new MultiArray([X.length, X[0].length], X), opA(A_lower, 'T')) as MultiArray, B);
         });
 
         it('trsm — right upper unit N', () => {
-            const A_upper = evaluator.Execute(`${matrixSample['trsm_upper_2x2_01']}`).list[0] as MultiArray;
-            const B = evaluator.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
+            const A_upper = interpreter.Execute(`${matrixSample['trsm_upper_2x2_01']}`).list[0] as MultiArray;
+            const B = interpreter.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
             const X = BLAS.trsm(A_upper.array as ComplexType[][], B.array as ComplexType[][], { side: 'right', uplo: 'upper', unitDiagonal: true, transA: 'N' });
             expectMatrixClose(MathOperation.mtimes(new MultiArray([X.length, X[0].length], X), opA(A_upper, 'N')) as MultiArray, B);
         });
 
         it('trsm — right upper non-unit T', () => {
-            const A_upper = evaluator.Execute(`${matrixSample['trsm_upper_2x2_01']}`).list[0] as MultiArray;
-            const B = evaluator.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
+            const A_upper = interpreter.Execute(`${matrixSample['trsm_upper_2x2_01']}`).list[0] as MultiArray;
+            const B = interpreter.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
             const X = BLAS.trsm(A_upper.array as ComplexType[][], B.array as ComplexType[][], { side: 'right', uplo: 'upper', unitDiagonal: false, transA: 'T' });
             expectMatrixClose(MathOperation.mtimes(new MultiArray([X.length, X[0].length], X), opA(A_upper, 'T')) as MultiArray, B);
         });
 
         it.skip('trsm — left lower unit C', () => {
-            const A_lower = evaluator.Execute(`${matrixSample['trsm_lower_3x3_01']}`).list[0] as MultiArray;
-            const B = evaluator.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
+            const A_lower = interpreter.Execute(`${matrixSample['trsm_lower_3x3_01']}`).list[0] as MultiArray;
+            const B = interpreter.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
             const X = BLAS.trsm(A_lower.array as ComplexType[][], B.array as ComplexType[][], {
                 side: 'left',
                 uplo: 'lower',
@@ -1769,8 +1769,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('trsm — left lower non-unit C', () => {
-            const A_lower = evaluator.Execute(`${matrixSample['trsm_lower_3x3_01']}`).list[0] as MultiArray;
-            const B = evaluator.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
+            const A_lower = interpreter.Execute(`${matrixSample['trsm_lower_3x3_01']}`).list[0] as MultiArray;
+            const B = interpreter.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
             const X = BLAS.trsm(A_lower.array as ComplexType[][], B.array as ComplexType[][], {
                 side: 'left',
                 uplo: 'lower',
@@ -1781,8 +1781,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it.skip('trsm — left upper unit C', () => {
-            const A_upper = evaluator.Execute(`${matrixSample['trsm_upper_3x3_01']}`).list[0] as MultiArray;
-            const B = evaluator.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
+            const A_upper = interpreter.Execute(`${matrixSample['trsm_upper_3x3_01']}`).list[0] as MultiArray;
+            const B = interpreter.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
             const X = BLAS.trsm(A_upper.array as ComplexType[][], B.array as ComplexType[][], {
                 side: 'left',
                 uplo: 'upper',
@@ -1793,8 +1793,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('trsm — left upper non-unit C', () => {
-            const A_upper = evaluator.Execute(`${matrixSample['trsm_upper_3x3_01']}`).list[0] as MultiArray;
-            const B = evaluator.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
+            const A_upper = interpreter.Execute(`${matrixSample['trsm_upper_3x3_01']}`).list[0] as MultiArray;
+            const B = interpreter.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
             const X = BLAS.trsm(A_upper.array as ComplexType[][], B.array as ComplexType[][], {
                 side: 'left',
                 uplo: 'upper',
@@ -1805,8 +1805,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it.skip('trsm — right lower unit C', () => {
-            const A_lower = evaluator.Execute(`${matrixSample['trsm_lower_3x3_01']}`).list[0] as MultiArray;
-            const B = evaluator.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
+            const A_lower = interpreter.Execute(`${matrixSample['trsm_lower_3x3_01']}`).list[0] as MultiArray;
+            const B = interpreter.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
             const X = BLAS.trsm(A_lower.array as ComplexType[][], B.array as ComplexType[][], {
                 side: 'right',
                 uplo: 'lower',
@@ -1817,8 +1817,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it.skip('trsm — right lower non-unit C', () => {
-            const A_lower = evaluator.Execute(`${matrixSample['trsm_lower_3x3_01']}`).list[0] as MultiArray;
-            const B = evaluator.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
+            const A_lower = interpreter.Execute(`${matrixSample['trsm_lower_3x3_01']}`).list[0] as MultiArray;
+            const B = interpreter.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
             const X = BLAS.trsm(A_lower.array as ComplexType[][], B.array as ComplexType[][], {
                 side: 'right',
                 uplo: 'lower',
@@ -1829,8 +1829,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it.skip('trsm — right upper unit C', () => {
-            const A_upper = evaluator.Execute(`${matrixSample['trsm_upper_3x3_01']}`).list[0] as MultiArray;
-            const B = evaluator.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
+            const A_upper = interpreter.Execute(`${matrixSample['trsm_upper_3x3_01']}`).list[0] as MultiArray;
+            const B = interpreter.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
             const X = BLAS.trsm(A_upper.array as ComplexType[][], B.array as ComplexType[][], {
                 side: 'right',
                 uplo: 'upper',
@@ -1841,8 +1841,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it.skip('trsm — right upper non-unit C', () => {
-            const A_upper = evaluator.Execute(`${matrixSample['trsm_upper_3x3_01']}`).list[0] as MultiArray;
-            const B = evaluator.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
+            const A_upper = interpreter.Execute(`${matrixSample['trsm_upper_3x3_01']}`).list[0] as MultiArray;
+            const B = interpreter.Execute(`${matrixSample['trsm_rhs_3x2_01']}`).list[0] as MultiArray;
             const X = BLAS.trsm(A_upper.array as ComplexType[][], B.array as ComplexType[][], {
                 side: 'right',
                 uplo: 'upper',
@@ -1855,48 +1855,48 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
     describe('BLAS.nrm2sq and BLAS.nmr2 — squared Euclidean norm and Euclidean norm (sqrt of sum |x_i|^2)', () => {
         it('nrm2 — real vector', () => {
-            evaluator.Execute('R = [3; 4]');
-            const R = evaluator.Execute('R').list[0];
+            interpreter.Execute('R = [3; 4]');
+            const R = interpreter.Execute('R').list[0];
             const n = BLAS.nrm2(R.array.map((row: any[]) => row[0]));
             expect(Complex.imagToNumber(n)).toBeCloseTo(0);
             expect(Complex.realToNumber(n)).toBeCloseTo(5);
         });
 
         it('nrm2 — complex vector', () => {
-            evaluator.Execute('R = [1+i; 2-i]');
-            const R = evaluator.Execute('R').list[0];
+            interpreter.Execute('R = [1+i; 2-i]');
+            const R = interpreter.Execute('R').list[0];
             const n = BLAS.nrm2(R.array.map((row: any[]) => row[0]));
             expect(Complex.imagToNumber(n)).toBeCloseTo(0);
             expect(Complex.realToNumber(n)).toBeCloseTo(Math.sqrt(7));
         });
 
         it('nrm2 — zero vector', () => {
-            evaluator.Execute('R = [0; 0; 0]');
-            const R = evaluator.Execute('R').list[0];
+            interpreter.Execute('R = [0; 0; 0]');
+            const R = interpreter.Execute('R').list[0];
             const n = BLAS.nrm2(R.array.map((row: any[]) => row[0]));
             expect(Complex.imagToNumber(n)).toBeCloseTo(0);
             expect(Complex.realToNumber(n)).toBeCloseTo(0);
         });
 
         it('nrm2sq — real vector', () => {
-            evaluator.Execute('R = [3; 4]');
-            const R = evaluator.Execute('R').list[0];
+            interpreter.Execute('R = [3; 4]');
+            const R = interpreter.Execute('R').list[0];
             const s = BLAS.nrm2sq(R, 0, 0, 2);
             expect(Complex.imagToNumber(s)).toBeCloseTo(0);
             expect(Complex.realToNumber(s)).toBeCloseTo(25);
         });
 
         it('nrm2sq — complex vector', () => {
-            evaluator.Execute('R = [1+i; 2-i]');
-            const R = evaluator.Execute('R').list[0];
+            interpreter.Execute('R = [1+i; 2-i]');
+            const R = interpreter.Execute('R').list[0];
             const s = BLAS.nrm2sq(R, 0, 0, 2);
             expect(Complex.imagToNumber(s)).toBeCloseTo(0);
             expect(Complex.realToNumber(s)).toBeCloseTo(7);
         });
 
         it('nrm2sq — sliced vector (startRow)', () => {
-            evaluator.Execute('R = [10; 3; 4]');
-            const R = evaluator.Execute('R').list[0];
+            interpreter.Execute('R = [10; 3; 4]');
+            const R = interpreter.Execute('R').list[0];
             const s = BLAS.nrm2sq(R, 0, 1, 3);
             expect(Complex.imagToNumber(s)).toBeCloseTo(0);
             expect(Complex.realToNumber(s)).toBeCloseTo(25);
@@ -1905,27 +1905,27 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
     describe('BLAS.nrm2 — scaled Euclidean norm (extended tests)', () => {
         it('nrm2 — vector with interleaved zeros', () => {
-            const R = evaluator.Execute('[0; 3; 0; 4]').list[0] as MultiArray;
+            const R = interpreter.Execute('[0; 3; 0; 4]').list[0] as MultiArray;
             const n = BLAS.nrm2(R.array.map((row: any[]) => row[0]));
             expect(Complex.realToNumber(n)).toBeCloseTo(5);
             expect(Complex.imagToNumber(n)).toBeCloseTo(0);
         });
 
         it('nrm2 — purely imaginary vector', () => {
-            const R = evaluator.Execute('[2i; -3i]').list[0] as MultiArray;
+            const R = interpreter.Execute('[2i; -3i]').list[0] as MultiArray;
             const n = BLAS.nrm2(R.array.map((row: any[]) => row[0]));
             expect(Complex.realToNumber(n)).toBeCloseTo(Math.sqrt(13));
             expect(Complex.imagToNumber(n)).toBeCloseTo(0);
         });
 
         it('nrm2 — mixed magnitude vector (scaling robustness)', () => {
-            const R = evaluator.Execute('[1e-20; 1e20]').list[0] as MultiArray;
+            const R = interpreter.Execute('[1e-20; 1e20]').list[0] as MultiArray;
             const n = BLAS.nrm2(R.array.map((row: any[]) => row[0]));
             expect(Complex.realToNumber(n)).toBeCloseTo(1e20);
         });
 
         it('nrm2 — unit vector', () => {
-            const R = evaluator.Execute('[1; 0; 0]').list[0] as MultiArray;
+            const R = interpreter.Execute('[1; 0; 0]').list[0] as MultiArray;
             const n = BLAS.nrm2(R.array.map((row: any[]) => row[0]));
             expect(Complex.realToNumber(n)).toBeCloseTo(1);
         });
@@ -1933,8 +1933,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
     describe('BLAS.trsv — Solve a triangular system A * x = b, A^T * x = b or A^H * x = b, where A is triangular and x is a vector', () => {
         it('trsv — lower unit N', () => {
-            const A = evaluator.Execute(matrixSample['trsm_lower_3x3_01']).list[0] as MultiArray;
-            const B = evaluator.Execute(matrixSample['trsm_rhs_3x2_01'] + '(:,1)').list[0] as MultiArray;
+            const A = interpreter.Execute(matrixSample['trsm_lower_3x3_01']).list[0] as MultiArray;
+            const B = interpreter.Execute(matrixSample['trsm_rhs_3x2_01'] + '(:,1)').list[0] as MultiArray;
             const x = BLAS.trsv(
                 A.array as ComplexType[][],
                 B.array.map((row: any[]) => row[0]),
@@ -1948,8 +1948,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('trsv — lower non-unit N', () => {
-            const A = evaluator.Execute(matrixSample['trsm_lower_3x3_01']).list[0] as MultiArray;
-            const B = evaluator.Execute(matrixSample['trsm_rhs_3x2_01'] + '(:,1)').list[0] as MultiArray;
+            const A = interpreter.Execute(matrixSample['trsm_lower_3x3_01']).list[0] as MultiArray;
+            const B = interpreter.Execute(matrixSample['trsm_rhs_3x2_01'] + '(:,1)').list[0] as MultiArray;
             const x = BLAS.trsv(
                 A.array as ComplexType[][],
                 B.array.map((row: any[]) => row[0]),
@@ -1963,8 +1963,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('trsv — lower unit T', () => {
-            const A = evaluator.Execute(matrixSample['trsm_lower_3x3_01']).list[0] as MultiArray;
-            const B = evaluator.Execute(matrixSample['trsm_rhs_3x2_01'] + '(:,1)').list[0] as MultiArray;
+            const A = interpreter.Execute(matrixSample['trsm_lower_3x3_01']).list[0] as MultiArray;
+            const B = interpreter.Execute(matrixSample['trsm_rhs_3x2_01'] + '(:,1)').list[0] as MultiArray;
             const x = BLAS.trsv(
                 A.array as ComplexType[][],
                 B.array.map((row: any[]) => row[0]),
@@ -1978,8 +1978,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('trsv — lower non-unit T', () => {
-            const A = evaluator.Execute(matrixSample['trsm_lower_3x3_01']).list[0] as MultiArray;
-            const B = evaluator.Execute(matrixSample['trsm_rhs_3x2_01'] + '(:,1)').list[0] as MultiArray;
+            const A = interpreter.Execute(matrixSample['trsm_lower_3x3_01']).list[0] as MultiArray;
+            const B = interpreter.Execute(matrixSample['trsm_rhs_3x2_01'] + '(:,1)').list[0] as MultiArray;
             const x = BLAS.trsv(
                 A.array as ComplexType[][],
                 B.array.map((row: any[]) => row[0]),
@@ -1993,8 +1993,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('trsv — upper unit N', () => {
-            const A = evaluator.Execute(matrixSample['trsm_upper_3x3_01']).list[0] as MultiArray;
-            const B = evaluator.Execute(matrixSample['trsm_rhs_3x2_01'] + '(:,1)').list[0] as MultiArray;
+            const A = interpreter.Execute(matrixSample['trsm_upper_3x3_01']).list[0] as MultiArray;
+            const B = interpreter.Execute(matrixSample['trsm_rhs_3x2_01'] + '(:,1)').list[0] as MultiArray;
             const x = BLAS.trsv(
                 A.array as ComplexType[][],
                 B.array.map((row: any[]) => row[0]),
@@ -2008,8 +2008,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('trsv — upper non-unit T', () => {
-            const A = evaluator.Execute(matrixSample['trsm_upper_3x3_01']).list[0] as MultiArray;
-            const B = evaluator.Execute(matrixSample['trsm_rhs_3x2_01'] + '(:,1)').list[0] as MultiArray;
+            const A = interpreter.Execute(matrixSample['trsm_upper_3x3_01']).list[0] as MultiArray;
+            const B = interpreter.Execute(matrixSample['trsm_rhs_3x2_01'] + '(:,1)').list[0] as MultiArray;
             const x = BLAS.trsv(
                 A.array as ComplexType[][],
                 B.array.map((row: any[]) => row[0]),
@@ -2025,7 +2025,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
     describe('LAPACK.potrf — Cholesky factorization', () => {
         it('potrf — lower 3x3 real positive-definite', () => {
-            const A = evaluator.Execute('[4,1,1; 1,3,0; 1,0,2]').list[0] as MultiArray;
+            const A = interpreter.Execute('[4,1,1; 1,3,0; 1,0,2]').list[0] as MultiArray;
             const L = LAPACK.potrf(A, { uplo: 'lower' });
             // Check reconstruction: L*L^T = A
             const Arec = MathOperation.mtimes(L, MathOperation.transpose(L) as MultiArray) as MultiArray;
@@ -2033,7 +2033,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('potrf — upper 3x3 real positive-definite', () => {
-            const A = evaluator.Execute('[4,1,1; 1,3,0; 1,0,2]').list[0] as MultiArray;
+            const A = interpreter.Execute('[4,1,1; 1,3,0; 1,0,2]').list[0] as MultiArray;
             const U = LAPACK.potrf(A, { uplo: 'upper' });
             // Check reconstruction: U^T*U = A
             const Arec = MathOperation.mtimes(MathOperation.transpose(U) as MultiArray, U) as MultiArray;
@@ -2041,7 +2041,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('potrf — lower 3x3 complex Hermitian positive-definite', () => {
-            const A = evaluator.Execute('[4,1+i,1-i; 1-i,5,2+i; 1+i,2-i,6]').list[0] as MultiArray;
+            const A = interpreter.Execute('[4,1+i,1-i; 1-i,5,2+i; 1+i,2-i,6]').list[0] as MultiArray;
             const L = LAPACK.potrf(A, { uplo: 'lower' });
             // Check reconstruction: L*L^H = A
             const AH = LinearAlgebra.ctranspose(L) as MultiArray;
@@ -2050,7 +2050,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('potrf — upper 3x3 complex Hermitian positive-definite', () => {
-            const A = evaluator.Execute('[4,1+i,1-i; 1-i,5,2+i; 1+i,2-i,6]').list[0] as MultiArray;
+            const A = interpreter.Execute('[4,1+i,1-i; 1-i,5,2+i; 1+i,2-i,6]').list[0] as MultiArray;
             const U = LAPACK.potrf(A, { uplo: 'upper' });
             // Check reconstruction: U^H*U = A
             const UH = LinearAlgebra.ctranspose(U) as MultiArray;
@@ -2059,42 +2059,42 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('potrf — lower 2x2 real positive-definite', () => {
-            const A = evaluator.Execute('[2,1; 1,2]').list[0] as MultiArray;
+            const A = interpreter.Execute('[2,1; 1,2]').list[0] as MultiArray;
             const L = LAPACK.potrf(A, { uplo: 'lower' });
             const Arec = MathOperation.mtimes(L, MathOperation.transpose(L) as MultiArray) as MultiArray;
             expectMatrixClose(Arec, A);
         });
 
         it('potrf — upper 2x2 real positive-definite', () => {
-            const A = evaluator.Execute('[2,1; 1,2]').list[0] as MultiArray;
+            const A = interpreter.Execute('[2,1; 1,2]').list[0] as MultiArray;
             const U = LAPACK.potrf(A, { uplo: 'upper' });
             const Arec = MathOperation.mtimes(MathOperation.transpose(U) as MultiArray, U) as MultiArray;
             expectMatrixClose(Arec, A);
         });
 
         it('potrf — fails on non-positive-definite matrix', () => {
-            const A = evaluator.Execute('[1,2;2,1]').list[0] as MultiArray;
+            const A = interpreter.Execute('[1,2;2,1]').list[0] as MultiArray;
             expect(() => LAPACK.potrf(A, { uplo: 'lower' })).toThrow();
         });
     });
 
     describe('LAPACK.potrf — extended Cholesky tests', () => {
         it('potrf — lower 4x4 real positive-definite', () => {
-            const A = evaluator.Execute('[6,2,1,1;2,5,2,1;1,2,5,2;1,1,2,4]').list[0] as MultiArray;
+            const A = interpreter.Execute('[6,2,1,1;2,5,2,1;1,2,5,2;1,1,2,4]').list[0] as MultiArray;
             const L = LAPACK.potrf(A, { uplo: 'lower' });
             const Arec = MathOperation.mtimes(L, MathOperation.transpose(L) as MultiArray) as MultiArray;
             expectMatrixClose(Arec, A);
         });
 
         it('potrf — upper 4x4 real positive-definite', () => {
-            const A = evaluator.Execute('[6,2,1,1;2,5,2,1;1,2,5,2;1,1,2,4]').list[0] as MultiArray;
+            const A = interpreter.Execute('[6,2,1,1;2,5,2,1;1,2,5,2;1,1,2,4]').list[0] as MultiArray;
             const U = LAPACK.potrf(A, { uplo: 'upper' });
             const Arec = MathOperation.mtimes(MathOperation.transpose(U) as MultiArray, U) as MultiArray;
             expectMatrixClose(Arec, A);
         });
 
         it('potrf — lower 4x4 complex Hermitian positive-definite', () => {
-            const A = evaluator.Execute('[6,1+i,2-i,1;1-i,5,1+i,1-i;2+i,1-i,7,1+i;1,1+i,1-i,5]').list[0] as MultiArray;
+            const A = interpreter.Execute('[6,1+i,2-i,1;1-i,5,1+i,1-i;2+i,1-i,7,1+i;1,1+i,1-i,5]').list[0] as MultiArray;
             const L = LAPACK.potrf(A, { uplo: 'lower' });
             const AH = LinearAlgebra.ctranspose(L) as MultiArray;
             const Arec = MathOperation.mtimes(L, AH) as MultiArray;
@@ -2102,7 +2102,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('potrf — upper 4x4 complex Hermitian positive-definite', () => {
-            const A = evaluator.Execute('[6,1+i,2-i,1;1-i,5,1+i,1-i;2+i,1-i,7,1+i;1,1+i,1-i,5]').list[0] as MultiArray;
+            const A = interpreter.Execute('[6,1+i,2-i,1;1-i,5,1+i,1-i;2+i,1-i,7,1+i;1,1+i,1-i,5]').list[0] as MultiArray;
             const U = LAPACK.potrf(A, { uplo: 'upper' });
             const UH = LinearAlgebra.ctranspose(U) as MultiArray;
             const Arec = MathOperation.mtimes(UH, U) as MultiArray;
@@ -2110,35 +2110,35 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('potrf — lower 5x5 almost-diagonal positive-definite', () => {
-            const A = evaluator.Execute('[10,1e-8,0,0,0;1e-8,8,1e-8,0,0;0,1e-8,6,1e-8,0;0,0,1e-8,4,1e-8;0,0,0,1e-8,2]').list[0] as MultiArray;
+            const A = interpreter.Execute('[10,1e-8,0,0,0;1e-8,8,1e-8,0,0;0,1e-8,6,1e-8,0;0,0,1e-8,4,1e-8;0,0,0,1e-8,2]').list[0] as MultiArray;
             const L = LAPACK.potrf(A, { uplo: 'lower' });
             const Arec = MathOperation.mtimes(L, MathOperation.transpose(L) as MultiArray) as MultiArray;
             expectMatrixClose(Arec, A, EXPECT_TOL); // tolerância maior para números pequenos
         });
 
         it('potrf — upper 5x5 almost-diagonal positive-definite', () => {
-            const A = evaluator.Execute('[10,1e-8,0,0,0;1e-8,8,1e-8,0,0;0,1e-8,6,1e-8,0;0,0,1e-8,4,1e-8;0,0,0,1e-8,2]').list[0] as MultiArray;
+            const A = interpreter.Execute('[10,1e-8,0,0,0;1e-8,8,1e-8,0,0;0,1e-8,6,1e-8,0;0,0,1e-8,4,1e-8;0,0,0,1e-8,2]').list[0] as MultiArray;
             const U = LAPACK.potrf(A, { uplo: 'upper' });
             const Arec = MathOperation.mtimes(MathOperation.transpose(U) as MultiArray, U) as MultiArray;
             expectMatrixClose(Arec, A, EXPECT_TOL);
         });
 
         it('potrf — fails on 4x4 symmetric but non-positive-definite', () => {
-            const A = evaluator.Execute('[1,2,3,4;2,0,1,1;3,1,0,2;4,1,2,0]').list[0] as MultiArray;
+            const A = interpreter.Execute('[1,2,3,4;2,0,1,1;3,1,0,2;4,1,2,0]').list[0] as MultiArray;
             expect(() => LAPACK.potrf(A, { uplo: 'lower' })).toThrow();
         });
 
         it('potrf — fails on 5x5 complex Hermitian not positive-definite', () => {
-            const A = evaluator.Execute('[0,1+i,0,0,0;1-i,0,1,0,0;0,1,0,1-i,0;0,0,1+i,0,1;0,0,0,1,0]').list[0] as MultiArray;
+            const A = interpreter.Execute('[0,1+i,0,0,0;1-i,0,1,0,0;0,1,0,1-i,0;0,0,1+i,0,1;0,0,0,1,0]').list[0] as MultiArray;
             expect(() => LAPACK.potrf(A, { uplo: 'upper' })).toThrow();
         });
     });
 
     describe('BLAS.gemv', () => {
         it('gemv — real matrix and vectors', () => {
-            const A = evaluator.Execute('[1,2; 3,4]').list[0] as MultiArray;
-            const x = evaluator.Execute('[1; 1]').list[0] as MultiArray;
-            const y = evaluator.Execute('[0; 0]').list[0] as MultiArray;
+            const A = interpreter.Execute('[1,2; 3,4]').list[0] as MultiArray;
+            const x = interpreter.Execute('[1; 1]').list[0] as MultiArray;
+            const y = interpreter.Execute('[0; 0]').list[0] as MultiArray;
             const xvec = x.array.map((row: any[]) => row[0]) as ComplexType[];
             const yvec = y.array.map((row: any[]) => row[0]) as ComplexType[];
             BLAS.gemv(A.array as ComplexType[][], 2, 2, 0, 0, xvec, 0, yvec, 0, Complex.one(), Complex.zero());
@@ -2149,9 +2149,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('gemv — complex matrix and vectors', () => {
-            const A = evaluator.Execute('[1+i, 2; 3, 4-i]').list[0] as MultiArray;
-            const x = evaluator.Execute('[1; i]').list[0] as MultiArray;
-            const y = evaluator.Execute('[0; 0]').list[0] as MultiArray;
+            const A = interpreter.Execute('[1+i, 2; 3, 4-i]').list[0] as MultiArray;
+            const x = interpreter.Execute('[1; i]').list[0] as MultiArray;
+            const y = interpreter.Execute('[0; 0]').list[0] as MultiArray;
             const xvec = x.array.map((row: any[]) => row[0]) as ComplexType[];
             const yvec = y.array.map((row: any[]) => row[0]) as ComplexType[];
             BLAS.gemv(A.array as ComplexType[][], 2, 2, 0, 0, xvec, 0, yvec, 0, Complex.one(), Complex.zero());
@@ -2166,9 +2166,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('gemv — beta = 0 overwrites y', () => {
-            const A = evaluator.Execute('[1,0; 0,1]').list[0] as MultiArray;
-            const x = evaluator.Execute('[2; 3]').list[0] as MultiArray;
-            const y = evaluator.Execute('[5; 6]').list[0] as MultiArray;
+            const A = interpreter.Execute('[1,0; 0,1]').list[0] as MultiArray;
+            const x = interpreter.Execute('[2; 3]').list[0] as MultiArray;
+            const y = interpreter.Execute('[5; 6]').list[0] as MultiArray;
             const xvec = x.array.map((row: any[]) => row[0]) as ComplexType[];
             const yvec = y.array.map((row: any[]) => row[0]) as ComplexType[];
             BLAS.gemv(A.array as ComplexType[][], 2, 2, 0, 0, xvec, 0, yvec, 0, Complex.one(), Complex.zero());
@@ -2179,9 +2179,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('gemv — submatrix with offsets', () => {
-            const A = evaluator.Execute('[1,2,3; 4,5,6; 7,8,9]').list[0] as MultiArray;
-            const x = evaluator.Execute('[1; 1]').list[0] as MultiArray;
-            const y = evaluator.Execute('[0; 0]').list[0] as MultiArray;
+            const A = interpreter.Execute('[1,2,3; 4,5,6; 7,8,9]').list[0] as MultiArray;
+            const x = interpreter.Execute('[1; 1]').list[0] as MultiArray;
+            const y = interpreter.Execute('[0; 0]').list[0] as MultiArray;
             const xvec = x.array.map((row: any[]) => row[0]) as ComplexType[];
             const yvec = y.array.map((row: any[]) => row[0]) as ComplexType[];
             BLAS.gemv(A.array as ComplexType[][], 2, 2, 1, 1, xvec, 0, yvec, 0, Complex.one(), Complex.zero());
@@ -2192,9 +2192,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('gemv — alpha = 0 leaves y scaled by beta', () => {
-            const A = evaluator.Execute('[1,2; 3,4]').list[0] as MultiArray;
-            const x = evaluator.Execute('[1; 1]').list[0] as MultiArray;
-            const y = evaluator.Execute('[2; 3]').list[0] as MultiArray;
+            const A = interpreter.Execute('[1,2; 3,4]').list[0] as MultiArray;
+            const x = interpreter.Execute('[1; 1]').list[0] as MultiArray;
+            const y = interpreter.Execute('[2; 3]').list[0] as MultiArray;
             BLAS.gemv(
                 A.array as ComplexType[][],
                 2,
@@ -2215,9 +2215,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
     describe('BLAS.ger', () => {
         it('ger — real vectors and matrix', () => {
-            const A = evaluator.Execute('[1,2; 3,4]').list[0] as MultiArray;
-            const x = evaluator.Execute('[1; 1]').list[0] as MultiArray;
-            const y = evaluator.Execute('[1; 2]').list[0] as MultiArray;
+            const A = interpreter.Execute('[1,2; 3,4]').list[0] as MultiArray;
+            const x = interpreter.Execute('[1; 1]').list[0] as MultiArray;
+            const y = interpreter.Execute('[1; 2]').list[0] as MultiArray;
             // A := A + x * yᵀ
             BLAS.ger(A.array as ComplexType[][], 0, 0, 2, 2, Complex.one(), x.array as ComplexType[][], 0, 0, y.array as ComplexType[][], 0, 0);
             // Expected:
@@ -2230,9 +2230,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('ger — complex vectors (conjugate on y)', () => {
-            const A = evaluator.Execute('[0,0; 0,0]').list[0] as MultiArray;
-            const x = evaluator.Execute('[1+i; 2]').list[0] as MultiArray;
-            const y = evaluator.Execute('[1-i; i]').list[0] as MultiArray;
+            const A = interpreter.Execute('[0,0; 0,0]').list[0] as MultiArray;
+            const x = interpreter.Execute('[1+i; 2]').list[0] as MultiArray;
+            const y = interpreter.Execute('[1-i; i]').list[0] as MultiArray;
             BLAS.ger(A.array as ComplexType[][], 0, 0, 2, 2, Complex.one(), x.array as ComplexType[][], 0, 0, y.array as ComplexType[][], 0, 0);
             // A[0,0] = (1+i)*conj(1-i) = (1+i)*(1+i) = 2i
             const a00 = A.array[0][0] as ComplexType;
@@ -2245,9 +2245,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('ger — alpha = 0 leaves matrix unchanged', () => {
-            const A = evaluator.Execute('[1,2; 3,4]').list[0] as MultiArray;
-            const x = evaluator.Execute('[5; 6]').list[0] as MultiArray;
-            const y = evaluator.Execute('[7; 8]').list[0] as MultiArray;
+            const A = interpreter.Execute('[1,2; 3,4]').list[0] as MultiArray;
+            const x = interpreter.Execute('[5; 6]').list[0] as MultiArray;
+            const y = interpreter.Execute('[7; 8]').list[0] as MultiArray;
             BLAS.ger(A.array as ComplexType[][], 0, 0, 2, 2, Complex.zero(), x.array as ComplexType[][], 0, 0, y.array as ComplexType[][], 0, 0);
             expect(Complex.realToNumber(A.array[0][0] as ComplexType)).toBeCloseTo(1);
             expect(Complex.realToNumber(A.array[0][1] as ComplexType)).toBeCloseTo(2);
@@ -2256,9 +2256,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('ger — submatrix with offsets', () => {
-            const A = evaluator.Execute('[1,2,3; 4,5,6; 7,8,9]').list[0] as MultiArray;
-            const x = evaluator.Execute('[1; 1]').list[0] as MultiArray;
-            const y = evaluator.Execute('[2; 3]').list[0] as MultiArray;
+            const A = interpreter.Execute('[1,2,3; 4,5,6; 7,8,9]').list[0] as MultiArray;
+            const x = interpreter.Execute('[1; 1]').list[0] as MultiArray;
+            const y = interpreter.Execute('[2; 3]').list[0] as MultiArray;
             // Atualiza bloco A[1:3, 1:3]
             BLAS.ger(A.array as ComplexType[][], 1, 1, 2, 2, Complex.one(), x.array as ComplexType[][], 0, 0, y.array as ComplexType[][], 0, 0);
             // Submatriz original [[5,6],[8,9]]
@@ -2272,9 +2272,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
     describe('BLAS.geru', () => {
         it('geru — real vectors', () => {
-            const C = evaluator.Execute('[1,2; 3,4]').list[0].array as ComplexType[][];
-            const x = evaluator.Execute('[1; 1]').list[0].array.map((row: any[]) => row[0]) as ComplexType[];
-            const y = evaluator.Execute('[2; 3]').list[0].array.map((row: any[]) => row[0]) as ComplexType[];
+            const C = interpreter.Execute('[1,2; 3,4]').list[0].array as ComplexType[][];
+            const x = interpreter.Execute('[1; 1]').list[0].array.map((row: any[]) => row[0]) as ComplexType[];
+            const y = interpreter.Execute('[2; 3]').list[0].array.map((row: any[]) => row[0]) as ComplexType[];
             BLAS.geru(x, y, Complex.one(), C, 0, 0);
             // C + x*yᵀ = [[1,2],[3,4]] + [[2,3],[2,3]]
             expect(Complex.realToNumber(C[0][0])).toBeCloseTo(3);
@@ -2284,9 +2284,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('geru — complex vectors (no conjugation)', () => {
-            const C = evaluator.Execute('[0,0; 0,0]').list[0].array as ComplexType[][];
-            const x = evaluator.Execute('[1+i; 2]').list[0].array.map((row: any[]) => row[0]) as ComplexType[];
-            const y = evaluator.Execute('[i; 1]').list[0].array.map((row: any[]) => row[0]) as ComplexType[];
+            const C = interpreter.Execute('[0,0; 0,0]').list[0].array as ComplexType[][];
+            const x = interpreter.Execute('[1+i; 2]').list[0].array.map((row: any[]) => row[0]) as ComplexType[];
+            const y = interpreter.Execute('[i; 1]').list[0].array.map((row: any[]) => row[0]) as ComplexType[];
             BLAS.geru(x, y, Complex.one(), C, 0, 0);
             // C[0,0] = (1+i)*i = -1 + i
             const c00 = C[0][0];
@@ -2297,9 +2297,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
     describe('BLAS.gemm', () => {
         it('gemm — small real matrices, alpha=1, beta=0', () => {
-            const A = evaluator.Execute('[1,2;3,4]').list[0] as MultiArray;
-            const B = evaluator.Execute('[5,6;7,8]').list[0] as MultiArray;
-            const C = evaluator.Execute('[0,0;0,0]').list[0] as MultiArray;
+            const A = interpreter.Execute('[1,2;3,4]').list[0] as MultiArray;
+            const B = interpreter.Execute('[5,6;7,8]').list[0] as MultiArray;
+            const C = interpreter.Execute('[0,0;0,0]').list[0] as MultiArray;
             BLAS.gemm(Complex.one(), A.array as ComplexType[][], 2, 2, B.array as ComplexType[][], 2, Complex.zero(), C.array as ComplexType[][]);
             expect(Complex.realToNumber(C.array[0][0] as ComplexType)).toBeCloseTo(19);
             expect(Complex.realToNumber(C.array[0][1] as ComplexType)).toBeCloseTo(22);
@@ -2308,9 +2308,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('gemm — small complex matrices, alpha=1, beta=0', () => {
-            const A = evaluator.Execute('[1+i,2;3,4-i]').list[0] as MultiArray;
-            const B = evaluator.Execute('[i,1;1,i]').list[0] as MultiArray;
-            const C = evaluator.Execute('[0,0;0,0]').list[0] as MultiArray;
+            const A = interpreter.Execute('[1+i,2;3,4-i]').list[0] as MultiArray;
+            const B = interpreter.Execute('[i,1;1,i]').list[0] as MultiArray;
+            const C = interpreter.Execute('[0,0;0,0]').list[0] as MultiArray;
             BLAS.gemm(Complex.one(), A.array as ComplexType[][], 2, 2, B.array as ComplexType[][], 2, Complex.zero(), C.array as ComplexType[][]);
             // expected: [ (1+i)*i + 2*1 , (1+i)*1 + 2*i ; 3*i + (4-i)*1 , 3*1 + (4-i)*i ]
             const y00 = Complex.add(Complex.mul(A.array[0][0] as ComplexType, B.array[0][0] as ComplexType), Complex.mul(A.array[0][1] as ComplexType, B.array[1][0] as ComplexType));
@@ -2329,7 +2329,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
         it('gemm — alpha=0 scales C by beta', () => {
             // matriz C de entrada
-            const C = evaluator.Execute('[1,2;3,4]').list[0] as MultiArray;
+            const C = interpreter.Execute('[1,2;3,4]').list[0] as MultiArray;
             // chama gemm com alpha = 0
             // A e B não serão usados, então podem ser matrizes vazias
             BLAS.gemm(
@@ -2350,10 +2350,10 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('gemm — blocked vs simple produce same results', () => {
-            const A = evaluator.Execute('[1,2,3;4,5,6;7,8,9]').list[0] as MultiArray;
-            const B = evaluator.Execute('[1,0,0;0,1,0;0,0,1]').list[0] as MultiArray;
-            const C1 = evaluator.Execute('[0,0,0;0,0,0;0,0,0]').list[0] as MultiArray;
-            const C2 = evaluator.Execute('[0,0,0;0,0,0;0,0,0]').list[0] as MultiArray;
+            const A = interpreter.Execute('[1,2,3;4,5,6;7,8,9]').list[0] as MultiArray;
+            const B = interpreter.Execute('[1,0,0;0,1,0;0,0,1]').list[0] as MultiArray;
+            const C1 = interpreter.Execute('[0,0,0;0,0,0;0,0,0]').list[0] as MultiArray;
+            const C2 = interpreter.Execute('[0,0,0;0,0,0;0,0,0]').list[0] as MultiArray;
             // force blocked
             BLAS.settings.blockThreshold = 1;
             BLAS.gemm(Complex.one(), A.array as ComplexType[][], 3, 3, B.array as ComplexType[][], 3, Complex.zero(), C1.array as ComplexType[][], 2);
@@ -2385,7 +2385,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
         describe('LAPACK.larfg', () => {
             it("larfg('L') — sigma = 0 yields tau = 0 (implicit identity reflector) (real)", () => {
-                const X = evaluator.Execute('[5 0 0; 0 3 0; 0 0 2]').list[0] as MultiArray;
+                const X = interpreter.Execute('[5 0 0; 0 3 0; 0 0 2]').list[0] as MultiArray;
                 const { v, tau, alpha } = LAPACK.larfg('L', X, 3, 2);
                 expect(Complex.realIsZero(tau)).toBe(true);
                 expect(v.length).toEqual(1);
@@ -2394,7 +2394,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             });
 
             it("larfg('R') — sigma = 0 yields tau = 0 (implicit identity reflector) (real)", () => {
-                const X = evaluator.Execute('[5 0 0; 0 3 0; 0 0 2]').list[0] as MultiArray;
+                const X = interpreter.Execute('[5 0 0; 0 3 0; 0 0 2]').list[0] as MultiArray;
                 const { v, tau, alpha } = LAPACK.larfg('R', X, 3, 2);
                 expect(Complex.realIsZero(tau)).toBe(true);
                 expect(v.length).toEqual(1);
@@ -2403,7 +2403,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             });
 
             it("larfg('L') — sigma = 0 yields tau = 0 (implicit identity reflector) (complex)", () => {
-                const X = evaluator.Execute('[5+2i; 0; 0]').list[0] as MultiArray;
+                const X = interpreter.Execute('[5+2i; 0; 0]').list[0] as MultiArray;
                 const { v, tau, alpha } = LAPACK.larfg('L', X, 3, 0);
                 expect(Complex.realIsZero(tau)).toBe(true);
                 expect(v.length).toEqual(3);
@@ -2413,7 +2413,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             });
 
             it("larfg('R') — sigma = 0 yields tau = 0 (implicit identity reflector) (complex)", () => {
-                const X = evaluator.Execute('[5+2i, 0, 0]').list[0] as MultiArray;
+                const X = interpreter.Execute('[5+2i, 0, 0]').list[0] as MultiArray;
                 const { v, tau, alpha } = LAPACK.larfg('R', X, 3, 0);
                 expect(Complex.realIsZero(tau)).toBe(true);
                 expect(v.length).toEqual(3);
@@ -2423,19 +2423,19 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             });
 
             it("larfg('L') — v[0] must be 1", () => {
-                const X = evaluator.Execute('[1+1i; 2-1i; -0.5+0.3i]').list[0] as MultiArray;
+                const X = interpreter.Execute('[1+1i; 2-1i; -0.5+0.3i]').list[0] as MultiArray;
                 const { v } = LAPACK.larfg('L', X, 3, 0);
                 expectComplexCloseTo(v[0], Complex.one());
             });
 
             it("larfg('R') — v[0] must be 1", () => {
-                const X = evaluator.Execute('[1+1i, 2-1i, -0.5+0.3i]').list[0] as MultiArray;
+                const X = interpreter.Execute('[1+1i, 2-1i, -0.5+0.3i]').list[0] as MultiArray;
                 const { v } = LAPACK.larfg('R', X, 3, 0);
                 expectComplexCloseTo(v[0], Complex.one());
             });
 
             it("larfg('L') — sigma must be real (complex input)", () => {
-                const X = evaluator.Execute('[1+1i; 2-1i; -0.5+0.3i]').list[0] as MultiArray;
+                const X = interpreter.Execute('[1+1i; 2-1i; -0.5+0.3i]').list[0] as MultiArray;
                 const { v } = LAPACK.larfg('L', X, 3, 0);
                 // recompute sigma from v (excluding v[0])
                 let sigma = Complex.zero();
@@ -2447,7 +2447,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             });
 
             it("larfg('R') — sigma must be real (complex input)", () => {
-                const X = evaluator.Execute('[1+1i, 2-1i, -0.5+0.3i]').list[0] as MultiArray;
+                const X = interpreter.Execute('[1+1i, 2-1i, -0.5+0.3i]').list[0] as MultiArray;
                 const { v, tau } = LAPACK.larfg('R', X, 3, 0);
                 // recompute sigma from v (excluding v[0])
                 let sigma = Complex.zero();
@@ -2459,7 +2459,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             });
 
             it("larfg('L') — v is colinear with (x − α e₁) (complex)", () => {
-                const X = evaluator.Execute('[1+1i; 2-1i; -0.5+0.3i]').list[0] as MultiArray;
+                const X = interpreter.Execute('[1+1i; 2-1i; -0.5+0.3i]').list[0] as MultiArray;
                 const m = 3;
                 const { v, alpha } = LAPACK.larfg('L', X, m, 0);
                 // w = x - alpha*e1
@@ -2477,7 +2477,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             });
 
             it("larfg('R') — v is colinear with (x − α e₁) (complex)", () => {
-                const X = evaluator.Execute('[1+1i, 2-1i, -0.5+0.3i]').list[0] as MultiArray;
+                const X = interpreter.Execute('[1+1i, 2-1i, -0.5+0.3i]').list[0] as MultiArray;
                 const n = 3;
                 const { v, alpha } = LAPACK.larfg('R', X, n, 0);
                 // w = x - alpha*e1
@@ -2495,7 +2495,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             });
 
             it("larfg('L') — H * x annihilates trailing components (complex)", () => {
-                const X = evaluator.Execute('[1+1i; 2-1i; -0.5+0.3i]').list[0] as MultiArray;
+                const X = interpreter.Execute('[1+1i; 2-1i; -0.5+0.3i]').list[0] as MultiArray;
                 const m = 3;
                 const { v, tau, alpha } = LAPACK.larfg('L', X, m, 0);
                 // v as COLUMN vector
@@ -2521,7 +2521,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             });
 
             it("larfg('R') — x * H annihilates trailing components (complex)", () => {
-                const X = evaluator.Execute('[1+1i, 2-1i, -0.5+0.3i]').list[0] as MultiArray;
+                const X = interpreter.Execute('[1+1i, 2-1i, -0.5+0.3i]').list[0] as MultiArray;
                 const n = 3;
                 const { v, tau, alpha } = LAPACK.larfg('R', X, n, 0);
                 // v as ROW vector
@@ -2547,7 +2547,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             });
 
             it("larfg('L') — generated Householder matrix is unitary (complex)", () => {
-                const X = evaluator.Execute('[1+1i; 2-1i; -0.5+0.3i]').list[0] as MultiArray;
+                const X = interpreter.Execute('[1+1i; 2-1i; -0.5+0.3i]').list[0] as MultiArray;
                 const m = 3;
                 const { v, tau } = LAPACK.larfg('L', X, m, 0);
                 // Build H = I - tau * v * vᴴ
@@ -2564,7 +2564,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             });
 
             it("larfg('R') — generated Householder matrix is unitary (complex)", () => {
-                const X = evaluator.Execute('[1+1i, 2-1i, -0.5+0.3i]').list[0] as MultiArray;
+                const X = interpreter.Execute('[1+1i, 2-1i, -0.5+0.3i]').list[0] as MultiArray;
                 const n = 3;
                 const { v, tau } = LAPACK.larfg('R', X, n, 0);
                 // Build H = I - tau * v * vᴴ
@@ -2582,7 +2582,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
             it("larfg('L') — Householder reflector annihilates trailing components (complex, LAPACK contract)", () => {
                 // Original vector x (as a column)
-                const X = evaluator.Execute('[1+1i; 2-1i; -0.5+0.3i]').list[0] as MultiArray;
+                const X = interpreter.Execute('[1+1i; 2-1i; -0.5+0.3i]').list[0] as MultiArray;
                 // Compute Householder data
                 const { v, tau, alpha } = LAPACK.larfg('L', X, 3, 0);
                 // Build H = I - tau * v * vᴴ
@@ -2599,7 +2599,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
             it("larfg('R') — Householder reflector annihilates trailing components (complex, LAPACK contract)", () => {
                 // Original vector x (as COLUMN, even for 'R')
-                const Xrow = evaluator.Execute('[1+1i, 2-1i, -0.5+0.3i]').list[0] as MultiArray;
+                const Xrow = interpreter.Execute('[1+1i, 2-1i, -0.5+0.3i]').list[0] as MultiArray;
                 // Convert row → column
                 const X = LinearAlgebra.transpose(Xrow) as MultiArray;
                 const { v, tau, alpha } = LAPACK.larfg('R', Xrow, 3, 0);
@@ -2616,7 +2616,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
         describe('LAPACK.larf', () => {
             it("larf('L') — H * x annihilates trailing components (complex)", () => {
-                const X = evaluator.Execute('[1+1i; 2-1i; -0.5+0.3i]').list[0] as MultiArray;
+                const X = interpreter.Execute('[1+1i; 2-1i; -0.5+0.3i]').list[0] as MultiArray;
                 const C = MultiArray.copy(X);
                 const { v, tau, alpha } = LAPACK.larfg('L', C, 3, 0);
                 LAPACK.larf('L', C, v, tau, 0, 0);
@@ -2629,7 +2629,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             });
 
             it("larf('R') — generated Householder matrix is unitary (complex)", () => {
-                const X = evaluator.Execute('[1+1i, 2-1i, -0.5+0.3i]').list[0] as MultiArray;
+                const X = interpreter.Execute('[1+1i, 2-1i, -0.5+0.3i]').list[0] as MultiArray;
                 const { v, tau } = LAPACK.larfg('R', X, 3, 0);
                 const H = buildH(v, tau);
                 const HhH = MathOperation.mtimes(LinearAlgebra.ctranspose(H), H) as MultiArray;
@@ -2638,7 +2638,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             });
 
             it("larf('R') — should return immediately if tau=0 (leaves matrix unchanged)", () => {
-                const A = evaluator.Execute('[1+2i, 3-1i; -2+i, 4]').list[0] as MultiArray;
+                const A = interpreter.Execute('[1+2i, 3-1i; -2+i, 4]').list[0] as MultiArray;
                 const v = [Complex.one(), Complex.zero()];
                 const tau = Complex.zero();
                 const before = A.array.map((row) => row.slice());
@@ -2647,7 +2647,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             });
 
             it("larf('R') — preserves Frobenius norm (complex)", () => {
-                const C = evaluator.Execute('[1+2i, 2-1i; 3+0.5i, -1+i]').list[0] as MultiArray;
+                const C = interpreter.Execute('[1+2i, 2-1i; 3+0.5i, -1+i]').list[0] as MultiArray;
                 const C0 = MultiArray.copy(C);
                 const { v, tau } = LAPACK.larfg('R', C, 2, 0);
                 LAPACK.larf('R', C, v, tau, 0, 0);
@@ -2657,11 +2657,11 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             });
 
             it("larf('R') — diagnostic using valid Householder reflector (LAPACK-consistent)", () => {
-                const C = evaluator.Execute('[ 1+2i,  3- i; -2+ i,  0.5 ]').list[0] as MultiArray;
+                const C = interpreter.Execute('[ 1+2i,  3- i; -2+ i,  0.5 ]').list[0] as MultiArray;
                 const C0 = MultiArray.copy(C);
                 // Generate a VALID Householder reflector v, tau
                 // v[0] = 1 is guaranteed by larfg('R')
-                const X = evaluator.Execute('[ 1, 0.3 - 0.4i ]').list[0] as MultiArray;
+                const X = interpreter.Execute('[ 1, 0.3 - 0.4i ]').list[0] as MultiArray;
                 const { v, tau } = LAPACK.larfg('R', X, 2, 0);
                 // Apply larf('R') (this is what we are testing)
                 const C_larf = MultiArray.copy(C0);

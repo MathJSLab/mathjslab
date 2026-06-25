@@ -6,7 +6,7 @@
 import * as TypeOfComplex from './ComplexInterface';
 import { ComplexNumber } from './ComplexNumber';
 import { ComplexDecimal, Decimal } from './ComplexDecimal';
-import { Evaluator } from './Evaluator';
+import { Interpreter } from './Interpreter';
 
 /**
  * External type complex facade definitions.
@@ -43,9 +43,9 @@ type OneArgReturnBooleanHandler = TypeOfComplex.OneArgReturnBooleanComplexHandle
 type OneArgReturnNumberHandler = TypeOfComplex.OneArgReturnNumberComplexHandler<RealType, ComplexType>;
 type TestNumLikeHandler = TypeOfComplex.TestNumLikeComplexHandler<RealType, ComplexType>;
 type ParseHandler = TypeOfComplex.ParseComplexHandler<RealType, ComplexType>;
-type PrecedenceHandler = TypeOfComplex.PrecedenceComplexHandler<RealType, ComplexType, Evaluator, number>;
+type PrecedenceHandler = TypeOfComplex.PrecedenceComplexHandler<RealType, ComplexType, Interpreter, number>;
 type UnparseValueHandler = TypeOfComplex.UnparseValueComplexHandler<RealType>;
-type UnparseHandler = TypeOfComplex.UnparseComplexHandler<RealType, ComplexType, Evaluator, number>;
+type UnparseHandler = TypeOfComplex.UnparseComplexHandler<RealType, ComplexType, Interpreter, number>;
 type ToStringHandler = TypeOfComplex.ToStringComplexHandler<RealType, ComplexType>;
 type CompareHandler = TypeOfComplex.CompareComplexHandler<RealType, ComplexType>;
 type MinMaxArrayHandler = TypeOfComplex.MinMaxArrayComplexHandler<RealType, ComplexType>;

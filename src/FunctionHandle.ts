@@ -1,6 +1,6 @@
 import { Complex, ComplexType } from './Complex';
 import { NodeExpr } from './AST';
-import { Scope, Evaluator } from './Evaluator';
+import { Scope, Interpreter } from './Interpreter';
 
 /**
  * # FunctionHandle
@@ -159,15 +159,15 @@ class FunctionHandle {
      * Converts a FunctionHandle back to source code representation.
      *
      * @param fhandle - Function handle to unparse
-     * @param evaluator - Evaluator used for AST unparsing
+     * @param interpreter - Interpreter used for AST unparsing
      * @param parentPrecedence - Operator precedence (currently unused)
      * @returns String representation (MATLAB-like syntax)
      */
-    public static unparse = (fhandle: FunctionHandle, evaluator: Evaluator, parentPrecedence = 0): string => {
+    public static unparse = (fhandle: FunctionHandle, interpreter: Interpreter, parentPrecedence = 0): string => {
         if (fhandle.id) {
             return '@' + fhandle.id;
         } else {
-            return '@(' + fhandle.parameter.map((param: NodeExpr) => evaluator.Unparse(param)).join(',') + ') ' + evaluator.Unparse(fhandle.expression);
+            return '@(' + fhandle.parameter.map((param: NodeExpr) => interpreter.Unparse(param)).join(',') + ') ' + interpreter.Unparse(fhandle.expression);
         }
     };
 
@@ -198,19 +198,19 @@ class FunctionHandle {
      * Converts the function handle into MathML representation.
      *
      * @param fhandle - Function handle
-     * @param evaluator - Evaluator for AST conversion
+     * @param interpreter - Interpreter for AST conversion
      * @param parentPrecedence - Operator precedence (unused)
      * @returns MathML string
      */
-    public static unparseMathML = (fhandle: FunctionHandle, evaluator: Evaluator, parentPrecedence = 0): string => {
+    public static unparseMathML = (fhandle: FunctionHandle, interpreter: Interpreter, parentPrecedence = 0): string => {
         if (fhandle.id) {
             return `<mo>@</mo><mi>${fhandle.id}</mi>`;
         } else {
             return (
                 '<mo>@</mo><mo fence="true" stretchy="true">(</mo>' +
-                fhandle.parameter.map((param: NodeExpr) => evaluator.UnparserMathML(param)).join('<mo>,</mo>') +
+                fhandle.parameter.map((param: NodeExpr) => interpreter.UnparserMathML(param)).join('<mo>,</mo>') +
                 '<mo fence="true" stretchy="true">)</mo><mspace width="0.8em"/>' +
-                evaluator.UnparserMathML(fhandle.expression)
+                interpreter.UnparserMathML(fhandle.expression)
             );
         }
     };

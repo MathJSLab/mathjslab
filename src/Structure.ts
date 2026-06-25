@@ -1,6 +1,6 @@
 import { Complex, ComplexType } from './Complex';
 import { type ElementType, MultiArray } from './MultiArray';
-import { Evaluator } from './Evaluator';
+import { Interpreter } from './Interpreter';
 
 class Structure {
     public static readonly STRUCTURE = 4;
@@ -126,25 +126,25 @@ class Structure {
     /**
      *
      * @param S
-     * @param evaluator
+     * @param interpreter
      * @returns
      */
-    public static unparse = (S: Structure, evaluator: Evaluator, parentPrecedence = 0): string => {
+    public static unparse = (S: Structure, interpreter: Interpreter, parentPrecedence = 0): string => {
         return `struct {\n${Object.entries(S.field)
-            .map((entry) => `${entry[0]}: ${evaluator.Unparse(entry[1])}`)
+            .map((entry) => `${entry[0]}: ${interpreter.Unparse(entry[1])}`)
             .join('\n')}\n}`;
     };
 
     /**
      *
      * @param S
-     * @param evaluator
+     * @param interpreter
      * @returns
      */
-    public static unparseMathML = (S: Structure, evaluator: Evaluator, parentPrecedence = 0): string => {
+    public static unparseMathML = (S: Structure, interpreter: Interpreter, parentPrecedence = 0): string => {
         let result = `<mtr><mtd columnspan="2"><mtext>struct {</mtext></mtd></mtr>`;
         result += Object.entries(S.field)
-            .map((entry) => `<mtr><mtd><mi>${entry[0]}</mi><mo>:</mo></mtd><mtd>${evaluator.UnparserMathML(entry[1])}</mtd></mtr>`)
+            .map((entry) => `<mtr><mtd><mi>${entry[0]}</mi><mo>:</mo></mtd><mtd>${interpreter.UnparserMathML(entry[1])}</mtd></mtr>`)
             .join('');
         result += `<mtr><mtd columnspan="2"><mtext>}</mtext></mtd></mtr>`;
         return `<mtable>${result}</mtable>`;

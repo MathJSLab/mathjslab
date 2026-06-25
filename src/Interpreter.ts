@@ -9,7 +9,6 @@ import MathJSLabParser from './MathJSLabParser';
 import { LexerErrorListener } from './LexerErrorListener';
 import { ParserErrorListener } from './ParserErrorListener';
 import type {
-    ElementType,
     OperatorType,
     NodeInput,
     NodeExpr,
@@ -85,12 +84,12 @@ class Scope {
     /**
      * Private constructor.
      *
-     * Use {@link Scope.create}.
+     * Use {@link Scope.create} to create a new `Scope` instance.
      *
      * @param parent - Parent scope (optional)
-     * @param nameTable - Variable table
-     * @param functionTable - Function table
-     * @param undefinedReferenceTable - Undefined references table
+     * @param nameTable - Variable table (optional)
+     * @param functionTable - Function table (optional)
+     * @param undefinedReferenceTable - Undefined references table (optional)
      */
     private constructor(
         public parent?: Scope,
@@ -103,7 +102,7 @@ class Scope {
      * Factory method for creating a new scope.
      *
      * @param parent - Parent scope (optional)
-     * @returns New Scope instance
+     * @returns New `Scope` instance
      */
     public static readonly create = (parent?: Scope) => new Scope(parent);
 
@@ -266,7 +265,6 @@ class Scope {
         if (names.length !== args.length) {
             throw new Error(`Arity mismatch: expected ${names.length} argument(s), got ${args.length}`);
         }
-
         this.bindParameters(names, args);
     }
 
@@ -279,7 +277,6 @@ class Scope {
      */
     public defineUndefinedReference(name: string, undefinedReference: string) {
         const entry = this.resolveUndefinedReference(name);
-
         if (entry) {
             if (!entry.includes(undefinedReference)) {
                 entry.push(undefinedReference);
@@ -343,7 +340,7 @@ class Scope {
  *
  * ## Design Notes
  *
- * This abstraction allows the evaluator to treat all callable entities
+ * This abstraction allows the interpreter to treat all callable entities
  * uniformly, while preserving their specific execution semantics.
  *
  * Each variant wraps a different underlying AST/runtime representation.
@@ -409,7 +406,7 @@ interface FunctionDefinitionCallable {
 /**
  * # CallFrame
  *
- * Represents a **function call frame** in the evaluation stack ({@link EvaluatorWorkspace.callStack}).
+ * Represents a **function call frame** in the evaluation stack ({@link InterpreterContext.callStack}).
  *
  * A call frame encapsulates:
  * - the **execution scope** for the call
@@ -465,9 +462,9 @@ class CallFrame {
      *
      * @param scope - Execution {@link Scope} for this frame
      * @param func - Callable associated with this frame (optional)
-     * @param parentFrame - Caller frame (optional)
      * @param callSite - {@link AST} node representing the call site (optional)
      * @param name - Human-readable function name (optional)
+     * @param parentFrame - Caller frame (optional)
      */
     public constructor(
         /**
@@ -505,7 +502,7 @@ class CallFrame {
 }
 
 /**
- * # EvaluatorError
+ * # InterpreterError
  *
  * Base class for all evaluation-related errors.
  *
@@ -528,7 +525,7 @@ class CallFrame {
  * - `stackFrames` is optional to support legacy code paths
  * - Formatting is deferred to `toString()` / `format()`
  */
-class EvaluatorError extends Error {
+class InterpreterError extends Error {
     /**
      * Optional call stack snapshot.
      *
@@ -537,14 +534,14 @@ class EvaluatorError extends Error {
     public readonly stackFrames?: CallFrame[];
 
     /**
-     * Creates a new EvaluatorError.
+     * Creates a new InterpreterError.
      *
      * @param message - Error message
      * @param stackFrames - Optional stack trace snapshot
      */
     public constructor(message: string, stackFrames?: CallFrame[]) {
         super(message);
-        this.name = 'EvaluatorError';
+        this.name = 'InterpreterError';
         this.stackFrames = stackFrames;
     }
 
@@ -565,7 +562,7 @@ class EvaluatorError extends Error {
         for (const frame of this.stackFrames) {
             const name = this.getFrameName(frame);
 
-            // 🔴 ignora frame global vazio
+            // Skip the synthetic global frame and anonymous frames that do not help users locate the error.
             if (!name || name === '<anonymous>') continue;
 
             let lineInfo = '';
@@ -607,7 +604,7 @@ class EvaluatorError extends Error {
                 return func.node.id ?? '<builtin>';
 
             case 'LAMBDA':
-                return '@anonymous';
+                return '<anonymous>';
 
             case 'FCNDEF':
                 return func.node.id ?? '<function>';
@@ -634,7 +631,7 @@ class EvaluatorError extends Error {
  * - invalid operations
  * - domain errors
  */
-class EvalError extends EvaluatorError {
+class EvalError extends InterpreterError {
     public constructor(message: string, stackFrames?: CallFrame[]) {
         super(message, stackFrames);
         this.name = 'EvalError';
@@ -650,10 +647,41 @@ class EvalError extends EvaluatorError {
  * - undefined variable
  * - undefined function
  */
-class ReferenceError extends EvaluatorError {
+class ReferenceError extends InterpreterError {
     public constructor(message: string, stackFrames?: CallFrame[]) {
         super(message, stackFrames);
         this.name = 'ReferenceError';
+    }
+}
+
+/**
+ * # UndefinedReferenceError
+ *
+ * Represents an unresolved identifier that may be registered as a
+ * forward reference when the current evaluation mode allows it.
+ */
+class UndefinedReferenceError extends ReferenceError {
+    public constructor(
+        public readonly identifier: string,
+        stackFrames?: CallFrame[],
+    ) {
+        super(`'${identifier}' undefined.`, stackFrames);
+        this.name = 'UndefinedReferenceError';
+    }
+}
+
+/**
+ * # CircularReferenceError
+ *
+ * Represents a circular dependency between unresolved forward references.
+ */
+class CircularReferenceError extends InterpreterError {
+    public constructor(
+        public readonly chain: string[],
+        stackFrames?: CallFrame[],
+    ) {
+        super(`Circular reference detected: ${chain.join(' → ')}`, stackFrames);
+        this.name = 'CircularReferenceError';
     }
 }
 
@@ -662,20 +690,21 @@ class ReferenceError extends EvaluatorError {
  *
  * Represents syntax-related errors detected during parsing or preprocessing.
  */
-class SyntaxError extends EvaluatorError {
+class SyntaxError extends InterpreterError {
     public constructor(message: string, stackFrames?: CallFrame[]) {
         super(message, stackFrames);
         this.name = 'SyntaxError';
     }
 }
 
-class EvaluatorWorkspace {
+class InterpreterContext {
     /**
+     * Reset the execution context to a provided scope/stack or to a fresh global state.
      *
-     * @param globalScope
-     * @param callStack
+     * @param globalScope Optional global scope to install.
+     * @param callStack Optional call stack to install.
      */
-    public loadEvaluatorWorkspace(globalScope?: Scope, callStack?: CallFrame[]): void {
+    public loadInterpreterContext(globalScope?: Scope, callStack?: CallFrame[]): void {
         if (globalScope) {
             this.globalScope = globalScope;
         } else {
@@ -694,9 +723,9 @@ class EvaluatorWorkspace {
      */
     private constructor(
         /**
-         * Evaluator instance associated to this workspace.
+         * Interpreter instance associated to this context.
          */
-        public evaluator?: Evaluator,
+        public interpreter?: Interpreter,
         /**
          * Global scope.
          */
@@ -710,25 +739,34 @@ class EvaluatorWorkspace {
          */
         public builtInFunctionTable: Record<string, NodeBuiltInFunction> = Object.create(null),
         /**
-         * Allow forward reference flag.
+         * Whether assignments may keep unresolved identifiers for later resolution.
          */
-        public allowForwardReference: boolean = false,
+        public allowForwardReference: boolean = true,
+        /**
+         * Assignment targets whose right-hand side is currently being evaluated.
+         *
+         * This stack lets undefined-reference handling distinguish a local
+         * forward reference from a dependency cycle such as `A -> B -> A`.
+         */
+        private forwardReferenceTargetStack: string[][] = [],
     ) {
-        this.loadEvaluatorWorkspace(globalScope, callStack);
+        this.loadInterpreterContext(globalScope, callStack);
     }
     /**
-     * Create {@link EvaluatorWorkspace} object.
+     * Create {@link InterpreterContext} object.
+     * @param interpreter Optional interpreter instance associated with the context.
      * @param globalScope Optional global scope reference.
      * @param callStack Optional function call stack reference.
-     * @returns
+     * @returns New interpreter context.
      */
-    public static readonly create = (evaluator?: Evaluator, globalScope?: Scope, callStack?: CallFrame[]): EvaluatorWorkspace => new EvaluatorWorkspace(evaluator, globalScope, callStack);
+    public static readonly create = (interpreter?: Interpreter, globalScope?: Scope, callStack?: CallFrame[]): InterpreterContext =>
+        new InterpreterContext(interpreter, globalScope, callStack);
     /**
-     * Native name table. It's inserted in nameTable when Evaluator constructor executed.
+     * Native constants inserted into the global name table during interpreter loading.
      */
     public nativeNameTable: Record<string, ComplexType>;
     /**
-     * Native name table list.
+     * Names provided by {@link nativeNameTable}.
      */
     public nativeNameTableList: string[];
     /**
@@ -736,14 +774,14 @@ class EvaluatorWorkspace {
      */
     private aliasNameTable: AliasNameTable;
     /**
-     * Alias name function. This property is set at Evaluator instantiation.
+     * Alias name function. This property is set at Interpreter instantiation.
      * @param name Alias name.
      * @returns Canonical name.
      */
     public aliasNameFunction = (name: string): string => name;
     /**
-     * Alias table setup
-     * @param aliasNameTable
+     * Configure aliases that map alternative spellings to canonical function names.
+     * @param aliasNameTable Alias patterns keyed by canonical names.
      */
     public setAliasNameTable(aliasNameTable?: AliasNameTable): void {
         if (aliasNameTable) {
@@ -787,9 +825,9 @@ class EvaluatorWorkspace {
         return this.currentFrame!.scope;
     }
     /**
-     * Name resolver.
-     * @param name
-     * @returns
+     * Resolve a variable name from the current scope chain.
+     * @param name Identifier to resolve.
+     * @returns Matching name entry, or `undefined` when not found.
      */
     public resolveName(name: string): NameEntry | undefined {
         return this.currentScope.resolveName(name);
@@ -809,16 +847,117 @@ class EvaluatorWorkspace {
     public createChildScope(parent: Scope = this.currentScope): Scope {
         return Scope.create(parent);
     }
+    /**
+     * Track assignment targets while their right-hand side is evaluated.
+     * @param targets Assignment target identifiers.
+     */
+    public pushForwardReferenceTargets(targets: string[]): void {
+        this.forwardReferenceTargetStack.push(targets);
+    }
+    /**
+     * Stop tracking the current right-hand-side assignment targets.
+     * @returns Removed target list, if any.
+     */
+    public popForwardReferenceTargets(): string[] | undefined {
+        return this.forwardReferenceTargetStack.pop();
+    }
+    private get currentForwardReferenceTargets(): string[] {
+        return this.forwardReferenceTargetStack[this.forwardReferenceTargetStack.length - 1] ?? [];
+    }
+    /**
+     * Follow unresolved-reference metadata to build a dependency chain.
+     *
+     * Pending expressions can be partially re-linked while forward references
+     * are resolved, so this also inspects the stored expression tree to retain
+     * useful chains such as `A -> B -> C -> A`.
+     */
+    private getUndefinedReferenceChain(name: string, scope: Scope): string[] {
+        const chain = [name];
+        const seen = new Set<string>(chain);
+        let current = name;
+        while (true) {
+            const next = this.getNextUndefinedReference(current, scope);
+            if (!next) {
+                return chain;
+            }
+            chain.push(next);
+            if (seen.has(next)) {
+                return chain;
+            }
+            seen.add(next);
+            current = next;
+        }
+    }
+    private getNextUndefinedReference(name: string, scope: Scope): string | undefined {
+        const entry = scope.resolveName(name);
+        if (!entry) {
+            return undefined;
+        }
+        const expressionReference = this.findPendingIdentifier(entry.node, scope, entry.undefinedReference);
+        return expressionReference ?? entry.undefinedReference;
+    }
+    /**
+     * Find the next pending identifier inside a stored expression tree.
+     */
+    private findPendingIdentifier(node: unknown, scope: Scope, fallback?: string, seen = new WeakSet<object>()): string | undefined {
+        if (!node || typeof node !== 'object') {
+            return undefined;
+        }
+        if (seen.has(node)) {
+            return undefined;
+        }
+        seen.add(node);
+        const record = node as Record<string, unknown>;
+        if (record.type === 'IDENT' && typeof record.id === 'string') {
+            const entry = scope.resolveName(record.id);
+            if (entry?.undefinedReference || (!entry && record.id === fallback)) {
+                return record.id;
+            }
+        }
+        for (const key of Object.keys(record)) {
+            if (key === 'parent' || key === 'start' || key === 'stop') {
+                continue;
+            }
+            const value = record[key];
+            if (Array.isArray(value)) {
+                for (const item of value) {
+                    const pending = this.findPendingIdentifier(item, scope, fallback, seen);
+                    if (pending) {
+                        return pending;
+                    }
+                }
+            } else {
+                const pending = this.findPendingIdentifier(value, scope, fallback, seen);
+                if (pending) {
+                    return pending;
+                }
+            }
+        }
+        return undefined;
+    }
+    /**
+     * Throw when resolving `name` would close an unresolved-reference cycle.
+     */
+    private throwIfCircularReference(name: string, scope: Scope): void {
+        const chain = this.getUndefinedReferenceChain(name, scope);
+        const last = chain[chain.length - 1];
+        const repeatedIndex = chain.slice(0, -1).indexOf(last);
+        if (repeatedIndex >= 0) {
+            this.throwCircularReferenceError(chain.slice(repeatedIndex));
+        }
+        const target = this.currentForwardReferenceTargets.find((candidate) => chain.includes(candidate));
+        if (target) {
+            this.throwCircularReferenceError([...chain.slice(0, chain.indexOf(target) + 1), name]);
+        }
+    }
     public resolveCallable(expr: NodeExpr): Callable | undefined {
-        /* =========================
-           FUNCTION HANDLE
-           ========================= */
+        /* Function handles may point to named functions or inline lambda bodies. */
         if (FunctionHandle.isInstanceOf(expr)) {
-            /* CASO 1: handle nomeado (@sin) */
+            /* Named handle, for example `@sin`. */
             if (expr.id) {
                 const func = this.resolveFunction(expr.id);
                 if (!func) {
-                    throw new ReferenceError(`'${expr.id}' undefined.`);
+                    this.throwReferenceError(`'${expr.id}' undefined.`);
                 }
                 if (func.type === 'BUILTIN') {
                     return { type: 'BUILTIN', node: func };
@@ -827,7 +966,7 @@ class EvaluatorWorkspace {
                     return { type: 'FCNDEF', node: func };
                 }
             }
-            /* CASO 2: lambda @(x)x^2 */
+            /* Lambda handle, for example `@(x)x^2`. */
             return {
                 type: 'LAMBDA',
                 node: expr as FunctionHandle & { id: undefined },
@@ -837,41 +976,56 @@ class EvaluatorWorkspace {
     }
     public resolveIdentifier(tree: NodeInput, scope: Scope): NodeExpr {
         const name = tree.id;
-        /* 1. variável */
+        /* 1. Variable lookup. */
         const entry = scope.resolveName(name);
         if (entry && entry.node) {
+            if (this.allowForwardReference && entry.undefinedReference) {
+                this.throwIfCircularReference(name, scope);
+                this.throwUndefinedReferenceError(entry.undefinedReference);
+            }
             entry.node.parent = tree;
             return entry.node;
         }
-        /* 2. função */
+        /* 2. Function lookup. */
         const func = this.resolveFunction(name);
         if (func) {
-            /* 👇 PERMITE se estiver sendo chamado */
+            /* A function name may be converted to a handle when it is being called. */
             if (tree.parent && tree.parent.type === 'IDX') {
                 const handle = FunctionHandle.create(name);
                 handle.parent = tree;
                 return handle;
             }
-            /* 👇 caso contrário: erro MATLAB-like */
-            AST.throwInvalidCallError(name);
+            /* Otherwise a bare function name is an invalid MATLAB-like call. */
+            AST.throwInvalidCallError(name, true, (message) => this.throwSyntaxError(message));
         }
-        /* 3. erro */
-        // throw new ReferenceError(`'${name}' undefined.`);
-        this.error(`'${name}' undefined.`);
+        /* 3. Undefined identifier. */
+        this.throwUndefinedReferenceError(name);
     }
     private evaluateArgs(args: NodeExpr[], parent: NodeInput, mode: 'all' | boolean[]): NodeExpr[] {
         return args.map((arg: NodeExpr, i: number) => {
             arg.parent = parent;
             arg.index = i;
             if (mode === 'all') {
-                return AST.reduceToFirstIfReturnList(this.evaluator!.Evaluator(arg, this.currentScope));
+                return AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(arg, this.currentScope));
             }
             const ev = mode;
-            return ev.length > 0 && i < ev.length && !ev[i] ? arg : AST.reduceToFirstIfReturnList(this.evaluator!.Evaluator(arg, this.currentScope));
+            return ev.length > 0 && i < ev.length && !ev[i] ? arg : AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(arg, this.currentScope));
         });
     }
-    private error(message: string): never {
+    public throwEvalError(message: string): never {
         throw new EvalError(message, this.getStackTrace());
+    }
+    public throwReferenceError(message: string): never {
+        throw new ReferenceError(message, this.getStackTrace());
+    }
+    public throwUndefinedReferenceError(identifier: string): never {
+        throw new UndefinedReferenceError(identifier, this.getStackTrace());
+    }
+    public throwCircularReferenceError(chain: string[]): never {
+        throw new CircularReferenceError(chain, this.getStackTrace());
+    }
+    public throwSyntaxError(message: string): never {
+        throw new SyntaxError(message, this.getStackTrace());
     }
     private resolveCallSite(node: NodeInput | undefined): NodeExpr | undefined {
         let current: any = node;
@@ -887,35 +1041,35 @@ class EvaluatorWorkspace {
                 const node = callable.node;
                 const alias = this.aliasNameFunction(node.id);
                 const evaluatedArgs = this.evaluateArgs(args, parent, node.ev);
-                /* 🔥 PUSH FRAME */
+                /* Push a frame before entering the built-in so errors can capture this call. */
                 this.pushCallStackFrame(new CallFrame(this.currentScope, callable, this.resolveCallSite(parent), node.id));
                 try {
                     if (node.mapper && evaluatedArgs.length !== 1) {
-                        this.error(`Invalid call to ${alias}.`);
+                        this.throwEvalError(`Invalid call to ${alias}.`);
                     }
                     return node.mapper && evaluatedArgs.length === 1 && MultiArray.isInstanceOf(evaluatedArgs[0])
                         ? MultiArray.rawMap(evaluatedArgs[0], node.func)
                         : node.func(...evaluatedArgs);
                 } finally {
-                    /* 🔥 POP FRAME */
+                    /* Always restore the caller frame, even when the built-in throws. */
                     this.popCallStackFrame();
                 }
             }
             case 'LAMBDA': {
                 const lambda = callable.node;
                 if (lambda.parameter.length !== args.length) {
-                    this.error(`invalid number of arguments.`);
+                    this.throwEvalError(`invalid number of arguments.`);
                 }
                 const lambdaScope = Scope.create(lambda.closure ?? this.currentScope);
                 for (let i = 0; i < args.length; i++) {
                     args[i].parent = parent;
                     args[i].index = i;
-                    const value = AST.reduceToFirstIfReturnList(this.evaluator!.Evaluator(args[i], this.currentScope));
+                    const value = AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(args[i], this.currentScope));
                     lambdaScope.defineName(lambda.parameter[i].id, value);
                 }
                 this.pushCallStackFrame(new CallFrame(lambdaScope, callable, this.resolveCallSite(parent), FunctionHandle.toString(lambda)));
                 try {
-                    const result = AST.reduceToFirstIfReturnList(this.evaluator!.Evaluator(lambda.expression, lambdaScope));
+                    const result = AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(lambda.expression, lambdaScope));
                     return result;
                 } finally {
                     this.popCallStackFrame();
@@ -925,27 +1079,27 @@ class EvaluatorWorkspace {
                 const func = callable.node;
                 const paramCount = func.parameter.list.length;
                 if (paramCount !== args.length) {
-                    this.error(`invalid number of arguments in function ${func.id}`);
+                    this.throwEvalError(`invalid number of arguments in function ${func.id}`);
                 }
-                /* criar escopo (já preparado para closure futura) */
+                /* Create a function scope, preserving the definition scope when available. */
                 const functionScope = Scope.create(func.definingScope ?? this.currentScope);
-                /* bind parâmetros */
+                /* Bind evaluated arguments to formal parameter names. */
                 for (let i = 0; i < paramCount; i++) {
                     args[i].parent = parent;
                     args[i].index = i;
-                    const value = AST.reduceToFirstIfReturnList(this.evaluator!.Evaluator(args[i], this.currentScope));
+                    const value = AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(args[i], this.currentScope));
                     const paramName = func.parameter.list[i].id;
                     functionScope.defineName(paramName, value);
                 }
-                /* call stack */
+                /* Push the user-defined function frame for stack trace reporting. */
                 this.pushCallStackFrame(new CallFrame(functionScope, callable, this.resolveCallSite(parent), func.id));
                 let result: NodeExpr;
                 try {
-                    /* execute body */
+                    /* Execute the function body. */
                     if (func.statements.list.length > 0) {
-                        this.evaluator!.Evaluator(func.statements, functionScope);
+                        this.interpreter!.Evaluator(func.statements, functionScope);
                     }
-                    /* return */
+                    /* Build a lazy return list backed by the function scope. */
                     if (func.return.list.length > 0) {
                         const names = func.return.list.map((r) => r.id);
                         result = AST.nodeReturnList(
@@ -953,7 +1107,7 @@ class EvaluatorWorkspace {
                                 const key = names[index];
                                 const value = evaluated[key];
                                 if (value === undefined) {
-                                    throw new EvalError(`Undefined return value '${key}'`);
+                                    this.throwEvalError(`Undefined return value '${key}'`);
                                 }
                                 return value;
                             },
@@ -963,7 +1117,7 @@ class EvaluatorWorkspace {
                                     const name = names[i];
                                     const entry = functionScope.resolveName(name);
                                     if (!entry || !entry.node) {
-                                        throw new EvalError(`Undefined return variable '${name}'`);
+                                        this.throwEvalError(`Undefined return variable '${name}'`);
                                     }
                                     out[name] = entry.node as NodeExpr;
                                 }
@@ -983,8 +1137,8 @@ class EvaluatorWorkspace {
         }
     }
     apply(expr: NodeExpr, args: NodeExpr[], parent: NodeInput): NodeExpr {
-        /* DEBUG GUARDRAIL */
-        if (this.evaluator!.debug) {
+        /* Debug-only structural trace for call/index dispatch. */
+        if (this.interpreter!.debug) {
             console.log('[APPLY]', {
                 exprType: expr?.type,
                 isFunctionHandle: FunctionHandle.isInstanceOf(expr),
@@ -993,27 +1147,27 @@ class EvaluatorWorkspace {
                 argsCount: args.length,
             });
         }
-        /* TRY FUNCTION CALL */
+        /* First try function-call semantics. */
         const callable = this.resolveCallable(expr);
-        if (this.evaluator!.debug) {
+        if (this.interpreter!.debug) {
             console.log('[CALLABLE]', callable?.type ?? 'NONE');
         }
-        /* 🔒 Guardrail estrutural */
+        /* A function handle should have resolved to a callable by this point. */
         if (!callable && FunctionHandle.isInstanceOf(expr)) {
             throw new Error('Unexpected non-callable FunctionHandle.');
         }
         if (callable) {
             return this.callCallable(callable, args, parent);
         }
-        /* INDEXING */
-        if (this.evaluator!.debug) {
+        /* Fall back to indexing when the expression is not callable. */
+        if (this.interpreter!.debug) {
             console.warn('[FALLBACK → INDEX]', {
                 exprType: expr?.type,
                 exprId: (expr as any)?.id,
             });
         }
         if (parent.delim === '{}' && !(MultiArray.isInstanceOf(expr) && expr.isCell)) {
-            throw new EvalError('matrix cannot be indexed with {');
+            this.throwEvalError('matrix cannot be indexed with {');
         }
         const array = MultiArray.scalarOrCellToMultiArray(expr);
         const evaluatedArgs = this.evaluateArgs(args, parent, 'all');
@@ -1040,8 +1194,8 @@ class EvaluatorWorkspace {
     }
 
     /**
-     *
-     * @param table
+     * Merge external built-in functions into the current built-in table.
+     * @param table Built-in functions to add or override.
      */
     public assignBuiltInFunctionTable(table?: Record<string, NodeBuiltInFunction>): void {
         if (table) {
@@ -1064,7 +1218,7 @@ class EvaluatorWorkspace {
                 if (operand.length === 1) {
                     return func(operand[0]);
                 } else {
-                    throw new EvalError(`Invalid call to ${name}. Type 'help ${name}' to see correct usage.`);
+                    this.throwEvalError(`Invalid call to ${name}. Type 'help ${name}' to see correct usage.`);
                 }
             },
             definingScope: this.globalScope!,
@@ -1086,7 +1240,7 @@ class EvaluatorWorkspace {
                 if (right.length === 1) {
                     return func(left, right[0]);
                 } else {
-                    throw new EvalError(`Invalid call to ${id}. Type 'help ${id}' to see correct usage.`);
+                    this.throwEvalError(`Invalid call to ${id}. Type 'help ${id}' to see correct usage.`);
                 }
             },
             definingScope: this.globalScope!,
@@ -1094,9 +1248,9 @@ class EvaluatorWorkspace {
     }
 
     /**
-     * Define define two-or-more operand function in builtInFunctionTable.
-     * @param name
-     * @param func
+     * Define a left-associative operator function that accepts two or more operands.
+     * @param id Operator name.
+     * @param func Binary operation used to fold the operands.
      */
     public defineLeftAssociativeMultipleOperationFunction(id: KeyOfTypeOfMathOperation, func: BinaryMathOperation): void {
         this.builtInFunctionTable[id] = {
@@ -1114,7 +1268,7 @@ class EvaluatorWorkspace {
                     }
                     return result;
                 } else {
-                    throw new EvalError(`Invalid call to ${id}. Type 'help ${id}' to see correct usage.`);
+                    this.throwEvalError(`Invalid call to ${id}. Type 'help ${id}' to see correct usage.`);
                 }
             },
             definingScope: this.globalScope!,
@@ -1156,9 +1310,9 @@ class EvaluatorWorkspace {
 }
 
 /**
- * EvaluatorConfig type.
+ * InterpreterConfig type.
  */
-type EvaluatorConfig = {
+type InterpreterConfig = {
     aliasNameTable?: AliasNameTable;
     externalFunctionTable?: BuiltInFunctionTable;
     externalCmdWListTable?: CommandWordListTable;
@@ -1170,11 +1324,11 @@ type EvaluatorConfig = {
 type IncDecOperator = (tree: NodeIdentifier) => MathObject;
 
 /**
- * Evaluator instance interface.
+ * Interpreter instance interface.
  */
-interface EvaluatorInterface {
+interface InterpreterInterface {
     debug: boolean;
-    workspace: EvaluatorWorkspace;
+    context: InterpreterContext;
     exitStatus: ExitStatus;
     precedenceTable: { [key: string]: number };
     Parse(input: string): NodeInput;
@@ -1182,6 +1336,7 @@ interface EvaluatorInterface {
     Clear(...names: string[]): void;
     Evaluator(tree: NodeInput, scope?: Scope): NodeInput;
     Evaluate(tree: NodeInput): NodeInput;
+    Execute(input: string): NodeInput;
     Unparse(tree: NodeInput, parentPrecedence?: number): string;
     UnparserMathML(tree: NodeInput, parentPrecedence: number): string;
     UnparseMathML(tree: NodeInput, display: 'inline' | 'block'): string;
@@ -1189,9 +1344,9 @@ interface EvaluatorInterface {
 }
 
 /**
- * `Evaluator` object.
+ * `Interpreter` object.
  */
-class Evaluator implements EvaluatorInterface {
+class Interpreter implements InterpreterInterface {
     /**
      * After run `Evaluate` method, the `exitStatus` property will contains
      * exit state of evaluation.
@@ -1204,26 +1359,30 @@ class Evaluator implements EvaluatorInterface {
         PARSER_ERROR: 2,
         EVAL_ERROR: 3,
     };
+
     /**
      * Private debug flag.
      */
     private _debug: boolean = false;
+
     /**
      * `debug` getter.
      */
     public get debug(): boolean {
         return this._debug;
     }
+
     /**
      * `debug` setter.
      */
     public set debug(value: boolean) {
         this._debug = value;
     }
+
     /**
-     * Evaluator workspace.
+     * Interpreter context.
      */
-    public workspace: EvaluatorWorkspace;
+    public context: InterpreterContext;
 
     /**
      * Command word list table.
@@ -1254,8 +1413,8 @@ class Evaluator implements EvaluatorInterface {
         __builtins__: {
             /* eslint-disable-next-line  @typescript-eslint/no-unused-vars */
             func: (...args: string[]): MultiArray => {
-                const result = new MultiArray([this.workspace.builtInFunctionList.length, 1], null, true);
-                result.array = this.workspace.builtInFunctionList.sort().map((name) => [new CharString(name)]);
+                const result = new MultiArray([this.context.builtInFunctionList.length, 1], null, true);
+                result.array = this.context.builtInFunctionList.sort().map((name) => [new CharString(name)]);
                 return result;
             },
         },
@@ -1280,12 +1439,12 @@ class Evaluator implements EvaluatorInterface {
     };
 
     /**
-     * Evaluator exit status.
+     * Interpreter exit status.
      */
     private _exitStatus: ExitStatus;
 
     /**
-     * Evaluator exit status getter.
+     * Interpreter exit status getter.
      */
     public get exitStatus(): ExitStatus {
         return this._exitStatus;
@@ -1301,30 +1460,30 @@ class Evaluator implements EvaluatorInterface {
         if (pre) {
             return (tree: NodeIdentifier): MathObject => {
                 if (tree.type === 'IDENT') {
-                    const variable = this.workspace.resolveName(tree.id);
+                    const variable = this.context.resolveName(tree.id);
                     if (variable) {
                         variable.node = MathOperation[operation](variable.node, Complex.one());
                         return variable.node;
                     } else {
-                        throw new EvalError(`in ${operation === 'plus' ? '++' : '--'}${tree.id}, ${tree.id} must be defined first.`);
+                        this.context.throwEvalError(`in ${operation === 'plus' ? '++' : '--'}${tree.id}, ${tree.id} must be defined first.`);
                     }
                 } else {
-                    throw new SyntaxError(`invalid prefixed ${operation === 'plus' ? 'increment' : 'decrement'} variable.`);
+                    this.context.throwSyntaxError(`invalid prefixed ${operation === 'plus' ? 'increment' : 'decrement'} variable.`);
                 }
             };
         } else {
             return (tree: NodeIdentifier): MathObject => {
                 if (tree.type === 'IDENT') {
-                    const variable = this.workspace.resolveName(tree.id);
+                    const variable = this.context.resolveName(tree.id);
                     if (variable) {
                         const value = MathOperation.copy(variable.node);
                         variable.node = MathOperation[operation](variable.node, Complex.one());
                         return value;
                     } else {
-                        throw new EvalError(`in ${tree.id}${operation === 'plus' ? '++' : '--'}, ${tree.id} must be defined first.`);
+                        this.context.throwEvalError(`in ${tree.id}${operation === 'plus' ? '++' : '--'}, ${tree.id} must be defined first.`);
                     }
                 } else {
-                    throw new SyntaxError(`invalid postfixed ${operation === 'plus' ? 'increment' : 'decrement'} variable.`);
+                    this.context.throwSyntaxError(`invalid postfixed ${operation === 'plus' ? 'increment' : 'decrement'} variable.`);
                 }
             };
         }
@@ -1402,10 +1561,10 @@ class Evaluator implements EvaluatorInterface {
                 return this.precedenceTable.max;
             }
         } else if (tree.type === 'IDX') {
-            const aliasTreeName = this.workspace.aliasNameFunction(tree.expr.id);
+            const aliasTreeName = this.context.aliasNameFunction(tree.expr.id);
             return tree.expr.type === 'IDENT' &&
-                aliasTreeName in this.workspace.builtInFunctionTable &&
-                (!!this.workspace.builtInFunctionTable[aliasTreeName].UnparserMathML || aliasTreeName in MathML.format)
+                aliasTreeName in this.context.builtInFunctionTable &&
+                (!!this.context.builtInFunctionTable[aliasTreeName].UnparserMathML || aliasTreeName in MathML.format)
                 ? this.precedenceTable.max
                 : this.precedenceTable.preMax;
         } else if (tree.type === 'RANGE') {
@@ -1457,72 +1616,69 @@ class Evaluator implements EvaluatorInterface {
     };
 
     /**
-     * Load the `Evaluator`.
+     * Load the `Interpreter`.
      * @param config
      */
-    private loadEvaluator(config?: EvaluatorConfig) {
-        this._exitStatus = Evaluator.response.OK;
+    private loadInterpreter(config?: InterpreterConfig) {
+        this._exitStatus = Interpreter.response.OK;
         AST.reload();
-        this.workspace.loadEvaluatorWorkspace();
-        this.workspace.nativeNameTable = Evaluator.nativeNameTableFactory();
-        this.workspace.nativeNameTableList = Object.keys(this.workspace.nativeNameTable);
-        this.workspace.globalScope!.defineNameTable(this.workspace.nativeNameTable);
-        /* Define Evaluator functions */
+        this.context.loadInterpreterContext();
+        this.context.nativeNameTable = Interpreter.nativeNameTableFactory();
+        this.context.nativeNameTableList = Object.keys(this.context.nativeNameTable);
+        this.context.globalScope!.defineNameTable(this.context.nativeNameTable);
+        /* Define Interpreter functions */
         for (const func in this.functions) {
-            this.workspace.defineBuiltInFunction(func, this.functions[func]);
+            this.context.defineBuiltInFunction(func, this.functions[func]);
         }
         /* Define function operators */
         for (const func in MathOperation.leftAssociativeMultipleOperations) {
-            this.workspace.defineLeftAssociativeMultipleOperationFunction(
-                func as KeyOfTypeOfMathOperation,
-                MathOperation.leftAssociativeMultipleOperations[func as KeyOfTypeOfMathOperation]!,
-            );
+            this.context.defineLeftAssociativeMultipleOperationFunction(func as KeyOfTypeOfMathOperation, MathOperation.leftAssociativeMultipleOperations[func as KeyOfTypeOfMathOperation]!);
         }
         for (const func in MathOperation.binaryOperations) {
-            this.workspace.defineBinaryOperatorFunction(func as KeyOfTypeOfMathOperation, MathOperation.binaryOperations[func as KeyOfTypeOfMathOperation]!);
+            this.context.defineBinaryOperatorFunction(func as KeyOfTypeOfMathOperation, MathOperation.binaryOperations[func as KeyOfTypeOfMathOperation]!);
         }
         for (const func in MathOperation.unaryOperations) {
-            this.workspace.defineUnaryOperatorFunction(func as KeyOfTypeOfMathOperation, MathOperation.unaryOperations[func as KeyOfTypeOfMathOperation]!);
+            this.context.defineUnaryOperatorFunction(func as KeyOfTypeOfMathOperation, MathOperation.unaryOperations[func as KeyOfTypeOfMathOperation]!);
         }
         /* Define function mappers */
         for (const func in Complex.mapFunction) {
-            this.workspace.defineBuiltInFunction(func, Complex.mapFunction[func], true);
+            this.context.defineBuiltInFunction(func, Complex.mapFunction[func], true);
         }
         /* Define other functions */
         for (const func in Complex.twoArgFunction) {
-            this.workspace.defineBuiltInFunction(func, Complex.twoArgFunction[func]);
+            this.context.defineBuiltInFunction(func, Complex.twoArgFunction[func]);
         }
         /* Define Configuration functions */
         for (const func in Configuration.functions) {
-            this.workspace.defineBuiltInFunction(func, Configuration.functions[func]);
+            this.context.defineBuiltInFunction(func, Configuration.functions[func]);
         }
         /* Define CoreFunctions functions */
         for (const func in CoreFunctions.functions) {
-            this.workspace.defineBuiltInFunction(func, CoreFunctions.functions[func]);
+            this.context.defineBuiltInFunction(func, CoreFunctions.functions[func]);
         }
         /* Define LinearAlgebra functions */
         for (const func in LinearAlgebra.functions) {
-            this.workspace.defineBuiltInFunction(func, LinearAlgebra.functions[func as keyof LinearAlgebra]);
+            this.context.defineBuiltInFunction(func, LinearAlgebra.functions[func as keyof LinearAlgebra]);
         }
         /* Load UnparserMathML for special functions */
         for (const func in this.unparseMathMLFunctions) {
-            this.workspace.builtInFunctionTable[func].UnparserMathML = this.unparseMathMLFunctions[func];
+            this.context.builtInFunctionTable[func].UnparserMathML = this.unparseMathMLFunctions[func];
         }
         if (config) {
-            this.workspace.setAliasNameTable(config.aliasNameTable);
-            this.workspace.assignBuiltInFunctionTable(config.externalFunctionTable);
+            this.context.setAliasNameTable(config.aliasNameTable);
+            this.context.assignBuiltInFunctionTable(config.externalFunctionTable);
             if (config.externalCmdWListTable) {
                 Object.assign(this.commandWordListTable, config.externalCmdWListTable);
             }
         } else {
-            this.workspace.aliasNameFunction = (name: string): string => name;
+            this.context.aliasNameFunction = (name: string): string => name;
         }
     }
 
     /**
-     * `Evaluator` object private constructor
+     * `Interpreter` object private constructor
      */
-    private constructor(config?: EvaluatorConfig, workspace?: EvaluatorWorkspace) {
+    private constructor(config?: InterpreterConfig, context?: InterpreterContext) {
         /* Set opTable aliases */
         this.opTable['**'] = this.opTable['^'];
         this.opTable['.**'] = this.opTable['.^'];
@@ -1530,7 +1686,7 @@ class Evaluator implements EvaluatorInterface {
         this.opTable['~'] = this.opTable['!'];
         /* Load precedence table */
         this.precedenceTable = {};
-        Evaluator.precedence.forEach((list, precedence) => {
+        Interpreter.precedence.forEach((list, precedence) => {
             list.forEach((field) => {
                 this.precedenceTable[field] = precedence + 1;
             });
@@ -1542,21 +1698,22 @@ class Evaluator implements EvaluatorInterface {
         this.precedenceTable['_.**'] = this.precedenceTable['_.^'];
         this.precedenceTable['~='] = this.precedenceTable['!='];
         this.precedenceTable['~'] = this.precedenceTable['!'];
-        if (workspace) {
-            this.workspace = workspace;
-            this.workspace.evaluator = this;
+        if (context) {
+            this.context = context;
+            this.context.interpreter = this;
         } else {
-            this.workspace = EvaluatorWorkspace.create(this);
+            this.context = InterpreterContext.create(this);
         }
-        this.loadEvaluator(config);
+        this.loadInterpreter(config);
     }
 
     /**
-     * Creates an instance of the `Evaluator` object.
-     * @param config
-     * @returns
+     * Creates an instance of the `Interpreter` object.
+     * @param config Optional interpreter configuration.
+     * @param context Optional pre-built interpreter context.
+     * @returns New interpreter instance.
      */
-    public static readonly Create = (config?: EvaluatorConfig, workspace?: EvaluatorWorkspace): Evaluator => new Evaluator(config, workspace);
+    public static readonly Create = (config?: InterpreterConfig, context?: InterpreterContext): Interpreter => new Interpreter(config, context);
 
     /**
      * Parse input string.
@@ -1612,14 +1769,14 @@ class Evaluator implements EvaluatorInterface {
     });
 
     /**
-     * Restart evaluator.
+     * Restart interpreter.
      */
     public Restart(): void {
-        this.loadEvaluator();
+        this.loadInterpreter();
     }
 
     /**
-     * Clear variables. If names is 0 lenght restart evaluator.
+     * Clear variables. When no names are provided, restart the interpreter.
      * @param names Variable names to clear in nameTable and builtInFunctionTable.
      */
     public Clear(...names: string[]): void {
@@ -1630,9 +1787,9 @@ class Evaluator implements EvaluatorInterface {
             this.Restart();
         } else {
             names.forEach((name) => {
-                this.workspace.currentScope.removeName(name);
-                if (this.workspace.nativeNameTableList.includes(name)) {
-                    this.workspace.globalScope!.defineName(name, this.workspace.nativeNameTable[name]);
+                this.context.currentScope.removeName(name);
+                if (this.context.nativeNameTableList.includes(name)) {
+                    this.context.globalScope!.defineName(name, this.context.nativeNameTable[name]);
                 }
             });
         }
@@ -1644,7 +1801,7 @@ class Evaluator implements EvaluatorInterface {
      * @param shallow True if tree is a left root of assignment.
      * @returns An object with four properties: `left`, `id`, `args` and `field`.
      */
-    private validateAssignment(tree: NodeExpr, shallow: boolean, scope: Scope = this.workspace.currentScope): { id: string; index?: NodeExpr[]; field: string[] }[] {
+    private validateAssignment(tree: NodeExpr, shallow: boolean, scope: Scope = this.context.currentScope): { id: string; index?: NodeExpr[]; field: string[] }[] {
         const invalidLeftAssignmentMessage = 'invalid left hand side of assignment';
         if (tree.type === 'IDENT') {
             return [
@@ -1670,7 +1827,7 @@ class Evaluator implements EvaluatorInterface {
                     if (CharString.isInstanceOf(result)) {
                         return result.str;
                     } else {
-                        throw new EvalError(`${invalidLeftAssignmentMessage}: dynamic structure field names must be strings.`);
+                        this.context.throwEvalError(`${invalidLeftAssignmentMessage}: dynamic structure field names must be strings.`);
                     }
                 }
             });
@@ -1690,7 +1847,7 @@ class Evaluator implements EvaluatorInterface {
                     },
                 ];
             } else {
-                throw new EvalError(`${invalidLeftAssignmentMessage}.`);
+                this.context.throwEvalError(`${invalidLeftAssignmentMessage}.`);
             }
         } else if (tree.type === '<~>') {
             return [
@@ -1702,14 +1859,14 @@ class Evaluator implements EvaluatorInterface {
         } else if (shallow && MultiArray.isRowVector(tree)) {
             return tree.array[0].map((left: NodeExpr) => this.validateAssignment(left, false, scope)[0]);
         } else {
-            throw new EvalError(`${invalidLeftAssignmentMessage}.`);
+            this.context.throwEvalError(`${invalidLeftAssignmentMessage}.`);
         }
     }
 
     /**
-     *
-     * @param tree
-     * @returns
+     * Convert an evaluated expression to a boolean condition.
+     * @param tree Evaluated expression.
+     * @returns Boolean truth value.
      */
     private toBoolean(tree: NodeExpr): boolean {
         const value = MultiArray.isInstanceOf(tree) ? MultiArray.toLogical(tree) : tree;
@@ -1721,17 +1878,23 @@ class Evaluator implements EvaluatorInterface {
     }
 
     /**
-     *
-     * @param id
+     * Re-evaluate expressions waiting for a newly defined forward reference.
+     * @param id Identifier that may unblock pending references.
+     * @param scope Scope that stores the pending references.
+     * @param resolving Resolution chain used to detect recursive cycles.
      */
-    private solveUndefined(id: string, scope: Scope = this.workspace.currentScope): void {
-        if (this.workspace.allowForwardReference) {
+    private solveUndefined(id: string, scope: Scope = this.context.currentScope, resolving: string[] = []): void {
+        if (this.context.allowForwardReference) {
+            const circularIndex = resolving.indexOf(id);
+            if (circularIndex >= 0) {
+                this.context.throwCircularReferenceError([...resolving.slice(circularIndex), id]);
+            }
             if (typeof scope.undefinedReferenceTable[id] !== 'undefined') {
-                /* Remove duplicates and undefined. */
+                /* Remove duplicate and empty entries. */
                 scope.undefinedReferenceTable[id] = scope.undefinedReferenceTable[id].filter((value, index, self) => value && self.indexOf(value) === index);
-                /* Create a copy. */
+                /* Work on a copy while the table is updated. */
                 let undefinedReferenceEntry = scope.undefinedReferenceTable[id].slice();
-                /* Stores resolved references. */
+                /* References that became fully resolved in this pass. */
                 const solvedReference: string[] = [];
                 scope.undefinedReferenceTable[id].forEach((ref, index) => {
                     if (typeof scope.nameTable[ref] !== 'undefined') {
@@ -1741,12 +1904,9 @@ class Evaluator implements EvaluatorInterface {
                             undefinedReferenceEntry[index] = undefined as unknown as string;
                             solvedReference.push(ref);
                         } catch (e: unknown) {
-                            if (e instanceof ReferenceError) {
-                                const match = e.message.match(/^'([^']+)'\s+undefined\.?$/);
-                                if (match) {
-                                    undefinedReferenceEntry[index] = match[1];
-                                    scope.nameTable[ref].undefinedReference = match[1];
-                                }
+                            if (e instanceof UndefinedReferenceError) {
+                                undefinedReferenceEntry[index] = e.identifier;
+                                scope.nameTable[ref].undefinedReference = e.identifier;
                             }
                         }
                     } else {
@@ -1754,20 +1914,35 @@ class Evaluator implements EvaluatorInterface {
                     }
                 });
                 scope.undefinedReferenceTable[id] = undefinedReferenceEntry.filter((value) => value);
-                solvedReference.forEach((ref) => this.solveUndefined(ref, scope));
+                solvedReference.forEach((ref) => this.solveUndefined(ref, scope, [...resolving, id]));
             }
         }
     }
 
     /**
-     * Expression tree recursive evaluator.
+     * A forward reference is recoverable only when it was raised in the
+     * currently executing callable. Errors propagated from deeper calls must
+     * keep their original stack trace and should not be registered as local
+     * pending assignments.
+     */
+    private isLocalUndefinedReference(error: unknown): error is UndefinedReferenceError {
+        if (!(error instanceof UndefinedReferenceError)) {
+            return false;
+        }
+        const callableFrames = this.context.callStack.filter((frame) => frame.func !== undefined);
+        const currentCallableFrame = callableFrames[callableFrames.length - 1];
+        return error.stackFrames?.[0] === currentCallableFrame;
+    }
+
+    /**
+     * Expression tree recursive interpreter.
      * @param tree Expression to evaluate.
      * @param scope Scope of execution.
      * @returns Expression `tree` evaluated.
      */
-    public Evaluator(tree: NodeInput, scope: Scope = this.workspace.currentScope): NodeInput {
+    public Evaluator(tree: NodeInput, scope: Scope = this.context.currentScope): NodeInput {
         if (this._debug) {
-            console.log(`Evaluator(\ntree:${JSON.stringify(tree, (key: string, value: NodeInput) => (key !== 'parent' ? value : value === null ? 'root' : true), 2)},\n);`);
+            console.log(`Interpreter(\ntree:${JSON.stringify(tree, (key: string, value: NodeInput) => (key !== 'parent' ? value : value === null ? 'root' : true), 2)},\n);`);
         }
         if (tree) {
             if (Complex.isInstanceOf(tree) || FunctionHandle.isInstanceOf(tree) || CharString.isInstanceOf(tree) || Structure.isInstanceOf(tree)) {
@@ -1847,22 +2022,26 @@ class Evaluator implements EvaluatorInterface {
                         const assignment = this.validateAssignment(tree.left, true, scope);
                         const op: OperatorType | '' = tree.type.substring(0, tree.type.length - 1);
                         if (assignment.length > 1 && op.length > 0) {
-                            throw new EvalError('computed multiple assignment not allowed.');
+                            this.context.throwEvalError('computed multiple assignment not allowed.');
                         }
                         let right: NodeExpr;
                         let undefinedReference: string | undefined;
                         let error: Error | undefined;
+                        this.context.pushForwardReferenceTargets(assignment.map(({ id }) => id).filter((id) => id !== '~'));
                         try {
                             right = MathOperation.copy(this.Evaluator(tree.right, scope));
                         } catch (e: unknown) {
+                            if (!this.context.allowForwardReference) {
+                                throw e as Error;
+                            }
+                            if (!this.isLocalUndefinedReference(e)) {
+                                throw e as Error;
+                            }
                             error = e as Error;
                             right = MathOperation.copy(tree.right);
-                            if (e instanceof Error) {
-                                const match = e.message.match(/^'([^']+)'\s+undefined\.?$/);
-                                if (match) {
-                                    undefinedReference = match[1];
-                                }
-                            }
+                            undefinedReference = e.identifier;
+                        } finally {
+                            this.context.popForwardReferenceTargets();
                         }
                         /* Convert `right` to `'RETLIST'` if the node is not already of that type. */
                         if (right.type !== 'RETLIST') {
@@ -1871,7 +2050,7 @@ class Evaluator implements EvaluatorInterface {
                                 if (index === 0) {
                                     return result;
                                 } else {
-                                    AST.throwErrorIfGreaterThanReturnList(evaluated.length, index);
+                                    AST.throwErrorIfGreaterThanReturnList(evaluated.length, index, (message) => this.context.throwEvalError(message));
                                 }
                             });
                         }
@@ -1880,14 +2059,14 @@ class Evaluator implements EvaluatorInterface {
                         for (let n = 0; n < assignment.length; n++) {
                             const { id, index, field } = assignment[n];
                             if (id !== '~') {
-                                /* Do assignment */
+                                /* Apply one assignment target. */
                                 if (index) {
-                                    /* Function definition or indexed matrix reference. */
+                                    /* Computed assignment to an indexed matrix element. */
                                     if (op) {
                                         const entry = scope.resolveName(id);
                                         if (typeof entry !== 'undefined') {
                                             if (!FunctionHandle.isInstanceOf(entry.node)) {
-                                                /* Indexed matrix reference on left hand side with operator. */
+                                                /* Read-modify-write assignment on an indexed matrix element. */
                                                 MultiArray.setElements(
                                                     scope,
                                                     id,
@@ -1909,15 +2088,15 @@ class Evaluator implements EvaluatorInterface {
                                                     ),
                                                 );
                                                 AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), entry.node));
-                                                continue; // TODO: It's needed? Or it's a eficiency improvement?
+                                                continue;
                                             } else {
-                                                throw new EvalError(`can't perform indexed assignment for function handle type.`);
+                                                this.context.throwEvalError(`can't perform indexed assignment for function handle type.`);
                                             }
                                         } else {
-                                            throw new EvalError(`in computed assignment ${id}(index) OP= X, ${id} must be defined first.`);
+                                            this.context.throwEvalError(`in computed assignment ${id}(index) OP= X, ${id} must be defined first.`);
                                         }
                                     } else {
-                                        /* Indexed matrix reference on left hand side. */
+                                        /* Direct assignment to an indexed matrix element. */
                                         MultiArray.setElements(
                                             scope,
                                             id,
@@ -1932,7 +2111,7 @@ class Evaluator implements EvaluatorInterface {
                                         AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), scope.resolveName(id)!.node));
                                     }
                                 } else {
-                                    /* Name definition. */
+                                    /* Name or structure-field assignment. */
                                     const rightN = (right as NodeReturnList).selector(evaluated, n);
                                     rightN.parent = tree.right;
                                     const expr = op.length
@@ -1949,17 +2128,18 @@ class Evaluator implements EvaluatorInterface {
                                             if (Structure.isInstanceOf(entry.node)) {
                                                 Structure.setNewField(entry.node, field, AST.reduceToFirstIfReturnList(expr));
                                             } else {
-                                                throw new EvalError('in indexed assignment.');
+                                                this.context.throwEvalError('in indexed assignment.');
                                             }
                                             AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), entry.node));
                                         } else {
                                             let entry: NameEntry;
                                             if (undefinedReference) {
-                                                if (this.workspace.allowForwardReference) {
+                                                if (this.context.allowForwardReference) {
                                                     scope.defineUndefinedReference(undefinedReference, id);
                                                     entry = scope.defineName(id, AST.reduceToFirstIfReturnList(expr), undefinedReference);
                                                 } else {
-                                                    throw new ReferenceError(`'${undefinedReference}' undefined.`);
+                                                    if (error) throw error;
+                                                    this.context.throwUndefinedReferenceError(undefinedReference);
                                                 }
                                             } else {
                                                 entry = scope.defineName(id, AST.reduceToFirstIfReturnList(expr));
@@ -1969,8 +2149,8 @@ class Evaluator implements EvaluatorInterface {
                                             if (error) throw error;
                                         }
                                     } catch (e: unknown) {
-                                        if (this.workspace.allowForwardReference) {
-                                            scope.defineName(id, expr);
+                                        if (this.context.allowForwardReference) {
+                                            scope.defineName(id, expr, undefinedReference);
                                         }
                                         throw e as Error;
                                     }
@@ -1978,26 +2158,26 @@ class Evaluator implements EvaluatorInterface {
                             }
                         }
                         if (tree.parent === null || tree.parent.parent === null) {
-                            /* assignment at root expression */
+                            /* Assignment at the root expression returns the assignment result. */
                             if (resultList.list.length === 1) {
-                                /* single assignment */
+                                /* Single assignment returns its only assignment node. */
                                 return resultList.list[0];
                             } else {
-                                /* multiple assignment */
+                                /* Multiple assignment returns the whole result list. */
                                 return resultList;
                             }
                         } else {
-                            /* assignment at right side */
+                            /* Nested assignment returns the assigned value. */
                             return (resultList.list[0] as NodeExpr).right;
                         }
                     }
                     case 'IDENT':
-                        return this.workspace.resolveIdentifier(tree, scope);
+                        return this.context.resolveIdentifier(tree, scope);
                     case 'FCNDEF': {
                         const func = tree as NodeFunctionDefinition;
                         /* Register function in the current scope. */
                         scope.defineFunction(func.id, func);
-                        /* Optional: store definition scope (light closure). */
+                        /* Store the definition scope so calls can resolve lexical captures. */
                         func.definingScope = scope;
                         /* MATLAB-like behavior: function definition does not execute anything. */
                         return AST.nodeVoid();
@@ -2013,7 +2193,7 @@ class Evaluator implements EvaluatorInterface {
                                     if (CharString.isInstanceOf(result)) {
                                         return result.str;
                                     } else {
-                                        throw new EvalError(`Dynamic structure field names must be strings.`);
+                                        this.context.throwEvalError(`Dynamic structure field names must be strings.`);
                                     }
                                 }
                             }),
@@ -2100,7 +2280,7 @@ class Evaluator implements EvaluatorInterface {
                                 return Complex.one();
                             }
                         } else {
-                            throw new SyntaxError("indeterminate end of range. The word 'end' to refer a value is valid only in indexing.");
+                            this.context.throwSyntaxError("indeterminate end of range. The word 'end' to refer a value is valid only in indexing.");
                         }
                     }
                     case ':':
@@ -2114,15 +2294,15 @@ class Evaluator implements EvaluatorInterface {
                                 return Complex.one();
                             }
                         } else {
-                            throw new SyntaxError('indeterminate colon. The colon to refer a range is valid only in indexing.');
+                            this.context.throwSyntaxError('indeterminate colon. The colon to refer a range is valid only in indexing.');
                         }
                     case 'IDX': {
                         if (!tree.expr) {
-                            throw new ReferenceError(`'${tree.id}' undefined.`);
+                            this.context.throwReferenceError(`'${tree.id}' undefined.`);
                         }
                         tree.expr.parent = tree;
                         const expr = AST.reduceToFirstIfReturnList(this.Evaluator(tree.expr, scope));
-                        return this.workspace.apply(expr, tree.args, tree);
+                        return this.context.apply(expr, tree.args, tree);
                     }
                     case 'CMDWLIST': {
                         const result = this.commandWordListTable[tree.id].func(...tree.args.map((word: CharString) => word.str));
@@ -2149,7 +2329,7 @@ class Evaluator implements EvaluatorInterface {
                         };
                     }
                     default:
-                        throw new EvalError(`evaluating undefined type '${tree.type}'.`);
+                        this.context.throwEvalError(`evaluating undefined type '${tree.type}'.`);
                 }
             }
         } else {
@@ -2164,11 +2344,11 @@ class Evaluator implements EvaluatorInterface {
      */
     public Evaluate(tree: NodeInput): NodeInput {
         try {
-            this._exitStatus = Evaluator.response.OK;
+            this._exitStatus = Interpreter.response.OK;
             tree.parent = null;
             return this.Evaluator(tree);
         } catch (e) {
-            this._exitStatus = Evaluator.response.EVAL_ERROR;
+            this._exitStatus = Interpreter.response.EVAL_ERROR;
             throw e;
         }
     }
@@ -2459,10 +2639,10 @@ class Evaluator implements EvaluatorInterface {
                             } else {
                                 let unparse;
                                 if (tree.expr.type === 'IDENT') {
-                                    const aliasTreeName = this.workspace.aliasNameFunction(tree.expr.id);
-                                    if (aliasTreeName in this.workspace.builtInFunctionTable && this.workspace.builtInFunctionTable[aliasTreeName].UnparserMathML) {
-                                        unparse = this.workspace.builtInFunctionTable[aliasTreeName].UnparserMathML(tree);
-                                    } else if (aliasTreeName in this.workspace.builtInFunctionTable && aliasTreeName in MathML.format) {
+                                    const aliasTreeName = this.context.aliasNameFunction(tree.expr.id);
+                                    if (aliasTreeName in this.context.builtInFunctionTable && this.context.builtInFunctionTable[aliasTreeName].UnparserMathML) {
+                                        unparse = this.context.builtInFunctionTable[aliasTreeName].UnparserMathML(tree);
+                                    } else if (aliasTreeName in this.context.builtInFunctionTable && aliasTreeName in MathML.format) {
                                         unparse = MathML.format[aliasTreeName](...tree.args.map((arg: NodeExpr) => this.UnparserMathML(arg)));
                                     } else {
                                         unparse = MathML.format['IDX'](
@@ -2542,6 +2722,6 @@ class Evaluator implements EvaluatorInterface {
     }
 }
 
-export type { EvaluatorConfig, IncDecOperator };
-export { Scope, CallFrame, EvaluatorError, EvaluatorWorkspace, Evaluator };
-export default { Scope, CallFrame, EvaluatorError, EvaluatorWorkspace, Evaluator };
+export type { InterpreterConfig, IncDecOperator };
+export { Scope, CallFrame, InterpreterError, EvalError, ReferenceError, UndefinedReferenceError, CircularReferenceError, SyntaxError, InterpreterContext, Interpreter };
+export default { Scope, CallFrame, InterpreterError, EvalError, ReferenceError, UndefinedReferenceError, CircularReferenceError, SyntaxError, InterpreterContext, Interpreter };

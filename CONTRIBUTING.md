@@ -117,7 +117,7 @@ Some are listed below:
 - Integer types and bitwise operations and functions.
 - String type and their respective functions.
 - More extensive tests need to be written, especially to test the parser and
-  evaluator.
+  interpreter.
 
 You are welcome to contribute to this project. I will be very grateful if you
 participate in some way.

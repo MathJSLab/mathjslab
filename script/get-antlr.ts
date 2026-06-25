@@ -11,6 +11,7 @@ const turndownService = new turndown({ br: '\r\n', emDelimiter: '*' });
 import getHtmlParsed from './helper/getHtmlParsed';
 import downloadIfNotExist from './helper/downloadIfNotExist';
 import { exit } from 'node:process';
+import { HTMLElement } from 'node-html-parser';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

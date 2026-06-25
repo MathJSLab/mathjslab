@@ -1,7 +1,7 @@
 import { Decimal } from 'decimal.js';
 
 import * as TypeOfComplex from './ComplexInterface';
-import { Evaluator } from './Evaluator';
+import { Interpreter } from './Interpreter';
 
 const defaultSettings: Partial<TypeOfComplex.ComplexConfig> = {
     precision: 336,
@@ -139,19 +139,24 @@ class ComplexDecimal implements TypeOfComplex.ComplexInterface<Decimal, number, 
     public static readonly imagGreaterThan = (z: ComplexDecimal, value: Decimal.Value): boolean => z.im.gt(value);
 
     public static readonly parse: TypeOfComplex.ParseComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.parseFactory<Decimal, ComplexDecimal, number, unknown>(ComplexDecimal);
-    public static readonly precedence: TypeOfComplex.PrecedenceComplexHandler<Decimal, ComplexDecimal, Evaluator, number> = TypeOfComplex.precedenceFactory<Decimal, ComplexDecimal, number>(
+    public static readonly precedence: TypeOfComplex.PrecedenceComplexHandler<Decimal, ComplexDecimal, Interpreter, number> = TypeOfComplex.precedenceFactory<
+        Decimal,
         ComplexDecimal,
-    );
+        number
+    >(ComplexDecimal);
     public static readonly unparseValue: TypeOfComplex.UnparseValueComplexHandler<Decimal> = TypeOfComplex.unparseValueFactory<Decimal, ComplexDecimal>(Decimal, ComplexDecimal);
-    public static readonly unparse: TypeOfComplex.UnparseComplexHandler<Decimal, ComplexDecimal, Evaluator, number> = TypeOfComplex.unparseFactory<Decimal, ComplexDecimal, number, unknown>(
+    public static readonly unparse: TypeOfComplex.UnparseComplexHandler<Decimal, ComplexDecimal, Interpreter, number> = TypeOfComplex.unparseFactory<
+        Decimal,
         ComplexDecimal,
-    );
+        number,
+        unknown
+    >(ComplexDecimal);
     public static readonly toString: TypeOfComplex.ToStringComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.toStringFactory<Decimal, ComplexDecimal, number, unknown>(ComplexDecimal);
     public toString(): string {
         return ComplexDecimal.toString(this);
     }
     public static readonly unparseMathMLValue: TypeOfComplex.UnparseValueComplexHandler<Decimal> = TypeOfComplex.unparseMathMLValueFactory<Decimal, ComplexDecimal>(Decimal, ComplexDecimal);
-    public static readonly unparseMathML: TypeOfComplex.UnparseComplexHandler<Decimal, ComplexDecimal, Evaluator, number> = TypeOfComplex.unparseMathMLFactory<
+    public static readonly unparseMathML: TypeOfComplex.UnparseComplexHandler<Decimal, ComplexDecimal, Interpreter, number> = TypeOfComplex.unparseMathMLFactory<
         Decimal,
         ComplexDecimal,
         number

@@ -1,5 +1,5 @@
 import * as TypeOfComplex from './ComplexInterface';
-import { Evaluator } from './Evaluator';
+import { Interpreter } from './Interpreter';
 
 const defaultSettings: Partial<TypeOfComplex.ComplexConfig> = {
     precision: 15 /* 16 can be used too, but 15 ensures compatibility */,
@@ -129,17 +129,17 @@ class ComplexNumber implements TypeOfComplex.ComplexInterface<number, number, un
     public static readonly imagGreaterThan = (z: ComplexNumber, value: TypeOfComplex.NumLike<number>): boolean => z.im > Number(value);
 
     public static readonly parse: TypeOfComplex.ParseComplexHandler<number, ComplexNumber> = TypeOfComplex.parseFactory<number, ComplexNumber>(ComplexNumber);
-    public static readonly precedence: TypeOfComplex.PrecedenceComplexHandler<number, ComplexNumber, Evaluator, number> = TypeOfComplex.precedenceFactory<number, ComplexNumber, number>(
+    public static readonly precedence: TypeOfComplex.PrecedenceComplexHandler<number, ComplexNumber, Interpreter, number> = TypeOfComplex.precedenceFactory<number, ComplexNumber, number>(
         ComplexNumber,
     );
     public static readonly unparseValue: TypeOfComplex.UnparseValueComplexHandler<number> = TypeOfComplex.unparseValueFactory<number, ComplexNumber>(Math, ComplexNumber);
-    public static readonly unparse: TypeOfComplex.UnparseComplexHandler<number, ComplexNumber, Evaluator> = TypeOfComplex.unparseFactory<number, ComplexNumber>(ComplexNumber);
+    public static readonly unparse: TypeOfComplex.UnparseComplexHandler<number, ComplexNumber, Interpreter> = TypeOfComplex.unparseFactory<number, ComplexNumber>(ComplexNumber);
     public static readonly toString: TypeOfComplex.ToStringComplexHandler<number, ComplexNumber> = TypeOfComplex.toStringFactory<number, ComplexNumber, number, unknown>(ComplexNumber);
     public toString(): string {
         return ComplexNumber.toString(this);
     }
     public static readonly unparseMathMLValue: TypeOfComplex.UnparseValueComplexHandler<number> = TypeOfComplex.unparseMathMLValueFactory<number, ComplexNumber>(Math, ComplexNumber);
-    public static readonly unparseMathML: TypeOfComplex.UnparseComplexHandler<number, ComplexNumber, Evaluator, number> = TypeOfComplex.unparseMathMLFactory<number, ComplexNumber, number>(
+    public static readonly unparseMathML: TypeOfComplex.UnparseComplexHandler<number, ComplexNumber, Interpreter, number> = TypeOfComplex.unparseMathMLFactory<number, ComplexNumber, number>(
         ComplexNumber,
     );
 

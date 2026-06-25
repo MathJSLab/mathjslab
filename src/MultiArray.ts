@@ -4,7 +4,7 @@ import { CharString } from './CharString';
 import { Structure } from './Structure';
 import { FunctionHandle } from './FunctionHandle';
 import { AST, NodeReturnList, ReturnHandlerResult } from './AST';
-import { Evaluator, Scope } from './Evaluator';
+import { Interpreter, Scope } from './Interpreter';
 
 /**
  * MultiArray Element type.
@@ -616,8 +616,8 @@ class MultiArray<ELEMENT = Elements> {
      * @param M MultiArray object.
      * @returns String of unparsed MultiArray.
      */
-    public static readonly unparse = (M: MultiArray, evaluator: Evaluator, parentPrecedence = 0): string => {
-        const unparseRows = (row: ElementType[]) => row.map((value) => evaluator.Unparse(value)).join() + ';\n';
+    public static readonly unparse = (M: MultiArray, interpreter: Interpreter, parentPrecedence = 0): string => {
+        const unparseRows = (row: ElementType[]) => row.map((value) => interpreter.Unparse(value)).join() + ';\n';
         let arraystr: string = '';
         if (M.dimension.reduce((p, c) => p * c, 1) === 0) {
             return `${M.isCell ? '{ }' : '[ ]'}(${M.dimension.join('x')})`;
@@ -653,8 +653,8 @@ class MultiArray<ELEMENT = Elements> {
      * @param M MultiArray object.
      * @returns String of unparsed MultiArray in MathML language.
      */
-    public static readonly unparseMathML = (M: MultiArray, evaluator: Evaluator, parentPrecedence = 0): string => {
-        const unparseRows = (row: ElementType[]) => `<mtr>${row.map((value) => `<mtd>${evaluator.UnparserMathML(value)}</mtd>`).join('')}</mtr>`;
+    public static readonly unparseMathML = (M: MultiArray, interpreter: Interpreter, parentPrecedence = 0): string => {
+        const unparseRows = (row: ElementType[]) => `<mtr>${row.map((value) => `<mtd>${interpreter.UnparserMathML(value)}</mtd>`).join('')}</mtr>`;
         const buildMrow = (rows: string) =>
             `<mrow><mo fence="true" stretchy="true">${M.isCell ? '{' : '['}</mo><mtable>${rows}</mtable><mo fence="true" stretchy="true">${M.isCell ? '}' : ']'}</mo></mrow>`;
         if (M.dimension.reduce((p, c) => p * c, 1) === 0) {
@@ -1076,9 +1076,9 @@ class MultiArray<ELEMENT = Elements> {
      * @param input Input string to generate error messages (the id of array).
      * @returns linear index.
      */
-    public static readonly parseSubscript = (dimension: number[], subscript: ComplexType[], input?: string, evaluator?: Evaluator): number => {
+    public static readonly parseSubscript = (dimension: number[], subscript: ComplexType[], input?: string, interpreter?: Interpreter): number => {
         /* Converts Complex[] subscript parameter to number[]. */
-        const index = subscript.map((i) => MultiArray.testIndex(i, `${input ? input : ''}${evaluator ? '(' + subscript.map((i) => evaluator.Unparse(i)).join() + ')' : ''}`));
+        const index = subscript.map((i) => MultiArray.testIndex(i, `${input ? input : ''}${interpreter ? '(' + subscript.map((i) => interpreter.Unparse(i)).join() + ')' : ''}`));
         /**
          * Throws comprehensive out of bound error indicating subscript index and bound.
          * @param indexPosition Position of subscript index out of bound.
@@ -1581,38 +1581,38 @@ class MultiArray<ELEMENT = Elements> {
      * then then concatenates the elements row by row horizontally, then
      * concatenates the rows vertically.
      * @param M MultiArray object.
-     * @param evaluator Evaluator instance.
+     * @param interpreter Interpreter instance.
      * @param local Local context (function evaluation).
      * @param fname Function name (context).
      * @returns Evaluated MultiArray object.
      */
-    private static readonly evaluateRecursive = (M: MultiArray, evaluator: Evaluator | null | undefined, scope?: Scope): MultiArray => {
+    private static readonly evaluateRecursive = (M: MultiArray, interpreter: Interpreter | null | undefined, scope?: Scope): MultiArray => {
         if (M.dimension.length > 2) {
-            return MultiArray.concatenate(M.dimension.length - 1, 'evaluate', ...MultiArray.splitLastDimension(M).map((S) => MultiArray.evaluate(S, evaluator, scope)));
+            return MultiArray.concatenate(M.dimension.length - 1, 'evaluate', ...MultiArray.splitLastDimension(M).map((S) => MultiArray.evaluate(S, interpreter, scope)));
         } else {
             return MultiArray.concatenate(
                 0,
                 'evaluate',
                 ...M.array.map((row) =>
-                    MultiArray.concatenate(1, 'evaluate', ...row.map((element) => MultiArray.scalarToMultiArray(evaluator ? evaluator.Evaluator(element, scope) : element))),
+                    MultiArray.concatenate(1, 'evaluate', ...row.map((element) => MultiArray.scalarToMultiArray(interpreter ? interpreter.Evaluator(element, scope) : element))),
                 ),
             );
         }
     };
 
     /**
-     * Wrapper to not pass the null array to `MultiArray.evaluatorRecursive`.
+     * Wrapper to not pass the null array to `MultiArray.interpreterRecursive`.
      * @param M MultiArray object.
-     * @param evaluator Evaluator instance.
+     * @param interpreter Interpreter instance.
      * @param local Local context (function evaluation).
      * @param fname Function name (context).
      * @returns Evaluated MultiArray object.
      */
-    public static readonly evaluate = (M: MultiArray, evaluator?: Evaluator | null | undefined, scope?: Scope): MultiArray => {
+    public static readonly evaluate = (M: MultiArray, interpreter?: Interpreter | null | undefined, scope?: Scope): MultiArray => {
         if (MultiArray.isEmpty(M)) {
             return M;
         } else {
-            const result = MultiArray.evaluateRecursive(M, evaluator, scope);
+            const result = MultiArray.evaluateRecursive(M, interpreter, scope);
             result.isCell = M.isCell;
             MultiArray.setType(result);
             return result;
@@ -2071,7 +2071,7 @@ class MultiArray<ELEMENT = Elements> {
      *   calling this function.
      *
      * @param dimension Shape of the target MultiArray (e.g. [m, n, ...]).
-     * @param indexList Raw index arguments as provided by the evaluator.
+     * @param indexList Raw index arguments as provided by the interpreter.
      *
      * @returns An object describing the normalized indexing plan:
      * - isLinear: true if indexing uses a single argument (linear indexing)
@@ -2156,7 +2156,7 @@ class MultiArray<ELEMENT = Elements> {
      * @param dimension Shape of the target MultiArray.
      * @param callback Function invoked for each indexed element.
      * @param input Optional input string (used for error reporting).
-     * @param evaluator Optional evaluator (used for resolving expressions like `end`).
+     * @param interpreter Optional interpreter (used for resolving expressions like `end`).
      */
     private static readonly iterateWithLinearIndex = (
         idx: {
@@ -2167,12 +2167,12 @@ class MultiArray<ELEMENT = Elements> {
         dimension: number[],
         callback: (subscriptArgs: ComplexType[], linearIndex: number, n: number) => void,
         input?: string,
-        evaluator?: Evaluator,
+        interpreter?: Interpreter,
     ): void => {
         for (let n = 0; n < idx.total; n++) {
             const subscript = MultiArray.linearIndexToSubscript(idx.argsLength, n);
             const subscriptArgs: ComplexType[] = subscript.map((s, r) => idx.args[r][s - 1] as ComplexType);
-            const linearIndex = MultiArray.parseSubscript(dimension, subscriptArgs, input, evaluator);
+            const linearIndex = MultiArray.parseSubscript(dimension, subscriptArgs, input, interpreter);
             callback(subscriptArgs, linearIndex, n);
         }
     };
@@ -2683,7 +2683,7 @@ class MultiArray<ELEMENT = Elements> {
      *    - Supports linear indexing (single argument)
      *    - Supports multi-dimensional indexing (A(i,j,...))
      *    - Supports colon (:) and range expressions
-     *    - Supports `end` keyword via evaluator
+     *    - Supports `end` keyword via interpreter
      *
      * Processing steps (numeric case):
      *    a) Normalize index structure via `computeIndexingStructure`
@@ -2697,7 +2697,7 @@ class MultiArray<ELEMENT = Elements> {
      * @param M Target MultiArray being indexed.
      * @param id Identifier (used for error reporting and `end` resolution).
      * @param indexList Raw index arguments (scalars, arrays, or logical masks).
-     * @param evaluator Optional evaluator used to resolve dynamic expressions (e.g., `end`).
+     * @param interpreter Optional interpreter used to resolve dynamic expressions (e.g., `end`).
      *
      * @returns Array of linear indices (0-based).
      *
@@ -2717,7 +2717,7 @@ class MultiArray<ELEMENT = Elements> {
      * - Shape/orientation semantics are handled separately (e.g., in getElements
      *   and collapseResult).
      */
-    private static resolveLinearIndices = (M: MultiArray, id: string, indexList: (ComplexType | MultiArray)[], evaluator?: Evaluator): number[] => {
+    private static resolveLinearIndices = (M: MultiArray, id: string, indexList: (ComplexType | MultiArray)[], interpreter?: Interpreter): number[] => {
         /* Logical indexing */
         if (indexList.length === 1 && MultiArray.isLogicalIndex(indexList[0])) {
             let mask: MultiArray;
@@ -2739,7 +2739,7 @@ class MultiArray<ELEMENT = Elements> {
                 indices.push(linearIndex);
             },
             id,
-            evaluator,
+            interpreter,
         );
         return indices;
     };
@@ -2762,7 +2762,7 @@ class MultiArray<ELEMENT = Elements> {
      * @param idx Normalized indexing structure (from computeIndexingStructure).
      * @param dimension Target array dimensions.
      * @param input Optional input string (used for error reporting).
-     * @param evaluator Optional evaluator (used to resolve dynamic expressions such as `end`).
+     * @param interpreter Optional interpreter (used to resolve dynamic expressions such as `end`).
      *
      * @returns Array of linear indices (0-based).
      *
@@ -2772,7 +2772,7 @@ class MultiArray<ELEMENT = Elements> {
      * - Equivalent to manually accumulating results from iterateWithLinearIndex.
      * - Used to simplify and centralize index collection logic.
      */
-    private static collectLinearIndices = (idx: any, dimension: number[], input?: string, evaluator?: Evaluator): number[] => {
+    private static collectLinearIndices = (idx: any, dimension: number[], input?: string, interpreter?: Interpreter): number[] => {
         const indices: number[] = [];
         MultiArray.iterateWithLinearIndex(
             idx,
@@ -2781,7 +2781,7 @@ class MultiArray<ELEMENT = Elements> {
                 indices.push(linearIndex);
             },
             input,
-            evaluator,
+            interpreter,
         );
         return indices;
     };
@@ -2882,7 +2882,7 @@ class MultiArray<ELEMENT = Elements> {
      * @param id Identifier (used for error reporting and `end` resolution).
      * @param field Optional structure field access path.
      * @param indexList Index arguments (numeric or logical).
-     * @param evaluator Optional evaluator (used for dynamic expressions such as `end`).
+     * @param interpreter Optional interpreter (used for dynamic expressions such as `end`).
      *
      * @returns Resulting element(s), as a MultiArray or scalar.
      *
@@ -2898,12 +2898,12 @@ class MultiArray<ELEMENT = Elements> {
      * - Internally, all indexing is reduced to linear index operations,
      *   ensuring a consistent and extensible implementation.
      */
-    public static readonly getElements = (M: MultiArray, id: string, field: string[], indexList: (ComplexType | MultiArray)[], evaluator?: Evaluator): ElementType => {
+    public static readonly getElements = (M: MultiArray, id: string, field: string[], indexList: (ComplexType | MultiArray)[], interpreter?: Interpreter): ElementType => {
         if (indexList.length === 0) {
             return M;
         }
         /* Solve indexes (unified) */
-        const indices = MultiArray.resolveLinearIndices(M, id, indexList, evaluator);
+        const indices = MultiArray.resolveLinearIndices(M, id, indexList, interpreter);
         const selected = MultiArray.applyLinearSelection(M, indices, field);
         /* Logical case → special shape */
         if (indexList.length === 1 && MultiArray.isLogicalIndex(indexList[0])) {
@@ -2997,7 +2997,7 @@ class MultiArray<ELEMENT = Elements> {
      * @param indexList Raw index expressions (already evaluated)
      * @param right Right-hand side MultiArray
      * @param input Optional original expression (for error reporting / `end`)
-     * @param evaluator Evaluator instance (used for `end` resolution)
+     * @param interpreter Interpreter instance (used for `end` resolution)
      *
      * @throws RangeError If indexing is invalid or nonconformant
      * @throws EvalError If assignment dimensions are incompatible
@@ -3009,7 +3009,7 @@ class MultiArray<ELEMENT = Elements> {
         indexList: (ComplexType | MultiArray)[],
         right: MultiArray,
         input?: string,
-        evaluator?: Evaluator,
+        interpreter?: Interpreter,
     ): void => {
         const linearizedRight = MultiArray.linearize(right);
         /* Deletion (A(I) = []) */
@@ -3028,7 +3028,7 @@ class MultiArray<ELEMENT = Elements> {
             if (nonColon !== 1) {
                 throw new RangeError('a null assignment can only have one non-colon index');
             }
-            MultiArray.deleteElements(entry.node, indexList, input, evaluator);
+            MultiArray.deleteElements(entry.node, indexList, input, interpreter);
             return;
         }
         /* Basic validation */
@@ -3086,7 +3086,7 @@ class MultiArray<ELEMENT = Elements> {
         }
         const dimension = M.dimension.slice();
         /* Collect linear indices (with `end` support) */
-        const indices = MultiArray.collectLinearIndices(idx, dimension, input, evaluator);
+        const indices = MultiArray.collectLinearIndices(idx, dimension, input, interpreter);
         /* Centralized assignment */
         MultiArray.applyLinearAssignment(M, indices, linearizedRight, field);
     };
@@ -3114,7 +3114,7 @@ class MultiArray<ELEMENT = Elements> {
      * - Delegated to setElementsNumerical
      * - Supports:
      *     - multi-dimensional indexing
-     *     - `end` keyword (via evaluator)
+     *     - `end` keyword (via interpreter)
      *     - scalar expansion (broadcasting)
      *     - automatic array expansion
      *     - deletion via []
@@ -3136,7 +3136,7 @@ class MultiArray<ELEMENT = Elements> {
      * @param indexList Raw index expressions (logical or numeric)
      * @param right     Right-hand side value (MultiArray)
      * @param input     Optional source string (used for error reporting / `end`)
-     * @param evaluator Optional evaluator for dynamic expressions (e.g., `end`)
+     * @param interpreter Optional interpreter for dynamic expressions (e.g., `end`)
      */
     public static readonly setElements = (
         scope: Scope,
@@ -3145,7 +3145,7 @@ class MultiArray<ELEMENT = Elements> {
         indexList: (ComplexType | MultiArray)[],
         right: MultiArray,
         input?: string,
-        evaluator?: Evaluator,
+        interpreter?: Interpreter,
     ): void => {
         /* Logical indexing (single argument) */
         if (indexList.length === 1 && MultiArray.isLogicalIndex(indexList[0])) {
@@ -3185,7 +3185,7 @@ class MultiArray<ELEMENT = Elements> {
             return;
         }
         /* Numerical indexing (standard) */
-        MultiArray.setElementsNumerical(scope, id, field, indexList, right, input, evaluator);
+        MultiArray.setElementsNumerical(scope, id, field, indexList, right, input, interpreter);
     };
 
     /**
@@ -3234,16 +3234,16 @@ class MultiArray<ELEMENT = Elements> {
      * @param M Target MultiArray (modified in-place)
      * @param indexList Raw index expressions (logical or numeric)
      * @param input Optional original input string (used for error context)
-     * @param evaluator Optional evaluator (used to resolve expressions like "end")
+     * @param interpreter Optional interpreter (used to resolve expressions like "end")
      */
-    public static readonly deleteElements = (M: MultiArray, indexList: (ComplexType | MultiArray)[], input?: string, evaluator?: Evaluator): void => {
+    public static readonly deleteElements = (M: MultiArray, indexList: (ComplexType | MultiArray)[], input?: string, interpreter?: Interpreter): void => {
         if (indexList.length === 0) {
             throw new RangeError('invalid empty index list.');
         }
         const idx = MultiArray.computeIndexingStructure(M.dimension, indexList);
         /* Linear case → direct delegation */
         if (idx.isLinear) {
-            const indices = MultiArray.collectLinearIndices(idx, M.dimension, input, evaluator);
+            const indices = MultiArray.collectLinearIndices(idx, M.dimension, input, interpreter);
             MultiArray.applyDeletionFromIndices(M, indices);
             return;
         }
@@ -3261,7 +3261,7 @@ class MultiArray<ELEMENT = Elements> {
             throw new RangeError('a null assignment can only have one non-colon index');
         }
         /* Collect linear indices */
-        const indices = MultiArray.collectLinearIndices(idx, M.dimension, input, evaluator);
+        const indices = MultiArray.collectLinearIndices(idx, M.dimension, input, interpreter);
         const removeSet = new Set(indices);
         /* Reconstruct array (N-D) */
         const newDimension = M.dimension.slice();

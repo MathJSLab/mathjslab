@@ -12,4 +12,4 @@ export { CoreFunctions } from './CoreFunctions';
 export { Configuration } from './Configuration';
 export { MathML } from './MathML';
 export * from './AST';
-export * from './Evaluator';
+export * from './Interpreter';

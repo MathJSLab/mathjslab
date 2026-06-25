@@ -1,6 +1,6 @@
 import { CharString, StringQuoteCharacter } from './CharString';
 import { Complex, ComplexType } from './Complex';
-import { Scope } from './Evaluator';
+import { Scope } from './Interpreter';
 import { FunctionHandle } from './FunctionHandle';
 import { type ElementType, MultiArray } from './MultiArray';
 
@@ -78,7 +78,6 @@ type NodeType =
     | ':'
     | '<~>'
     | 'VOID'
-    | 'UNPARSE'
     | 'RETLIST'
     | 'FCNDEF'
     | 'USERFCN'
@@ -234,6 +233,7 @@ interface NodeIndirectRef extends NodeBase {
 type ReturnHandlerResult = { length: number } & Record<string, NodeExpr>;
 type ReturnSelector = (evaluated: ReturnHandlerResult, index: number) => NodeExpr;
 type ReturnHandler = (length: number) => ReturnHandlerResult;
+type ThrowError = (message: string) => never;
 
 /**
  * Return list node
@@ -272,7 +272,7 @@ interface NodeFunctionDefinition extends NodeFunction {
 
     /**
      * Argument validation blocks (MATLAB-style)
-     * NOT used by evaluator yet
+     * NOT used by interpreter yet
      */
     arguments: NodeList;
 
@@ -387,7 +387,7 @@ abstract class AST {
      * @param node AST node to copy.
      * @returns Shallow copy of `node`.
      */
-    public static readonly nodeCopy = <T = object>(node: T): T => Object.assign(Object.create(null), node);
+    public static readonly nodeCopy = <T = object>(node: T): T => Object.assign({}, node);
 
     public static readonly nodeVoid = (): NodeVoid => ({
         type: 'VOID',
@@ -694,12 +694,17 @@ abstract class AST {
         };
     };
 
+    /**
+     * Ensures that the node is of type `NodeReturnList`.
+     * @param node A `NodeExpr`
+     * @returns `node` as NodeReturnList
+     */
     public static readonly ensureReturnList = (node: NodeExpr): NodeReturnList => {
         if (node.type === 'RETLIST') {
             return node as NodeReturnList;
         }
         const result = node;
-        return AST.nodeReturnList((evaluated: ReturnHandlerResult, index: number) => {
+        return AST.nodeReturnList((evaluated: ReturnHandlerResult, index: number): NodeExpr | never => {
             if (index === 0) {
                 return result;
             } else {
@@ -714,9 +719,13 @@ abstract class AST {
      * @param maxLength Maximum length of return list.
      * @param currentLength Requested length of return list.
      */
-    public static readonly throwErrorIfGreaterThanReturnList = (maxLength: number, currentLength: number): void | never => {
+    public static readonly throwErrorIfGreaterThanReturnList = (maxLength: number, currentLength: number, throwError?: ThrowError): void | never => {
         if (currentLength > maxLength) {
-            throw new EvalError(`element number ${maxLength + 1} undefined in return list`);
+            const message = `element number ${maxLength + 1} undefined in return list`;
+            if (throwError) {
+                throwError(message);
+            }
+            throw new EvalError(message);
         }
     };
 
@@ -743,9 +752,13 @@ abstract class AST {
      * Throw invalid call error if (optional) test is true.
      * @param name
      */
-    public static readonly throwInvalidCallError = (name: string, test: boolean = true): void | never => {
+    public static readonly throwInvalidCallError = (name: string, test: boolean = true, throwError?: ThrowError): void | never => {
         if (test) {
-            throw new SyntaxError(`Invalid call to ${name}. Type 'help ${name}' to see correct usage.`);
+            const message = `Invalid call to ${name}. Type 'help ${name}' to see correct usage.`;
+            if (throwError) {
+                throwError(message);
+            }
+            throw new SyntaxError(message);
         }
     };
 

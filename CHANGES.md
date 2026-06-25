@@ -3,6 +3,43 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 2.0.0
+
+- Releasing the latest version as 1.9.2 violated the concepts of Semantic
+  Versioning, therefore the current version is changing the major version.
+- Bug fix in the `README.md` file: link to the ES2022 bundle.
+- All occurrences of
+    - `Evaluator*` were replaced with `Interpreter*` (`Evaluator` as a method
+      name have been retained).
+    - `evaluator` were replaced with `interpreter`.
+    - `EVALUATOR` were replaced with `INTERPRETER` Occurrences of `Evaluator`.
+- The directory `promo` was created containing files related to promotional
+  materials.
+- Interpreter error handling was consolidated and improved:
+    - Added a public `InterpreterError` hierarchy, including `EvalError`,
+      `ReferenceError`, `UndefinedReferenceError`, `CircularReferenceError`,
+      and `SyntaxError`.
+    - Restored MATLAB/Octave-like stack trace reporting for errors raised
+      inside nested user-defined functions.
+    - Centralized interpreter error creation so runtime, reference, syntax,
+      invalid-call, and return-list errors can preserve interpreter stack
+      frames.
+    - Added stack trace support to interpreter paths that use `AST` helper
+      errors.
+- Forward reference handling was improved:
+    - Replaced message-regex based undefined-reference detection with the
+      structured `UndefinedReferenceError` class.
+    - Prevented errors propagated from nested function calls from being treated
+      as local forward references.
+    - Added circular dependency detection for unresolved forward references,
+      reporting chains such as `A → B → A` and `A → B → C → A`.
+- Added regression tests for interpreter stack traces, forward reference
+  resolution, circular reference errors, exported error classes, and
+  `AST`-helper errors reported through the interpreter.
+- Reviewed and polished comments in `src/Interpreter.ts` and
+  `src/Interpreter.spec.ts`, translating them to English and documenting the
+  new error and forward-reference flow.
+
 ## 1.9.2
 
 - Bug fix: During assignments where one variable was assigned to another, the

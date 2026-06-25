@@ -27,7 +27,7 @@
 
 **[ISBN 978-65-00-82338-7](https://grp.isbn-international.org/search/piid_solr?keys=978-65-00-82338-7)**
 
-This package emulates a parser and evaluator for a subset of
+This package emulates a parser and interpreter for a subset of
 [MATLAB&reg;](https://www.mathworks.com/products/matlab.html)/[Octave](https://www.gnu.org/software/octave/)
 language. It is written completely in
 [TypeScript](https://www.typescriptlang.org/).
@@ -59,7 +59,7 @@ a [parser](https://en.wikipedia.org/wiki/Parsing) that create an
 input.
 
 Other components besides the [parser](https://en.wikipedia.org/wiki/Parsing)
-are the evaluator, which computes the inputs, and the
+are the interpreter, which computes the inputs, and the
 [MathML](https://www.w3.org/Math/) unparser, that generates mathematical
 representations of the inputs and results.
 
@@ -125,7 +125,7 @@ available in the
   [framework](https://en.wikipedia.org/wiki/Software_framework) (most tests not
   yet implemented).
 - Is easily extensible through configuration parameters passed to
-  [`Evaluator` constructor](https://github.com/MathJSLab/mathjslab/blob/main/src/Evaluator.ts).
+  [`Interpreter` constructor](https://github.com/MathJSLab/mathjslab/blob/main/src/Interpreter.ts).
 - [Open source](https://opensource.org/) software with fully documented code:
   [MIT License](https://github.com/MathJSLab/mathjslab/blob/main/LICENSE).
 - Software with assigned
@@ -168,7 +168,7 @@ There are 6 different bundles:
   ([mathjslab.web.umd2022.js](https://cdn.jsdelivr.net/npm/mathjslab/lib/mathjslab.web.umd2022.js)).
 - For browser environment, [ES Module](https://nodejs.org/api/esm.html),
   [ES2022](https://262.ecma-international.org/11.0/) target
-  ([mathjslab.web.esm2022.js](<(https://cdn.jsdelivr.net/npm/mathjslab/lib/mathjslab.web.esm2022.js)>)).
+  ([mathjslab.web.esm2022.js](https://cdn.jsdelivr.net/npm/mathjslab/lib/mathjslab.web.esm2022.js)).
 
 ## Installation
 
@@ -181,19 +181,19 @@ npm install mathjslab
 ## Usage
 
 The basic [API](https://en.wikipedia.org/wiki/API) is an instantiation of
-`Evaluator` class with optional configuration.
+`Interpreter` class with optional configuration.
 
 Import **[MathJSLab](https://mathjslab.com/)
 [API](https://en.wikipedia.org/wiki/API)**:
 
 ```typescript
-import { Evaluator, TEvaluatorConfig } from "mathjslab";
+import { Interpreter, TInterpreterConfig } from "mathjslab";
 ```
 
-Instantiate the `Evaluator` class with:
+Instantiate the `Interpreter` class with:
 
 ```typescript
-let evaluator: Evaluator = new Evaluator(EvaluatorConfiguration);
+let interpreter: Interpreter = new Interpreter(InterpreterConfiguration);
 ```
 
 ### Examples
@@ -201,20 +201,20 @@ let evaluator: Evaluator = new Evaluator(EvaluatorConfiguration);
 - **Parsing**:
 
 ```typescript
-let input: AST.NodeInput = evaluator.Parse("x=sqrt(1+2*3)");
+let input: AST.NodeInput = interpreter.Parse("x=sqrt(1+2*3)");
 ```
 
 - **Evaluation**:
 
 ```typescript
-let result: AST.NodeInput = evaluator.Evaluate(input);
+let result: AST.NodeInput = interpreter.Evaluate(input);
 ```
 
 - **[MathML](https://www.w3.org/Math/) generation**:
 
 ```typescript
-let mathmlInput: string = evaluator.UnparseMathML(input);
-let mathmlResult: string = evaluator.UnparseMathML(result);
+let mathmlInput: string = interpreter.UnparseMathML(input);
+let mathmlResult: string = interpreter.UnparseMathML(result);
 ```
 
 You can try [some basic examples](https://codepen.io/collection/BaNkVd) on
@@ -257,10 +257,10 @@ following [HTML](https://developer.mozilla.org/en-US/docs/Web/HTML) code:
 ### [MathJSLab](https://www.npmjs.com/package/mathjslab) [module](https://github.com/umdjs/umd) use
 
 The [UMD module](https://github.com/umdjs/umd) will be loaded with `mathjslab`
-name. You can instantiate `Evaluator` with:
+name. You can instantiate `Interpreter` with:
 
 ```typescript
-let evaluator = new mathjslab.Evaluator(EvaluatorConfiguration);
+let interpreter = new mathjslab.Evaluator(InterpreterConfiguration);
 ```
 
 ## Contributing
