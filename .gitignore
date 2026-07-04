@@ -59,3 +59,6 @@ package-lock.json
 
 # vscode settings
 .vscode
+
+# OpenAI Codex Agent
+.agents/

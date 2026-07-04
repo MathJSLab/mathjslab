@@ -720,6 +720,20 @@ Reserved node.
 
 Return list node
 
+## NodeSwitch
+
+- Kind: `interface`
+- Source: `src/AST.ts`
+
+`switch` statement node.
+
+## NodeSwitchCase
+
+- Kind: `interface`
+- Source: `src/AST.ts`
+
+`case` clause node.
+
 ## NodeType
 
 - Kind: `type`

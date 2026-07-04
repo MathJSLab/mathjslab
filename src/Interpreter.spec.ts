@@ -40,6 +40,27 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(unparsed === '1+2*3\n').toBe(true);
         });
 
+        it('Should evaluate a switch case that matches the selector.', () => {
+            const localInterpreter = Interpreter.Create();
+            const value = localInterpreter.Execute(['x = 2;', 'switch x', 'case 1', '  y = 10;', 'case 2', '  y = 20;', 'otherwise', '  y = 30;', 'end', 'y'].join('\n'));
+
+            expect(localInterpreter.Unparse(value)).toBe('x=2\n20\n20\n');
+        });
+
+        it('Should evaluate switch otherwise when no case matches.', () => {
+            const localInterpreter = Interpreter.Create();
+            const value = localInterpreter.Execute(['x = 3;', 'switch x', 'case 1', '  y = 10;', 'case 2', '  y = 20;', 'otherwise', '  y = 30;', 'endswitch', 'y'].join('\n'));
+
+            expect(localInterpreter.Unparse(value)).toBe('x=3\n30\n30\n');
+        });
+
+        it('Should allow a switch without a matching case or otherwise.', () => {
+            const localInterpreter = Interpreter.Create();
+            const value = localInterpreter.Execute(['x = 3;', 'switch x', 'case 1', '  y = 10;', 'end', 'x'].join('\n'));
+
+            expect(localInterpreter.Unparse(value)).toBe('x=3\n3\n');
+        });
+
         /**
          * Error handling regressions.
          */

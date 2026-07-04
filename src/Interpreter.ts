@@ -2672,6 +2672,29 @@ class Interpreter implements InterpreterInterface {
                             parent: tree,
                         };
                     }
+                    case 'SWITCH': {
+                        tree.expression.parent = tree;
+                        const switchValue = AST.reduceToFirstIfReturnList(this.Evaluator(tree.expression, scope));
+                        for (const switchCase of tree.cases) {
+                            switchCase.parent = tree;
+                            switchCase.expression.parent = switchCase;
+                            const caseValue = AST.reduceToFirstIfReturnList(this.Evaluator(switchCase.expression, scope));
+                            const matches = AST.reduceToFirstIfReturnList(this.Evaluator(AST.nodeOperation('==', MathOperation.copy(switchValue), MathOperation.copy(caseValue)), scope));
+                            if (this.toBoolean(matches)) {
+                                switchCase.then.parent = switchCase;
+                                return AST.reduceToFirstIfReturnList(this.Evaluator(switchCase.then, scope));
+                            }
+                        }
+                        if (tree.otherwise) {
+                            tree.otherwise.parent = tree;
+                            return AST.reduceToFirstIfReturnList(this.Evaluator(tree.otherwise, scope));
+                        }
+                        return {
+                            type: 'LIST',
+                            list: [],
+                            parent: tree,
+                        };
+                    }
                     default:
                         this.context.throwEvalError(`evaluating undefined type '${tree.type}'.`);
                 }
@@ -2857,6 +2880,17 @@ class Interpreter implements InterpreterInterface {
                             }
                             ifstr += 'ENDIF';
                             return ifstr;
+                        case 'SWITCH':
+                            let switchstr = 'SWITCH ' + this.Unparse(tree.expression) + '\n';
+                            for (const switchCase of tree.cases) {
+                                switchstr += 'CASE ' + this.Unparse(switchCase.expression) + '\n';
+                                switchstr += this.Unparse(switchCase.then) + '\n';
+                            }
+                            if (tree.otherwise) {
+                                switchstr += 'OTHERWISE\n' + this.Unparse(tree.otherwise) + '\n';
+                            }
+                            switchstr += 'ENDSWITCH';
+                            return switchstr;
                         case 'FCNDEF':
                         case 'VOID':
                             return '';

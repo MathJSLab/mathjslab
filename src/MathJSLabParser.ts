@@ -27,7 +27,20 @@ import {
 // eslint-disable-next-line no-unused-vars
 type int = number;
 
-import type { OperatorType, NodeInput, NodeExpr, NodeList, NodeArgumentValidation, NodeArguments, NodeIf, NodeElseIf, NodeElse, StringQuoteCharacter } from './AST';
+import type {
+    OperatorType,
+    NodeInput,
+    NodeExpr,
+    NodeList,
+    NodeArgumentValidation,
+    NodeArguments,
+    NodeIf,
+    NodeElseIf,
+    NodeElse,
+    NodeSwitch,
+    NodeSwitchCase,
+    StringQuoteCharacter,
+} from './AST';
 import { AST } from './AST';
 
 /**
@@ -201,18 +214,22 @@ export default class MathJSLabParser extends Parser {
     public static readonly RULE_if_command = 28;
     public static readonly RULE_elseif_clause = 29;
     public static readonly RULE_else_clause = 30;
-    public static readonly RULE_param_list = 31;
-    public static readonly RULE_param_list_elt = 32;
-    public static readonly RULE_return_list = 33;
-    public static readonly RULE_function = 34;
-    public static readonly RULE_arguments_block_list = 35;
-    public static readonly RULE_arguments_block = 36;
-    public static readonly RULE_args_validation_list = 37;
-    public static readonly RULE_arg_validation = 38;
-    public static readonly RULE_arg_validation_name = 39;
-    public static readonly RULE_sep_no_nl = 40;
-    public static readonly RULE_nl = 41;
-    public static readonly RULE_sep = 42;
+    public static readonly RULE_switch_command = 31;
+    public static readonly RULE_switch_case_list = 32;
+    public static readonly RULE_switch_case = 33;
+    public static readonly RULE_otherwise_case = 34;
+    public static readonly RULE_param_list = 35;
+    public static readonly RULE_param_list_elt = 36;
+    public static readonly RULE_return_list = 37;
+    public static readonly RULE_function = 38;
+    public static readonly RULE_arguments_block_list = 39;
+    public static readonly RULE_arguments_block = 40;
+    public static readonly RULE_args_validation_list = 41;
+    public static readonly RULE_arg_validation = 42;
+    public static readonly RULE_arg_validation_name = 43;
+    public static readonly RULE_sep_no_nl = 44;
+    public static readonly RULE_nl = 45;
+    public static readonly RULE_sep = 46;
     public static readonly literalNames: (string | null)[] = [
         null,
         null,
@@ -487,6 +504,10 @@ export default class MathJSLabParser extends Parser {
         'if_command',
         'elseif_clause',
         'else_clause',
+        'switch_command',
+        'switch_case_list',
+        'switch_case',
+        'otherwise_case',
         'param_list',
         'param_list_elt',
         'return_list',
@@ -530,23 +551,23 @@ export default class MathJSLabParser extends Parser {
         this.enterRule(localctx, 0, MathJSLabParser.RULE_input);
         let _la: number;
         try {
-            this.state = 98;
+            this.state = 106;
             this._errHandler.sync(this);
             switch (this._interp.adaptivePredict(this._input, 2, this._ctx)) {
                 case 1:
                     this.enterOuterAlt(localctx, 1);
                     {
-                        this.state = 87;
+                        this.state = 95;
                         this._errHandler.sync(this);
                         _la = this._input.LA(1);
                         if (_la === 51 || _la === 52 || _la === 100) {
                             {
-                                this.state = 86;
+                                this.state = 94;
                                 this.sep();
                             }
                         }
 
-                        this.state = 89;
+                        this.state = 97;
                         this.match(MathJSLabParser.EOF);
 
                         localctx.node = null;
@@ -555,19 +576,19 @@ export default class MathJSLabParser extends Parser {
                 case 2:
                     this.enterOuterAlt(localctx, 2);
                     {
-                        this.state = 92;
+                        this.state = 100;
                         this._errHandler.sync(this);
                         _la = this._input.LA(1);
                         if (_la === 51 || _la === 52 || _la === 100) {
                             {
-                                this.state = 91;
+                                this.state = 99;
                                 this.sep();
                             }
                         }
 
-                        this.state = 94;
+                        this.state = 102;
                         this.global_list();
-                        this.state = 95;
+                        this.state = 103;
                         this.match(MathJSLabParser.EOF);
 
                         localctx.node = localctx.global_list().node;
@@ -596,7 +617,7 @@ export default class MathJSLabParser extends Parser {
             let _alt: number;
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 100;
+                this.state = 108;
                 this.statement();
 
                 localctx.statement(localctx.i).node.start = {
@@ -609,16 +630,16 @@ export default class MathJSLabParser extends Parser {
                 };
                 localctx.node = AST.nodeListFirst(localctx.statement(localctx.i++).node);
 
-                this.state = 108;
+                this.state = 116;
                 this._errHandler.sync(this);
                 _alt = this._interp.adaptivePredict(this._input, 3, this._ctx);
                 while (_alt !== 2 && _alt !== ATN.INVALID_ALT_NUMBER) {
                     if (_alt === 1) {
                         {
                             {
-                                this.state = 102;
+                                this.state = 110;
                                 this.sep();
-                                this.state = 103;
+                                this.state = 111;
                                 this.statement();
 
                                 localctx.statement(localctx.i).node.start = {
@@ -636,16 +657,16 @@ export default class MathJSLabParser extends Parser {
                             }
                         }
                     }
-                    this.state = 110;
+                    this.state = 118;
                     this._errHandler.sync(this);
                     _alt = this._interp.adaptivePredict(this._input, 3, this._ctx);
                 }
-                this.state = 112;
+                this.state = 120;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 if (_la === 51 || _la === 52 || _la === 100) {
                     {
-                        this.state = 111;
+                        this.state = 119;
                         this.sep();
                     }
                 }
@@ -671,12 +692,11 @@ export default class MathJSLabParser extends Parser {
     public list(): ListContext {
         let localctx: ListContext = new ListContext(this, this._ctx, this.state);
         this.enterRule(localctx, 4, MathJSLabParser.RULE_list);
-        let _la: number;
         try {
             let _alt: number;
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 116;
+                this.state = 124;
                 this.statement();
 
                 localctx.statement(localctx.i).node.start = {
@@ -689,16 +709,16 @@ export default class MathJSLabParser extends Parser {
                 };
                 localctx.node = AST.nodeListFirst(localctx.statement(localctx.i++).node);
 
-                this.state = 124;
+                this.state = 132;
                 this._errHandler.sync(this);
                 _alt = this._interp.adaptivePredict(this._input, 5, this._ctx);
                 while (_alt !== 2 && _alt !== ATN.INVALID_ALT_NUMBER) {
                     if (_alt === 1) {
                         {
                             {
-                                this.state = 118;
+                                this.state = 126;
                                 this.sep();
-                                this.state = 119;
+                                this.state = 127;
                                 this.statement();
 
                                 localctx.statement(localctx.i).node.start = {
@@ -716,18 +736,19 @@ export default class MathJSLabParser extends Parser {
                             }
                         }
                     }
-                    this.state = 126;
+                    this.state = 134;
                     this._errHandler.sync(this);
                     _alt = this._interp.adaptivePredict(this._input, 5, this._ctx);
                 }
-                this.state = 128;
+                this.state = 136;
                 this._errHandler.sync(this);
-                _la = this._input.LA(1);
-                if (_la === 51 || _la === 52 || _la === 100) {
-                    {
-                        this.state = 127;
-                        this.sep();
-                    }
+                switch (this._interp.adaptivePredict(this._input, 6, this._ctx)) {
+                    case 1:
+                        {
+                            this.state = 135;
+                            this.sep();
+                        }
+                        break;
                 }
 
                 if (localctx.sep(localctx.i - 1) && localctx.sep(localctx.i - 1).getText()[0] === ';') {
@@ -752,13 +773,13 @@ export default class MathJSLabParser extends Parser {
         let localctx: StatementContext = new StatementContext(this, this._ctx, this.state);
         this.enterRule(localctx, 6, MathJSLabParser.RULE_statement);
         try {
-            this.state = 141;
+            this.state = 149;
             this._errHandler.sync(this);
             switch (this._interp.adaptivePredict(this._input, 7, this._ctx)) {
                 case 1:
                     this.enterOuterAlt(localctx, 1);
                     {
-                        this.state = 132;
+                        this.state = 140;
                         this.expression();
 
                         localctx.node = localctx.expression().node;
@@ -767,7 +788,7 @@ export default class MathJSLabParser extends Parser {
                 case 2:
                     this.enterOuterAlt(localctx, 2);
                     {
-                        this.state = 135;
+                        this.state = 143;
                         this.command();
 
                         localctx.node = localctx.command().node;
@@ -776,7 +797,7 @@ export default class MathJSLabParser extends Parser {
                 case 3:
                     this.enterOuterAlt(localctx, 3);
                     {
-                        this.state = 138;
+                        this.state = 146;
                         this.word_list_cmd();
 
                         localctx.node = localctx.word_list_cmd().node;
@@ -804,15 +825,15 @@ export default class MathJSLabParser extends Parser {
         try {
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 143;
+                this.state = 151;
                 this.identifier();
-                this.state = 149;
+                this.state = 157;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 while (_la === 43 || _la === 125) {
                     {
                         {
-                            this.state = 144;
+                            this.state = 152;
                             this.string_();
 
                             if (localctx.i === 0) {
@@ -822,7 +843,7 @@ export default class MathJSLabParser extends Parser {
                             }
                         }
                     }
-                    this.state = 151;
+                    this.state = 159;
                     this._errHandler.sync(this);
                     _la = this._input.LA(1);
                 }
@@ -849,7 +870,7 @@ export default class MathJSLabParser extends Parser {
         try {
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 154;
+                this.state = 162;
                 this.match(MathJSLabParser.IDENTIFIER);
 
                 localctx.node = AST.nodeIdentifier(localctx.IDENTIFIER().getText());
@@ -872,13 +893,13 @@ export default class MathJSLabParser extends Parser {
         let localctx: StringContext = new StringContext(this, this._ctx, this.state);
         this.enterRule(localctx, 12, MathJSLabParser.RULE_string);
         try {
-            this.state = 161;
+            this.state = 169;
             this._errHandler.sync(this);
             switch (this._input.LA(1)) {
                 case 43:
                     this.enterOuterAlt(localctx, 1);
                     {
-                        this.state = 157;
+                        this.state = 165;
                         this.match(MathJSLabParser.STRING);
 
                         const str = localctx.STRING().getText();
@@ -888,7 +909,7 @@ export default class MathJSLabParser extends Parser {
                 case 125:
                     this.enterOuterAlt(localctx, 2);
                     {
-                        this.state = 159;
+                        this.state = 167;
                         this.match(MathJSLabParser.UNQUOTED_STRING);
 
                         localctx.node = AST.nodeString(localctx.UNQUOTED_STRING().getText());
@@ -917,7 +938,7 @@ export default class MathJSLabParser extends Parser {
         try {
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 163;
+                this.state = 171;
                 this.match(MathJSLabParser.FLOAT_NUMBER);
 
                 localctx.node = AST.nodeNumber(localctx.FLOAT_NUMBER().getText());
@@ -942,7 +963,7 @@ export default class MathJSLabParser extends Parser {
         try {
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 166;
+                this.state = 174;
                 this.match(MathJSLabParser.ENDRANGE);
 
                 localctx.node = AST.nodeEndRange();
@@ -965,13 +986,13 @@ export default class MathJSLabParser extends Parser {
         let localctx: ConstantContext = new ConstantContext(this, this._ctx, this.state);
         this.enterRule(localctx, 18, MathJSLabParser.RULE_constant);
         try {
-            this.state = 178;
+            this.state = 186;
             this._errHandler.sync(this);
             switch (this._input.LA(1)) {
                 case 97:
                     this.enterOuterAlt(localctx, 1);
                     {
-                        this.state = 169;
+                        this.state = 177;
                         this.number_();
 
                         localctx.node = localctx.number_().node;
@@ -981,7 +1002,7 @@ export default class MathJSLabParser extends Parser {
                 case 125:
                     this.enterOuterAlt(localctx, 2);
                     {
-                        this.state = 172;
+                        this.state = 180;
                         this.string_();
 
                         localctx.node = localctx.string_().node;
@@ -990,7 +1011,7 @@ export default class MathJSLabParser extends Parser {
                 case 6:
                     this.enterOuterAlt(localctx, 3);
                     {
-                        this.state = 175;
+                        this.state = 183;
                         this.end_range();
 
                         localctx.node = localctx.end_range().node;
@@ -1019,15 +1040,15 @@ export default class MathJSLabParser extends Parser {
         let _la: number;
         try {
             let _alt: number;
-            this.state = 226;
+            this.state = 234;
             this._errHandler.sync(this);
             switch (this._interp.adaptivePredict(this._input, 17, this._ctx)) {
                 case 1:
                     this.enterOuterAlt(localctx, 1);
                     {
-                        this.state = 180;
+                        this.state = 188;
                         this.match(MathJSLabParser.LBRACKET);
-                        this.state = 181;
+                        this.state = 189;
                         this.match(MathJSLabParser.RBRACKET);
 
                         localctx.node = AST.emptyArray();
@@ -1036,69 +1057,69 @@ export default class MathJSLabParser extends Parser {
                 case 2:
                     this.enterOuterAlt(localctx, 2);
                     {
-                        this.state = 183;
+                        this.state = 191;
                         this.match(MathJSLabParser.LBRACKET);
-                        this.state = 184;
+                        this.state = 192;
                         this.matrix_row();
 
                         localctx.node = AST.nodeFirstRow(localctx.matrix_row(localctx.i++).node);
 
-                        this.state = 195;
+                        this.state = 203;
                         this._errHandler.sync(this);
                         _alt = this._interp.adaptivePredict(this._input, 12, this._ctx);
                         while (_alt !== 2 && _alt !== ATN.INVALID_ALT_NUMBER) {
                             if (_alt === 1) {
                                 {
                                     {
-                                        this.state = 188;
+                                        this.state = 196;
                                         this._errHandler.sync(this);
                                         switch (this._input.LA(1)) {
                                             case 51:
                                                 {
-                                                    this.state = 186;
+                                                    this.state = 194;
                                                     this.match(MathJSLabParser.SEMICOLON);
                                                 }
                                                 break;
                                             case 100:
                                                 {
-                                                    this.state = 187;
+                                                    this.state = 195;
                                                     this.nl();
                                                 }
                                                 break;
                                             default:
                                                 throw new NoViableAltException(this);
                                         }
-                                        this.state = 190;
+                                        this.state = 198;
                                         this.matrix_row();
 
                                         localctx.node = AST.nodeAppendRow(localctx.node, localctx.matrix_row(localctx.i++).node);
                                     }
                                 }
                             }
-                            this.state = 197;
+                            this.state = 205;
                             this._errHandler.sync(this);
                             _alt = this._interp.adaptivePredict(this._input, 12, this._ctx);
                         }
-                        this.state = 199;
+                        this.state = 207;
                         this._errHandler.sync(this);
                         _la = this._input.LA(1);
                         if (_la === 100) {
                             {
-                                this.state = 198;
+                                this.state = 206;
                                 this.nl();
                             }
                         }
 
-                        this.state = 201;
+                        this.state = 209;
                         this.match(MathJSLabParser.RBRACKET);
                     }
                     break;
                 case 3:
                     this.enterOuterAlt(localctx, 3);
                     {
-                        this.state = 203;
+                        this.state = 211;
                         this.match(MathJSLabParser.LCURLYBR);
-                        this.state = 204;
+                        this.state = 212;
                         this.match(MathJSLabParser.RCURLYBR);
 
                         localctx.node = AST.emptyArray(true);
@@ -1107,60 +1128,60 @@ export default class MathJSLabParser extends Parser {
                 case 4:
                     this.enterOuterAlt(localctx, 4);
                     {
-                        this.state = 206;
+                        this.state = 214;
                         this.match(MathJSLabParser.LCURLYBR);
-                        this.state = 207;
+                        this.state = 215;
                         this.matrix_row();
 
                         localctx.node = AST.nodeFirstRow(localctx.matrix_row(localctx.i++).node, true);
 
-                        this.state = 218;
+                        this.state = 226;
                         this._errHandler.sync(this);
                         _alt = this._interp.adaptivePredict(this._input, 15, this._ctx);
                         while (_alt !== 2 && _alt !== ATN.INVALID_ALT_NUMBER) {
                             if (_alt === 1) {
                                 {
                                     {
-                                        this.state = 211;
+                                        this.state = 219;
                                         this._errHandler.sync(this);
                                         switch (this._input.LA(1)) {
                                             case 51:
                                                 {
-                                                    this.state = 209;
+                                                    this.state = 217;
                                                     this.match(MathJSLabParser.SEMICOLON);
                                                 }
                                                 break;
                                             case 100:
                                                 {
-                                                    this.state = 210;
+                                                    this.state = 218;
                                                     this.nl();
                                                 }
                                                 break;
                                             default:
                                                 throw new NoViableAltException(this);
                                         }
-                                        this.state = 213;
+                                        this.state = 221;
                                         this.matrix_row();
 
                                         localctx.node = AST.nodeAppendRow(localctx.node, localctx.matrix_row(localctx.i++).node);
                                     }
                                 }
                             }
-                            this.state = 220;
+                            this.state = 228;
                             this._errHandler.sync(this);
                             _alt = this._interp.adaptivePredict(this._input, 15, this._ctx);
                         }
-                        this.state = 222;
+                        this.state = 230;
                         this._errHandler.sync(this);
                         _la = this._input.LA(1);
                         if (_la === 100) {
                             {
-                                this.state = 221;
+                                this.state = 229;
                                 this.nl();
                             }
                         }
 
-                        this.state = 224;
+                        this.state = 232;
                         this.match(MathJSLabParser.RCURLYBR);
                     }
                     break;
@@ -1185,13 +1206,13 @@ export default class MathJSLabParser extends Parser {
         let _la: number;
         try {
             let _alt: number;
-            this.state = 247;
+            this.state = 255;
             this._errHandler.sync(this);
             switch (this._interp.adaptivePredict(this._input, 21, this._ctx)) {
                 case 1:
                     this.enterOuterAlt(localctx, 1);
                     {
-                        this.state = 228;
+                        this.state = 236;
                         _la = this._input.LA(1);
                         if (!(_la === 42 || _la === 52)) {
                             this._errHandler.recoverInline(this);
@@ -1206,12 +1227,12 @@ export default class MathJSLabParser extends Parser {
                 case 2:
                     this.enterOuterAlt(localctx, 2);
                     {
-                        this.state = 231;
+                        this.state = 239;
                         this._errHandler.sync(this);
                         _la = this._input.LA(1);
                         if (_la === 42 || _la === 52) {
                             {
-                                this.state = 230;
+                                this.state = 238;
                                 _la = this._input.LA(1);
                                 if (!(_la === 42 || _la === 52)) {
                                     this._errHandler.recoverInline(this);
@@ -1222,19 +1243,19 @@ export default class MathJSLabParser extends Parser {
                             }
                         }
 
-                        this.state = 233;
+                        this.state = 241;
                         this.list_element();
 
                         localctx.node = AST.nodeListFirst(localctx.list_element(localctx.i++).node);
 
-                        this.state = 241;
+                        this.state = 249;
                         this._errHandler.sync(this);
                         _alt = this._interp.adaptivePredict(this._input, 19, this._ctx);
                         while (_alt !== 2 && _alt !== ATN.INVALID_ALT_NUMBER) {
                             if (_alt === 1) {
                                 {
                                     {
-                                        this.state = 235;
+                                        this.state = 243;
                                         _la = this._input.LA(1);
                                         if (!(_la === 42 || _la === 52)) {
                                             this._errHandler.recoverInline(this);
@@ -1242,23 +1263,23 @@ export default class MathJSLabParser extends Parser {
                                             this._errHandler.reportMatch(this);
                                             this.consume();
                                         }
-                                        this.state = 236;
+                                        this.state = 244;
                                         this.list_element();
 
                                         localctx.node = AST.appendNodeList(localctx.node, localctx.list_element(localctx.i++).node);
                                     }
                                 }
                             }
-                            this.state = 243;
+                            this.state = 251;
                             this._errHandler.sync(this);
                             _alt = this._interp.adaptivePredict(this._input, 19, this._ctx);
                         }
-                        this.state = 245;
+                        this.state = 253;
                         this._errHandler.sync(this);
                         _la = this._input.LA(1);
                         if (_la === 42 || _la === 52) {
                             {
-                                this.state = 244;
+                                this.state = 252;
                                 _la = this._input.LA(1);
                                 if (!(_la === 42 || _la === 52)) {
                                     this._errHandler.recoverInline(this);
@@ -1291,9 +1312,9 @@ export default class MathJSLabParser extends Parser {
         try {
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 249;
+                this.state = 257;
                 this.match(MathJSLabParser.COMMAT);
-                this.state = 250;
+                this.state = 258;
                 this.identifier();
 
                 localctx.node = AST.nodeFunctionHandle(localctx.identifier().node);
@@ -1318,11 +1339,11 @@ export default class MathJSLabParser extends Parser {
         try {
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 253;
+                this.state = 261;
                 this.match(MathJSLabParser.COMMAT);
-                this.state = 254;
+                this.state = 262;
                 this.param_list();
-                this.state = 255;
+                this.state = 263;
                 this.expression();
 
                 localctx.node = AST.nodeFunctionHandle(null, localctx.param_list().node, localctx.expression().node);
@@ -1345,13 +1366,13 @@ export default class MathJSLabParser extends Parser {
         let localctx: Primary_exprContext = new Primary_exprContext(this, this._ctx, this.state);
         this.enterRule(localctx, 28, MathJSLabParser.RULE_primary_expr);
         try {
-            this.state = 275;
+            this.state = 283;
             this._errHandler.sync(this);
             switch (this._input.LA(1)) {
                 case 96:
                     this.enterOuterAlt(localctx, 1);
                     {
-                        this.state = 258;
+                        this.state = 266;
                         this.identifier();
 
                         localctx.node = localctx.identifier().node;
@@ -1363,7 +1384,7 @@ export default class MathJSLabParser extends Parser {
                 case 125:
                     this.enterOuterAlt(localctx, 2);
                     {
-                        this.state = 261;
+                        this.state = 269;
                         this.constant();
 
                         localctx.node = localctx.constant().node;
@@ -1372,7 +1393,7 @@ export default class MathJSLabParser extends Parser {
                 case 56:
                     this.enterOuterAlt(localctx, 3);
                     {
-                        this.state = 264;
+                        this.state = 272;
                         this.fcn_handle();
 
                         localctx.node = localctx.fcn_handle().node;
@@ -1382,7 +1403,7 @@ export default class MathJSLabParser extends Parser {
                 case 61:
                     this.enterOuterAlt(localctx, 4);
                     {
-                        this.state = 267;
+                        this.state = 275;
                         this.matrix();
 
                         localctx.node = localctx.matrix().node;
@@ -1391,11 +1412,11 @@ export default class MathJSLabParser extends Parser {
                 case 57:
                     this.enterOuterAlt(localctx, 5);
                     {
-                        this.state = 270;
+                        this.state = 278;
                         this.match(MathJSLabParser.LPAREN);
-                        this.state = 271;
+                        this.state = 279;
                         this.expression();
-                        this.state = 272;
+                        this.state = 280;
                         this.match(MathJSLabParser.RPAREN);
 
                         localctx.node = AST.nodeOperation('()', localctx.expression().node);
@@ -1424,7 +1445,7 @@ export default class MathJSLabParser extends Parser {
         try {
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 277;
+                this.state = 285;
                 this.match(MathJSLabParser.COLON);
 
                 localctx.node = AST.nodeColon();
@@ -1449,7 +1470,7 @@ export default class MathJSLabParser extends Parser {
         try {
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 280;
+                this.state = 288;
                 this.match(MathJSLabParser.TILDE);
 
                 localctx.node = AST.nodeIgnoredTarget();
@@ -1472,13 +1493,13 @@ export default class MathJSLabParser extends Parser {
         let localctx: List_elementContext = new List_elementContext(this, this._ctx, this.state);
         this.enterRule(localctx, 34, MathJSLabParser.RULE_list_element);
         try {
-            this.state = 292;
+            this.state = 300;
             this._errHandler.sync(this);
             switch (this._interp.adaptivePredict(this._input, 23, this._ctx)) {
                 case 1:
                     this.enterOuterAlt(localctx, 1);
                     {
-                        this.state = 283;
+                        this.state = 291;
                         this.expression();
 
                         localctx.node = localctx.expression().node;
@@ -1487,7 +1508,7 @@ export default class MathJSLabParser extends Parser {
                 case 2:
                     this.enterOuterAlt(localctx, 2);
                     {
-                        this.state = 286;
+                        this.state = 294;
                         this.magic_colon();
 
                         localctx.node = localctx.magic_colon().node;
@@ -1496,7 +1517,7 @@ export default class MathJSLabParser extends Parser {
                 case 3:
                     this.enterOuterAlt(localctx, 3);
                     {
-                        this.state = 289;
+                        this.state = 297;
                         this.magic_tilde();
 
                         localctx.node = localctx.magic_tilde().node;
@@ -1524,26 +1545,26 @@ export default class MathJSLabParser extends Parser {
         try {
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 294;
+                this.state = 302;
                 this.list_element();
 
                 localctx.node = AST.nodeListFirst(localctx.list_element(localctx.i++).node);
 
-                this.state = 302;
+                this.state = 310;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 while (_la === 52) {
                     {
                         {
-                            this.state = 296;
+                            this.state = 304;
                             this.match(MathJSLabParser.COMMA);
-                            this.state = 297;
+                            this.state = 305;
                             this.list_element();
 
                             localctx.node = AST.appendNodeList(localctx.node, localctx.list_element(localctx.i++).node);
                         }
                     }
-                    this.state = 304;
+                    this.state = 312;
                     this._errHandler.sync(this);
                     _la = this._input.LA(1);
                 }
@@ -1581,7 +1602,7 @@ export default class MathJSLabParser extends Parser {
             let _alt: number;
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 317;
+                this.state = 325;
                 this._errHandler.sync(this);
                 switch (this._input.LA(1)) {
                     case 6:
@@ -1594,7 +1615,7 @@ export default class MathJSLabParser extends Parser {
                     case 97:
                     case 125:
                         {
-                            this.state = 306;
+                            this.state = 314;
                             this.primary_expr();
 
                             localctx.node = localctx.primary_expr().node;
@@ -1605,7 +1626,7 @@ export default class MathJSLabParser extends Parser {
                     case 89:
                     case 90:
                         {
-                            this.state = 309;
+                            this.state = 317;
                             localctx._op = this._input.LT(1);
                             _la = this._input.LA(1);
                             if (!(_la === 45 || _la === 46 || _la === 89 || _la === 90)) {
@@ -1614,7 +1635,7 @@ export default class MathJSLabParser extends Parser {
                                 this._errHandler.reportMatch(this);
                                 this.consume();
                             }
-                            this.state = 310;
+                            this.state = 318;
                             this.oper_expr(4);
 
                             localctx.node = AST.nodeOperation((localctx._op.text + '_') as OperatorType, localctx.oper_expr(0).node);
@@ -1623,7 +1644,7 @@ export default class MathJSLabParser extends Parser {
                     case 54:
                     case 55:
                         {
-                            this.state = 313;
+                            this.state = 321;
                             localctx._op = this._input.LT(1);
                             _la = this._input.LA(1);
                             if (!(_la === 54 || _la === 55)) {
@@ -1632,7 +1653,7 @@ export default class MathJSLabParser extends Parser {
                                 this._errHandler.reportMatch(this);
                                 this.consume();
                             }
-                            this.state = 314;
+                            this.state = 322;
                             this.oper_expr(3);
 
                             localctx.node = AST.nodeOperation(localctx._op.text as OperatorType, localctx.oper_expr(0).node);
@@ -1642,7 +1663,7 @@ export default class MathJSLabParser extends Parser {
                         throw new NoViableAltException(this);
                 }
                 this._ctx.stop = this._input.LT(-1);
-                this.state = 367;
+                this.state = 375;
                 this._errHandler.sync(this);
                 _alt = this._interp.adaptivePredict(this._input, 29, this._ctx);
                 while (_alt !== 2 && _alt !== ATN.INVALID_ALT_NUMBER) {
@@ -1652,18 +1673,18 @@ export default class MathJSLabParser extends Parser {
                         }
                         _prevctx = localctx;
                         {
-                            this.state = 365;
+                            this.state = 373;
                             this._errHandler.sync(this);
                             switch (this._interp.adaptivePredict(this._input, 28, this._ctx)) {
                                 case 1:
                                     {
                                         localctx = new Oper_exprContext(this, _parentctx, _parentState);
                                         this.pushNewRecursionContext(localctx, _startState, MathJSLabParser.RULE_oper_expr);
-                                        this.state = 319;
+                                        this.state = 327;
                                         if (!this.precpred(this._ctx, 2)) {
                                             throw this.createFailedPredicateException('this.precpred(this._ctx, 2)');
                                         }
-                                        this.state = 320;
+                                        this.state = 328;
                                         localctx._op = this._input.LT(1);
                                         _la = this._input.LA(1);
                                         if (!((((_la - 47) & ~0x1f) === 0 && ((1 << (_la - 47)) & 65539) !== 0) || (((_la - 86) & ~0x1f) === 0 && ((1 << (_la - 86)) & 7) !== 0))) {
@@ -1672,7 +1693,7 @@ export default class MathJSLabParser extends Parser {
                                             this._errHandler.reportMatch(this);
                                             this.consume();
                                         }
-                                        this.state = 321;
+                                        this.state = 329;
                                         this.oper_expr(3);
 
                                         localctx.node = AST.nodeOperation(localctx._op.text as OperatorType, localctx.oper_expr(0).node, localctx.oper_expr(1).node);
@@ -1682,11 +1703,11 @@ export default class MathJSLabParser extends Parser {
                                     {
                                         localctx = new Oper_exprContext(this, _parentctx, _parentState);
                                         this.pushNewRecursionContext(localctx, _startState, MathJSLabParser.RULE_oper_expr);
-                                        this.state = 324;
+                                        this.state = 332;
                                         if (!this.precpred(this._ctx, 1)) {
                                             throw this.createFailedPredicateException('this.precpred(this._ctx, 1)');
                                         }
-                                        this.state = 325;
+                                        this.state = 333;
                                         localctx._op = this._input.LT(1);
                                         _la = this._input.LA(1);
                                         if (!(_la === 45 || _la === 46)) {
@@ -1695,7 +1716,7 @@ export default class MathJSLabParser extends Parser {
                                             this._errHandler.reportMatch(this);
                                             this.consume();
                                         }
-                                        this.state = 326;
+                                        this.state = 334;
                                         this.oper_expr(2);
 
                                         localctx.node = AST.nodeOperation(localctx._op.text as OperatorType, localctx.oper_expr(0).node, localctx.oper_expr(1).node);
@@ -1705,11 +1726,11 @@ export default class MathJSLabParser extends Parser {
                                     {
                                         localctx = new Oper_exprContext(this, _parentctx, _parentState);
                                         this.pushNewRecursionContext(localctx, _startState, MathJSLabParser.RULE_oper_expr);
-                                        this.state = 329;
+                                        this.state = 337;
                                         if (!this.precpred(this._ctx, 11)) {
                                             throw this.createFailedPredicateException('this.precpred(this._ctx, 11)');
                                         }
-                                        this.state = 330;
+                                        this.state = 338;
                                         localctx._op = this._input.LT(1);
                                         _la = this._input.LA(1);
                                         if (!(_la === 89 || _la === 90)) {
@@ -1726,13 +1747,13 @@ export default class MathJSLabParser extends Parser {
                                     {
                                         localctx = new Oper_exprContext(this, _parentctx, _parentState);
                                         this.pushNewRecursionContext(localctx, _startState, MathJSLabParser.RULE_oper_expr);
-                                        this.state = 332;
+                                        this.state = 340;
                                         if (!this.precpred(this._ctx, 10)) {
                                             throw this.createFailedPredicateException('this.precpred(this._ctx, 10)');
                                         }
-                                        this.state = 333;
+                                        this.state = 341;
                                         this.match(MathJSLabParser.LPAREN);
-                                        this.state = 335;
+                                        this.state = 343;
                                         this._errHandler.sync(this);
                                         _la = this._input.LA(1);
                                         if (
@@ -1742,12 +1763,12 @@ export default class MathJSLabParser extends Parser {
                                             _la === 125
                                         ) {
                                             {
-                                                this.state = 334;
+                                                this.state = 342;
                                                 this.arg_list();
                                             }
                                         }
 
-                                        this.state = 337;
+                                        this.state = 345;
                                         this.match(MathJSLabParser.RPAREN);
 
                                         localctx.node = AST.nodeIndexExpr(localctx.oper_expr(0).node, localctx.arg_list() ? localctx.arg_list().node : null, '()');
@@ -1757,13 +1778,13 @@ export default class MathJSLabParser extends Parser {
                                     {
                                         localctx = new Oper_exprContext(this, _parentctx, _parentState);
                                         this.pushNewRecursionContext(localctx, _startState, MathJSLabParser.RULE_oper_expr);
-                                        this.state = 339;
+                                        this.state = 347;
                                         if (!this.precpred(this._ctx, 9)) {
                                             throw this.createFailedPredicateException('this.precpred(this._ctx, 9)');
                                         }
-                                        this.state = 340;
+                                        this.state = 348;
                                         this.match(MathJSLabParser.LCURLYBR);
-                                        this.state = 342;
+                                        this.state = 350;
                                         this._errHandler.sync(this);
                                         _la = this._input.LA(1);
                                         if (
@@ -1773,12 +1794,12 @@ export default class MathJSLabParser extends Parser {
                                             _la === 125
                                         ) {
                                             {
-                                                this.state = 341;
+                                                this.state = 349;
                                                 this.arg_list();
                                             }
                                         }
 
-                                        this.state = 344;
+                                        this.state = 352;
                                         this.match(MathJSLabParser.RCURLYBR);
 
                                         localctx.node = AST.nodeIndexExpr(localctx.oper_expr(0).node, localctx.arg_list() ? localctx.arg_list().node : null, '{}');
@@ -1788,11 +1809,11 @@ export default class MathJSLabParser extends Parser {
                                     {
                                         localctx = new Oper_exprContext(this, _parentctx, _parentState);
                                         this.pushNewRecursionContext(localctx, _startState, MathJSLabParser.RULE_oper_expr);
-                                        this.state = 346;
+                                        this.state = 354;
                                         if (!this.precpred(this._ctx, 8)) {
                                             throw this.createFailedPredicateException('this.precpred(this._ctx, 8)');
                                         }
-                                        this.state = 347;
+                                        this.state = 355;
                                         localctx._op = this._input.LT(1);
                                         _la = this._input.LA(1);
                                         if (!(_la === 93 || _la === 94)) {
@@ -1809,13 +1830,13 @@ export default class MathJSLabParser extends Parser {
                                     {
                                         localctx = new Oper_exprContext(this, _parentctx, _parentState);
                                         this.pushNewRecursionContext(localctx, _startState, MathJSLabParser.RULE_oper_expr);
-                                        this.state = 349;
+                                        this.state = 357;
                                         if (!this.precpred(this._ctx, 7)) {
                                             throw this.createFailedPredicateException('this.precpred(this._ctx, 7)');
                                         }
-                                        this.state = 350;
+                                        this.state = 358;
                                         this.match(MathJSLabParser.DOT);
-                                        this.state = 351;
+                                        this.state = 359;
                                         this.match(MathJSLabParser.IDENTIFIER);
 
                                         localctx.node = AST.nodeIndirectRef(localctx.oper_expr(0).node, localctx.IDENTIFIER().getText());
@@ -1825,17 +1846,17 @@ export default class MathJSLabParser extends Parser {
                                     {
                                         localctx = new Oper_exprContext(this, _parentctx, _parentState);
                                         this.pushNewRecursionContext(localctx, _startState, MathJSLabParser.RULE_oper_expr);
-                                        this.state = 353;
+                                        this.state = 361;
                                         if (!this.precpred(this._ctx, 6)) {
                                             throw this.createFailedPredicateException('this.precpred(this._ctx, 6)');
                                         }
-                                        this.state = 354;
+                                        this.state = 362;
                                         this.match(MathJSLabParser.DOT);
-                                        this.state = 355;
+                                        this.state = 363;
                                         this.match(MathJSLabParser.LPAREN);
-                                        this.state = 356;
+                                        this.state = 364;
                                         this.expression();
-                                        this.state = 357;
+                                        this.state = 365;
                                         this.match(MathJSLabParser.RPAREN);
 
                                         localctx.node = AST.nodeIndirectRef(localctx.oper_expr(0).node, localctx.expression().node);
@@ -1845,11 +1866,11 @@ export default class MathJSLabParser extends Parser {
                                     {
                                         localctx = new Oper_exprContext(this, _parentctx, _parentState);
                                         this.pushNewRecursionContext(localctx, _startState, MathJSLabParser.RULE_oper_expr);
-                                        this.state = 360;
+                                        this.state = 368;
                                         if (!this.precpred(this._ctx, 5)) {
                                             throw this.createFailedPredicateException('this.precpred(this._ctx, 5)');
                                         }
-                                        this.state = 361;
+                                        this.state = 369;
                                         localctx._op = this._input.LT(1);
                                         _la = this._input.LA(1);
                                         if (!(_la === 91 || _la === 92)) {
@@ -1858,7 +1879,7 @@ export default class MathJSLabParser extends Parser {
                                             this._errHandler.reportMatch(this);
                                             this.consume();
                                         }
-                                        this.state = 362;
+                                        this.state = 370;
                                         this.power_expr(0);
 
                                         localctx.node = AST.nodeOperation(localctx._op.text as OperatorType, localctx.oper_expr(0).node, localctx.power_expr().node);
@@ -1867,7 +1888,7 @@ export default class MathJSLabParser extends Parser {
                             }
                         }
                     }
-                    this.state = 369;
+                    this.state = 377;
                     this._errHandler.sync(this);
                     _alt = this._interp.adaptivePredict(this._input, 29, this._ctx);
                 }
@@ -1905,7 +1926,7 @@ export default class MathJSLabParser extends Parser {
             let _alt: number;
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 382;
+                this.state = 390;
                 this._errHandler.sync(this);
                 switch (this._input.LA(1)) {
                     case 6:
@@ -1918,7 +1939,7 @@ export default class MathJSLabParser extends Parser {
                     case 97:
                     case 125:
                         {
-                            this.state = 371;
+                            this.state = 379;
                             this.primary_expr();
 
                             localctx.node = localctx.primary_expr().node;
@@ -1929,7 +1950,7 @@ export default class MathJSLabParser extends Parser {
                     case 89:
                     case 90:
                         {
-                            this.state = 374;
+                            this.state = 382;
                             localctx._op = this._input.LT(1);
                             _la = this._input.LA(1);
                             if (!(_la === 45 || _la === 46 || _la === 89 || _la === 90)) {
@@ -1938,7 +1959,7 @@ export default class MathJSLabParser extends Parser {
                                 this._errHandler.reportMatch(this);
                                 this.consume();
                             }
-                            this.state = 375;
+                            this.state = 383;
                             this.power_expr(2);
 
                             localctx.node = AST.nodeOperation((localctx._op.text + '_') as OperatorType, localctx.power_expr().node);
@@ -1947,7 +1968,7 @@ export default class MathJSLabParser extends Parser {
                     case 54:
                     case 55:
                         {
-                            this.state = 378;
+                            this.state = 386;
                             localctx._op = this._input.LT(1);
                             _la = this._input.LA(1);
                             if (!(_la === 54 || _la === 55)) {
@@ -1956,7 +1977,7 @@ export default class MathJSLabParser extends Parser {
                                 this._errHandler.reportMatch(this);
                                 this.consume();
                             }
-                            this.state = 379;
+                            this.state = 387;
                             this.power_expr(1);
 
                             localctx.node = AST.nodeOperation(localctx._op.text as OperatorType, localctx.power_expr().node);
@@ -1966,7 +1987,7 @@ export default class MathJSLabParser extends Parser {
                         throw new NoViableAltException(this);
                 }
                 this._ctx.stop = this._input.LT(-1);
-                this.state = 414;
+                this.state = 422;
                 this._errHandler.sync(this);
                 _alt = this._interp.adaptivePredict(this._input, 34, this._ctx);
                 while (_alt !== 2 && _alt !== ATN.INVALID_ALT_NUMBER) {
@@ -1976,18 +1997,18 @@ export default class MathJSLabParser extends Parser {
                         }
                         _prevctx = localctx;
                         {
-                            this.state = 412;
+                            this.state = 420;
                             this._errHandler.sync(this);
                             switch (this._interp.adaptivePredict(this._input, 33, this._ctx)) {
                                 case 1:
                                     {
                                         localctx = new Power_exprContext(this, _parentctx, _parentState);
                                         this.pushNewRecursionContext(localctx, _startState, MathJSLabParser.RULE_power_expr);
-                                        this.state = 384;
+                                        this.state = 392;
                                         if (!this.precpred(this._ctx, 7)) {
                                             throw this.createFailedPredicateException('this.precpred(this._ctx, 7)');
                                         }
-                                        this.state = 385;
+                                        this.state = 393;
                                         localctx._op = this._input.LT(1);
                                         _la = this._input.LA(1);
                                         if (!(_la === 89 || _la === 90)) {
@@ -2004,13 +2025,13 @@ export default class MathJSLabParser extends Parser {
                                     {
                                         localctx = new Power_exprContext(this, _parentctx, _parentState);
                                         this.pushNewRecursionContext(localctx, _startState, MathJSLabParser.RULE_power_expr);
-                                        this.state = 387;
+                                        this.state = 395;
                                         if (!this.precpred(this._ctx, 6)) {
                                             throw this.createFailedPredicateException('this.precpred(this._ctx, 6)');
                                         }
-                                        this.state = 388;
+                                        this.state = 396;
                                         this.match(MathJSLabParser.LPAREN);
-                                        this.state = 390;
+                                        this.state = 398;
                                         this._errHandler.sync(this);
                                         _la = this._input.LA(1);
                                         if (
@@ -2020,12 +2041,12 @@ export default class MathJSLabParser extends Parser {
                                             _la === 125
                                         ) {
                                             {
-                                                this.state = 389;
+                                                this.state = 397;
                                                 this.arg_list();
                                             }
                                         }
 
-                                        this.state = 392;
+                                        this.state = 400;
                                         this.match(MathJSLabParser.RPAREN);
 
                                         localctx.node = AST.nodeIndexExpr(localctx.power_expr().node, localctx.arg_list() ? localctx.arg_list().node : null, '()');
@@ -2035,13 +2056,13 @@ export default class MathJSLabParser extends Parser {
                                     {
                                         localctx = new Power_exprContext(this, _parentctx, _parentState);
                                         this.pushNewRecursionContext(localctx, _startState, MathJSLabParser.RULE_power_expr);
-                                        this.state = 394;
+                                        this.state = 402;
                                         if (!this.precpred(this._ctx, 5)) {
                                             throw this.createFailedPredicateException('this.precpred(this._ctx, 5)');
                                         }
-                                        this.state = 395;
+                                        this.state = 403;
                                         this.match(MathJSLabParser.LCURLYBR);
-                                        this.state = 397;
+                                        this.state = 405;
                                         this._errHandler.sync(this);
                                         _la = this._input.LA(1);
                                         if (
@@ -2051,12 +2072,12 @@ export default class MathJSLabParser extends Parser {
                                             _la === 125
                                         ) {
                                             {
-                                                this.state = 396;
+                                                this.state = 404;
                                                 this.arg_list();
                                             }
                                         }
 
-                                        this.state = 399;
+                                        this.state = 407;
                                         this.match(MathJSLabParser.RCURLYBR);
 
                                         localctx.node = AST.nodeIndexExpr(localctx.power_expr().node, localctx.arg_list() ? localctx.arg_list().node : null, '{}');
@@ -2066,13 +2087,13 @@ export default class MathJSLabParser extends Parser {
                                     {
                                         localctx = new Power_exprContext(this, _parentctx, _parentState);
                                         this.pushNewRecursionContext(localctx, _startState, MathJSLabParser.RULE_power_expr);
-                                        this.state = 401;
+                                        this.state = 409;
                                         if (!this.precpred(this._ctx, 4)) {
                                             throw this.createFailedPredicateException('this.precpred(this._ctx, 4)');
                                         }
-                                        this.state = 402;
+                                        this.state = 410;
                                         this.match(MathJSLabParser.DOT);
-                                        this.state = 403;
+                                        this.state = 411;
                                         this.match(MathJSLabParser.IDENTIFIER);
 
                                         localctx.node = AST.nodeIndirectRef(localctx.power_expr().node, localctx.IDENTIFIER().getText());
@@ -2082,17 +2103,17 @@ export default class MathJSLabParser extends Parser {
                                     {
                                         localctx = new Power_exprContext(this, _parentctx, _parentState);
                                         this.pushNewRecursionContext(localctx, _startState, MathJSLabParser.RULE_power_expr);
-                                        this.state = 405;
+                                        this.state = 413;
                                         if (!this.precpred(this._ctx, 3)) {
                                             throw this.createFailedPredicateException('this.precpred(this._ctx, 3)');
                                         }
-                                        this.state = 406;
+                                        this.state = 414;
                                         this.match(MathJSLabParser.DOT);
-                                        this.state = 407;
+                                        this.state = 415;
                                         this.match(MathJSLabParser.LPAREN);
-                                        this.state = 408;
+                                        this.state = 416;
                                         this.expression();
-                                        this.state = 409;
+                                        this.state = 417;
                                         this.match(MathJSLabParser.RPAREN);
 
                                         localctx.node = AST.nodeIndirectRef(localctx.power_expr().node, localctx.expression().node);
@@ -2101,7 +2122,7 @@ export default class MathJSLabParser extends Parser {
                             }
                         }
                     }
-                    this.state = 416;
+                    this.state = 424;
                     this._errHandler.sync(this);
                     _alt = this._interp.adaptivePredict(this._input, 34, this._ctx);
                 }
@@ -2126,20 +2147,20 @@ export default class MathJSLabParser extends Parser {
         try {
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 417;
+                this.state = 425;
                 this.oper_expr(0);
-                this.state = 418;
+                this.state = 426;
                 this.match(MathJSLabParser.COLON);
-                this.state = 419;
+                this.state = 427;
                 this.oper_expr(0);
-                this.state = 422;
+                this.state = 430;
                 this._errHandler.sync(this);
                 switch (this._interp.adaptivePredict(this._input, 35, this._ctx)) {
                     case 1:
                         {
-                            this.state = 420;
+                            this.state = 428;
                             this.match(MathJSLabParser.COLON);
-                            this.state = 421;
+                            this.state = 429;
                             this.oper_expr(0);
                         }
                         break;
@@ -2184,12 +2205,12 @@ export default class MathJSLabParser extends Parser {
             let _alt: number;
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 433;
+                this.state = 441;
                 this._errHandler.sync(this);
                 switch (this._interp.adaptivePredict(this._input, 36, this._ctx)) {
                     case 1:
                         {
-                            this.state = 427;
+                            this.state = 435;
                             this.oper_expr(0);
 
                             localctx.node = localctx.oper_expr().node;
@@ -2197,7 +2218,7 @@ export default class MathJSLabParser extends Parser {
                         break;
                     case 2:
                         {
-                            this.state = 430;
+                            this.state = 438;
                             this.colon_expr();
 
                             localctx.node = localctx.colon_expr().node;
@@ -2205,7 +2226,7 @@ export default class MathJSLabParser extends Parser {
                         break;
                 }
                 this._ctx.stop = this._input.LT(-1);
-                this.state = 462;
+                this.state = 470;
                 this._errHandler.sync(this);
                 _alt = this._interp.adaptivePredict(this._input, 38, this._ctx);
                 while (_alt !== 2 && _alt !== ATN.INVALID_ALT_NUMBER) {
@@ -2215,18 +2236,18 @@ export default class MathJSLabParser extends Parser {
                         }
                         _prevctx = localctx;
                         {
-                            this.state = 460;
+                            this.state = 468;
                             this._errHandler.sync(this);
                             switch (this._interp.adaptivePredict(this._input, 37, this._ctx)) {
                                 case 1:
                                     {
                                         localctx = new Simple_exprContext(this, _parentctx, _parentState);
                                         this.pushNewRecursionContext(localctx, _startState, MathJSLabParser.RULE_simple_expr);
-                                        this.state = 435;
+                                        this.state = 443;
                                         if (!this.precpred(this._ctx, 5)) {
                                             throw this.createFailedPredicateException('this.precpred(this._ctx, 5)');
                                         }
-                                        this.state = 436;
+                                        this.state = 444;
                                         localctx._op = this._input.LT(1);
                                         _la = this._input.LA(1);
                                         if (!(((_la - 80) & ~0x1f) === 0 && ((1 << (_la - 80)) & 63) !== 0)) {
@@ -2235,7 +2256,7 @@ export default class MathJSLabParser extends Parser {
                                             this._errHandler.reportMatch(this);
                                             this.consume();
                                         }
-                                        this.state = 437;
+                                        this.state = 445;
                                         this.simple_expr(6);
 
                                         localctx.node = AST.nodeOperation(localctx._op.text as OperatorType, localctx.simple_expr(0).node, localctx.simple_expr(1).node);
@@ -2245,13 +2266,13 @@ export default class MathJSLabParser extends Parser {
                                     {
                                         localctx = new Simple_exprContext(this, _parentctx, _parentState);
                                         this.pushNewRecursionContext(localctx, _startState, MathJSLabParser.RULE_simple_expr);
-                                        this.state = 440;
+                                        this.state = 448;
                                         if (!this.precpred(this._ctx, 4)) {
                                             throw this.createFailedPredicateException('this.precpred(this._ctx, 4)');
                                         }
-                                        this.state = 441;
+                                        this.state = 449;
                                         localctx._op = this.match(MathJSLabParser.EXPR_AND);
-                                        this.state = 442;
+                                        this.state = 450;
                                         this.simple_expr(5);
 
                                         localctx.node = AST.nodeOperation(localctx._op.text as OperatorType, localctx.simple_expr(0).node, localctx.simple_expr(1).node);
@@ -2261,13 +2282,13 @@ export default class MathJSLabParser extends Parser {
                                     {
                                         localctx = new Simple_exprContext(this, _parentctx, _parentState);
                                         this.pushNewRecursionContext(localctx, _startState, MathJSLabParser.RULE_simple_expr);
-                                        this.state = 445;
+                                        this.state = 453;
                                         if (!this.precpred(this._ctx, 3)) {
                                             throw this.createFailedPredicateException('this.precpred(this._ctx, 3)');
                                         }
-                                        this.state = 446;
+                                        this.state = 454;
                                         localctx._op = this.match(MathJSLabParser.EXPR_OR);
-                                        this.state = 447;
+                                        this.state = 455;
                                         this.simple_expr(4);
 
                                         localctx.node = AST.nodeOperation(localctx._op.text as OperatorType, localctx.simple_expr(0).node, localctx.simple_expr(1).node);
@@ -2277,13 +2298,13 @@ export default class MathJSLabParser extends Parser {
                                     {
                                         localctx = new Simple_exprContext(this, _parentctx, _parentState);
                                         this.pushNewRecursionContext(localctx, _startState, MathJSLabParser.RULE_simple_expr);
-                                        this.state = 450;
+                                        this.state = 458;
                                         if (!this.precpred(this._ctx, 2)) {
                                             throw this.createFailedPredicateException('this.precpred(this._ctx, 2)');
                                         }
-                                        this.state = 451;
+                                        this.state = 459;
                                         localctx._op = this.match(MathJSLabParser.EXPR_AND_AND);
-                                        this.state = 452;
+                                        this.state = 460;
                                         this.simple_expr(3);
 
                                         localctx.node = AST.nodeOperation(localctx._op.text as OperatorType, localctx.simple_expr(0).node, localctx.simple_expr(1).node);
@@ -2293,13 +2314,13 @@ export default class MathJSLabParser extends Parser {
                                     {
                                         localctx = new Simple_exprContext(this, _parentctx, _parentState);
                                         this.pushNewRecursionContext(localctx, _startState, MathJSLabParser.RULE_simple_expr);
-                                        this.state = 455;
+                                        this.state = 463;
                                         if (!this.precpred(this._ctx, 1)) {
                                             throw this.createFailedPredicateException('this.precpred(this._ctx, 1)');
                                         }
-                                        this.state = 456;
+                                        this.state = 464;
                                         localctx._op = this.match(MathJSLabParser.EXPR_OR_OR);
-                                        this.state = 457;
+                                        this.state = 465;
                                         this.simple_expr(2);
 
                                         localctx.node = AST.nodeOperation(localctx._op.text as OperatorType, localctx.simple_expr(0).node, localctx.simple_expr(1).node);
@@ -2308,7 +2329,7 @@ export default class MathJSLabParser extends Parser {
                             }
                         }
                     }
-                    this.state = 464;
+                    this.state = 472;
                     this._errHandler.sync(this);
                     _alt = this._interp.adaptivePredict(this._input, 38, this._ctx);
                 }
@@ -2332,13 +2353,13 @@ export default class MathJSLabParser extends Parser {
         this.enterRule(localctx, 46, MathJSLabParser.RULE_expression);
         let _la: number;
         try {
-            this.state = 476;
+            this.state = 484;
             this._errHandler.sync(this);
             switch (this._interp.adaptivePredict(this._input, 39, this._ctx)) {
                 case 1:
                     this.enterOuterAlt(localctx, 1);
                     {
-                        this.state = 465;
+                        this.state = 473;
                         this.simple_expr(0);
 
                         localctx.node = localctx.simple_expr().node;
@@ -2347,9 +2368,9 @@ export default class MathJSLabParser extends Parser {
                 case 2:
                     this.enterOuterAlt(localctx, 2);
                     {
-                        this.state = 468;
+                        this.state = 476;
                         this.simple_expr(0);
-                        this.state = 469;
+                        this.state = 477;
                         localctx._op = this._input.LT(1);
                         _la = this._input.LA(1);
                         if (!(((_la - 49) & ~0x1f) === 0 && ((1 << (_la - 49)) & 134184961) !== 0)) {
@@ -2358,7 +2379,7 @@ export default class MathJSLabParser extends Parser {
                             this._errHandler.reportMatch(this);
                             this.consume();
                         }
-                        this.state = 470;
+                        this.state = 478;
                         this.expression();
 
                         localctx.node = AST.nodeOperation(localctx._op.text as OperatorType, localctx.simple_expr().node, localctx.expression().node);
@@ -2367,7 +2388,7 @@ export default class MathJSLabParser extends Parser {
                 case 3:
                     this.enterOuterAlt(localctx, 3);
                     {
-                        this.state = 473;
+                        this.state = 481;
                         this.anon_fcn_handle();
 
                         localctx.node = localctx.anon_fcn_handle().node;
@@ -2392,14 +2413,14 @@ export default class MathJSLabParser extends Parser {
         let localctx: CommandContext = new CommandContext(this, this._ctx, this.state);
         this.enterRule(localctx, 48, MathJSLabParser.RULE_command);
         try {
-            this.state = 489;
+            this.state = 497;
             this._errHandler.sync(this);
             switch (this._input.LA(1)) {
                 case 1:
                 case 2:
                     this.enterOuterAlt(localctx, 1);
                     {
-                        this.state = 478;
+                        this.state = 486;
                         this.declaration();
 
                         localctx.node = localctx.declaration().node;
@@ -2408,16 +2429,17 @@ export default class MathJSLabParser extends Parser {
                 case 23:
                     this.enterOuterAlt(localctx, 2);
                     {
-                        this.state = 481;
+                        this.state = 489;
                         this.match(MathJSLabParser.RETURN);
 
                         localctx.node = AST.nodeReturn();
                     }
                     break;
                 case 3:
+                case 9:
                     this.enterOuterAlt(localctx, 3);
                     {
-                        this.state = 483;
+                        this.state = 491;
                         this.select_command();
 
                         localctx.node = localctx.select_command().node;
@@ -2426,7 +2448,7 @@ export default class MathJSLabParser extends Parser {
                 case 24:
                     this.enterOuterAlt(localctx, 4);
                     {
-                        this.state = 486;
+                        this.state = 494;
                         this.function_();
 
                         localctx.node = localctx.function_().node;
@@ -2456,12 +2478,12 @@ export default class MathJSLabParser extends Parser {
         try {
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 495;
+                this.state = 503;
                 this._errHandler.sync(this);
                 switch (this._input.LA(1)) {
                     case 1:
                         {
-                            this.state = 491;
+                            this.state = 499;
                             this.match(MathJSLabParser.GLOBAL);
 
                             localctx.node = AST.nodeDeclarationFirst('GLOBAL');
@@ -2469,7 +2491,7 @@ export default class MathJSLabParser extends Parser {
                         break;
                     case 2:
                         {
-                            this.state = 493;
+                            this.state = 501;
                             this.match(MathJSLabParser.PERSISTENT);
 
                             localctx.node = AST.nodeDeclarationFirst('PERSIST');
@@ -2478,19 +2500,19 @@ export default class MathJSLabParser extends Parser {
                     default:
                         throw new NoViableAltException(this);
                 }
-                this.state = 500;
+                this.state = 508;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 do {
                     {
                         {
-                            this.state = 497;
+                            this.state = 505;
                             this.declaration_element();
 
                             localctx.node = AST.nodeAppendDeclaration(localctx.node, localctx.declaration_element(localctx.i++).node);
                         }
                     }
-                    this.state = 502;
+                    this.state = 510;
                     this._errHandler.sync(this);
                     _la = this._input.LA(1);
                 } while (_la === 96);
@@ -2513,13 +2535,13 @@ export default class MathJSLabParser extends Parser {
         let localctx: Declaration_elementContext = new Declaration_elementContext(this, this._ctx, this.state);
         this.enterRule(localctx, 52, MathJSLabParser.RULE_declaration_element);
         try {
-            this.state = 512;
+            this.state = 520;
             this._errHandler.sync(this);
             switch (this._interp.adaptivePredict(this._input, 43, this._ctx)) {
                 case 1:
                     this.enterOuterAlt(localctx, 1);
                     {
-                        this.state = 504;
+                        this.state = 512;
                         this.identifier();
 
                         localctx.node = localctx.identifier().node;
@@ -2528,11 +2550,11 @@ export default class MathJSLabParser extends Parser {
                 case 2:
                     this.enterOuterAlt(localctx, 2);
                     {
-                        this.state = 507;
+                        this.state = 515;
                         this.identifier();
-                        this.state = 508;
+                        this.state = 516;
                         this.match(MathJSLabParser.EQ);
-                        this.state = 509;
+                        this.state = 517;
                         this.expression();
 
                         localctx.node = AST.nodeOperation('=', localctx.identifier().node, localctx.expression().node);
@@ -2557,12 +2579,29 @@ export default class MathJSLabParser extends Parser {
         let localctx: Select_commandContext = new Select_commandContext(this, this._ctx, this.state);
         this.enterRule(localctx, 54, MathJSLabParser.RULE_select_command);
         try {
-            this.enterOuterAlt(localctx, 1);
-            {
-                this.state = 514;
-                this.if_command();
+            this.state = 528;
+            this._errHandler.sync(this);
+            switch (this._input.LA(1)) {
+                case 3:
+                    this.enterOuterAlt(localctx, 1);
+                    {
+                        this.state = 522;
+                        this.if_command();
 
-                localctx.node = localctx.if_command().node;
+                        localctx.node = localctx.if_command().node;
+                    }
+                    break;
+                case 9:
+                    this.enterOuterAlt(localctx, 2);
+                    {
+                        this.state = 525;
+                        this.switch_command();
+
+                        localctx.node = localctx.switch_command().node;
+                    }
+                    break;
+                default:
+                    throw new NoViableAltException(this);
             }
         } catch (re) {
             if (re instanceof RecognitionException) {
@@ -2585,59 +2624,59 @@ export default class MathJSLabParser extends Parser {
         try {
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 517;
+                this.state = 530;
                 this.match(MathJSLabParser.IF);
-                this.state = 518;
+                this.state = 531;
                 this.expression();
-                this.state = 520;
+                this.state = 533;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 if (_la === 51 || _la === 52 || _la === 100) {
                     {
-                        this.state = 519;
+                        this.state = 532;
                         this.sep();
                     }
                 }
 
-                this.state = 523;
+                this.state = 536;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 if (
-                    ((_la & ~0x1f) === 0 && ((1 << _la) & 25165902) !== 0) ||
+                    ((_la & ~0x1f) === 0 && ((1 << _la) & 25166414) !== 0) ||
                     (((_la - 43) & ~0x1f) === 0 && ((1 << (_la - 43)) & 358413) !== 0) ||
                     (((_la - 89) & ~0x1f) === 0 && ((1 << (_la - 89)) & 387) !== 0) ||
                     _la === 125
                 ) {
                     {
-                        this.state = 522;
+                        this.state = 535;
                         this.list();
                     }
                 }
 
                 localctx.node = AST.nodeIfBegin(localctx.expression().node, localctx.list() ? localctx.list().node : AST.nodeListFirst());
 
-                this.state = 531;
+                this.state = 544;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 while (_la === 7) {
                     {
                         {
-                            this.state = 526;
+                            this.state = 539;
                             this.elseif_clause();
 
                             localctx.node = AST.nodeIfAppendElseIf(localctx.node, localctx.elseif_clause(localctx.i++).node);
                         }
                     }
-                    this.state = 533;
+                    this.state = 546;
                     this._errHandler.sync(this);
                     _la = this._input.LA(1);
                 }
-                this.state = 535;
+                this.state = 548;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 if (_la === 8) {
                     {
-                        this.state = 534;
+                        this.state = 547;
                         this.else_clause();
                     }
                 }
@@ -2646,7 +2685,7 @@ export default class MathJSLabParser extends Parser {
                     localctx.node = AST.nodeIfAppendElse(localctx.node, localctx.else_clause().node);
                 }
 
-                this.state = 538;
+                this.state = 551;
                 _la = this._input.LA(1);
                 if (!(_la === 4 || _la === 5)) {
                     this._errHandler.recoverInline(this);
@@ -2676,41 +2715,41 @@ export default class MathJSLabParser extends Parser {
         try {
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 540;
+                this.state = 553;
                 this.match(MathJSLabParser.ELSEIF);
-                this.state = 542;
+                this.state = 555;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 if (_la === 51 || _la === 52 || _la === 100) {
                     {
-                        this.state = 541;
+                        this.state = 554;
                         this.sep();
                     }
                 }
 
-                this.state = 544;
+                this.state = 557;
                 this.expression();
-                this.state = 546;
+                this.state = 559;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 if (_la === 51 || _la === 52 || _la === 100) {
                     {
-                        this.state = 545;
+                        this.state = 558;
                         this.sep();
                     }
                 }
 
-                this.state = 549;
+                this.state = 562;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 if (
-                    ((_la & ~0x1f) === 0 && ((1 << _la) & 25165902) !== 0) ||
+                    ((_la & ~0x1f) === 0 && ((1 << _la) & 25166414) !== 0) ||
                     (((_la - 43) & ~0x1f) === 0 && ((1 << (_la - 43)) & 358413) !== 0) ||
                     (((_la - 89) & ~0x1f) === 0 && ((1 << (_la - 89)) & 387) !== 0) ||
                     _la === 125
                 ) {
                     {
-                        this.state = 548;
+                        this.state = 561;
                         this.list();
                     }
                 }
@@ -2738,29 +2777,29 @@ export default class MathJSLabParser extends Parser {
         try {
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 553;
+                this.state = 566;
                 this.match(MathJSLabParser.ELSE);
-                this.state = 555;
+                this.state = 568;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 if (_la === 51 || _la === 52 || _la === 100) {
                     {
-                        this.state = 554;
+                        this.state = 567;
                         this.sep();
                     }
                 }
 
-                this.state = 558;
+                this.state = 571;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 if (
-                    ((_la & ~0x1f) === 0 && ((1 << _la) & 25165902) !== 0) ||
+                    ((_la & ~0x1f) === 0 && ((1 << _la) & 25166414) !== 0) ||
                     (((_la - 43) & ~0x1f) === 0 && ((1 << (_la - 43)) & 358413) !== 0) ||
                     (((_la - 89) & ~0x1f) === 0 && ((1 << (_la - 89)) & 387) !== 0) ||
                     _la === 125
                 ) {
                     {
-                        this.state = 557;
+                        this.state = 570;
                         this.list();
                     }
                 }
@@ -2781,50 +2820,307 @@ export default class MathJSLabParser extends Parser {
         return localctx;
     }
     // @RuleVersion(0)
-    public param_list(): Param_listContext {
-        let localctx: Param_listContext = new Param_listContext(this, this._ctx, this.state);
-        this.enterRule(localctx, 62, MathJSLabParser.RULE_param_list);
+    public switch_command(): Switch_commandContext {
+        let localctx: Switch_commandContext = new Switch_commandContext(this, this._ctx, this.state);
+        this.enterRule(localctx, 62, MathJSLabParser.RULE_switch_command);
         let _la: number;
         try {
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 562;
+                this.state = 575;
+                this.match(MathJSLabParser.SWITCH);
+                this.state = 576;
+                this.expression();
+                this.state = 578;
+                this._errHandler.sync(this);
+                _la = this._input.LA(1);
+                if (_la === 51 || _la === 52 || _la === 100) {
+                    {
+                        this.state = 577;
+                        this.sep();
+                    }
+                }
+
+                this.state = 581;
+                this._errHandler.sync(this);
+                _la = this._input.LA(1);
+                if (_la === 11) {
+                    {
+                        this.state = 580;
+                        this.switch_case_list();
+                    }
+                }
+
+                this.state = 584;
+                this._errHandler.sync(this);
+                _la = this._input.LA(1);
+                if (_la === 12) {
+                    {
+                        this.state = 583;
+                        this.otherwise_case();
+                    }
+                }
+
+                this.state = 586;
+                _la = this._input.LA(1);
+                if (!(_la === 5 || _la === 10)) {
+                    this._errHandler.recoverInline(this);
+                } else {
+                    this._errHandler.reportMatch(this);
+                    this.consume();
+                }
+
+                localctx.node = AST.nodeSwitch(
+                    localctx.expression().node,
+                    localctx.switch_case_list() ? localctx.switch_case_list().node : AST.nodeListFirst(),
+                    localctx.otherwise_case() ? localctx.otherwise_case().node : null,
+                );
+            }
+        } catch (re) {
+            if (re instanceof RecognitionException) {
+                localctx.exception = re;
+                this._errHandler.reportError(this, re);
+                this._errHandler.recover(this, re);
+            } else {
+                throw re;
+            }
+        } finally {
+            this.exitRule();
+        }
+        return localctx;
+    }
+    // @RuleVersion(0)
+    public switch_case_list(): Switch_case_listContext {
+        let localctx: Switch_case_listContext = new Switch_case_listContext(this, this._ctx, this.state);
+        this.enterRule(localctx, 64, MathJSLabParser.RULE_switch_case_list);
+        let _la: number;
+        try {
+            let _alt: number;
+            this.enterOuterAlt(localctx, 1);
+            {
+                this.state = 589;
+                this.switch_case();
+
+                localctx.node = AST.nodeListFirst(localctx.switch_case(localctx.i++).node);
+
+                this.state = 599;
+                this._errHandler.sync(this);
+                _alt = this._interp.adaptivePredict(this._input, 58, this._ctx);
+                while (_alt !== 2 && _alt !== ATN.INVALID_ALT_NUMBER) {
+                    if (_alt === 1) {
+                        {
+                            {
+                                this.state = 592;
+                                this._errHandler.sync(this);
+                                _la = this._input.LA(1);
+                                if (_la === 51 || _la === 52 || _la === 100) {
+                                    {
+                                        this.state = 591;
+                                        this.sep();
+                                    }
+                                }
+
+                                this.state = 594;
+                                this.switch_case();
+
+                                localctx.node = AST.appendNodeList(localctx.node, localctx.switch_case(localctx.i++).node);
+                            }
+                        }
+                    }
+                    this.state = 601;
+                    this._errHandler.sync(this);
+                    _alt = this._interp.adaptivePredict(this._input, 58, this._ctx);
+                }
+                this.state = 603;
+                this._errHandler.sync(this);
+                _la = this._input.LA(1);
+                if (_la === 51 || _la === 52 || _la === 100) {
+                    {
+                        this.state = 602;
+                        this.sep();
+                    }
+                }
+            }
+        } catch (re) {
+            if (re instanceof RecognitionException) {
+                localctx.exception = re;
+                this._errHandler.reportError(this, re);
+                this._errHandler.recover(this, re);
+            } else {
+                throw re;
+            }
+        } finally {
+            this.exitRule();
+        }
+        return localctx;
+    }
+    // @RuleVersion(0)
+    public switch_case(): Switch_caseContext {
+        let localctx: Switch_caseContext = new Switch_caseContext(this, this._ctx, this.state);
+        this.enterRule(localctx, 66, MathJSLabParser.RULE_switch_case);
+        let _la: number;
+        try {
+            this.enterOuterAlt(localctx, 1);
+            {
+                this.state = 605;
+                this.match(MathJSLabParser.CASE);
+                this.state = 607;
+                this._errHandler.sync(this);
+                _la = this._input.LA(1);
+                if (_la === 51 || _la === 52 || _la === 100) {
+                    {
+                        this.state = 606;
+                        this.sep();
+                    }
+                }
+
+                this.state = 609;
+                this.expression();
+                this.state = 611;
+                this._errHandler.sync(this);
+                switch (this._interp.adaptivePredict(this._input, 61, this._ctx)) {
+                    case 1:
+                        {
+                            this.state = 610;
+                            this.sep();
+                        }
+                        break;
+                }
+                this.state = 614;
+                this._errHandler.sync(this);
+                _la = this._input.LA(1);
+                if (
+                    ((_la & ~0x1f) === 0 && ((1 << _la) & 25166414) !== 0) ||
+                    (((_la - 43) & ~0x1f) === 0 && ((1 << (_la - 43)) & 358413) !== 0) ||
+                    (((_la - 89) & ~0x1f) === 0 && ((1 << (_la - 89)) & 387) !== 0) ||
+                    _la === 125
+                ) {
+                    {
+                        this.state = 613;
+                        this.list();
+                    }
+                }
+
+                localctx.node = AST.nodeSwitchCase(localctx.expression().node, localctx.list() ? localctx.list().node : AST.nodeListFirst());
+            }
+        } catch (re) {
+            if (re instanceof RecognitionException) {
+                localctx.exception = re;
+                this._errHandler.reportError(this, re);
+                this._errHandler.recover(this, re);
+            } else {
+                throw re;
+            }
+        } finally {
+            this.exitRule();
+        }
+        return localctx;
+    }
+    // @RuleVersion(0)
+    public otherwise_case(): Otherwise_caseContext {
+        let localctx: Otherwise_caseContext = new Otherwise_caseContext(this, this._ctx, this.state);
+        this.enterRule(localctx, 68, MathJSLabParser.RULE_otherwise_case);
+        let _la: number;
+        try {
+            this.enterOuterAlt(localctx, 1);
+            {
+                this.state = 618;
+                this.match(MathJSLabParser.OTHERWISE);
+                this.state = 620;
+                this._errHandler.sync(this);
+                switch (this._interp.adaptivePredict(this._input, 63, this._ctx)) {
+                    case 1:
+                        {
+                            this.state = 619;
+                            this.sep();
+                        }
+                        break;
+                }
+                this.state = 623;
+                this._errHandler.sync(this);
+                _la = this._input.LA(1);
+                if (
+                    ((_la & ~0x1f) === 0 && ((1 << _la) & 25166414) !== 0) ||
+                    (((_la - 43) & ~0x1f) === 0 && ((1 << (_la - 43)) & 358413) !== 0) ||
+                    (((_la - 89) & ~0x1f) === 0 && ((1 << (_la - 89)) & 387) !== 0) ||
+                    _la === 125
+                ) {
+                    {
+                        this.state = 622;
+                        this.list();
+                    }
+                }
+
+                this.state = 626;
+                this._errHandler.sync(this);
+                _la = this._input.LA(1);
+                if (_la === 51 || _la === 52 || _la === 100) {
+                    {
+                        this.state = 625;
+                        this.sep();
+                    }
+                }
+
+                localctx.node = localctx.list() ? localctx.list().node : AST.nodeListFirst();
+            }
+        } catch (re) {
+            if (re instanceof RecognitionException) {
+                localctx.exception = re;
+                this._errHandler.reportError(this, re);
+                this._errHandler.recover(this, re);
+            } else {
+                throw re;
+            }
+        } finally {
+            this.exitRule();
+        }
+        return localctx;
+    }
+    // @RuleVersion(0)
+    public param_list(): Param_listContext {
+        let localctx: Param_listContext = new Param_listContext(this, this._ctx, this.state);
+        this.enterRule(localctx, 70, MathJSLabParser.RULE_param_list);
+        let _la: number;
+        try {
+            this.enterOuterAlt(localctx, 1);
+            {
+                this.state = 630;
                 this.match(MathJSLabParser.LPAREN);
 
                 localctx.node = AST.nodeListFirst();
 
-                this.state = 575;
+                this.state = 643;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 if (_la === 54 || _la === 96) {
                     {
-                        this.state = 564;
+                        this.state = 632;
                         this.param_list_elt();
 
                         localctx.node = AST.appendNodeList(localctx.node, localctx.param_list_elt(localctx.i++).node);
 
-                        this.state = 572;
+                        this.state = 640;
                         this._errHandler.sync(this);
                         _la = this._input.LA(1);
                         while (_la === 52) {
                             {
                                 {
-                                    this.state = 566;
+                                    this.state = 634;
                                     this.match(MathJSLabParser.COMMA);
-                                    this.state = 567;
+                                    this.state = 635;
                                     this.param_list_elt();
 
                                     localctx.node = AST.appendNodeList(localctx.node, localctx.param_list_elt(localctx.i++).node);
                                 }
                             }
-                            this.state = 574;
+                            this.state = 642;
                             this._errHandler.sync(this);
                             _la = this._input.LA(1);
                         }
                     }
                 }
 
-                this.state = 577;
+                this.state = 645;
                 this.match(MathJSLabParser.RPAREN);
             }
         } catch (re) {
@@ -2843,15 +3139,15 @@ export default class MathJSLabParser extends Parser {
     // @RuleVersion(0)
     public param_list_elt(): Param_list_eltContext {
         let localctx: Param_list_eltContext = new Param_list_eltContext(this, this._ctx, this.state);
-        this.enterRule(localctx, 64, MathJSLabParser.RULE_param_list_elt);
+        this.enterRule(localctx, 72, MathJSLabParser.RULE_param_list_elt);
         try {
-            this.state = 585;
+            this.state = 653;
             this._errHandler.sync(this);
             switch (this._input.LA(1)) {
                 case 96:
                     this.enterOuterAlt(localctx, 1);
                     {
-                        this.state = 579;
+                        this.state = 647;
                         this.declaration_element();
 
                         localctx.node = localctx.declaration_element().node;
@@ -2860,7 +3156,7 @@ export default class MathJSLabParser extends Parser {
                 case 54:
                     this.enterOuterAlt(localctx, 2);
                     {
-                        this.state = 582;
+                        this.state = 650;
                         this.magic_tilde();
 
                         localctx.node = localctx.magic_tilde().node;
@@ -2885,16 +3181,16 @@ export default class MathJSLabParser extends Parser {
     // @RuleVersion(0)
     public return_list(): Return_listContext {
         let localctx: Return_listContext = new Return_listContext(this, this._ctx, this.state);
-        this.enterRule(localctx, 66, MathJSLabParser.RULE_return_list);
+        this.enterRule(localctx, 74, MathJSLabParser.RULE_return_list);
         let _la: number;
         try {
-            this.state = 606;
+            this.state = 674;
             this._errHandler.sync(this);
             switch (this._input.LA(1)) {
                 case 96:
                     this.enterOuterAlt(localctx, 1);
                     {
-                        this.state = 587;
+                        this.state = 655;
                         this.identifier();
 
                         localctx.node = AST.nodeListFirst(localctx.identifier(0).node);
@@ -2903,43 +3199,43 @@ export default class MathJSLabParser extends Parser {
                 case 59:
                     this.enterOuterAlt(localctx, 2);
                     {
-                        this.state = 590;
+                        this.state = 658;
                         this.match(MathJSLabParser.LBRACKET);
 
                         localctx.node = AST.nodeListFirst();
 
-                        this.state = 603;
+                        this.state = 671;
                         this._errHandler.sync(this);
                         _la = this._input.LA(1);
                         if (_la === 96) {
                             {
-                                this.state = 592;
+                                this.state = 660;
                                 this.identifier();
 
                                 localctx.node = AST.appendNodeList(localctx.node, localctx.identifier(localctx.i++).node);
 
-                                this.state = 600;
+                                this.state = 668;
                                 this._errHandler.sync(this);
                                 _la = this._input.LA(1);
                                 while (_la === 52) {
                                     {
                                         {
-                                            this.state = 594;
+                                            this.state = 662;
                                             this.match(MathJSLabParser.COMMA);
-                                            this.state = 595;
+                                            this.state = 663;
                                             this.identifier();
 
                                             localctx.node = AST.appendNodeList(localctx.node, localctx.identifier(localctx.i++).node);
                                         }
                                     }
-                                    this.state = 602;
+                                    this.state = 670;
                                     this._errHandler.sync(this);
                                     _la = this._input.LA(1);
                                 }
                             }
                         }
 
-                        this.state = 605;
+                        this.state = 673;
                         this.match(MathJSLabParser.RBRACKET);
                     }
                     break;
@@ -2962,73 +3258,73 @@ export default class MathJSLabParser extends Parser {
     // @RuleVersion(0)
     public function_(): FunctionContext {
         let localctx: FunctionContext = new FunctionContext(this, this._ctx, this.state);
-        this.enterRule(localctx, 68, MathJSLabParser.RULE_function);
+        this.enterRule(localctx, 76, MathJSLabParser.RULE_function);
         let _la: number;
         try {
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 608;
+                this.state = 676;
                 this.match(MathJSLabParser.FUNCTION);
-                this.state = 612;
+                this.state = 680;
                 this._errHandler.sync(this);
-                switch (this._interp.adaptivePredict(this._input, 59, this._ctx)) {
+                switch (this._interp.adaptivePredict(this._input, 72, this._ctx)) {
                     case 1:
                         {
-                            this.state = 609;
+                            this.state = 677;
                             this.return_list();
-                            this.state = 610;
+                            this.state = 678;
                             this.match(MathJSLabParser.EQ);
                         }
                         break;
                 }
-                this.state = 614;
+                this.state = 682;
                 this.identifier();
-                this.state = 616;
+                this.state = 684;
                 this._errHandler.sync(this);
-                switch (this._interp.adaptivePredict(this._input, 60, this._ctx)) {
+                switch (this._interp.adaptivePredict(this._input, 73, this._ctx)) {
                     case 1:
                         {
-                            this.state = 615;
+                            this.state = 683;
                             this.param_list();
                         }
                         break;
                 }
-                this.state = 619;
+                this.state = 687;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 if (_la === 51 || _la === 52 || _la === 100) {
                     {
-                        this.state = 618;
+                        this.state = 686;
                         this.sep();
                     }
                 }
 
-                this.state = 622;
+                this.state = 690;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 if (_la === 44) {
                     {
-                        this.state = 621;
+                        this.state = 689;
                         this.arguments_block_list();
                     }
                 }
 
-                this.state = 625;
+                this.state = 693;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 if (
-                    ((_la & ~0x1f) === 0 && ((1 << _la) & 25165902) !== 0) ||
+                    ((_la & ~0x1f) === 0 && ((1 << _la) & 25166414) !== 0) ||
                     (((_la - 43) & ~0x1f) === 0 && ((1 << (_la - 43)) & 358413) !== 0) ||
                     (((_la - 89) & ~0x1f) === 0 && ((1 << (_la - 89)) & 387) !== 0) ||
                     _la === 125
                 ) {
                     {
-                        this.state = 624;
+                        this.state = 692;
                         this.list();
                     }
                 }
 
-                this.state = 627;
+                this.state = 695;
                 _la = this._input.LA(1);
                 if (!(((_la - -1) & ~0x1f) === 0 && ((1 << (_la - -1)) & 67108929) !== 0)) {
                     this._errHandler.recoverInline(this);
@@ -3061,51 +3357,51 @@ export default class MathJSLabParser extends Parser {
     // @RuleVersion(0)
     public arguments_block_list(): Arguments_block_listContext {
         let localctx: Arguments_block_listContext = new Arguments_block_listContext(this, this._ctx, this.state);
-        this.enterRule(localctx, 70, MathJSLabParser.RULE_arguments_block_list);
+        this.enterRule(localctx, 78, MathJSLabParser.RULE_arguments_block_list);
         let _la: number;
         try {
             let _alt: number;
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 630;
+                this.state = 698;
                 this.arguments_block();
 
                 localctx.node = AST.nodeListFirst(localctx.arguments_block(localctx.i++).node);
 
-                this.state = 640;
+                this.state = 708;
                 this._errHandler.sync(this);
-                _alt = this._interp.adaptivePredict(this._input, 65, this._ctx);
+                _alt = this._interp.adaptivePredict(this._input, 78, this._ctx);
                 while (_alt !== 2 && _alt !== ATN.INVALID_ALT_NUMBER) {
                     if (_alt === 1) {
                         {
                             {
-                                this.state = 633;
+                                this.state = 701;
                                 this._errHandler.sync(this);
                                 _la = this._input.LA(1);
                                 if (_la === 51 || _la === 52 || _la === 100) {
                                     {
-                                        this.state = 632;
+                                        this.state = 700;
                                         this.sep();
                                     }
                                 }
 
-                                this.state = 635;
+                                this.state = 703;
                                 this.arguments_block();
 
                                 localctx.node = AST.appendNodeList(localctx.node, localctx.arguments_block(localctx.i++).node);
                             }
                         }
                     }
-                    this.state = 642;
+                    this.state = 710;
                     this._errHandler.sync(this);
-                    _alt = this._interp.adaptivePredict(this._input, 65, this._ctx);
+                    _alt = this._interp.adaptivePredict(this._input, 78, this._ctx);
                 }
-                this.state = 644;
+                this.state = 712;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 if (_la === 51 || _la === 52 || _la === 100) {
                     {
-                        this.state = 643;
+                        this.state = 711;
                         this.sep();
                     }
                 }
@@ -3126,59 +3422,59 @@ export default class MathJSLabParser extends Parser {
     // @RuleVersion(0)
     public arguments_block(): Arguments_blockContext {
         let localctx: Arguments_blockContext = new Arguments_blockContext(this, this._ctx, this.state);
-        this.enterRule(localctx, 72, MathJSLabParser.RULE_arguments_block);
+        this.enterRule(localctx, 80, MathJSLabParser.RULE_arguments_block);
         let _la: number;
         try {
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 646;
+                this.state = 714;
                 this.match(MathJSLabParser.ARGUMENTS);
-                this.state = 648;
+                this.state = 716;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 if (_la === 51 || _la === 52 || _la === 100) {
                     {
-                        this.state = 647;
+                        this.state = 715;
                         this.sep();
                     }
                 }
 
-                this.state = 656;
+                this.state = 724;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 if (_la === 57) {
                     {
-                        this.state = 650;
+                        this.state = 718;
                         this.match(MathJSLabParser.LPAREN);
-                        this.state = 651;
+                        this.state = 719;
                         this.identifier();
-                        this.state = 652;
+                        this.state = 720;
                         this.match(MathJSLabParser.RPAREN);
-                        this.state = 654;
+                        this.state = 722;
                         this._errHandler.sync(this);
                         _la = this._input.LA(1);
                         if (_la === 51 || _la === 52 || _la === 100) {
                             {
-                                this.state = 653;
+                                this.state = 721;
                                 this.sep();
                             }
                         }
                     }
                 }
 
-                this.state = 658;
+                this.state = 726;
                 this.args_validation_list();
-                this.state = 660;
+                this.state = 728;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 if (_la === 51 || _la === 52 || _la === 100) {
                     {
-                        this.state = 659;
+                        this.state = 727;
                         this.sep();
                     }
                 }
 
-                this.state = 662;
+                this.state = 730;
                 this.match(MathJSLabParser.END);
 
                 localctx.node = AST.nodeArguments(localctx.identifier() ? localctx.identifier().node : null, localctx.args_validation_list().node);
@@ -3199,35 +3495,35 @@ export default class MathJSLabParser extends Parser {
     // @RuleVersion(0)
     public args_validation_list(): Args_validation_listContext {
         let localctx: Args_validation_listContext = new Args_validation_listContext(this, this._ctx, this.state);
-        this.enterRule(localctx, 74, MathJSLabParser.RULE_args_validation_list);
+        this.enterRule(localctx, 82, MathJSLabParser.RULE_args_validation_list);
         try {
             let _alt: number;
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 665;
+                this.state = 733;
                 this.arg_validation();
 
                 localctx.node = AST.nodeListFirst(localctx.arg_validation(localctx.i++).node);
 
-                this.state = 673;
+                this.state = 741;
                 this._errHandler.sync(this);
-                _alt = this._interp.adaptivePredict(this._input, 71, this._ctx);
+                _alt = this._interp.adaptivePredict(this._input, 84, this._ctx);
                 while (_alt !== 2 && _alt !== ATN.INVALID_ALT_NUMBER) {
                     if (_alt === 1) {
                         {
                             {
-                                this.state = 667;
+                                this.state = 735;
                                 this.sep();
-                                this.state = 668;
+                                this.state = 736;
                                 this.arg_validation();
 
                                 localctx.node = AST.appendNodeList(localctx.node, localctx.arg_validation(localctx.i++).node);
                             }
                         }
                     }
-                    this.state = 675;
+                    this.state = 743;
                     this._errHandler.sync(this);
-                    _alt = this._interp.adaptivePredict(this._input, 71, this._ctx);
+                    _alt = this._interp.adaptivePredict(this._input, 84, this._ctx);
                 }
             }
         } catch (re) {
@@ -3246,59 +3542,59 @@ export default class MathJSLabParser extends Parser {
     // @RuleVersion(0)
     public arg_validation(): Arg_validationContext {
         let localctx: Arg_validationContext = new Arg_validationContext(this, this._ctx, this.state);
-        this.enterRule(localctx, 76, MathJSLabParser.RULE_arg_validation);
+        this.enterRule(localctx, 84, MathJSLabParser.RULE_arg_validation);
         let _la: number;
         try {
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 676;
+                this.state = 744;
                 this.arg_validation_name();
-                this.state = 681;
+                this.state = 749;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 if (_la === 57) {
                     {
-                        this.state = 677;
+                        this.state = 745;
                         this.match(MathJSLabParser.LPAREN);
-                        this.state = 678;
+                        this.state = 746;
                         this.arg_list();
-                        this.state = 679;
+                        this.state = 747;
                         this.match(MathJSLabParser.RPAREN);
                     }
                 }
 
-                this.state = 684;
+                this.state = 752;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 if (_la === 96) {
                     {
-                        this.state = 683;
+                        this.state = 751;
                         this.identifier();
                     }
                 }
 
-                this.state = 690;
+                this.state = 758;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 if (_la === 61) {
                     {
-                        this.state = 686;
+                        this.state = 754;
                         this.match(MathJSLabParser.LCURLYBR);
-                        this.state = 687;
+                        this.state = 755;
                         this.arg_list();
-                        this.state = 688;
+                        this.state = 756;
                         this.match(MathJSLabParser.RCURLYBR);
                     }
                 }
 
-                this.state = 694;
+                this.state = 762;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 if (_la === 49) {
                     {
-                        this.state = 692;
+                        this.state = 760;
                         this.match(MathJSLabParser.EQ);
-                        this.state = 693;
+                        this.state = 761;
                         this.expression();
                     }
                 }
@@ -3327,31 +3623,31 @@ export default class MathJSLabParser extends Parser {
     // @RuleVersion(0)
     public arg_validation_name(): Arg_validation_nameContext {
         let localctx: Arg_validation_nameContext = new Arg_validation_nameContext(this, this._ctx, this.state);
-        this.enterRule(localctx, 78, MathJSLabParser.RULE_arg_validation_name);
+        this.enterRule(localctx, 86, MathJSLabParser.RULE_arg_validation_name);
         let _la: number;
         try {
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 698;
+                this.state = 766;
                 this.identifier();
 
                 localctx.node = localctx.identifier(0).node;
 
-                this.state = 706;
+                this.state = 774;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 while (_la === 53) {
                     {
                         {
-                            this.state = 700;
+                            this.state = 768;
                             this.match(MathJSLabParser.DOT);
-                            this.state = 701;
+                            this.state = 769;
                             this.identifier();
 
                             localctx.node = AST.nodeIndirectRef(localctx.node, localctx.identifier(localctx.i++).node.id);
                         }
                     }
-                    this.state = 708;
+                    this.state = 776;
                     this._errHandler.sync(this);
                     _la = this._input.LA(1);
                 }
@@ -3372,18 +3668,18 @@ export default class MathJSLabParser extends Parser {
     // @RuleVersion(0)
     public sep_no_nl(): Sep_no_nlContext {
         let localctx: Sep_no_nlContext = new Sep_no_nlContext(this, this._ctx, this.state);
-        this.enterRule(localctx, 80, MathJSLabParser.RULE_sep_no_nl);
+        this.enterRule(localctx, 88, MathJSLabParser.RULE_sep_no_nl);
         let _la: number;
         try {
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 710;
+                this.state = 778;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 do {
                     {
                         {
-                            this.state = 709;
+                            this.state = 777;
                             _la = this._input.LA(1);
                             if (!(_la === 51 || _la === 52)) {
                                 this._errHandler.recoverInline(this);
@@ -3393,7 +3689,7 @@ export default class MathJSLabParser extends Parser {
                             }
                         }
                     }
-                    this.state = 712;
+                    this.state = 780;
                     this._errHandler.sync(this);
                     _la = this._input.LA(1);
                 } while (_la === 51 || _la === 52);
@@ -3414,22 +3710,22 @@ export default class MathJSLabParser extends Parser {
     // @RuleVersion(0)
     public nl(): NlContext {
         let localctx: NlContext = new NlContext(this, this._ctx, this.state);
-        this.enterRule(localctx, 82, MathJSLabParser.RULE_nl);
+        this.enterRule(localctx, 90, MathJSLabParser.RULE_nl);
         let _la: number;
         try {
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 715;
+                this.state = 783;
                 this._errHandler.sync(this);
                 _la = this._input.LA(1);
                 do {
                     {
                         {
-                            this.state = 714;
+                            this.state = 782;
                             this.match(MathJSLabParser.NEWLINE);
                         }
                     }
-                    this.state = 717;
+                    this.state = 785;
                     this._errHandler.sync(this);
                     _la = this._input.LA(1);
                 } while (_la === 100);
@@ -3450,31 +3746,38 @@ export default class MathJSLabParser extends Parser {
     // @RuleVersion(0)
     public sep(): SepContext {
         let localctx: SepContext = new SepContext(this, this._ctx, this.state);
-        this.enterRule(localctx, 84, MathJSLabParser.RULE_sep);
+        this.enterRule(localctx, 92, MathJSLabParser.RULE_sep);
         let _la: number;
         try {
+            let _alt: number;
             this.enterOuterAlt(localctx, 1);
             {
-                this.state = 720;
+                this.state = 788;
                 this._errHandler.sync(this);
-                _la = this._input.LA(1);
+                _alt = 1;
                 do {
-                    {
-                        {
-                            this.state = 719;
-                            _la = this._input.LA(1);
-                            if (!(_la === 51 || _la === 52 || _la === 100)) {
-                                this._errHandler.recoverInline(this);
-                            } else {
-                                this._errHandler.reportMatch(this);
-                                this.consume();
+                    switch (_alt) {
+                        case 1:
+                            {
+                                {
+                                    this.state = 787;
+                                    _la = this._input.LA(1);
+                                    if (!(_la === 51 || _la === 52 || _la === 100)) {
+                                        this._errHandler.recoverInline(this);
+                                    } else {
+                                        this._errHandler.reportMatch(this);
+                                        this.consume();
+                                    }
+                                }
                             }
-                        }
+                            break;
+                        default:
+                            throw new NoViableAltException(this);
                     }
-                    this.state = 722;
+                    this.state = 790;
                     this._errHandler.sync(this);
-                    _la = this._input.LA(1);
-                } while (_la === 51 || _la === 52 || _la === 100);
+                    _alt = this._interp.adaptivePredict(this._input, 92, this._ctx);
+                } while (_alt !== 2 && _alt !== ATN.INVALID_ALT_NUMBER);
             }
         } catch (re) {
             if (re instanceof RecognitionException) {
@@ -3556,139 +3859,152 @@ export default class MathJSLabParser extends Parser {
     }
 
     public static readonly _serializedATN: number[] = [
-        4, 1, 125, 725, 2, 0, 7, 0, 2, 1, 7, 1, 2, 2, 7, 2, 2, 3, 7, 3, 2, 4, 7, 4, 2, 5, 7, 5, 2, 6, 7, 6, 2, 7, 7, 7, 2, 8, 7, 8, 2, 9, 7, 9, 2, 10, 7, 10, 2, 11, 7, 11, 2, 12, 7, 12, 2,
+        4, 1, 125, 793, 2, 0, 7, 0, 2, 1, 7, 1, 2, 2, 7, 2, 2, 3, 7, 3, 2, 4, 7, 4, 2, 5, 7, 5, 2, 6, 7, 6, 2, 7, 7, 7, 2, 8, 7, 8, 2, 9, 7, 9, 2, 10, 7, 10, 2, 11, 7, 11, 2, 12, 7, 12, 2,
         13, 7, 13, 2, 14, 7, 14, 2, 15, 7, 15, 2, 16, 7, 16, 2, 17, 7, 17, 2, 18, 7, 18, 2, 19, 7, 19, 2, 20, 7, 20, 2, 21, 7, 21, 2, 22, 7, 22, 2, 23, 7, 23, 2, 24, 7, 24, 2, 25, 7, 25, 2,
         26, 7, 26, 2, 27, 7, 27, 2, 28, 7, 28, 2, 29, 7, 29, 2, 30, 7, 30, 2, 31, 7, 31, 2, 32, 7, 32, 2, 33, 7, 33, 2, 34, 7, 34, 2, 35, 7, 35, 2, 36, 7, 36, 2, 37, 7, 37, 2, 38, 7, 38, 2,
-        39, 7, 39, 2, 40, 7, 40, 2, 41, 7, 41, 2, 42, 7, 42, 1, 0, 3, 0, 88, 8, 0, 1, 0, 1, 0, 1, 0, 3, 0, 93, 8, 0, 1, 0, 1, 0, 1, 0, 1, 0, 3, 0, 99, 8, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-        1, 5, 1, 107, 8, 1, 10, 1, 12, 1, 110, 9, 1, 1, 1, 3, 1, 113, 8, 1, 1, 1, 1, 1, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 5, 2, 123, 8, 2, 10, 2, 12, 2, 126, 9, 2, 1, 2, 3, 2, 129, 8, 2,
-        1, 2, 1, 2, 1, 3, 1, 3, 1, 3, 1, 3, 1, 3, 1, 3, 1, 3, 1, 3, 1, 3, 3, 3, 142, 8, 3, 1, 4, 1, 4, 1, 4, 1, 4, 5, 4, 148, 8, 4, 10, 4, 12, 4, 151, 9, 4, 1, 4, 1, 4, 1, 5, 1, 5, 1, 5, 1,
-        6, 1, 6, 1, 6, 1, 6, 3, 6, 162, 8, 6, 1, 7, 1, 7, 1, 7, 1, 8, 1, 8, 1, 8, 1, 9, 1, 9, 1, 9, 1, 9, 1, 9, 1, 9, 1, 9, 1, 9, 1, 9, 3, 9, 179, 8, 9, 1, 10, 1, 10, 1, 10, 1, 10, 1, 10, 1,
-        10, 1, 10, 1, 10, 3, 10, 189, 8, 10, 1, 10, 1, 10, 1, 10, 5, 10, 194, 8, 10, 10, 10, 12, 10, 197, 9, 10, 1, 10, 3, 10, 200, 8, 10, 1, 10, 1, 10, 1, 10, 1, 10, 1, 10, 1, 10, 1, 10, 1,
-        10, 1, 10, 1, 10, 3, 10, 212, 8, 10, 1, 10, 1, 10, 1, 10, 5, 10, 217, 8, 10, 10, 10, 12, 10, 220, 9, 10, 1, 10, 3, 10, 223, 8, 10, 1, 10, 1, 10, 3, 10, 227, 8, 10, 1, 11, 1, 11, 1,
-        11, 3, 11, 232, 8, 11, 1, 11, 1, 11, 1, 11, 1, 11, 1, 11, 1, 11, 5, 11, 240, 8, 11, 10, 11, 12, 11, 243, 9, 11, 1, 11, 3, 11, 246, 8, 11, 3, 11, 248, 8, 11, 1, 12, 1, 12, 1, 12, 1,
-        12, 1, 13, 1, 13, 1, 13, 1, 13, 1, 13, 1, 14, 1, 14, 1, 14, 1, 14, 1, 14, 1, 14, 1, 14, 1, 14, 1, 14, 1, 14, 1, 14, 1, 14, 1, 14, 1, 14, 1, 14, 1, 14, 1, 14, 3, 14, 276, 8, 14, 1,
-        15, 1, 15, 1, 15, 1, 16, 1, 16, 1, 16, 1, 17, 1, 17, 1, 17, 1, 17, 1, 17, 1, 17, 1, 17, 1, 17, 1, 17, 3, 17, 293, 8, 17, 1, 18, 1, 18, 1, 18, 1, 18, 1, 18, 1, 18, 5, 18, 301, 8, 18,
-        10, 18, 12, 18, 304, 9, 18, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 3, 19, 318, 8, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1,
-        19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 3, 19, 336, 8, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 3, 19, 343, 8, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19,
-        1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 5, 19, 366, 8, 19, 10, 19, 12, 19, 369, 9, 19, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1,
-        20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 3, 20, 383, 8, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 3, 20, 391, 8, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 3, 20, 398, 8, 20, 1,
-        20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 5, 20, 413, 8, 20, 10, 20, 12, 20, 416, 9, 20, 1, 21, 1, 21, 1, 21, 1, 21, 1, 21, 3, 21, 423,
-        8, 21, 1, 21, 1, 21, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 3, 22, 434, 8, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1,
-        22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 5, 22, 461, 8, 22, 10, 22, 12, 22, 464, 9, 22, 1, 23, 1, 23, 1, 23, 1, 23, 1, 23, 1, 23, 1, 23, 1,
-        23, 1, 23, 1, 23, 1, 23, 3, 23, 477, 8, 23, 1, 24, 1, 24, 1, 24, 1, 24, 1, 24, 1, 24, 1, 24, 1, 24, 1, 24, 1, 24, 1, 24, 3, 24, 490, 8, 24, 1, 25, 1, 25, 1, 25, 1, 25, 3, 25, 496, 8,
-        25, 1, 25, 1, 25, 1, 25, 4, 25, 501, 8, 25, 11, 25, 12, 25, 502, 1, 26, 1, 26, 1, 26, 1, 26, 1, 26, 1, 26, 1, 26, 1, 26, 3, 26, 513, 8, 26, 1, 27, 1, 27, 1, 27, 1, 28, 1, 28, 1, 28,
-        3, 28, 521, 8, 28, 1, 28, 3, 28, 524, 8, 28, 1, 28, 1, 28, 1, 28, 1, 28, 5, 28, 530, 8, 28, 10, 28, 12, 28, 533, 9, 28, 1, 28, 3, 28, 536, 8, 28, 1, 28, 1, 28, 1, 28, 1, 29, 1, 29,
-        3, 29, 543, 8, 29, 1, 29, 1, 29, 3, 29, 547, 8, 29, 1, 29, 3, 29, 550, 8, 29, 1, 29, 1, 29, 1, 30, 1, 30, 3, 30, 556, 8, 30, 1, 30, 3, 30, 559, 8, 30, 1, 30, 1, 30, 1, 31, 1, 31, 1,
-        31, 1, 31, 1, 31, 1, 31, 1, 31, 1, 31, 5, 31, 571, 8, 31, 10, 31, 12, 31, 574, 9, 31, 3, 31, 576, 8, 31, 1, 31, 1, 31, 1, 32, 1, 32, 1, 32, 1, 32, 1, 32, 1, 32, 3, 32, 586, 8, 32, 1,
-        33, 1, 33, 1, 33, 1, 33, 1, 33, 1, 33, 1, 33, 1, 33, 1, 33, 1, 33, 1, 33, 5, 33, 599, 8, 33, 10, 33, 12, 33, 602, 9, 33, 3, 33, 604, 8, 33, 1, 33, 3, 33, 607, 8, 33, 1, 34, 1, 34, 1,
-        34, 1, 34, 3, 34, 613, 8, 34, 1, 34, 1, 34, 3, 34, 617, 8, 34, 1, 34, 3, 34, 620, 8, 34, 1, 34, 3, 34, 623, 8, 34, 1, 34, 3, 34, 626, 8, 34, 1, 34, 1, 34, 1, 34, 1, 35, 1, 35, 1, 35,
-        3, 35, 634, 8, 35, 1, 35, 1, 35, 1, 35, 5, 35, 639, 8, 35, 10, 35, 12, 35, 642, 9, 35, 1, 35, 3, 35, 645, 8, 35, 1, 36, 1, 36, 3, 36, 649, 8, 36, 1, 36, 1, 36, 1, 36, 1, 36, 3, 36,
-        655, 8, 36, 3, 36, 657, 8, 36, 1, 36, 1, 36, 3, 36, 661, 8, 36, 1, 36, 1, 36, 1, 36, 1, 37, 1, 37, 1, 37, 1, 37, 1, 37, 1, 37, 5, 37, 672, 8, 37, 10, 37, 12, 37, 675, 9, 37, 1, 38,
-        1, 38, 1, 38, 1, 38, 1, 38, 3, 38, 682, 8, 38, 1, 38, 3, 38, 685, 8, 38, 1, 38, 1, 38, 1, 38, 1, 38, 3, 38, 691, 8, 38, 1, 38, 1, 38, 3, 38, 695, 8, 38, 1, 38, 1, 38, 1, 39, 1, 39,
-        1, 39, 1, 39, 1, 39, 1, 39, 5, 39, 705, 8, 39, 10, 39, 12, 39, 708, 9, 39, 1, 40, 4, 40, 711, 8, 40, 11, 40, 12, 40, 712, 1, 41, 4, 41, 716, 8, 41, 11, 41, 12, 41, 717, 1, 42, 4, 42,
-        721, 8, 42, 11, 42, 12, 42, 722, 1, 42, 0, 3, 38, 40, 44, 43, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 48, 50, 52, 54, 56, 58, 60,
-        62, 64, 66, 68, 70, 72, 74, 76, 78, 80, 82, 84, 0, 14, 2, 0, 42, 42, 52, 52, 2, 0, 45, 46, 89, 90, 1, 0, 54, 55, 3, 0, 47, 48, 63, 63, 86, 88, 1, 0, 45, 46, 1, 0, 89, 90, 1, 0, 93,
-        94, 1, 0, 91, 92, 1, 0, 80, 85, 2, 0, 49, 49, 64, 75, 1, 0, 4, 5, 2, 1, 5, 5, 25, 25, 1, 0, 51, 52, 2, 0, 51, 52, 100, 100, 787, 0, 98, 1, 0, 0, 0, 2, 100, 1, 0, 0, 0, 4, 116, 1, 0,
-        0, 0, 6, 141, 1, 0, 0, 0, 8, 143, 1, 0, 0, 0, 10, 154, 1, 0, 0, 0, 12, 161, 1, 0, 0, 0, 14, 163, 1, 0, 0, 0, 16, 166, 1, 0, 0, 0, 18, 178, 1, 0, 0, 0, 20, 226, 1, 0, 0, 0, 22, 247,
-        1, 0, 0, 0, 24, 249, 1, 0, 0, 0, 26, 253, 1, 0, 0, 0, 28, 275, 1, 0, 0, 0, 30, 277, 1, 0, 0, 0, 32, 280, 1, 0, 0, 0, 34, 292, 1, 0, 0, 0, 36, 294, 1, 0, 0, 0, 38, 317, 1, 0, 0, 0,
-        40, 382, 1, 0, 0, 0, 42, 417, 1, 0, 0, 0, 44, 433, 1, 0, 0, 0, 46, 476, 1, 0, 0, 0, 48, 489, 1, 0, 0, 0, 50, 495, 1, 0, 0, 0, 52, 512, 1, 0, 0, 0, 54, 514, 1, 0, 0, 0, 56, 517, 1, 0,
-        0, 0, 58, 540, 1, 0, 0, 0, 60, 553, 1, 0, 0, 0, 62, 562, 1, 0, 0, 0, 64, 585, 1, 0, 0, 0, 66, 606, 1, 0, 0, 0, 68, 608, 1, 0, 0, 0, 70, 630, 1, 0, 0, 0, 72, 646, 1, 0, 0, 0, 74, 665,
-        1, 0, 0, 0, 76, 676, 1, 0, 0, 0, 78, 698, 1, 0, 0, 0, 80, 710, 1, 0, 0, 0, 82, 715, 1, 0, 0, 0, 84, 720, 1, 0, 0, 0, 86, 88, 3, 84, 42, 0, 87, 86, 1, 0, 0, 0, 87, 88, 1, 0, 0, 0, 88,
-        89, 1, 0, 0, 0, 89, 90, 5, 0, 0, 1, 90, 99, 6, 0, -1, 0, 91, 93, 3, 84, 42, 0, 92, 91, 1, 0, 0, 0, 92, 93, 1, 0, 0, 0, 93, 94, 1, 0, 0, 0, 94, 95, 3, 2, 1, 0, 95, 96, 5, 0, 0, 1, 96,
-        97, 6, 0, -1, 0, 97, 99, 1, 0, 0, 0, 98, 87, 1, 0, 0, 0, 98, 92, 1, 0, 0, 0, 99, 1, 1, 0, 0, 0, 100, 101, 3, 6, 3, 0, 101, 108, 6, 1, -1, 0, 102, 103, 3, 84, 42, 0, 103, 104, 3, 6,
-        3, 0, 104, 105, 6, 1, -1, 0, 105, 107, 1, 0, 0, 0, 106, 102, 1, 0, 0, 0, 107, 110, 1, 0, 0, 0, 108, 106, 1, 0, 0, 0, 108, 109, 1, 0, 0, 0, 109, 112, 1, 0, 0, 0, 110, 108, 1, 0, 0, 0,
-        111, 113, 3, 84, 42, 0, 112, 111, 1, 0, 0, 0, 112, 113, 1, 0, 0, 0, 113, 114, 1, 0, 0, 0, 114, 115, 6, 1, -1, 0, 115, 3, 1, 0, 0, 0, 116, 117, 3, 6, 3, 0, 117, 124, 6, 2, -1, 0, 118,
-        119, 3, 84, 42, 0, 119, 120, 3, 6, 3, 0, 120, 121, 6, 2, -1, 0, 121, 123, 1, 0, 0, 0, 122, 118, 1, 0, 0, 0, 123, 126, 1, 0, 0, 0, 124, 122, 1, 0, 0, 0, 124, 125, 1, 0, 0, 0, 125,
-        128, 1, 0, 0, 0, 126, 124, 1, 0, 0, 0, 127, 129, 3, 84, 42, 0, 128, 127, 1, 0, 0, 0, 128, 129, 1, 0, 0, 0, 129, 130, 1, 0, 0, 0, 130, 131, 6, 2, -1, 0, 131, 5, 1, 0, 0, 0, 132, 133,
-        3, 46, 23, 0, 133, 134, 6, 3, -1, 0, 134, 142, 1, 0, 0, 0, 135, 136, 3, 48, 24, 0, 136, 137, 6, 3, -1, 0, 137, 142, 1, 0, 0, 0, 138, 139, 3, 8, 4, 0, 139, 140, 6, 3, -1, 0, 140, 142,
-        1, 0, 0, 0, 141, 132, 1, 0, 0, 0, 141, 135, 1, 0, 0, 0, 141, 138, 1, 0, 0, 0, 142, 7, 1, 0, 0, 0, 143, 149, 3, 10, 5, 0, 144, 145, 3, 12, 6, 0, 145, 146, 6, 4, -1, 0, 146, 148, 1, 0,
-        0, 0, 147, 144, 1, 0, 0, 0, 148, 151, 1, 0, 0, 0, 149, 147, 1, 0, 0, 0, 149, 150, 1, 0, 0, 0, 150, 152, 1, 0, 0, 0, 151, 149, 1, 0, 0, 0, 152, 153, 6, 4, -1, 0, 153, 9, 1, 0, 0, 0,
-        154, 155, 5, 96, 0, 0, 155, 156, 6, 5, -1, 0, 156, 11, 1, 0, 0, 0, 157, 158, 5, 43, 0, 0, 158, 162, 6, 6, -1, 0, 159, 160, 5, 125, 0, 0, 160, 162, 6, 6, -1, 0, 161, 157, 1, 0, 0, 0,
-        161, 159, 1, 0, 0, 0, 162, 13, 1, 0, 0, 0, 163, 164, 5, 97, 0, 0, 164, 165, 6, 7, -1, 0, 165, 15, 1, 0, 0, 0, 166, 167, 5, 6, 0, 0, 167, 168, 6, 8, -1, 0, 168, 17, 1, 0, 0, 0, 169,
-        170, 3, 14, 7, 0, 170, 171, 6, 9, -1, 0, 171, 179, 1, 0, 0, 0, 172, 173, 3, 12, 6, 0, 173, 174, 6, 9, -1, 0, 174, 179, 1, 0, 0, 0, 175, 176, 3, 16, 8, 0, 176, 177, 6, 9, -1, 0, 177,
-        179, 1, 0, 0, 0, 178, 169, 1, 0, 0, 0, 178, 172, 1, 0, 0, 0, 178, 175, 1, 0, 0, 0, 179, 19, 1, 0, 0, 0, 180, 181, 5, 59, 0, 0, 181, 182, 5, 60, 0, 0, 182, 227, 6, 10, -1, 0, 183,
-        184, 5, 59, 0, 0, 184, 185, 3, 22, 11, 0, 185, 195, 6, 10, -1, 0, 186, 189, 5, 51, 0, 0, 187, 189, 3, 82, 41, 0, 188, 186, 1, 0, 0, 0, 188, 187, 1, 0, 0, 0, 189, 190, 1, 0, 0, 0,
-        190, 191, 3, 22, 11, 0, 191, 192, 6, 10, -1, 0, 192, 194, 1, 0, 0, 0, 193, 188, 1, 0, 0, 0, 194, 197, 1, 0, 0, 0, 195, 193, 1, 0, 0, 0, 195, 196, 1, 0, 0, 0, 196, 199, 1, 0, 0, 0,
-        197, 195, 1, 0, 0, 0, 198, 200, 3, 82, 41, 0, 199, 198, 1, 0, 0, 0, 199, 200, 1, 0, 0, 0, 200, 201, 1, 0, 0, 0, 201, 202, 5, 60, 0, 0, 202, 227, 1, 0, 0, 0, 203, 204, 5, 61, 0, 0,
-        204, 205, 5, 62, 0, 0, 205, 227, 6, 10, -1, 0, 206, 207, 5, 61, 0, 0, 207, 208, 3, 22, 11, 0, 208, 218, 6, 10, -1, 0, 209, 212, 5, 51, 0, 0, 210, 212, 3, 82, 41, 0, 211, 209, 1, 0,
-        0, 0, 211, 210, 1, 0, 0, 0, 212, 213, 1, 0, 0, 0, 213, 214, 3, 22, 11, 0, 214, 215, 6, 10, -1, 0, 215, 217, 1, 0, 0, 0, 216, 211, 1, 0, 0, 0, 217, 220, 1, 0, 0, 0, 218, 216, 1, 0, 0,
-        0, 218, 219, 1, 0, 0, 0, 219, 222, 1, 0, 0, 0, 220, 218, 1, 0, 0, 0, 221, 223, 3, 82, 41, 0, 222, 221, 1, 0, 0, 0, 222, 223, 1, 0, 0, 0, 223, 224, 1, 0, 0, 0, 224, 225, 5, 62, 0, 0,
-        225, 227, 1, 0, 0, 0, 226, 180, 1, 0, 0, 0, 226, 183, 1, 0, 0, 0, 226, 203, 1, 0, 0, 0, 226, 206, 1, 0, 0, 0, 227, 21, 1, 0, 0, 0, 228, 229, 7, 0, 0, 0, 229, 248, 6, 11, -1, 0, 230,
-        232, 7, 0, 0, 0, 231, 230, 1, 0, 0, 0, 231, 232, 1, 0, 0, 0, 232, 233, 1, 0, 0, 0, 233, 234, 3, 34, 17, 0, 234, 241, 6, 11, -1, 0, 235, 236, 7, 0, 0, 0, 236, 237, 3, 34, 17, 0, 237,
-        238, 6, 11, -1, 0, 238, 240, 1, 0, 0, 0, 239, 235, 1, 0, 0, 0, 240, 243, 1, 0, 0, 0, 241, 239, 1, 0, 0, 0, 241, 242, 1, 0, 0, 0, 242, 245, 1, 0, 0, 0, 243, 241, 1, 0, 0, 0, 244, 246,
-        7, 0, 0, 0, 245, 244, 1, 0, 0, 0, 245, 246, 1, 0, 0, 0, 246, 248, 1, 0, 0, 0, 247, 228, 1, 0, 0, 0, 247, 231, 1, 0, 0, 0, 248, 23, 1, 0, 0, 0, 249, 250, 5, 56, 0, 0, 250, 251, 3, 10,
-        5, 0, 251, 252, 6, 12, -1, 0, 252, 25, 1, 0, 0, 0, 253, 254, 5, 56, 0, 0, 254, 255, 3, 62, 31, 0, 255, 256, 3, 46, 23, 0, 256, 257, 6, 13, -1, 0, 257, 27, 1, 0, 0, 0, 258, 259, 3,
-        10, 5, 0, 259, 260, 6, 14, -1, 0, 260, 276, 1, 0, 0, 0, 261, 262, 3, 18, 9, 0, 262, 263, 6, 14, -1, 0, 263, 276, 1, 0, 0, 0, 264, 265, 3, 24, 12, 0, 265, 266, 6, 14, -1, 0, 266, 276,
-        1, 0, 0, 0, 267, 268, 3, 20, 10, 0, 268, 269, 6, 14, -1, 0, 269, 276, 1, 0, 0, 0, 270, 271, 5, 57, 0, 0, 271, 272, 3, 46, 23, 0, 272, 273, 5, 58, 0, 0, 273, 274, 6, 14, -1, 0, 274,
-        276, 1, 0, 0, 0, 275, 258, 1, 0, 0, 0, 275, 261, 1, 0, 0, 0, 275, 264, 1, 0, 0, 0, 275, 267, 1, 0, 0, 0, 275, 270, 1, 0, 0, 0, 276, 29, 1, 0, 0, 0, 277, 278, 5, 50, 0, 0, 278, 279,
-        6, 15, -1, 0, 279, 31, 1, 0, 0, 0, 280, 281, 5, 54, 0, 0, 281, 282, 6, 16, -1, 0, 282, 33, 1, 0, 0, 0, 283, 284, 3, 46, 23, 0, 284, 285, 6, 17, -1, 0, 285, 293, 1, 0, 0, 0, 286, 287,
-        3, 30, 15, 0, 287, 288, 6, 17, -1, 0, 288, 293, 1, 0, 0, 0, 289, 290, 3, 32, 16, 0, 290, 291, 6, 17, -1, 0, 291, 293, 1, 0, 0, 0, 292, 283, 1, 0, 0, 0, 292, 286, 1, 0, 0, 0, 292,
-        289, 1, 0, 0, 0, 293, 35, 1, 0, 0, 0, 294, 295, 3, 34, 17, 0, 295, 302, 6, 18, -1, 0, 296, 297, 5, 52, 0, 0, 297, 298, 3, 34, 17, 0, 298, 299, 6, 18, -1, 0, 299, 301, 1, 0, 0, 0,
-        300, 296, 1, 0, 0, 0, 301, 304, 1, 0, 0, 0, 302, 300, 1, 0, 0, 0, 302, 303, 1, 0, 0, 0, 303, 37, 1, 0, 0, 0, 304, 302, 1, 0, 0, 0, 305, 306, 6, 19, -1, 0, 306, 307, 3, 28, 14, 0,
-        307, 308, 6, 19, -1, 0, 308, 318, 1, 0, 0, 0, 309, 310, 7, 1, 0, 0, 310, 311, 3, 38, 19, 4, 311, 312, 6, 19, -1, 0, 312, 318, 1, 0, 0, 0, 313, 314, 7, 2, 0, 0, 314, 315, 3, 38, 19,
-        3, 315, 316, 6, 19, -1, 0, 316, 318, 1, 0, 0, 0, 317, 305, 1, 0, 0, 0, 317, 309, 1, 0, 0, 0, 317, 313, 1, 0, 0, 0, 318, 367, 1, 0, 0, 0, 319, 320, 10, 2, 0, 0, 320, 321, 7, 3, 0, 0,
-        321, 322, 3, 38, 19, 3, 322, 323, 6, 19, -1, 0, 323, 366, 1, 0, 0, 0, 324, 325, 10, 1, 0, 0, 325, 326, 7, 4, 0, 0, 326, 327, 3, 38, 19, 2, 327, 328, 6, 19, -1, 0, 328, 366, 1, 0, 0,
-        0, 329, 330, 10, 11, 0, 0, 330, 331, 7, 5, 0, 0, 331, 366, 6, 19, -1, 0, 332, 333, 10, 10, 0, 0, 333, 335, 5, 57, 0, 0, 334, 336, 3, 36, 18, 0, 335, 334, 1, 0, 0, 0, 335, 336, 1, 0,
-        0, 0, 336, 337, 1, 0, 0, 0, 337, 338, 5, 58, 0, 0, 338, 366, 6, 19, -1, 0, 339, 340, 10, 9, 0, 0, 340, 342, 5, 61, 0, 0, 341, 343, 3, 36, 18, 0, 342, 341, 1, 0, 0, 0, 342, 343, 1, 0,
-        0, 0, 343, 344, 1, 0, 0, 0, 344, 345, 5, 62, 0, 0, 345, 366, 6, 19, -1, 0, 346, 347, 10, 8, 0, 0, 347, 348, 7, 6, 0, 0, 348, 366, 6, 19, -1, 0, 349, 350, 10, 7, 0, 0, 350, 351, 5,
-        53, 0, 0, 351, 352, 5, 96, 0, 0, 352, 366, 6, 19, -1, 0, 353, 354, 10, 6, 0, 0, 354, 355, 5, 53, 0, 0, 355, 356, 5, 57, 0, 0, 356, 357, 3, 46, 23, 0, 357, 358, 5, 58, 0, 0, 358, 359,
-        6, 19, -1, 0, 359, 366, 1, 0, 0, 0, 360, 361, 10, 5, 0, 0, 361, 362, 7, 7, 0, 0, 362, 363, 3, 40, 20, 0, 363, 364, 6, 19, -1, 0, 364, 366, 1, 0, 0, 0, 365, 319, 1, 0, 0, 0, 365, 324,
-        1, 0, 0, 0, 365, 329, 1, 0, 0, 0, 365, 332, 1, 0, 0, 0, 365, 339, 1, 0, 0, 0, 365, 346, 1, 0, 0, 0, 365, 349, 1, 0, 0, 0, 365, 353, 1, 0, 0, 0, 365, 360, 1, 0, 0, 0, 366, 369, 1, 0,
-        0, 0, 367, 365, 1, 0, 0, 0, 367, 368, 1, 0, 0, 0, 368, 39, 1, 0, 0, 0, 369, 367, 1, 0, 0, 0, 370, 371, 6, 20, -1, 0, 371, 372, 3, 28, 14, 0, 372, 373, 6, 20, -1, 0, 373, 383, 1, 0,
-        0, 0, 374, 375, 7, 1, 0, 0, 375, 376, 3, 40, 20, 2, 376, 377, 6, 20, -1, 0, 377, 383, 1, 0, 0, 0, 378, 379, 7, 2, 0, 0, 379, 380, 3, 40, 20, 1, 380, 381, 6, 20, -1, 0, 381, 383, 1,
-        0, 0, 0, 382, 370, 1, 0, 0, 0, 382, 374, 1, 0, 0, 0, 382, 378, 1, 0, 0, 0, 383, 414, 1, 0, 0, 0, 384, 385, 10, 7, 0, 0, 385, 386, 7, 5, 0, 0, 386, 413, 6, 20, -1, 0, 387, 388, 10, 6,
-        0, 0, 388, 390, 5, 57, 0, 0, 389, 391, 3, 36, 18, 0, 390, 389, 1, 0, 0, 0, 390, 391, 1, 0, 0, 0, 391, 392, 1, 0, 0, 0, 392, 393, 5, 58, 0, 0, 393, 413, 6, 20, -1, 0, 394, 395, 10, 5,
-        0, 0, 395, 397, 5, 61, 0, 0, 396, 398, 3, 36, 18, 0, 397, 396, 1, 0, 0, 0, 397, 398, 1, 0, 0, 0, 398, 399, 1, 0, 0, 0, 399, 400, 5, 62, 0, 0, 400, 413, 6, 20, -1, 0, 401, 402, 10, 4,
-        0, 0, 402, 403, 5, 53, 0, 0, 403, 404, 5, 96, 0, 0, 404, 413, 6, 20, -1, 0, 405, 406, 10, 3, 0, 0, 406, 407, 5, 53, 0, 0, 407, 408, 5, 57, 0, 0, 408, 409, 3, 46, 23, 0, 409, 410, 5,
-        58, 0, 0, 410, 411, 6, 20, -1, 0, 411, 413, 1, 0, 0, 0, 412, 384, 1, 0, 0, 0, 412, 387, 1, 0, 0, 0, 412, 394, 1, 0, 0, 0, 412, 401, 1, 0, 0, 0, 412, 405, 1, 0, 0, 0, 413, 416, 1, 0,
-        0, 0, 414, 412, 1, 0, 0, 0, 414, 415, 1, 0, 0, 0, 415, 41, 1, 0, 0, 0, 416, 414, 1, 0, 0, 0, 417, 418, 3, 38, 19, 0, 418, 419, 5, 50, 0, 0, 419, 422, 3, 38, 19, 0, 420, 421, 5, 50,
-        0, 0, 421, 423, 3, 38, 19, 0, 422, 420, 1, 0, 0, 0, 422, 423, 1, 0, 0, 0, 423, 424, 1, 0, 0, 0, 424, 425, 6, 21, -1, 0, 425, 43, 1, 0, 0, 0, 426, 427, 6, 22, -1, 0, 427, 428, 3, 38,
-        19, 0, 428, 429, 6, 22, -1, 0, 429, 434, 1, 0, 0, 0, 430, 431, 3, 42, 21, 0, 431, 432, 6, 22, -1, 0, 432, 434, 1, 0, 0, 0, 433, 426, 1, 0, 0, 0, 433, 430, 1, 0, 0, 0, 434, 462, 1, 0,
-        0, 0, 435, 436, 10, 5, 0, 0, 436, 437, 7, 8, 0, 0, 437, 438, 3, 44, 22, 6, 438, 439, 6, 22, -1, 0, 439, 461, 1, 0, 0, 0, 440, 441, 10, 4, 0, 0, 441, 442, 5, 78, 0, 0, 442, 443, 3,
-        44, 22, 5, 443, 444, 6, 22, -1, 0, 444, 461, 1, 0, 0, 0, 445, 446, 10, 3, 0, 0, 446, 447, 5, 79, 0, 0, 447, 448, 3, 44, 22, 4, 448, 449, 6, 22, -1, 0, 449, 461, 1, 0, 0, 0, 450, 451,
-        10, 2, 0, 0, 451, 452, 5, 76, 0, 0, 452, 453, 3, 44, 22, 3, 453, 454, 6, 22, -1, 0, 454, 461, 1, 0, 0, 0, 455, 456, 10, 1, 0, 0, 456, 457, 5, 77, 0, 0, 457, 458, 3, 44, 22, 2, 458,
-        459, 6, 22, -1, 0, 459, 461, 1, 0, 0, 0, 460, 435, 1, 0, 0, 0, 460, 440, 1, 0, 0, 0, 460, 445, 1, 0, 0, 0, 460, 450, 1, 0, 0, 0, 460, 455, 1, 0, 0, 0, 461, 464, 1, 0, 0, 0, 462, 460,
-        1, 0, 0, 0, 462, 463, 1, 0, 0, 0, 463, 45, 1, 0, 0, 0, 464, 462, 1, 0, 0, 0, 465, 466, 3, 44, 22, 0, 466, 467, 6, 23, -1, 0, 467, 477, 1, 0, 0, 0, 468, 469, 3, 44, 22, 0, 469, 470,
-        7, 9, 0, 0, 470, 471, 3, 46, 23, 0, 471, 472, 6, 23, -1, 0, 472, 477, 1, 0, 0, 0, 473, 474, 3, 26, 13, 0, 474, 475, 6, 23, -1, 0, 475, 477, 1, 0, 0, 0, 476, 465, 1, 0, 0, 0, 476,
-        468, 1, 0, 0, 0, 476, 473, 1, 0, 0, 0, 477, 47, 1, 0, 0, 0, 478, 479, 3, 50, 25, 0, 479, 480, 6, 24, -1, 0, 480, 490, 1, 0, 0, 0, 481, 482, 5, 23, 0, 0, 482, 490, 6, 24, -1, 0, 483,
-        484, 3, 54, 27, 0, 484, 485, 6, 24, -1, 0, 485, 490, 1, 0, 0, 0, 486, 487, 3, 68, 34, 0, 487, 488, 6, 24, -1, 0, 488, 490, 1, 0, 0, 0, 489, 478, 1, 0, 0, 0, 489, 481, 1, 0, 0, 0,
-        489, 483, 1, 0, 0, 0, 489, 486, 1, 0, 0, 0, 490, 49, 1, 0, 0, 0, 491, 492, 5, 1, 0, 0, 492, 496, 6, 25, -1, 0, 493, 494, 5, 2, 0, 0, 494, 496, 6, 25, -1, 0, 495, 491, 1, 0, 0, 0,
-        495, 493, 1, 0, 0, 0, 496, 500, 1, 0, 0, 0, 497, 498, 3, 52, 26, 0, 498, 499, 6, 25, -1, 0, 499, 501, 1, 0, 0, 0, 500, 497, 1, 0, 0, 0, 501, 502, 1, 0, 0, 0, 502, 500, 1, 0, 0, 0,
-        502, 503, 1, 0, 0, 0, 503, 51, 1, 0, 0, 0, 504, 505, 3, 10, 5, 0, 505, 506, 6, 26, -1, 0, 506, 513, 1, 0, 0, 0, 507, 508, 3, 10, 5, 0, 508, 509, 5, 49, 0, 0, 509, 510, 3, 46, 23, 0,
-        510, 511, 6, 26, -1, 0, 511, 513, 1, 0, 0, 0, 512, 504, 1, 0, 0, 0, 512, 507, 1, 0, 0, 0, 513, 53, 1, 0, 0, 0, 514, 515, 3, 56, 28, 0, 515, 516, 6, 27, -1, 0, 516, 55, 1, 0, 0, 0,
-        517, 518, 5, 3, 0, 0, 518, 520, 3, 46, 23, 0, 519, 521, 3, 84, 42, 0, 520, 519, 1, 0, 0, 0, 520, 521, 1, 0, 0, 0, 521, 523, 1, 0, 0, 0, 522, 524, 3, 4, 2, 0, 523, 522, 1, 0, 0, 0,
-        523, 524, 1, 0, 0, 0, 524, 525, 1, 0, 0, 0, 525, 531, 6, 28, -1, 0, 526, 527, 3, 58, 29, 0, 527, 528, 6, 28, -1, 0, 528, 530, 1, 0, 0, 0, 529, 526, 1, 0, 0, 0, 530, 533, 1, 0, 0, 0,
-        531, 529, 1, 0, 0, 0, 531, 532, 1, 0, 0, 0, 532, 535, 1, 0, 0, 0, 533, 531, 1, 0, 0, 0, 534, 536, 3, 60, 30, 0, 535, 534, 1, 0, 0, 0, 535, 536, 1, 0, 0, 0, 536, 537, 1, 0, 0, 0, 537,
-        538, 6, 28, -1, 0, 538, 539, 7, 10, 0, 0, 539, 57, 1, 0, 0, 0, 540, 542, 5, 7, 0, 0, 541, 543, 3, 84, 42, 0, 542, 541, 1, 0, 0, 0, 542, 543, 1, 0, 0, 0, 543, 544, 1, 0, 0, 0, 544,
-        546, 3, 46, 23, 0, 545, 547, 3, 84, 42, 0, 546, 545, 1, 0, 0, 0, 546, 547, 1, 0, 0, 0, 547, 549, 1, 0, 0, 0, 548, 550, 3, 4, 2, 0, 549, 548, 1, 0, 0, 0, 549, 550, 1, 0, 0, 0, 550,
-        551, 1, 0, 0, 0, 551, 552, 6, 29, -1, 0, 552, 59, 1, 0, 0, 0, 553, 555, 5, 8, 0, 0, 554, 556, 3, 84, 42, 0, 555, 554, 1, 0, 0, 0, 555, 556, 1, 0, 0, 0, 556, 558, 1, 0, 0, 0, 557,
-        559, 3, 4, 2, 0, 558, 557, 1, 0, 0, 0, 558, 559, 1, 0, 0, 0, 559, 560, 1, 0, 0, 0, 560, 561, 6, 30, -1, 0, 561, 61, 1, 0, 0, 0, 562, 563, 5, 57, 0, 0, 563, 575, 6, 31, -1, 0, 564,
-        565, 3, 64, 32, 0, 565, 572, 6, 31, -1, 0, 566, 567, 5, 52, 0, 0, 567, 568, 3, 64, 32, 0, 568, 569, 6, 31, -1, 0, 569, 571, 1, 0, 0, 0, 570, 566, 1, 0, 0, 0, 571, 574, 1, 0, 0, 0,
-        572, 570, 1, 0, 0, 0, 572, 573, 1, 0, 0, 0, 573, 576, 1, 0, 0, 0, 574, 572, 1, 0, 0, 0, 575, 564, 1, 0, 0, 0, 575, 576, 1, 0, 0, 0, 576, 577, 1, 0, 0, 0, 577, 578, 5, 58, 0, 0, 578,
-        63, 1, 0, 0, 0, 579, 580, 3, 52, 26, 0, 580, 581, 6, 32, -1, 0, 581, 586, 1, 0, 0, 0, 582, 583, 3, 32, 16, 0, 583, 584, 6, 32, -1, 0, 584, 586, 1, 0, 0, 0, 585, 579, 1, 0, 0, 0, 585,
-        582, 1, 0, 0, 0, 586, 65, 1, 0, 0, 0, 587, 588, 3, 10, 5, 0, 588, 589, 6, 33, -1, 0, 589, 607, 1, 0, 0, 0, 590, 591, 5, 59, 0, 0, 591, 603, 6, 33, -1, 0, 592, 593, 3, 10, 5, 0, 593,
-        600, 6, 33, -1, 0, 594, 595, 5, 52, 0, 0, 595, 596, 3, 10, 5, 0, 596, 597, 6, 33, -1, 0, 597, 599, 1, 0, 0, 0, 598, 594, 1, 0, 0, 0, 599, 602, 1, 0, 0, 0, 600, 598, 1, 0, 0, 0, 600,
-        601, 1, 0, 0, 0, 601, 604, 1, 0, 0, 0, 602, 600, 1, 0, 0, 0, 603, 592, 1, 0, 0, 0, 603, 604, 1, 0, 0, 0, 604, 605, 1, 0, 0, 0, 605, 607, 5, 60, 0, 0, 606, 587, 1, 0, 0, 0, 606, 590,
-        1, 0, 0, 0, 607, 67, 1, 0, 0, 0, 608, 612, 5, 24, 0, 0, 609, 610, 3, 66, 33, 0, 610, 611, 5, 49, 0, 0, 611, 613, 1, 0, 0, 0, 612, 609, 1, 0, 0, 0, 612, 613, 1, 0, 0, 0, 613, 614, 1,
-        0, 0, 0, 614, 616, 3, 10, 5, 0, 615, 617, 3, 62, 31, 0, 616, 615, 1, 0, 0, 0, 616, 617, 1, 0, 0, 0, 617, 619, 1, 0, 0, 0, 618, 620, 3, 84, 42, 0, 619, 618, 1, 0, 0, 0, 619, 620, 1,
-        0, 0, 0, 620, 622, 1, 0, 0, 0, 621, 623, 3, 70, 35, 0, 622, 621, 1, 0, 0, 0, 622, 623, 1, 0, 0, 0, 623, 625, 1, 0, 0, 0, 624, 626, 3, 4, 2, 0, 625, 624, 1, 0, 0, 0, 625, 626, 1, 0,
-        0, 0, 626, 627, 1, 0, 0, 0, 627, 628, 7, 11, 0, 0, 628, 629, 6, 34, -1, 0, 629, 69, 1, 0, 0, 0, 630, 631, 3, 72, 36, 0, 631, 640, 6, 35, -1, 0, 632, 634, 3, 84, 42, 0, 633, 632, 1,
-        0, 0, 0, 633, 634, 1, 0, 0, 0, 634, 635, 1, 0, 0, 0, 635, 636, 3, 72, 36, 0, 636, 637, 6, 35, -1, 0, 637, 639, 1, 0, 0, 0, 638, 633, 1, 0, 0, 0, 639, 642, 1, 0, 0, 0, 640, 638, 1, 0,
-        0, 0, 640, 641, 1, 0, 0, 0, 641, 644, 1, 0, 0, 0, 642, 640, 1, 0, 0, 0, 643, 645, 3, 84, 42, 0, 644, 643, 1, 0, 0, 0, 644, 645, 1, 0, 0, 0, 645, 71, 1, 0, 0, 0, 646, 648, 5, 44, 0,
-        0, 647, 649, 3, 84, 42, 0, 648, 647, 1, 0, 0, 0, 648, 649, 1, 0, 0, 0, 649, 656, 1, 0, 0, 0, 650, 651, 5, 57, 0, 0, 651, 652, 3, 10, 5, 0, 652, 654, 5, 58, 0, 0, 653, 655, 3, 84, 42,
-        0, 654, 653, 1, 0, 0, 0, 654, 655, 1, 0, 0, 0, 655, 657, 1, 0, 0, 0, 656, 650, 1, 0, 0, 0, 656, 657, 1, 0, 0, 0, 657, 658, 1, 0, 0, 0, 658, 660, 3, 74, 37, 0, 659, 661, 3, 84, 42, 0,
-        660, 659, 1, 0, 0, 0, 660, 661, 1, 0, 0, 0, 661, 662, 1, 0, 0, 0, 662, 663, 5, 5, 0, 0, 663, 664, 6, 36, -1, 0, 664, 73, 1, 0, 0, 0, 665, 666, 3, 76, 38, 0, 666, 673, 6, 37, -1, 0,
-        667, 668, 3, 84, 42, 0, 668, 669, 3, 76, 38, 0, 669, 670, 6, 37, -1, 0, 670, 672, 1, 0, 0, 0, 671, 667, 1, 0, 0, 0, 672, 675, 1, 0, 0, 0, 673, 671, 1, 0, 0, 0, 673, 674, 1, 0, 0, 0,
-        674, 75, 1, 0, 0, 0, 675, 673, 1, 0, 0, 0, 676, 681, 3, 78, 39, 0, 677, 678, 5, 57, 0, 0, 678, 679, 3, 36, 18, 0, 679, 680, 5, 58, 0, 0, 680, 682, 1, 0, 0, 0, 681, 677, 1, 0, 0, 0,
-        681, 682, 1, 0, 0, 0, 682, 684, 1, 0, 0, 0, 683, 685, 3, 10, 5, 0, 684, 683, 1, 0, 0, 0, 684, 685, 1, 0, 0, 0, 685, 690, 1, 0, 0, 0, 686, 687, 5, 61, 0, 0, 687, 688, 3, 36, 18, 0,
-        688, 689, 5, 62, 0, 0, 689, 691, 1, 0, 0, 0, 690, 686, 1, 0, 0, 0, 690, 691, 1, 0, 0, 0, 691, 694, 1, 0, 0, 0, 692, 693, 5, 49, 0, 0, 693, 695, 3, 46, 23, 0, 694, 692, 1, 0, 0, 0,
-        694, 695, 1, 0, 0, 0, 695, 696, 1, 0, 0, 0, 696, 697, 6, 38, -1, 0, 697, 77, 1, 0, 0, 0, 698, 699, 3, 10, 5, 0, 699, 706, 6, 39, -1, 0, 700, 701, 5, 53, 0, 0, 701, 702, 3, 10, 5, 0,
-        702, 703, 6, 39, -1, 0, 703, 705, 1, 0, 0, 0, 704, 700, 1, 0, 0, 0, 705, 708, 1, 0, 0, 0, 706, 704, 1, 0, 0, 0, 706, 707, 1, 0, 0, 0, 707, 79, 1, 0, 0, 0, 708, 706, 1, 0, 0, 0, 709,
-        711, 7, 12, 0, 0, 710, 709, 1, 0, 0, 0, 711, 712, 1, 0, 0, 0, 712, 710, 1, 0, 0, 0, 712, 713, 1, 0, 0, 0, 713, 81, 1, 0, 0, 0, 714, 716, 5, 100, 0, 0, 715, 714, 1, 0, 0, 0, 716, 717,
-        1, 0, 0, 0, 717, 715, 1, 0, 0, 0, 717, 718, 1, 0, 0, 0, 718, 83, 1, 0, 0, 0, 719, 721, 7, 13, 0, 0, 720, 719, 1, 0, 0, 0, 721, 722, 1, 0, 0, 0, 722, 720, 1, 0, 0, 0, 722, 723, 1, 0,
-        0, 0, 723, 85, 1, 0, 0, 0, 80, 87, 92, 98, 108, 112, 124, 128, 141, 149, 161, 178, 188, 195, 199, 211, 218, 222, 226, 231, 241, 245, 247, 275, 292, 302, 317, 335, 342, 365, 367, 382,
-        390, 397, 412, 414, 422, 433, 460, 462, 476, 489, 495, 502, 512, 520, 523, 531, 535, 542, 546, 549, 555, 558, 572, 575, 585, 600, 603, 606, 612, 616, 619, 622, 625, 633, 640, 644,
-        648, 654, 656, 660, 673, 681, 684, 690, 694, 706, 712, 717, 722,
+        39, 7, 39, 2, 40, 7, 40, 2, 41, 7, 41, 2, 42, 7, 42, 2, 43, 7, 43, 2, 44, 7, 44, 2, 45, 7, 45, 2, 46, 7, 46, 1, 0, 3, 0, 96, 8, 0, 1, 0, 1, 0, 1, 0, 3, 0, 101, 8, 0, 1, 0, 1, 0, 1,
+        0, 1, 0, 3, 0, 107, 8, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 5, 1, 115, 8, 1, 10, 1, 12, 1, 118, 9, 1, 1, 1, 3, 1, 121, 8, 1, 1, 1, 1, 1, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 5, 2,
+        131, 8, 2, 10, 2, 12, 2, 134, 9, 2, 1, 2, 3, 2, 137, 8, 2, 1, 2, 1, 2, 1, 3, 1, 3, 1, 3, 1, 3, 1, 3, 1, 3, 1, 3, 1, 3, 1, 3, 3, 3, 150, 8, 3, 1, 4, 1, 4, 1, 4, 1, 4, 5, 4, 156, 8, 4,
+        10, 4, 12, 4, 159, 9, 4, 1, 4, 1, 4, 1, 5, 1, 5, 1, 5, 1, 6, 1, 6, 1, 6, 1, 6, 3, 6, 170, 8, 6, 1, 7, 1, 7, 1, 7, 1, 8, 1, 8, 1, 8, 1, 9, 1, 9, 1, 9, 1, 9, 1, 9, 1, 9, 1, 9, 1, 9, 1,
+        9, 3, 9, 187, 8, 9, 1, 10, 1, 10, 1, 10, 1, 10, 1, 10, 1, 10, 1, 10, 1, 10, 3, 10, 197, 8, 10, 1, 10, 1, 10, 1, 10, 5, 10, 202, 8, 10, 10, 10, 12, 10, 205, 9, 10, 1, 10, 3, 10, 208,
+        8, 10, 1, 10, 1, 10, 1, 10, 1, 10, 1, 10, 1, 10, 1, 10, 1, 10, 1, 10, 1, 10, 3, 10, 220, 8, 10, 1, 10, 1, 10, 1, 10, 5, 10, 225, 8, 10, 10, 10, 12, 10, 228, 9, 10, 1, 10, 3, 10, 231,
+        8, 10, 1, 10, 1, 10, 3, 10, 235, 8, 10, 1, 11, 1, 11, 1, 11, 3, 11, 240, 8, 11, 1, 11, 1, 11, 1, 11, 1, 11, 1, 11, 1, 11, 5, 11, 248, 8, 11, 10, 11, 12, 11, 251, 9, 11, 1, 11, 3, 11,
+        254, 8, 11, 3, 11, 256, 8, 11, 1, 12, 1, 12, 1, 12, 1, 12, 1, 13, 1, 13, 1, 13, 1, 13, 1, 13, 1, 14, 1, 14, 1, 14, 1, 14, 1, 14, 1, 14, 1, 14, 1, 14, 1, 14, 1, 14, 1, 14, 1, 14, 1,
+        14, 1, 14, 1, 14, 1, 14, 1, 14, 3, 14, 284, 8, 14, 1, 15, 1, 15, 1, 15, 1, 16, 1, 16, 1, 16, 1, 17, 1, 17, 1, 17, 1, 17, 1, 17, 1, 17, 1, 17, 1, 17, 1, 17, 3, 17, 301, 8, 17, 1, 18,
+        1, 18, 1, 18, 1, 18, 1, 18, 1, 18, 5, 18, 309, 8, 18, 10, 18, 12, 18, 312, 9, 18, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 3, 19, 326, 8,
+        19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 3, 19, 344, 8, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 3, 19, 351,
+        8, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 1, 19, 5, 19, 374, 8, 19, 10, 19,
+        12, 19, 377, 9, 19, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 3, 20, 391, 8, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 3, 20, 399, 8,
+        20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 3, 20, 406, 8, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 1, 20, 5, 20, 421, 8, 20, 10, 20, 12,
+        20, 424, 9, 20, 1, 21, 1, 21, 1, 21, 1, 21, 1, 21, 3, 21, 431, 8, 21, 1, 21, 1, 21, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 3, 22, 442, 8, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1,
+        22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 1, 22, 5, 22, 469, 8, 22, 10, 22, 12, 22,
+        472, 9, 22, 1, 23, 1, 23, 1, 23, 1, 23, 1, 23, 1, 23, 1, 23, 1, 23, 1, 23, 1, 23, 1, 23, 3, 23, 485, 8, 23, 1, 24, 1, 24, 1, 24, 1, 24, 1, 24, 1, 24, 1, 24, 1, 24, 1, 24, 1, 24, 1,
+        24, 3, 24, 498, 8, 24, 1, 25, 1, 25, 1, 25, 1, 25, 3, 25, 504, 8, 25, 1, 25, 1, 25, 1, 25, 4, 25, 509, 8, 25, 11, 25, 12, 25, 510, 1, 26, 1, 26, 1, 26, 1, 26, 1, 26, 1, 26, 1, 26, 1,
+        26, 3, 26, 521, 8, 26, 1, 27, 1, 27, 1, 27, 1, 27, 1, 27, 1, 27, 3, 27, 529, 8, 27, 1, 28, 1, 28, 1, 28, 3, 28, 534, 8, 28, 1, 28, 3, 28, 537, 8, 28, 1, 28, 1, 28, 1, 28, 1, 28, 5,
+        28, 543, 8, 28, 10, 28, 12, 28, 546, 9, 28, 1, 28, 3, 28, 549, 8, 28, 1, 28, 1, 28, 1, 28, 1, 29, 1, 29, 3, 29, 556, 8, 29, 1, 29, 1, 29, 3, 29, 560, 8, 29, 1, 29, 3, 29, 563, 8, 29,
+        1, 29, 1, 29, 1, 30, 1, 30, 3, 30, 569, 8, 30, 1, 30, 3, 30, 572, 8, 30, 1, 30, 1, 30, 1, 31, 1, 31, 1, 31, 3, 31, 579, 8, 31, 1, 31, 3, 31, 582, 8, 31, 1, 31, 3, 31, 585, 8, 31, 1,
+        31, 1, 31, 1, 31, 1, 32, 1, 32, 1, 32, 3, 32, 593, 8, 32, 1, 32, 1, 32, 1, 32, 5, 32, 598, 8, 32, 10, 32, 12, 32, 601, 9, 32, 1, 32, 3, 32, 604, 8, 32, 1, 33, 1, 33, 3, 33, 608, 8,
+        33, 1, 33, 1, 33, 3, 33, 612, 8, 33, 1, 33, 3, 33, 615, 8, 33, 1, 33, 1, 33, 1, 34, 1, 34, 3, 34, 621, 8, 34, 1, 34, 3, 34, 624, 8, 34, 1, 34, 3, 34, 627, 8, 34, 1, 34, 1, 34, 1, 35,
+        1, 35, 1, 35, 1, 35, 1, 35, 1, 35, 1, 35, 1, 35, 5, 35, 639, 8, 35, 10, 35, 12, 35, 642, 9, 35, 3, 35, 644, 8, 35, 1, 35, 1, 35, 1, 36, 1, 36, 1, 36, 1, 36, 1, 36, 1, 36, 3, 36, 654,
+        8, 36, 1, 37, 1, 37, 1, 37, 1, 37, 1, 37, 1, 37, 1, 37, 1, 37, 1, 37, 1, 37, 1, 37, 5, 37, 667, 8, 37, 10, 37, 12, 37, 670, 9, 37, 3, 37, 672, 8, 37, 1, 37, 3, 37, 675, 8, 37, 1, 38,
+        1, 38, 1, 38, 1, 38, 3, 38, 681, 8, 38, 1, 38, 1, 38, 3, 38, 685, 8, 38, 1, 38, 3, 38, 688, 8, 38, 1, 38, 3, 38, 691, 8, 38, 1, 38, 3, 38, 694, 8, 38, 1, 38, 1, 38, 1, 38, 1, 39, 1,
+        39, 1, 39, 3, 39, 702, 8, 39, 1, 39, 1, 39, 1, 39, 5, 39, 707, 8, 39, 10, 39, 12, 39, 710, 9, 39, 1, 39, 3, 39, 713, 8, 39, 1, 40, 1, 40, 3, 40, 717, 8, 40, 1, 40, 1, 40, 1, 40, 1,
+        40, 3, 40, 723, 8, 40, 3, 40, 725, 8, 40, 1, 40, 1, 40, 3, 40, 729, 8, 40, 1, 40, 1, 40, 1, 40, 1, 41, 1, 41, 1, 41, 1, 41, 1, 41, 1, 41, 5, 41, 740, 8, 41, 10, 41, 12, 41, 743, 9,
+        41, 1, 42, 1, 42, 1, 42, 1, 42, 1, 42, 3, 42, 750, 8, 42, 1, 42, 3, 42, 753, 8, 42, 1, 42, 1, 42, 1, 42, 1, 42, 3, 42, 759, 8, 42, 1, 42, 1, 42, 3, 42, 763, 8, 42, 1, 42, 1, 42, 1,
+        43, 1, 43, 1, 43, 1, 43, 1, 43, 1, 43, 5, 43, 773, 8, 43, 10, 43, 12, 43, 776, 9, 43, 1, 44, 4, 44, 779, 8, 44, 11, 44, 12, 44, 780, 1, 45, 4, 45, 784, 8, 45, 11, 45, 12, 45, 785, 1,
+        46, 4, 46, 789, 8, 46, 11, 46, 12, 46, 790, 1, 46, 0, 3, 38, 40, 44, 47, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 48, 50, 52, 54,
+        56, 58, 60, 62, 64, 66, 68, 70, 72, 74, 76, 78, 80, 82, 84, 86, 88, 90, 92, 0, 15, 2, 0, 42, 42, 52, 52, 2, 0, 45, 46, 89, 90, 1, 0, 54, 55, 3, 0, 47, 48, 63, 63, 86, 88, 1, 0, 45,
+        46, 1, 0, 89, 90, 1, 0, 93, 94, 1, 0, 91, 92, 1, 0, 80, 85, 2, 0, 49, 49, 64, 75, 1, 0, 4, 5, 2, 0, 5, 5, 10, 10, 2, 1, 5, 5, 25, 25, 1, 0, 51, 52, 2, 0, 51, 52, 100, 100, 864, 0,
+        106, 1, 0, 0, 0, 2, 108, 1, 0, 0, 0, 4, 124, 1, 0, 0, 0, 6, 149, 1, 0, 0, 0, 8, 151, 1, 0, 0, 0, 10, 162, 1, 0, 0, 0, 12, 169, 1, 0, 0, 0, 14, 171, 1, 0, 0, 0, 16, 174, 1, 0, 0, 0,
+        18, 186, 1, 0, 0, 0, 20, 234, 1, 0, 0, 0, 22, 255, 1, 0, 0, 0, 24, 257, 1, 0, 0, 0, 26, 261, 1, 0, 0, 0, 28, 283, 1, 0, 0, 0, 30, 285, 1, 0, 0, 0, 32, 288, 1, 0, 0, 0, 34, 300, 1, 0,
+        0, 0, 36, 302, 1, 0, 0, 0, 38, 325, 1, 0, 0, 0, 40, 390, 1, 0, 0, 0, 42, 425, 1, 0, 0, 0, 44, 441, 1, 0, 0, 0, 46, 484, 1, 0, 0, 0, 48, 497, 1, 0, 0, 0, 50, 503, 1, 0, 0, 0, 52, 520,
+        1, 0, 0, 0, 54, 528, 1, 0, 0, 0, 56, 530, 1, 0, 0, 0, 58, 553, 1, 0, 0, 0, 60, 566, 1, 0, 0, 0, 62, 575, 1, 0, 0, 0, 64, 589, 1, 0, 0, 0, 66, 605, 1, 0, 0, 0, 68, 618, 1, 0, 0, 0,
+        70, 630, 1, 0, 0, 0, 72, 653, 1, 0, 0, 0, 74, 674, 1, 0, 0, 0, 76, 676, 1, 0, 0, 0, 78, 698, 1, 0, 0, 0, 80, 714, 1, 0, 0, 0, 82, 733, 1, 0, 0, 0, 84, 744, 1, 0, 0, 0, 86, 766, 1, 0,
+        0, 0, 88, 778, 1, 0, 0, 0, 90, 783, 1, 0, 0, 0, 92, 788, 1, 0, 0, 0, 94, 96, 3, 92, 46, 0, 95, 94, 1, 0, 0, 0, 95, 96, 1, 0, 0, 0, 96, 97, 1, 0, 0, 0, 97, 98, 5, 0, 0, 1, 98, 107, 6,
+        0, -1, 0, 99, 101, 3, 92, 46, 0, 100, 99, 1, 0, 0, 0, 100, 101, 1, 0, 0, 0, 101, 102, 1, 0, 0, 0, 102, 103, 3, 2, 1, 0, 103, 104, 5, 0, 0, 1, 104, 105, 6, 0, -1, 0, 105, 107, 1, 0,
+        0, 0, 106, 95, 1, 0, 0, 0, 106, 100, 1, 0, 0, 0, 107, 1, 1, 0, 0, 0, 108, 109, 3, 6, 3, 0, 109, 116, 6, 1, -1, 0, 110, 111, 3, 92, 46, 0, 111, 112, 3, 6, 3, 0, 112, 113, 6, 1, -1, 0,
+        113, 115, 1, 0, 0, 0, 114, 110, 1, 0, 0, 0, 115, 118, 1, 0, 0, 0, 116, 114, 1, 0, 0, 0, 116, 117, 1, 0, 0, 0, 117, 120, 1, 0, 0, 0, 118, 116, 1, 0, 0, 0, 119, 121, 3, 92, 46, 0, 120,
+        119, 1, 0, 0, 0, 120, 121, 1, 0, 0, 0, 121, 122, 1, 0, 0, 0, 122, 123, 6, 1, -1, 0, 123, 3, 1, 0, 0, 0, 124, 125, 3, 6, 3, 0, 125, 132, 6, 2, -1, 0, 126, 127, 3, 92, 46, 0, 127, 128,
+        3, 6, 3, 0, 128, 129, 6, 2, -1, 0, 129, 131, 1, 0, 0, 0, 130, 126, 1, 0, 0, 0, 131, 134, 1, 0, 0, 0, 132, 130, 1, 0, 0, 0, 132, 133, 1, 0, 0, 0, 133, 136, 1, 0, 0, 0, 134, 132, 1, 0,
+        0, 0, 135, 137, 3, 92, 46, 0, 136, 135, 1, 0, 0, 0, 136, 137, 1, 0, 0, 0, 137, 138, 1, 0, 0, 0, 138, 139, 6, 2, -1, 0, 139, 5, 1, 0, 0, 0, 140, 141, 3, 46, 23, 0, 141, 142, 6, 3, -1,
+        0, 142, 150, 1, 0, 0, 0, 143, 144, 3, 48, 24, 0, 144, 145, 6, 3, -1, 0, 145, 150, 1, 0, 0, 0, 146, 147, 3, 8, 4, 0, 147, 148, 6, 3, -1, 0, 148, 150, 1, 0, 0, 0, 149, 140, 1, 0, 0, 0,
+        149, 143, 1, 0, 0, 0, 149, 146, 1, 0, 0, 0, 150, 7, 1, 0, 0, 0, 151, 157, 3, 10, 5, 0, 152, 153, 3, 12, 6, 0, 153, 154, 6, 4, -1, 0, 154, 156, 1, 0, 0, 0, 155, 152, 1, 0, 0, 0, 156,
+        159, 1, 0, 0, 0, 157, 155, 1, 0, 0, 0, 157, 158, 1, 0, 0, 0, 158, 160, 1, 0, 0, 0, 159, 157, 1, 0, 0, 0, 160, 161, 6, 4, -1, 0, 161, 9, 1, 0, 0, 0, 162, 163, 5, 96, 0, 0, 163, 164,
+        6, 5, -1, 0, 164, 11, 1, 0, 0, 0, 165, 166, 5, 43, 0, 0, 166, 170, 6, 6, -1, 0, 167, 168, 5, 125, 0, 0, 168, 170, 6, 6, -1, 0, 169, 165, 1, 0, 0, 0, 169, 167, 1, 0, 0, 0, 170, 13, 1,
+        0, 0, 0, 171, 172, 5, 97, 0, 0, 172, 173, 6, 7, -1, 0, 173, 15, 1, 0, 0, 0, 174, 175, 5, 6, 0, 0, 175, 176, 6, 8, -1, 0, 176, 17, 1, 0, 0, 0, 177, 178, 3, 14, 7, 0, 178, 179, 6, 9,
+        -1, 0, 179, 187, 1, 0, 0, 0, 180, 181, 3, 12, 6, 0, 181, 182, 6, 9, -1, 0, 182, 187, 1, 0, 0, 0, 183, 184, 3, 16, 8, 0, 184, 185, 6, 9, -1, 0, 185, 187, 1, 0, 0, 0, 186, 177, 1, 0,
+        0, 0, 186, 180, 1, 0, 0, 0, 186, 183, 1, 0, 0, 0, 187, 19, 1, 0, 0, 0, 188, 189, 5, 59, 0, 0, 189, 190, 5, 60, 0, 0, 190, 235, 6, 10, -1, 0, 191, 192, 5, 59, 0, 0, 192, 193, 3, 22,
+        11, 0, 193, 203, 6, 10, -1, 0, 194, 197, 5, 51, 0, 0, 195, 197, 3, 90, 45, 0, 196, 194, 1, 0, 0, 0, 196, 195, 1, 0, 0, 0, 197, 198, 1, 0, 0, 0, 198, 199, 3, 22, 11, 0, 199, 200, 6,
+        10, -1, 0, 200, 202, 1, 0, 0, 0, 201, 196, 1, 0, 0, 0, 202, 205, 1, 0, 0, 0, 203, 201, 1, 0, 0, 0, 203, 204, 1, 0, 0, 0, 204, 207, 1, 0, 0, 0, 205, 203, 1, 0, 0, 0, 206, 208, 3, 90,
+        45, 0, 207, 206, 1, 0, 0, 0, 207, 208, 1, 0, 0, 0, 208, 209, 1, 0, 0, 0, 209, 210, 5, 60, 0, 0, 210, 235, 1, 0, 0, 0, 211, 212, 5, 61, 0, 0, 212, 213, 5, 62, 0, 0, 213, 235, 6, 10,
+        -1, 0, 214, 215, 5, 61, 0, 0, 215, 216, 3, 22, 11, 0, 216, 226, 6, 10, -1, 0, 217, 220, 5, 51, 0, 0, 218, 220, 3, 90, 45, 0, 219, 217, 1, 0, 0, 0, 219, 218, 1, 0, 0, 0, 220, 221, 1,
+        0, 0, 0, 221, 222, 3, 22, 11, 0, 222, 223, 6, 10, -1, 0, 223, 225, 1, 0, 0, 0, 224, 219, 1, 0, 0, 0, 225, 228, 1, 0, 0, 0, 226, 224, 1, 0, 0, 0, 226, 227, 1, 0, 0, 0, 227, 230, 1, 0,
+        0, 0, 228, 226, 1, 0, 0, 0, 229, 231, 3, 90, 45, 0, 230, 229, 1, 0, 0, 0, 230, 231, 1, 0, 0, 0, 231, 232, 1, 0, 0, 0, 232, 233, 5, 62, 0, 0, 233, 235, 1, 0, 0, 0, 234, 188, 1, 0, 0,
+        0, 234, 191, 1, 0, 0, 0, 234, 211, 1, 0, 0, 0, 234, 214, 1, 0, 0, 0, 235, 21, 1, 0, 0, 0, 236, 237, 7, 0, 0, 0, 237, 256, 6, 11, -1, 0, 238, 240, 7, 0, 0, 0, 239, 238, 1, 0, 0, 0,
+        239, 240, 1, 0, 0, 0, 240, 241, 1, 0, 0, 0, 241, 242, 3, 34, 17, 0, 242, 249, 6, 11, -1, 0, 243, 244, 7, 0, 0, 0, 244, 245, 3, 34, 17, 0, 245, 246, 6, 11, -1, 0, 246, 248, 1, 0, 0,
+        0, 247, 243, 1, 0, 0, 0, 248, 251, 1, 0, 0, 0, 249, 247, 1, 0, 0, 0, 249, 250, 1, 0, 0, 0, 250, 253, 1, 0, 0, 0, 251, 249, 1, 0, 0, 0, 252, 254, 7, 0, 0, 0, 253, 252, 1, 0, 0, 0,
+        253, 254, 1, 0, 0, 0, 254, 256, 1, 0, 0, 0, 255, 236, 1, 0, 0, 0, 255, 239, 1, 0, 0, 0, 256, 23, 1, 0, 0, 0, 257, 258, 5, 56, 0, 0, 258, 259, 3, 10, 5, 0, 259, 260, 6, 12, -1, 0,
+        260, 25, 1, 0, 0, 0, 261, 262, 5, 56, 0, 0, 262, 263, 3, 70, 35, 0, 263, 264, 3, 46, 23, 0, 264, 265, 6, 13, -1, 0, 265, 27, 1, 0, 0, 0, 266, 267, 3, 10, 5, 0, 267, 268, 6, 14, -1,
+        0, 268, 284, 1, 0, 0, 0, 269, 270, 3, 18, 9, 0, 270, 271, 6, 14, -1, 0, 271, 284, 1, 0, 0, 0, 272, 273, 3, 24, 12, 0, 273, 274, 6, 14, -1, 0, 274, 284, 1, 0, 0, 0, 275, 276, 3, 20,
+        10, 0, 276, 277, 6, 14, -1, 0, 277, 284, 1, 0, 0, 0, 278, 279, 5, 57, 0, 0, 279, 280, 3, 46, 23, 0, 280, 281, 5, 58, 0, 0, 281, 282, 6, 14, -1, 0, 282, 284, 1, 0, 0, 0, 283, 266, 1,
+        0, 0, 0, 283, 269, 1, 0, 0, 0, 283, 272, 1, 0, 0, 0, 283, 275, 1, 0, 0, 0, 283, 278, 1, 0, 0, 0, 284, 29, 1, 0, 0, 0, 285, 286, 5, 50, 0, 0, 286, 287, 6, 15, -1, 0, 287, 31, 1, 0, 0,
+        0, 288, 289, 5, 54, 0, 0, 289, 290, 6, 16, -1, 0, 290, 33, 1, 0, 0, 0, 291, 292, 3, 46, 23, 0, 292, 293, 6, 17, -1, 0, 293, 301, 1, 0, 0, 0, 294, 295, 3, 30, 15, 0, 295, 296, 6, 17,
+        -1, 0, 296, 301, 1, 0, 0, 0, 297, 298, 3, 32, 16, 0, 298, 299, 6, 17, -1, 0, 299, 301, 1, 0, 0, 0, 300, 291, 1, 0, 0, 0, 300, 294, 1, 0, 0, 0, 300, 297, 1, 0, 0, 0, 301, 35, 1, 0, 0,
+        0, 302, 303, 3, 34, 17, 0, 303, 310, 6, 18, -1, 0, 304, 305, 5, 52, 0, 0, 305, 306, 3, 34, 17, 0, 306, 307, 6, 18, -1, 0, 307, 309, 1, 0, 0, 0, 308, 304, 1, 0, 0, 0, 309, 312, 1, 0,
+        0, 0, 310, 308, 1, 0, 0, 0, 310, 311, 1, 0, 0, 0, 311, 37, 1, 0, 0, 0, 312, 310, 1, 0, 0, 0, 313, 314, 6, 19, -1, 0, 314, 315, 3, 28, 14, 0, 315, 316, 6, 19, -1, 0, 316, 326, 1, 0,
+        0, 0, 317, 318, 7, 1, 0, 0, 318, 319, 3, 38, 19, 4, 319, 320, 6, 19, -1, 0, 320, 326, 1, 0, 0, 0, 321, 322, 7, 2, 0, 0, 322, 323, 3, 38, 19, 3, 323, 324, 6, 19, -1, 0, 324, 326, 1,
+        0, 0, 0, 325, 313, 1, 0, 0, 0, 325, 317, 1, 0, 0, 0, 325, 321, 1, 0, 0, 0, 326, 375, 1, 0, 0, 0, 327, 328, 10, 2, 0, 0, 328, 329, 7, 3, 0, 0, 329, 330, 3, 38, 19, 3, 330, 331, 6, 19,
+        -1, 0, 331, 374, 1, 0, 0, 0, 332, 333, 10, 1, 0, 0, 333, 334, 7, 4, 0, 0, 334, 335, 3, 38, 19, 2, 335, 336, 6, 19, -1, 0, 336, 374, 1, 0, 0, 0, 337, 338, 10, 11, 0, 0, 338, 339, 7,
+        5, 0, 0, 339, 374, 6, 19, -1, 0, 340, 341, 10, 10, 0, 0, 341, 343, 5, 57, 0, 0, 342, 344, 3, 36, 18, 0, 343, 342, 1, 0, 0, 0, 343, 344, 1, 0, 0, 0, 344, 345, 1, 0, 0, 0, 345, 346, 5,
+        58, 0, 0, 346, 374, 6, 19, -1, 0, 347, 348, 10, 9, 0, 0, 348, 350, 5, 61, 0, 0, 349, 351, 3, 36, 18, 0, 350, 349, 1, 0, 0, 0, 350, 351, 1, 0, 0, 0, 351, 352, 1, 0, 0, 0, 352, 353, 5,
+        62, 0, 0, 353, 374, 6, 19, -1, 0, 354, 355, 10, 8, 0, 0, 355, 356, 7, 6, 0, 0, 356, 374, 6, 19, -1, 0, 357, 358, 10, 7, 0, 0, 358, 359, 5, 53, 0, 0, 359, 360, 5, 96, 0, 0, 360, 374,
+        6, 19, -1, 0, 361, 362, 10, 6, 0, 0, 362, 363, 5, 53, 0, 0, 363, 364, 5, 57, 0, 0, 364, 365, 3, 46, 23, 0, 365, 366, 5, 58, 0, 0, 366, 367, 6, 19, -1, 0, 367, 374, 1, 0, 0, 0, 368,
+        369, 10, 5, 0, 0, 369, 370, 7, 7, 0, 0, 370, 371, 3, 40, 20, 0, 371, 372, 6, 19, -1, 0, 372, 374, 1, 0, 0, 0, 373, 327, 1, 0, 0, 0, 373, 332, 1, 0, 0, 0, 373, 337, 1, 0, 0, 0, 373,
+        340, 1, 0, 0, 0, 373, 347, 1, 0, 0, 0, 373, 354, 1, 0, 0, 0, 373, 357, 1, 0, 0, 0, 373, 361, 1, 0, 0, 0, 373, 368, 1, 0, 0, 0, 374, 377, 1, 0, 0, 0, 375, 373, 1, 0, 0, 0, 375, 376,
+        1, 0, 0, 0, 376, 39, 1, 0, 0, 0, 377, 375, 1, 0, 0, 0, 378, 379, 6, 20, -1, 0, 379, 380, 3, 28, 14, 0, 380, 381, 6, 20, -1, 0, 381, 391, 1, 0, 0, 0, 382, 383, 7, 1, 0, 0, 383, 384,
+        3, 40, 20, 2, 384, 385, 6, 20, -1, 0, 385, 391, 1, 0, 0, 0, 386, 387, 7, 2, 0, 0, 387, 388, 3, 40, 20, 1, 388, 389, 6, 20, -1, 0, 389, 391, 1, 0, 0, 0, 390, 378, 1, 0, 0, 0, 390,
+        382, 1, 0, 0, 0, 390, 386, 1, 0, 0, 0, 391, 422, 1, 0, 0, 0, 392, 393, 10, 7, 0, 0, 393, 394, 7, 5, 0, 0, 394, 421, 6, 20, -1, 0, 395, 396, 10, 6, 0, 0, 396, 398, 5, 57, 0, 0, 397,
+        399, 3, 36, 18, 0, 398, 397, 1, 0, 0, 0, 398, 399, 1, 0, 0, 0, 399, 400, 1, 0, 0, 0, 400, 401, 5, 58, 0, 0, 401, 421, 6, 20, -1, 0, 402, 403, 10, 5, 0, 0, 403, 405, 5, 61, 0, 0, 404,
+        406, 3, 36, 18, 0, 405, 404, 1, 0, 0, 0, 405, 406, 1, 0, 0, 0, 406, 407, 1, 0, 0, 0, 407, 408, 5, 62, 0, 0, 408, 421, 6, 20, -1, 0, 409, 410, 10, 4, 0, 0, 410, 411, 5, 53, 0, 0, 411,
+        412, 5, 96, 0, 0, 412, 421, 6, 20, -1, 0, 413, 414, 10, 3, 0, 0, 414, 415, 5, 53, 0, 0, 415, 416, 5, 57, 0, 0, 416, 417, 3, 46, 23, 0, 417, 418, 5, 58, 0, 0, 418, 419, 6, 20, -1, 0,
+        419, 421, 1, 0, 0, 0, 420, 392, 1, 0, 0, 0, 420, 395, 1, 0, 0, 0, 420, 402, 1, 0, 0, 0, 420, 409, 1, 0, 0, 0, 420, 413, 1, 0, 0, 0, 421, 424, 1, 0, 0, 0, 422, 420, 1, 0, 0, 0, 422,
+        423, 1, 0, 0, 0, 423, 41, 1, 0, 0, 0, 424, 422, 1, 0, 0, 0, 425, 426, 3, 38, 19, 0, 426, 427, 5, 50, 0, 0, 427, 430, 3, 38, 19, 0, 428, 429, 5, 50, 0, 0, 429, 431, 3, 38, 19, 0, 430,
+        428, 1, 0, 0, 0, 430, 431, 1, 0, 0, 0, 431, 432, 1, 0, 0, 0, 432, 433, 6, 21, -1, 0, 433, 43, 1, 0, 0, 0, 434, 435, 6, 22, -1, 0, 435, 436, 3, 38, 19, 0, 436, 437, 6, 22, -1, 0, 437,
+        442, 1, 0, 0, 0, 438, 439, 3, 42, 21, 0, 439, 440, 6, 22, -1, 0, 440, 442, 1, 0, 0, 0, 441, 434, 1, 0, 0, 0, 441, 438, 1, 0, 0, 0, 442, 470, 1, 0, 0, 0, 443, 444, 10, 5, 0, 0, 444,
+        445, 7, 8, 0, 0, 445, 446, 3, 44, 22, 6, 446, 447, 6, 22, -1, 0, 447, 469, 1, 0, 0, 0, 448, 449, 10, 4, 0, 0, 449, 450, 5, 78, 0, 0, 450, 451, 3, 44, 22, 5, 451, 452, 6, 22, -1, 0,
+        452, 469, 1, 0, 0, 0, 453, 454, 10, 3, 0, 0, 454, 455, 5, 79, 0, 0, 455, 456, 3, 44, 22, 4, 456, 457, 6, 22, -1, 0, 457, 469, 1, 0, 0, 0, 458, 459, 10, 2, 0, 0, 459, 460, 5, 76, 0,
+        0, 460, 461, 3, 44, 22, 3, 461, 462, 6, 22, -1, 0, 462, 469, 1, 0, 0, 0, 463, 464, 10, 1, 0, 0, 464, 465, 5, 77, 0, 0, 465, 466, 3, 44, 22, 2, 466, 467, 6, 22, -1, 0, 467, 469, 1, 0,
+        0, 0, 468, 443, 1, 0, 0, 0, 468, 448, 1, 0, 0, 0, 468, 453, 1, 0, 0, 0, 468, 458, 1, 0, 0, 0, 468, 463, 1, 0, 0, 0, 469, 472, 1, 0, 0, 0, 470, 468, 1, 0, 0, 0, 470, 471, 1, 0, 0, 0,
+        471, 45, 1, 0, 0, 0, 472, 470, 1, 0, 0, 0, 473, 474, 3, 44, 22, 0, 474, 475, 6, 23, -1, 0, 475, 485, 1, 0, 0, 0, 476, 477, 3, 44, 22, 0, 477, 478, 7, 9, 0, 0, 478, 479, 3, 46, 23, 0,
+        479, 480, 6, 23, -1, 0, 480, 485, 1, 0, 0, 0, 481, 482, 3, 26, 13, 0, 482, 483, 6, 23, -1, 0, 483, 485, 1, 0, 0, 0, 484, 473, 1, 0, 0, 0, 484, 476, 1, 0, 0, 0, 484, 481, 1, 0, 0, 0,
+        485, 47, 1, 0, 0, 0, 486, 487, 3, 50, 25, 0, 487, 488, 6, 24, -1, 0, 488, 498, 1, 0, 0, 0, 489, 490, 5, 23, 0, 0, 490, 498, 6, 24, -1, 0, 491, 492, 3, 54, 27, 0, 492, 493, 6, 24, -1,
+        0, 493, 498, 1, 0, 0, 0, 494, 495, 3, 76, 38, 0, 495, 496, 6, 24, -1, 0, 496, 498, 1, 0, 0, 0, 497, 486, 1, 0, 0, 0, 497, 489, 1, 0, 0, 0, 497, 491, 1, 0, 0, 0, 497, 494, 1, 0, 0, 0,
+        498, 49, 1, 0, 0, 0, 499, 500, 5, 1, 0, 0, 500, 504, 6, 25, -1, 0, 501, 502, 5, 2, 0, 0, 502, 504, 6, 25, -1, 0, 503, 499, 1, 0, 0, 0, 503, 501, 1, 0, 0, 0, 504, 508, 1, 0, 0, 0,
+        505, 506, 3, 52, 26, 0, 506, 507, 6, 25, -1, 0, 507, 509, 1, 0, 0, 0, 508, 505, 1, 0, 0, 0, 509, 510, 1, 0, 0, 0, 510, 508, 1, 0, 0, 0, 510, 511, 1, 0, 0, 0, 511, 51, 1, 0, 0, 0,
+        512, 513, 3, 10, 5, 0, 513, 514, 6, 26, -1, 0, 514, 521, 1, 0, 0, 0, 515, 516, 3, 10, 5, 0, 516, 517, 5, 49, 0, 0, 517, 518, 3, 46, 23, 0, 518, 519, 6, 26, -1, 0, 519, 521, 1, 0, 0,
+        0, 520, 512, 1, 0, 0, 0, 520, 515, 1, 0, 0, 0, 521, 53, 1, 0, 0, 0, 522, 523, 3, 56, 28, 0, 523, 524, 6, 27, -1, 0, 524, 529, 1, 0, 0, 0, 525, 526, 3, 62, 31, 0, 526, 527, 6, 27, -1,
+        0, 527, 529, 1, 0, 0, 0, 528, 522, 1, 0, 0, 0, 528, 525, 1, 0, 0, 0, 529, 55, 1, 0, 0, 0, 530, 531, 5, 3, 0, 0, 531, 533, 3, 46, 23, 0, 532, 534, 3, 92, 46, 0, 533, 532, 1, 0, 0, 0,
+        533, 534, 1, 0, 0, 0, 534, 536, 1, 0, 0, 0, 535, 537, 3, 4, 2, 0, 536, 535, 1, 0, 0, 0, 536, 537, 1, 0, 0, 0, 537, 538, 1, 0, 0, 0, 538, 544, 6, 28, -1, 0, 539, 540, 3, 58, 29, 0,
+        540, 541, 6, 28, -1, 0, 541, 543, 1, 0, 0, 0, 542, 539, 1, 0, 0, 0, 543, 546, 1, 0, 0, 0, 544, 542, 1, 0, 0, 0, 544, 545, 1, 0, 0, 0, 545, 548, 1, 0, 0, 0, 546, 544, 1, 0, 0, 0, 547,
+        549, 3, 60, 30, 0, 548, 547, 1, 0, 0, 0, 548, 549, 1, 0, 0, 0, 549, 550, 1, 0, 0, 0, 550, 551, 6, 28, -1, 0, 551, 552, 7, 10, 0, 0, 552, 57, 1, 0, 0, 0, 553, 555, 5, 7, 0, 0, 554,
+        556, 3, 92, 46, 0, 555, 554, 1, 0, 0, 0, 555, 556, 1, 0, 0, 0, 556, 557, 1, 0, 0, 0, 557, 559, 3, 46, 23, 0, 558, 560, 3, 92, 46, 0, 559, 558, 1, 0, 0, 0, 559, 560, 1, 0, 0, 0, 560,
+        562, 1, 0, 0, 0, 561, 563, 3, 4, 2, 0, 562, 561, 1, 0, 0, 0, 562, 563, 1, 0, 0, 0, 563, 564, 1, 0, 0, 0, 564, 565, 6, 29, -1, 0, 565, 59, 1, 0, 0, 0, 566, 568, 5, 8, 0, 0, 567, 569,
+        3, 92, 46, 0, 568, 567, 1, 0, 0, 0, 568, 569, 1, 0, 0, 0, 569, 571, 1, 0, 0, 0, 570, 572, 3, 4, 2, 0, 571, 570, 1, 0, 0, 0, 571, 572, 1, 0, 0, 0, 572, 573, 1, 0, 0, 0, 573, 574, 6,
+        30, -1, 0, 574, 61, 1, 0, 0, 0, 575, 576, 5, 9, 0, 0, 576, 578, 3, 46, 23, 0, 577, 579, 3, 92, 46, 0, 578, 577, 1, 0, 0, 0, 578, 579, 1, 0, 0, 0, 579, 581, 1, 0, 0, 0, 580, 582, 3,
+        64, 32, 0, 581, 580, 1, 0, 0, 0, 581, 582, 1, 0, 0, 0, 582, 584, 1, 0, 0, 0, 583, 585, 3, 68, 34, 0, 584, 583, 1, 0, 0, 0, 584, 585, 1, 0, 0, 0, 585, 586, 1, 0, 0, 0, 586, 587, 7,
+        11, 0, 0, 587, 588, 6, 31, -1, 0, 588, 63, 1, 0, 0, 0, 589, 590, 3, 66, 33, 0, 590, 599, 6, 32, -1, 0, 591, 593, 3, 92, 46, 0, 592, 591, 1, 0, 0, 0, 592, 593, 1, 0, 0, 0, 593, 594,
+        1, 0, 0, 0, 594, 595, 3, 66, 33, 0, 595, 596, 6, 32, -1, 0, 596, 598, 1, 0, 0, 0, 597, 592, 1, 0, 0, 0, 598, 601, 1, 0, 0, 0, 599, 597, 1, 0, 0, 0, 599, 600, 1, 0, 0, 0, 600, 603, 1,
+        0, 0, 0, 601, 599, 1, 0, 0, 0, 602, 604, 3, 92, 46, 0, 603, 602, 1, 0, 0, 0, 603, 604, 1, 0, 0, 0, 604, 65, 1, 0, 0, 0, 605, 607, 5, 11, 0, 0, 606, 608, 3, 92, 46, 0, 607, 606, 1, 0,
+        0, 0, 607, 608, 1, 0, 0, 0, 608, 609, 1, 0, 0, 0, 609, 611, 3, 46, 23, 0, 610, 612, 3, 92, 46, 0, 611, 610, 1, 0, 0, 0, 611, 612, 1, 0, 0, 0, 612, 614, 1, 0, 0, 0, 613, 615, 3, 4, 2,
+        0, 614, 613, 1, 0, 0, 0, 614, 615, 1, 0, 0, 0, 615, 616, 1, 0, 0, 0, 616, 617, 6, 33, -1, 0, 617, 67, 1, 0, 0, 0, 618, 620, 5, 12, 0, 0, 619, 621, 3, 92, 46, 0, 620, 619, 1, 0, 0, 0,
+        620, 621, 1, 0, 0, 0, 621, 623, 1, 0, 0, 0, 622, 624, 3, 4, 2, 0, 623, 622, 1, 0, 0, 0, 623, 624, 1, 0, 0, 0, 624, 626, 1, 0, 0, 0, 625, 627, 3, 92, 46, 0, 626, 625, 1, 0, 0, 0, 626,
+        627, 1, 0, 0, 0, 627, 628, 1, 0, 0, 0, 628, 629, 6, 34, -1, 0, 629, 69, 1, 0, 0, 0, 630, 631, 5, 57, 0, 0, 631, 643, 6, 35, -1, 0, 632, 633, 3, 72, 36, 0, 633, 640, 6, 35, -1, 0,
+        634, 635, 5, 52, 0, 0, 635, 636, 3, 72, 36, 0, 636, 637, 6, 35, -1, 0, 637, 639, 1, 0, 0, 0, 638, 634, 1, 0, 0, 0, 639, 642, 1, 0, 0, 0, 640, 638, 1, 0, 0, 0, 640, 641, 1, 0, 0, 0,
+        641, 644, 1, 0, 0, 0, 642, 640, 1, 0, 0, 0, 643, 632, 1, 0, 0, 0, 643, 644, 1, 0, 0, 0, 644, 645, 1, 0, 0, 0, 645, 646, 5, 58, 0, 0, 646, 71, 1, 0, 0, 0, 647, 648, 3, 52, 26, 0, 648,
+        649, 6, 36, -1, 0, 649, 654, 1, 0, 0, 0, 650, 651, 3, 32, 16, 0, 651, 652, 6, 36, -1, 0, 652, 654, 1, 0, 0, 0, 653, 647, 1, 0, 0, 0, 653, 650, 1, 0, 0, 0, 654, 73, 1, 0, 0, 0, 655,
+        656, 3, 10, 5, 0, 656, 657, 6, 37, -1, 0, 657, 675, 1, 0, 0, 0, 658, 659, 5, 59, 0, 0, 659, 671, 6, 37, -1, 0, 660, 661, 3, 10, 5, 0, 661, 668, 6, 37, -1, 0, 662, 663, 5, 52, 0, 0,
+        663, 664, 3, 10, 5, 0, 664, 665, 6, 37, -1, 0, 665, 667, 1, 0, 0, 0, 666, 662, 1, 0, 0, 0, 667, 670, 1, 0, 0, 0, 668, 666, 1, 0, 0, 0, 668, 669, 1, 0, 0, 0, 669, 672, 1, 0, 0, 0,
+        670, 668, 1, 0, 0, 0, 671, 660, 1, 0, 0, 0, 671, 672, 1, 0, 0, 0, 672, 673, 1, 0, 0, 0, 673, 675, 5, 60, 0, 0, 674, 655, 1, 0, 0, 0, 674, 658, 1, 0, 0, 0, 675, 75, 1, 0, 0, 0, 676,
+        680, 5, 24, 0, 0, 677, 678, 3, 74, 37, 0, 678, 679, 5, 49, 0, 0, 679, 681, 1, 0, 0, 0, 680, 677, 1, 0, 0, 0, 680, 681, 1, 0, 0, 0, 681, 682, 1, 0, 0, 0, 682, 684, 3, 10, 5, 0, 683,
+        685, 3, 70, 35, 0, 684, 683, 1, 0, 0, 0, 684, 685, 1, 0, 0, 0, 685, 687, 1, 0, 0, 0, 686, 688, 3, 92, 46, 0, 687, 686, 1, 0, 0, 0, 687, 688, 1, 0, 0, 0, 688, 690, 1, 0, 0, 0, 689,
+        691, 3, 78, 39, 0, 690, 689, 1, 0, 0, 0, 690, 691, 1, 0, 0, 0, 691, 693, 1, 0, 0, 0, 692, 694, 3, 4, 2, 0, 693, 692, 1, 0, 0, 0, 693, 694, 1, 0, 0, 0, 694, 695, 1, 0, 0, 0, 695, 696,
+        7, 12, 0, 0, 696, 697, 6, 38, -1, 0, 697, 77, 1, 0, 0, 0, 698, 699, 3, 80, 40, 0, 699, 708, 6, 39, -1, 0, 700, 702, 3, 92, 46, 0, 701, 700, 1, 0, 0, 0, 701, 702, 1, 0, 0, 0, 702,
+        703, 1, 0, 0, 0, 703, 704, 3, 80, 40, 0, 704, 705, 6, 39, -1, 0, 705, 707, 1, 0, 0, 0, 706, 701, 1, 0, 0, 0, 707, 710, 1, 0, 0, 0, 708, 706, 1, 0, 0, 0, 708, 709, 1, 0, 0, 0, 709,
+        712, 1, 0, 0, 0, 710, 708, 1, 0, 0, 0, 711, 713, 3, 92, 46, 0, 712, 711, 1, 0, 0, 0, 712, 713, 1, 0, 0, 0, 713, 79, 1, 0, 0, 0, 714, 716, 5, 44, 0, 0, 715, 717, 3, 92, 46, 0, 716,
+        715, 1, 0, 0, 0, 716, 717, 1, 0, 0, 0, 717, 724, 1, 0, 0, 0, 718, 719, 5, 57, 0, 0, 719, 720, 3, 10, 5, 0, 720, 722, 5, 58, 0, 0, 721, 723, 3, 92, 46, 0, 722, 721, 1, 0, 0, 0, 722,
+        723, 1, 0, 0, 0, 723, 725, 1, 0, 0, 0, 724, 718, 1, 0, 0, 0, 724, 725, 1, 0, 0, 0, 725, 726, 1, 0, 0, 0, 726, 728, 3, 82, 41, 0, 727, 729, 3, 92, 46, 0, 728, 727, 1, 0, 0, 0, 728,
+        729, 1, 0, 0, 0, 729, 730, 1, 0, 0, 0, 730, 731, 5, 5, 0, 0, 731, 732, 6, 40, -1, 0, 732, 81, 1, 0, 0, 0, 733, 734, 3, 84, 42, 0, 734, 741, 6, 41, -1, 0, 735, 736, 3, 92, 46, 0, 736,
+        737, 3, 84, 42, 0, 737, 738, 6, 41, -1, 0, 738, 740, 1, 0, 0, 0, 739, 735, 1, 0, 0, 0, 740, 743, 1, 0, 0, 0, 741, 739, 1, 0, 0, 0, 741, 742, 1, 0, 0, 0, 742, 83, 1, 0, 0, 0, 743,
+        741, 1, 0, 0, 0, 744, 749, 3, 86, 43, 0, 745, 746, 5, 57, 0, 0, 746, 747, 3, 36, 18, 0, 747, 748, 5, 58, 0, 0, 748, 750, 1, 0, 0, 0, 749, 745, 1, 0, 0, 0, 749, 750, 1, 0, 0, 0, 750,
+        752, 1, 0, 0, 0, 751, 753, 3, 10, 5, 0, 752, 751, 1, 0, 0, 0, 752, 753, 1, 0, 0, 0, 753, 758, 1, 0, 0, 0, 754, 755, 5, 61, 0, 0, 755, 756, 3, 36, 18, 0, 756, 757, 5, 62, 0, 0, 757,
+        759, 1, 0, 0, 0, 758, 754, 1, 0, 0, 0, 758, 759, 1, 0, 0, 0, 759, 762, 1, 0, 0, 0, 760, 761, 5, 49, 0, 0, 761, 763, 3, 46, 23, 0, 762, 760, 1, 0, 0, 0, 762, 763, 1, 0, 0, 0, 763,
+        764, 1, 0, 0, 0, 764, 765, 6, 42, -1, 0, 765, 85, 1, 0, 0, 0, 766, 767, 3, 10, 5, 0, 767, 774, 6, 43, -1, 0, 768, 769, 5, 53, 0, 0, 769, 770, 3, 10, 5, 0, 770, 771, 6, 43, -1, 0,
+        771, 773, 1, 0, 0, 0, 772, 768, 1, 0, 0, 0, 773, 776, 1, 0, 0, 0, 774, 772, 1, 0, 0, 0, 774, 775, 1, 0, 0, 0, 775, 87, 1, 0, 0, 0, 776, 774, 1, 0, 0, 0, 777, 779, 7, 13, 0, 0, 778,
+        777, 1, 0, 0, 0, 779, 780, 1, 0, 0, 0, 780, 778, 1, 0, 0, 0, 780, 781, 1, 0, 0, 0, 781, 89, 1, 0, 0, 0, 782, 784, 5, 100, 0, 0, 783, 782, 1, 0, 0, 0, 784, 785, 1, 0, 0, 0, 785, 783,
+        1, 0, 0, 0, 785, 786, 1, 0, 0, 0, 786, 91, 1, 0, 0, 0, 787, 789, 7, 14, 0, 0, 788, 787, 1, 0, 0, 0, 789, 790, 1, 0, 0, 0, 790, 788, 1, 0, 0, 0, 790, 791, 1, 0, 0, 0, 791, 93, 1, 0,
+        0, 0, 93, 95, 100, 106, 116, 120, 132, 136, 149, 157, 169, 186, 196, 203, 207, 219, 226, 230, 234, 239, 249, 253, 255, 283, 300, 310, 325, 343, 350, 373, 375, 390, 398, 405, 420,
+        422, 430, 441, 468, 470, 484, 497, 503, 510, 520, 528, 533, 536, 544, 548, 555, 559, 562, 568, 571, 578, 581, 584, 592, 599, 603, 607, 611, 614, 620, 623, 626, 640, 643, 653, 668,
+        671, 674, 680, 684, 687, 690, 693, 701, 708, 712, 716, 722, 724, 728, 741, 749, 752, 758, 762, 774, 780, 785, 790,
     ];
 
     private static __ATN: ATN;
@@ -4473,6 +4789,9 @@ export class Select_commandContext extends ParserRuleContext {
     public if_command(): If_commandContext {
         return this.getTypedRuleContext(If_commandContext, 0) as If_commandContext;
     }
+    public switch_command(): Switch_commandContext {
+        return this.getTypedRuleContext(Switch_commandContext, 0) as Switch_commandContext;
+    }
     public get ruleIndex(): number {
         return MathJSLabParser.RULE_select_command;
     }
@@ -4560,6 +4879,111 @@ export class Else_clauseContext extends ParserRuleContext {
     }
     public get ruleIndex(): number {
         return MathJSLabParser.RULE_else_clause;
+    }
+}
+
+export class Switch_commandContext extends ParserRuleContext {
+    public node: NodeSwitch;
+    constructor(parser?: MathJSLabParser, parent?: ParserRuleContext, invokingState?: number) {
+        super(parent, invokingState);
+        this.parser = parser;
+    }
+    public SWITCH(): TerminalNode {
+        return this.getToken(MathJSLabParser.SWITCH, 0);
+    }
+    public expression(): ExpressionContext {
+        return this.getTypedRuleContext(ExpressionContext, 0) as ExpressionContext;
+    }
+    public END(): TerminalNode {
+        return this.getToken(MathJSLabParser.END, 0);
+    }
+    public ENDSWITCH(): TerminalNode {
+        return this.getToken(MathJSLabParser.ENDSWITCH, 0);
+    }
+    public sep(): SepContext {
+        return this.getTypedRuleContext(SepContext, 0) as SepContext;
+    }
+    public switch_case_list(): Switch_case_listContext {
+        return this.getTypedRuleContext(Switch_case_listContext, 0) as Switch_case_listContext;
+    }
+    public otherwise_case(): Otherwise_caseContext {
+        return this.getTypedRuleContext(Otherwise_caseContext, 0) as Otherwise_caseContext;
+    }
+    public get ruleIndex(): number {
+        return MathJSLabParser.RULE_switch_command;
+    }
+}
+
+export class Switch_case_listContext extends ParserRuleContext {
+    public node: NodeList;
+    public i: number = 0;
+    constructor(parser?: MathJSLabParser, parent?: ParserRuleContext, invokingState?: number) {
+        super(parent, invokingState);
+        this.parser = parser;
+    }
+    public switch_case_list(): Switch_caseContext[] {
+        return this.getTypedRuleContexts(Switch_caseContext) as Switch_caseContext[];
+    }
+    public switch_case(i: number): Switch_caseContext {
+        return this.getTypedRuleContext(Switch_caseContext, i) as Switch_caseContext;
+    }
+    public sep_list(): SepContext[] {
+        return this.getTypedRuleContexts(SepContext) as SepContext[];
+    }
+    public sep(i: number): SepContext {
+        return this.getTypedRuleContext(SepContext, i) as SepContext;
+    }
+    public get ruleIndex(): number {
+        return MathJSLabParser.RULE_switch_case_list;
+    }
+}
+
+export class Switch_caseContext extends ParserRuleContext {
+    public node: NodeSwitchCase;
+    constructor(parser?: MathJSLabParser, parent?: ParserRuleContext, invokingState?: number) {
+        super(parent, invokingState);
+        this.parser = parser;
+    }
+    public CASE(): TerminalNode {
+        return this.getToken(MathJSLabParser.CASE, 0);
+    }
+    public expression(): ExpressionContext {
+        return this.getTypedRuleContext(ExpressionContext, 0) as ExpressionContext;
+    }
+    public sep_list(): SepContext[] {
+        return this.getTypedRuleContexts(SepContext) as SepContext[];
+    }
+    public sep(i: number): SepContext {
+        return this.getTypedRuleContext(SepContext, i) as SepContext;
+    }
+    public list(): ListContext {
+        return this.getTypedRuleContext(ListContext, 0) as ListContext;
+    }
+    public get ruleIndex(): number {
+        return MathJSLabParser.RULE_switch_case;
+    }
+}
+
+export class Otherwise_caseContext extends ParserRuleContext {
+    public node: NodeList;
+    constructor(parser?: MathJSLabParser, parent?: ParserRuleContext, invokingState?: number) {
+        super(parent, invokingState);
+        this.parser = parser;
+    }
+    public OTHERWISE(): TerminalNode {
+        return this.getToken(MathJSLabParser.OTHERWISE, 0);
+    }
+    public sep_list(): SepContext[] {
+        return this.getTypedRuleContexts(SepContext) as SepContext[];
+    }
+    public sep(i: number): SepContext {
+        return this.getTypedRuleContext(SepContext, i) as SepContext;
+    }
+    public list(): ListContext {
+        return this.getTypedRuleContext(ListContext, 0) as ListContext;
+    }
+    public get ruleIndex(): number {
+        return MathJSLabParser.RULE_otherwise_case;
     }
 }
 

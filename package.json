@@ -1,6 +1,6 @@
 {
     "name": "mathjslab",
-    "version": "2.1.0",
+    "version": "2.1.1",
     "description": "MathJSLab - An interpreter with language syntax like MATLAB®/Octave, ISBN 978-65-00-82338-7.",
     "keywords": [
         "MathJSLab",
@@ -93,8 +93,9 @@
         "clean:parser:src": "shx rm -rf ./src/MathJSLabLexer.ts ./src/MathJSLabParser.ts",
         "clean:parser:tokens:interp": "shx rm -rf ./src/.antlr ./src/MathJSLabLexer.tokens ./src/MathJSLabLexer.interp ./src/MathJSLabParser.tokens ./src/MathJSLabParser.interp",
         "clean:parser": "npm run clean:parser:src && npm run clean:parser:tokens:interp",
+        "clean:doc": "shx rm -rf ./doc/api-reference.md",
         "clean:copy": "npm run npx:tsx -- script/helper/copy-repo-files.ts clean && npx shx rm -rf script/helper/copy-repo-files.ts && npx shx rm -rf copy.repo.config.json",
-        "clean": "npm run clean:build && npm run clean:parser && npm run clean:key",
+        "clean": "npm run clean:build && npm run clean:parser && npm run clean:key && npm run clean:doc",
         "clean:all": "npm run clean && npm run clean:resources && npm run clean:package-lock && npm run clean:copy",
         "clone:repository": "shx rm -rf repo && shx mkdir -p repo && git clone https://github.com/MathJSLab/.github.git repo/.github",
         "copy:repository": "shx cp repo/.github/script/helper/copy-repo-files.ts script/helper/copy-repo-files.ts && shx cp repo/.github/resource/mathjslab/copy.repo.config.json copy.repo.config.json && npm run tsx -- script/helper/copy-repo-files.ts",
@@ -104,7 +105,7 @@
         "update": "npx npm-check-updates -u && npm run install:all",
         "format": "prettier --write **/*.{js,cjs,mjs,ts,cts,mts,json,md}",
         "lint": "eslint --fix",
-        "docs:api": "npm run tsx script/generate-api-docs.ts",
+        "docs": "npm run tsx script/generate-api-docs.ts",
         "format:lint": "npm run format && npm run lint",
         "git:add": "git add .",
         "git:commit": "node script/helper/git-commit.cjs",
@@ -132,7 +133,7 @@
         "build:dev": "npm run build:package -- --mode development",
         "build:prod": "npm run build:package -- --mode production",
         "build": "npm run build:prod",
-        "do:all": "npm run clean:all && npm run update && npm run build:parser:key:types && npm run format:lint && npm run test:circ:unit && npm run docs:api && npm run build && npm run test:bundle && npm run git:all:npm:publish && echo script \"do:all\" finished."
+        "do:all": "npm run clean:all && npm run update && npm run build:parser:key:types && npm run format:lint && npm run test:circ:unit && npm run docs && npm run build && npm run test:bundle && npm run git:all:npm:publish && echo script \"do:all\" finished."
     },
     "dependencies": {
         "antlr4": "^4.13.2",
@@ -174,9 +175,9 @@
         "turndown": "^7.2.4",
         "typedoc": "^0.28.19",
         "typescript": "^6.0.3",
-        "webpack": "^5.108.3",
+        "webpack": "^5.108.4",
         "webpack-bundle-analyzer": "^5.3.0",
-        "webpack-cli": "^7.1.0"
+        "webpack-cli": "^7.2.0"
     },
     "engines": {
         "node": ">=16",

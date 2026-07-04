@@ -14,6 +14,8 @@ import type {
     NodeIf,
     NodeElseIf,
     NodeElse,
+    NodeSwitch,
+    NodeSwitchCase,
     StringQuoteCharacter,
 } from './AST';
 import { AST } from './AST';
@@ -449,6 +451,9 @@ select_command returns [node: NodeInput]
     : if_command {
         localctx.node = localctx.if_command().node;
     }
+    | switch_command {
+        localctx.node = localctx.switch_command().node;
+    }
     ;
 
 /**
@@ -477,6 +482,41 @@ elseif_clause returns [node: NodeElseIf]
 else_clause returns [node: NodeElse]
     : ELSE sep? list? {
         localctx.node = AST.nodeElse(localctx.list() ? localctx.list().node : AST.nodeListFirst());
+    }
+    ;
+
+/**
+ * Switch statement.
+ */
+
+switch_command returns [node: NodeSwitch]
+    : SWITCH expression sep? switch_case_list? otherwise_case? (END | ENDSWITCH) {
+        localctx.node = AST.nodeSwitch(
+            localctx.expression().node,
+            localctx.switch_case_list() ? localctx.switch_case_list().node : AST.nodeListFirst(),
+            localctx.otherwise_case() ? localctx.otherwise_case().node : null,
+        );
+    }
+    ;
+
+switch_case_list returns [node: NodeList]
+    locals [i: number = 0]
+    : switch_case {
+        localctx.node = AST.nodeListFirst(localctx.switch_case(localctx.i++).node);
+    } (sep? switch_case {
+        localctx.node = AST.appendNodeList(localctx.node, localctx.switch_case(localctx.i++).node);
+    })* sep?
+    ;
+
+switch_case returns [node: NodeSwitchCase]
+    : CASE sep? expression sep? list? {
+        localctx.node = AST.nodeSwitchCase(localctx.expression().node, localctx.list() ? localctx.list().node : AST.nodeListFirst());
+    }
+    ;
+
+otherwise_case returns [node: NodeList]
+    : OTHERWISE sep? list? sep? {
+        localctx.node = localctx.list() ? localctx.list().node : AST.nodeListFirst();
     }
     ;
 

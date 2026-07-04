@@ -339,7 +339,9 @@ After run this command you will need to do workspace setup running
 ## Language subset
 
 Currently only the mathematical expressions of the language are implemented.
-The control and loop structures are not yet implemented.
+The control and loop structures are not yet implemented. Most of the
+infrastructure for function support is already implemented, and a large set of
+native functions is also already available.
 
 There are some differences from the original
 [MATLAB&reg;](https://www.mathworks.com/products/matlab.html)/[Octave](https://www.gnu.org/software/octave/).

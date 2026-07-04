@@ -96,6 +96,8 @@ type NodeType =
     | 'IF'
     | 'ELSEIF'
     | 'ELSE'
+    | 'SWITCH'
+    | 'CASE'
     | OperatorType;
 
 /**
@@ -133,7 +135,7 @@ interface NodeVoid extends NodeBase {
 /**
  * Any AST node that can be used as an executable/evaluable input.
  */
-type NodeInput = NodeExpr | NodeList | NodeDeclaration | NodeReturn | NodeIf;
+type NodeInput = NodeExpr | NodeList | NodeDeclaration | NodeReturn | NodeIf | NodeSwitch;
 
 /**
  * Expression node.
@@ -572,6 +574,25 @@ interface NodeElseIf extends NodeBase {
 interface NodeElse extends NodeBase {
     type: 'ELSE';
     else: NodeList;
+}
+
+/**
+ * `case` clause node.
+ */
+interface NodeSwitchCase extends NodeBase {
+    type: 'CASE';
+    expression: NodeExpr;
+    then: NodeList;
+}
+
+/**
+ * `switch` statement node.
+ */
+interface NodeSwitch extends NodeBase {
+    type: 'SWITCH';
+    expression: NodeExpr;
+    cases: NodeSwitchCase[];
+    otherwise: NodeList | null;
 }
 
 /**
@@ -1204,6 +1225,42 @@ abstract class AST {
         omitAnswer: true,
         omitOutput: true,
     });
+
+    /**
+     * Create a `switch` statement node.
+     */
+    public static readonly nodeSwitch = (expression: NodeExpr, cases: NodeList, otherwise: NodeList | null = null): NodeSwitch => {
+        const result = {
+            type: 'SWITCH',
+            expression,
+            cases: cases.list as unknown as NodeSwitchCase[],
+            otherwise,
+            omitAnswer: true,
+            omitOutput: true,
+        } as NodeSwitch;
+        result.expression.parent = result;
+        result.cases.forEach((node) => (node.parent = result));
+        if (result.otherwise) {
+            result.otherwise.parent = result;
+        }
+        return result;
+    };
+
+    /**
+     * Create a `case` clause node.
+     */
+    public static readonly nodeSwitchCase = (expression: NodeExpr, then: NodeList): NodeSwitchCase => {
+        const result = {
+            type: 'CASE',
+            expression,
+            then,
+            omitAnswer: true,
+            omitOutput: true,
+        } as NodeSwitchCase;
+        result.expression.parent = result;
+        result.then.parent = result;
+        return result;
+    };
 }
 
 export type {
@@ -1256,6 +1313,8 @@ export type {
     NodeIf,
     NodeElseIf,
     NodeElse,
+    NodeSwitch,
+    NodeSwitchCase,
 };
 export { AST };
 export default { AST };

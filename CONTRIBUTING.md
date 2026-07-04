@@ -29,12 +29,14 @@ Application.
 
 #### Table Of Contents
 
-- [Code of Conduct](#code-of-conduct)
-- [How to Contribute](#how-to-contribute)
-- [Community](#community)
-- [Code conventions](#code-conventions)
-- [Work fronts](#work-fronts)
-- [References](#references)
+- [Contributing to MathJSLab](#contributing-to-mathjslab) -
+  [Table Of Contents](#table-of-contents)
+    - [Code of Conduct](#code-of-conduct)
+    - [How to Contribute](#how-to-contribute)
+    - [Community](#community)
+    - [Code Conventions](#code-conventions)
+    - [Work fronts](#work-fronts)
+    - [References](#references)
 
 ## Code of Conduct
 
@@ -115,9 +117,6 @@ Some are listed below:
 - All operations over array elements are complex. Create and use real
   operations for arrays with only real elements.
 - Integer types and bitwise operations and functions.
-- String type and their respective functions.
-- More extensive tests need to be written, especially to test the parser and
-  interpreter.
 
 You are welcome to contribute to this project. I will be very grateful if you
 participate in some way.
