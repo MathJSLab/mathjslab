@@ -218,7 +218,7 @@ abstract class LAPACK {
      */
     public static readonly laswp_rows = (M: ComplexType[][], dim: number[], row1: number, row2: number): void => {
         const k1 = row1 + 1; // LAPACK 1-based
-        const k2 = k1; // somente uma linha
+        const k2 = k1; // Single row.
         const ipiv = [];
         ipiv[k1 - 1] = row2 + 1; // LAPACK 1-based
         LAPACK.laswp(M, dim, k1, k2, ipiv, +1);
@@ -1001,19 +1001,19 @@ abstract class LAPACK {
         const taus: ComplexType[] = new Array(kMax);
         const phis: ComplexType[] = new Array(kMax);
         for (let k = 0; k < kMax; k++) {
-            // 1) gera refletor para coluna k
+            // Generate the reflector for column k.
             const { tau, v, phi, alpha } = LAPACK.larfg('L', R, m, k);
-            // 2) grava alpha em R[k,k]
+            // Store alpha at R[k,k].
             R.array[k][k] = alpha;
-            // 3) armazena tau * v[1..] (MATLAB/Octave-style)
+            // Store tau * v[1..] using the MATLAB/Octave-compatible layout.
             for (let i = 1; i < v.length; i++) {
                 R.array[k + i][k] = Complex.mul(tau, v[i]);
             }
-            // 4) aplica H = I - tau * v * vᴴ às colunas restantes
+            // Apply H = I - tau * v * v^H to the remaining columns.
             if (k + 1 < n) {
                 LAPACK.larf('L', R, v, tau, k, k + 1);
             }
-            // 5) salva tau e phi (sem qualquer reparametrização)
+            // Preserve tau and phi exactly as produced by larfg.
             taus[k] = tau;
             phis[k] = phi;
         }
@@ -1388,7 +1388,7 @@ abstract class LAPACK {
                 // tau == 0 => null reflector (trivial)
                 for (let i = 1; i < vlen; i++) v[i] = Complex.zero();
             } else {
-                // reconstruir v a partir do armazenamento tau * v
+                // Reconstruct v from the tau * v storage.
                 for (let i = 1; i < vlen; i++) {
                     // R.array[k + i][k] is equals tau * v[i]
                     v[i] = Complex.rdiv(R.array[k + i][k] as ComplexType, tau);
@@ -1404,21 +1404,21 @@ abstract class LAPACK {
     /**
      * ## LAPACK.orglq
      *
-     * Reconstrói explicitamente a matriz unitária Q a partir da saída de `gelq2`.
+     * Explicitly reconstruct the unitary matrix Q from `gelq2` output.
      *
-     * Assume:
-     * - L armazena os vetores de Householder v diretamente em L[k][k+1..]
-     * - taus[k] contém os coeficientes escalares tau
+     * Assumptions:
+     * - `L` stores Householder vectors directly in `L[k][k+1..]`.
+     * - `taus[k]` stores the scalar Householder coefficient.
      *
-     * Reconstrói:
-     *   Q = H₀ᴴ · H₁ᴴ · ... · H_{k−1}ᴴ
+     * Reconstructs:
+     *   Q = H_0^H * H_1^H * ... * H_{k-1}^H
      *
-     * onde:
-     *   H_k = I − tau[k] · v · vᴴ
+     * where:
+     *   H_k = I - tau[k] * v * v^H
      *
-     * @param L   Matriz m×n (retornada por gelq2)
-     * @param taus Array de coeficientes de Householder
-     * @returns Q matriz unitária n×n
+     * @param L `m x n` matrix returned by `gelq2`.
+     * @param taus Householder scalar coefficients.
+     * @returns Unitary `n x n` matrix Q.
      */
     public static readonly orglq = (L: MultiArray, taus: ComplexType[]): MultiArray => {
         const n = L.dimension[1];
@@ -2328,9 +2328,14 @@ abstract class LAPACK {
         return T;
     };
     /**
-     * Transformação Hermitiana → Real 2n×2n
-     * @param H
-     * @returns
+     * Convert a complex Hermitian matrix into the equivalent real `2n x 2n`
+     * block representation.
+     *
+     * For `H = A + iB`, this returns `[A -B; B A]`. The input is assumed to be
+     * square and Hermitian; the routine does not revalidate symmetry.
+     *
+     * @param H Complex Hermitian matrix in row-major storage.
+     * @returns Real block matrix represented with `ComplexType` real values.
      */
     public static readonly hermitian_to_real2n = (H: ComplexType[][]): ComplexType[][] => {
         const n = H.length;
@@ -2348,17 +2353,21 @@ abstract class LAPACK {
     };
 
     /**
-     * Reconstrói autovetores complexos
-     * @param Q
-     * @returns
+     * Reconstruct complex eigenvectors from a real `2n x 2n` eigenspace.
+     *
+     * The first `n` rows provide the real parts and the next `n` rows provide
+     * the imaginary parts. Only the first `n` columns are consumed.
+     *
+     * @param Q Real block eigenvector matrix produced by the `2n` transform.
+     * @returns Complex eigenvector matrix.
      */
     public static readonly real2n_to_complex_eigenvectors = (Q: ComplexType[][]): ComplexType[][] => {
         const n = Q.length / 2;
         const V: ComplexType[][] = Array.from({ length: n }, (_) => Array.from({ length: n }));
         for (let j = 0; j < n; j++) {
-            // coluna j
+            // Column j.
             for (let i = 0; i < n; i++) {
-                // linha i
+                // Row i.
                 const x = Q[i][j] as ComplexType;
                 const y = Q[i + n][j] as ComplexType;
                 V[i][j] = Complex.create(x.re, y.re);
@@ -2957,21 +2966,20 @@ abstract class LAPACK {
     } => {
         const n = A.dimension[0];
         const Acopy = MultiArray.copy(A);
-        // 1) Redução Hermitiana → tridiagonal
+        // Hermitian reduction to tridiagonal form.
         const { diag, offdiag, taus } = LAPACK.hetrd(Acopy);
         if (computeVectors) {
-            // 2) Reconstruir Q (vetores da redução)
+            // Reconstruct Q from the reduction vectors.
             let Q = LAPACK.ungtr(Acopy, taus);
-            // 3) Resolver o problema tridiagonal
-            //    ZSTEQR: Q ← Q * Z
+            // Solve the tridiagonal problem. ZSTEQR semantics: Q := Q * Z.
             const { D, V } = LAPACK.steqr_vectors(diag, offdiag);
-            // Multiplica Q pelos autovetores do tridiagonal
+            // Multiply Q by the tridiagonal eigenvectors.
             const vectors = new MultiArray([V.length, V[0].length]);
             vectors.array = V;
             Q = MathOperation.mtimes(Q, vectors) as MultiArray;
             return { D: MultiArray.toDiagonalMatrix(D), V: Q };
         } else {
-            // Apenas autovalores
+            // Eigenvalues only.
             return { D: MultiArray.toColumnVector(LAPACK.steqr_vectors(diag, offdiag).D) };
         }
     };
@@ -2985,9 +2993,7 @@ abstract class LAPACK {
     } => {
         const n = A.dimension[0];
         const Acopy = MultiArray.copy(A);
-        // -------------------------------------------------
-        // Detecta se a matriz é realmente complexa
-        // -------------------------------------------------
+        // Detect whether the matrix has any nonzero imaginary part.
         let isComplex = false;
         for (let i = 0; i < n && !isComplex; i++) {
             for (let j = 0; j < n; j++) {
@@ -2999,34 +3005,30 @@ abstract class LAPACK {
             }
         }
         if (isComplex) {
-            // =================================================
-            // CASO 1: MATRIZ HERMITIANA COMPLEXA (ZHETRD-style)
-            // =================================================
+            // Case 1: complex Hermitian matrix, ZHETRD-style.
             const { diag, offdiag, taus } = LAPACK.hetrd(Acopy);
             if (!computeVectors) {
                 const { D } = LAPACK.steqr_vectors(diag, offdiag);
                 return { D: MultiArray.toColumnVector(D) };
             }
-            // Reconstrói Q complexo
+            // Reconstruct complex Q.
             let Q = LAPACK.ungtr(Acopy, taus);
             console.log('Q =', Q);
-            // Resolve o problema tridiagonal real
+            // Solve the real tridiagonal problem.
             const { D, V } = LAPACK.steqr_vectors(diag, offdiag);
-            // Multiplica Q pelos autovetores do tridiagonal
+            // Multiply Q by the tridiagonal eigenvectors.
             const Z = new MultiArray([n, n]);
             Z.array = V;
             Q = MathOperation.mtimes(Q, Z) as MultiArray;
             return { D: MultiArray.toDiagonalMatrix(D), V: Q };
         } else {
-            // =================================================
-            // CASO 2: MATRIZ SIMÉTRICA REAL
-            // =================================================
+            // Case 2: real symmetric matrix.
             const { diag, offdiag, taus } = LAPACK.hetrd(Acopy);
             if (!computeVectors) {
                 const { D } = LAPACK.steqr_vectors(diag, offdiag);
                 return { D: MultiArray.toColumnVector(D) };
             }
-            let Q = LAPACK.ungtr(Acopy, taus); // taus não são usados no caso real
+            let Q = LAPACK.ungtr(Acopy, taus); // taus are not used in the real case.
             const { D, V } = LAPACK.steqr_vectors(diag, offdiag);
             const Z = new MultiArray([n, n]);
             Z.array = V;

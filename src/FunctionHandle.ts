@@ -1,6 +1,7 @@
 import { Complex, ComplexType } from './Complex';
 import { NodeExpr } from './AST';
-import { Scope, Interpreter } from './Interpreter';
+import { Interpreter } from './Interpreter';
+import { Scope } from './Scope';
 
 /**
  * # FunctionHandle
@@ -34,7 +35,8 @@ import { Scope, Interpreter } from './Interpreter';
  *
  * ## Closure Semantics
  *
- * When representing an anonymous function, a `closure` may be attached.
+ * When representing an anonymous function or a named local/nested function
+ * handle, a `closure` may be attached.
  * This closure captures the lexical environment (`Scope`) at the moment
  * the function handle is created.
  *
@@ -49,7 +51,7 @@ import { Scope, Interpreter } from './Interpreter';
  *
  * - `expression` is only meaningful for anonymous functions.
  * - `parameter` defines the formal parameters of the lambda.
- * - `closure` is optional and only relevant for lambdas.
+ * - `closure` is optional and relevant for lambdas and lexical named handles.
  * - This class does **not** execute functions — it only represents them.
  *
  * ---
@@ -112,7 +114,8 @@ class FunctionHandle {
     /**
      * Captured lexical scope (closure).
      *
-     * Only defined for anonymous functions that capture variables.
+     * Defined for anonymous functions that capture variables and for named
+     * handles that must resolve through a lexical function scope.
      */
     public closure?: Scope;
 
@@ -220,13 +223,13 @@ class FunctionHandle {
      *
      * Notes:
      * - AST nodes (`parameter`, `expression`) are **not cloned**
-     * - `closure` is not copied
+     * - `closure` is preserved by reference
      *
      * @param fhandle - Source handle
      * @returns New FunctionHandle instance
      */
     public static copy = (fhandle: FunctionHandle): FunctionHandle => {
-        const result = new FunctionHandle(fhandle.id, fhandle.parameter, fhandle.expression);
+        const result = new FunctionHandle(fhandle.id, fhandle.parameter, fhandle.expression, fhandle.closure);
         result.parent = fhandle.parent;
         return result;
     };
@@ -237,7 +240,7 @@ class FunctionHandle {
      * @returns Shallow copy
      */
     public copy(): FunctionHandle {
-        const result = new FunctionHandle(this.id, this.parameter, this.expression);
+        const result = new FunctionHandle(this.id, this.parameter, this.expression, this.closure);
         result.parent = this.parent;
         return result;
     }

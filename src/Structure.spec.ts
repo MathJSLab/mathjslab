@@ -1,12 +1,60 @@
 import path from 'node:path';
-// import { Structure } from './Structure';
+import { Complex } from './Complex';
+import { MultiArray } from './MultiArray';
+import { Structure } from './Structure';
 
 const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.sep}]+)\\.spec\\.([cm]?[jt]s)\$`))!;
 const unitName = __filenameMatch[1];
 const testExtension = __filenameMatch[2];
 
 describe(`${unitName} unit test (.${testExtension} test file).`, () => {
-    it(`${unitName} should be defined.`, () => {
-        // expect(Structure).toBeDefined();
+    describe('Definition', () => {
+        it(`${unitName} should be defined.`, () => {
+            expect(Structure).toBeDefined();
+            expect(Structure.isInstanceOf(new Structure({}))).toBe(true);
+        });
+    });
+
+    describe('Fields', () => {
+        it('Should create nested field branches from a field path.', () => {
+            const structure = new Structure(['outer', 'inner']);
+
+            expect(Structure.getField(structure, ['outer', 'inner'])).toEqual(MultiArray.emptyArray());
+            expect(() => Structure.getField(structure, ['outer', 'missing'])).toThrow('value cannot be indexed with .');
+        });
+
+        it('Should set and retrieve nested fields.', () => {
+            const structure = new Structure({});
+            const value = Complex.create(42);
+
+            Structure.setField(structure, ['a', 'b'], value);
+
+            expect(Structure.getField(structure, ['a', 'b'])).toEqual(value);
+        });
+
+        it('Should add empty fields to every structure element in a structure array.', () => {
+            const array = new MultiArray([2, 1], (row) => new Structure({ id: Complex.create(row + 1) }));
+
+            Structure.setEmptyField(array, 'name');
+
+            expect(Structure.getField(array.array[0][0], ['name'])).toEqual(MultiArray.emptyArray());
+            expect(Structure.getField(array.array[1][0], ['name'])).toEqual(MultiArray.emptyArray());
+        });
+    });
+
+    describe('Copying and logical conversion', () => {
+        it('Should deep-copy fields.', () => {
+            const source = new Structure({ value: Complex.create(1) });
+            const copy = source.copy();
+
+            expect(copy).not.toBe(source);
+            expect(copy.field.value).not.toBe(source.field.value);
+            expect((source.field.value as ReturnType<typeof Complex.create>).re.toString()).toBe('1');
+        });
+
+        it('Should treat empty structures as false and structures with fields as true.', () => {
+            expect(Structure.toLogical(new Structure({})).re.toString()).toBe('0');
+            expect(Structure.toLogical(new Structure({ value: Complex.create(1) })).re.toString()).toBe('1');
+        });
     });
 });

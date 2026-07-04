@@ -1,58 +1,58 @@
 import path from 'node:path';
-import { ComplexDecimal } from './ComplexDecimal';
+import { ComplexNumber } from './ComplexNumber';
 
 const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.sep}]+)\\.spec\\.([cm]?[jt]s)\$`))!;
 const unitName = __filenameMatch[1];
 const testExtension = __filenameMatch[2];
 
 describe(`${unitName} unit test (.${testExtension} test file).`, () => {
-    jest.setTimeout(40000);
+    describe('Definition', () => {
+        it(`${unitName} should be defined.`, () => {
+            expect(ComplexNumber).toBeDefined();
+            expect(ComplexNumber.create).toBeDefined();
+            expect(ComplexNumber.add).toBeDefined();
+        });
+    });
 
-    it(`${unitName} should be defined.`, () => {
-        expect(ComplexDecimal).toBeDefined();
-    }, 20);
+    describe('Construction and classification', () => {
+        it('Should create real, complex, and logical values with the expected tags.', () => {
+            const real = ComplexNumber.create(2);
+            const complex = ComplexNumber.create(2, 3);
+            const logical = ComplexNumber.create(1, 0, ComplexNumber.LOGICAL);
 
-    // it('sin(x)^2+cos(x)^2 should be equal 1 for any value of x (first cycle)', () => {
-    //     let result: boolean = true;
-    //     // One-by-one degree
-    //     for (let i = 0; i <= 2 * Math.PI; i += Math.PI / 180) {
-    //         const value = ComplexDecimal.add(
-    //             ComplexDecimal.power(ComplexDecimal.sin(ComplexDecimal.create(i)), ComplexDecimal.create(2)),
-    //             ComplexDecimal.power(ComplexDecimal.cos(ComplexDecimal.create(i)), ComplexDecimal.create(2)),
-    //         );
-    //         result &&= value.re.toNumber() === 1 && value.im.toNumber() === 0; // converting to native number type to comparison.
-    //         result &&= Boolean(ComplexDecimal.eq(value, ComplexDecimal.one()).re.toNumber()); // using ComplexDecimal.eq to comparison.
-    //     }
+            expect(ComplexNumber.isInstanceOf(real)).toBe(true);
+            expect(real.type).toBe(ComplexNumber.REAL);
+            expect(complex.type).toBe(ComplexNumber.COMPLEX);
+            expect(logical.type).toBe(ComplexNumber.LOGICAL);
+            expect(ComplexNumber.toBoolean(logical)).toBe(true);
+        });
 
-    //     expect(result).toBe(true);
-    // }, 10000);
+        it('Should detect negative real and imaginary parts.', () => {
+            const value = ComplexNumber.create(-2, -3);
 
-    // it('sin(x)^2+cos(x)^2 should be equal 1 for lower values of x', () => {
-    //     let result: boolean = true;
-    //     for (let i = 0; i <= 1e-300; i += 1e-302) {
-    //         const value = ComplexDecimal.add(
-    //             ComplexDecimal.power(ComplexDecimal.sin(ComplexDecimal.create(i)), ComplexDecimal.create(2)),
-    //             ComplexDecimal.power(ComplexDecimal.cos(ComplexDecimal.create(i)), ComplexDecimal.create(2)),
-    //         );
-    //         result &&= value.re.toNumber() === 1 && value.im.toNumber() === 0; // converting to native number type to comparison.
-    //         result &&= Boolean(ComplexDecimal.eq(value, ComplexDecimal.one()).re.toNumber()); // using ComplexDecimal.eq to comparison.
-    //     }
+            expect(ComplexNumber.realIsNegative(value)).toBe(true);
+            expect(ComplexNumber.imagIsNegative(value)).toBe(true);
+            expect(ComplexNumber.realIsPositive(value)).toBe(false);
+            expect(ComplexNumber.imagIsPositive(value)).toBe(false);
+        });
+    });
 
-    //     expect(result).toBe(true);
-    // }, 200);
+    describe('Arithmetic', () => {
+        it('Should add, multiply, divide, and conjugate complex values.', () => {
+            const left = ComplexNumber.create(2, 3);
+            const right = ComplexNumber.create(4, -5);
 
-    // it('e^(i*pi) should be equal -1', () => {
-    //     const value = ComplexDecimal.exp(ComplexDecimal.mul(ComplexDecimal.onei(), ComplexDecimal.pi()));
-    //     const result = Boolean(ComplexDecimal.eq(value, ComplexDecimal.minusone()).re.toNumber()); // using ComplexDecimal.eq to comparison.
-    //     expect(result).toBe(true);
-    // }, 100);
+            expect(ComplexNumber.add(left, right)).toMatchObject({ re: 6, im: -2 });
+            expect(ComplexNumber.mul(left, right)).toMatchObject({ re: 23, im: 2 });
+            expect(ComplexNumber.rdiv(left, right)).toMatchObject({ re: -7 / 41, im: 22 / 41 });
+            expect(ComplexNumber.conj(left)).toMatchObject({ re: 2, im: -3 });
+        });
 
-    // it('abs(sin(n*pi+pi/2)) == 1 for integer n >= 0', () => {
-    //     let result: boolean = true;
-    //     for (let n = 0; n < 1000; n++) {
-    //         const value = ComplexDecimal.abs(ComplexDecimal.sin(ComplexDecimal.add(ComplexDecimal.mul(ComplexDecimal.create(n), ComplexDecimal.pi()), ComplexDecimal.pidiv2())));
-    //         result &&= Boolean(ComplexDecimal.eq(value, ComplexDecimal.one()).re.toNumber()); // using ComplexDecimal.eq to comparison.
-    //     }
-    //     expect(result).toBe(true);
-    // }, 30000);
+        it('Should evaluate Euler identity within native-number precision.', () => {
+            const value = ComplexNumber.exp(ComplexNumber.mul(ComplexNumber.onei(), ComplexNumber.pi()));
+
+            expect(value.re).toBeCloseTo(-1, 12);
+            expect(value.im).toBeCloseTo(0, 12);
+        });
+    });
 });

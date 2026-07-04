@@ -30,6 +30,14 @@ type StringQuoteCharacter = SingleQuoteCharacter | DoubleQuoteCharacter;
  */
 const stringClass = 3;
 
+/**
+ * Runtime string value used by the AST and interpreter.
+ *
+ * `CharString` preserves the source quote style when the parser knows it, but
+ * semantic operations treat `str` as the canonical value. Truthiness follows
+ * MATLAB/Octave-like string behavior: empty strings are false and non-empty
+ * strings are true.
+ */
 class CharString {
     /**
      * String value property.
@@ -58,8 +66,8 @@ class CharString {
 
     /**
      * `CharString` constructor.
-     * @param str
-     * @param quote
+     * @param str Runtime string value.
+     * @param quote Source quote style to preserve when unparsing.
      */
     public constructor(str: string, quote: StringQuoteCharacter = doubleQuoteCharacter) {
         this.str = str;
@@ -70,7 +78,7 @@ class CharString {
      * Creates a `CharString` instance.
      * @param str String value.
      * @param quote Quote character.
-     * @returns
+     * @returns A new `CharString` instance.
      */
     public static readonly create = (str: string, quote: StringQuoteCharacter = '"') => new CharString(str, quote);
 
@@ -97,84 +105,110 @@ class CharString {
     }
 
     /**
+     * Parse a raw string token into a `CharString`.
      *
-     * @param str
-     * @returns
+     * The current parser already supplies the decoded string content, so this
+     * helper simply wraps it with the default double-quote style.
+     *
+     * @param str Decoded string content.
+     * @returns Parsed `CharString`.
      */
     public static readonly parse = (str: string): CharString => new CharString(str);
 
     /**
+     * Render the string as source text without adding quotes.
      *
-     * @param value
-     * @param parentPrecedence
-     * @returns
+     * `parentPrecedence` is accepted for compatibility with other unparse
+     * helpers; string rendering does not need precedence.
+     *
+     * @param value String value to render.
+     * @param parentPrecedence Parent operator precedence, unused.
+     * @returns Raw string content.
      */
     public static readonly unparse = (value: CharString, parentPrecedence = 0): string => value.str;
 
     /**
+     * Convert a `CharString` to its runtime string value.
      *
-     * @param value
-     * @returns
+     * @param value String wrapper.
+     * @returns Raw string content.
      */
     public static readonly toString = (value: CharString): string => value.str;
 
+    /**
+     * Convert this instance to its runtime string value.
+     *
+     * @returns Raw string content.
+     */
     public toString(): string {
         return this.str;
     }
 
     /**
+     * Render the string as a double-quoted escaped source literal.
      *
-     * @param value
-     * @returns
+     * The escaping mirrors MATLAB/Octave double-quote conventions used by the
+     * rest of the unparsing pipeline.
+     *
+     * @param value String wrapper.
+     * @returns Escaped source literal.
      */
     public static readonly unparseEscaped = (value: CharString): string => {
         let result = JSON.stringify(value.str);
         result = result
-            .substring(1, result.length - 2)
+            .substring(1, result.length - 1)
             .replace(/\\\\/, '\\')
             .replace(/\\\"/, '""');
         return '"' + result + '"';
     };
 
     /**
+     * Render the string as MathML.
      *
-     * @param value
-     * @param parentPrecedence
-     * @returns
+     * `parentPrecedence` is accepted for compatibility with other MathML
+     * helpers; string rendering does not need precedence.
+     *
+     * @param value String value to render.
+     * @param parentPrecedence Parent operator precedence, unused.
+     * @returns MathML fragment.
      */
     public static readonly unparseMathML = (value: CharString, parentPrecedence = 0): string => '<mi><pre>' + value.str + '</pre></mi>';
 
     /**
+     * Render the string as an escaped MathML literal.
      *
-     * @param value
-     * @returns
+     * @param value String value to render.
+     * @returns MathML fragment containing a quoted escaped string.
      */
     public static readonly unparseEscapedMathML = (value: CharString): string => {
         let result = JSON.stringify(value.str);
         result = result
-            .substring(1, result.length - 2)
+            .substring(1, result.length - 1)
             .replace(/\\\\/, '\\')
             .replace(/\\\"/, '""');
         return '<mi><pre>"' + result + '"</pre></mi>';
     };
 
     /**
+     * Convert a string to a logical complex scalar.
      *
-     * @param value
-     * @returns
+     * @param value String wrapper.
+     * @returns `true` for non-empty strings, `false` for empty strings.
      */
     public static readonly logical = (value: CharString): Complex => (value.str ? Complex.true() : Complex.false());
 
     /**
+     * Alias for `logical` used by the common element interface.
      *
-     * @param value
-     * @returns
+     * @param value String wrapper.
+     * @returns Logical complex scalar.
      */
     public static readonly toLogical = (value: CharString): Complex => CharString.logical(value);
 
     /**
+     * Convert this instance to a logical complex scalar.
      *
-     * @returns
+     * @returns Logical complex scalar.
      */
     public toLogical(): Complex {
         return CharString.logical(this);

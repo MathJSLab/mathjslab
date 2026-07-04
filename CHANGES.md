@@ -3,6 +3,103 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 2.1.0
+
+- This release completes a broad redesign of the MATLAB/Octave-like function
+  infrastructure in the MathJSLab interpreter. User-defined functions now have
+  a more robust execution model, with clearer separation between function
+  lookup, call binding, call frames, scopes, workspaces, callable objects,
+  argument validation, signature metadata, and function introspection. The
+  former interpreter-centered implementation was progressively split into
+  dedicated modules such as `FunctionCall`, `FunctionArguments`,
+  `FunctionArity`, `FunctionIntrospection`, `FunctionLookup`,
+  `FunctionSignature`, `FunctionValidation`, `FunctionWorkspace`,
+  `FunctionStack`, `Callable`, `CallFrame`, and `Scope`, leaving `Interpreter`
+  focused on the central engine flow.
+- The implementation of user-defined functions was expanded to cover the main
+  MATLAB/Octave function mechanisms: multiple input and output arguments,
+  `varargin`, `varargout`, `nargin`, `nargout`, omitted outputs with `~`,
+  anonymous functions, function handles, nested functions, lexical closures,
+  `feval`, `eval`, `evalin`, `assignin`, `inputname`, `narginchk`,
+  `nargoutchk`, `persistent`, and `global`. Function calls now preserve call
+  stack information more consistently, report function stack traces for errors
+  raised inside nested calls, and handle forward references without confusing
+  runtime errors from deeper frames with unresolved local references.
+- The `arguments` block implementation was made substantially more MATLAB-like.
+  It now supports input, output, and repeating argument blocks, default values,
+  optional parameters, name-value options, struct-backed option groups,
+  symbolic and inferred dimensions, output validation, custom validation
+  functions, validation functions with parameters, and built-in validators such
+  as numeric, scalar, vector, matrix, integer, finite, real, positive,
+  nonnegative, nonzero, member, range, text, and class-like checks supported by
+  the current engine. Argument validation now evaluates defaults, bounds, and
+  validator calls in the appropriate temporary or function workspace context.
+- Built-in function call validation was generalized through declarative
+  signatures. The interpreter now derives arity, `nargin`, `nargout`, overload
+  behavior, variadic groups, repeated parameter patterns, and invalid-call
+  diagnostics from signature metadata instead of relying exclusively on ad hoc
+  checks inside each built-in. Signature registration was moved closer to the
+  classes that define the corresponding functions, including `CoreFunctions`,
+  `LinearAlgebra`, and `Configuration`, while the interpreter loads those
+  functions and their signatures through a common mechanism.
+- The parser, lexer, AST, unparser, and MathML unparser were adjusted to
+  support the new function features consistently. This includes support for
+  command-form declarations such as `global` and `persistent`, richer function
+  output lists, arguments-block declarations, name-value syntax, function
+  handles, anonymous functions, tilde output placeholders, and the AST helpers
+  needed to normalize declaration nodes across parser and unparser paths. The
+  grammar changes were reviewed against GNU Octave's parser sources to keep the
+  implementation aligned with MATLAB/Octave language behavior.
+- Function-related state management was improved. Persistent variables are now
+  stored per function definition, global variables share a base global storage
+  model, `clear` interacts with user functions and persistent state more
+  predictably, and closures preserve the lexical environments required by
+  nested functions and anonymous handles. The engine also gained more precise
+  behavior for caller/base workspace access through `evalin` and `assignin`.
+- Function introspection was expanded and made more coherent. The behavior of
+  `which`, `exist`, `functions`, `func2str`, `str2func`, `nargin`, `nargout`,
+  `inputname`, `narginchk`, and `nargoutchk` was refined for built-ins,
+  user-defined functions, anonymous handles, nested handles, and invalid usage
+  cases. Unsupported or browser-limited external-file behavior remains
+  intentionally conservative and is left for future work because MathJSLab runs
+  primarily in the browser.
+- The test suite was reorganized and expanded around the new function
+  infrastructure. Unit tests in `src` were grouped into clearer nested
+  `describe` structures, following the organization used by `LAPACK.spec.ts`.
+  New focused tests were added for the extracted function modules, and a
+  signature coverage metatest was added to verify that implemented built-ins
+  and their declarative signatures remain synchronized. A new integration test
+  project under `test/function-infrastructure` exercises cross-module function
+  behavior, including built-in signature validation, `arguments` blocks,
+  name-value and repeating arguments, output validation, persistent and global
+  workspaces, closures, `feval`, `evalin`, and `assignin`.
+- The function infrastructure code and related AST definitions were documented
+  with extensive comments and JSDoc-style descriptions. The documentation added
+  in source files explains the responsibilities of the new modules, the
+  MATLAB/Octave compatibility assumptions behind the implementation, and the
+  boundaries between parser structures, call binding, validation, workspace
+  handling, and interpreter execution.
+- Comments and JSDoc documentation were reviewed more broadly across core
+  source files. Portuguese comments in maintained code were translated to
+  English, empty or vague comment blocks were replaced with useful contracts,
+  and additional documentation was added for AST nodes, BLAS/LAPACK layout
+  assumptions, string handling, function-call helpers, introspection helpers,
+  eigenvalue wrappers, and MultiArray indexing behavior.
+- Test maintenance was improved by removing unused test-only helpers, replacing
+  skipped LAPACK TRSM cases that used invalid fixtures with active conformant
+  conjugate-transpose tests, and adding public contract tests for selected
+  linear algebra validation paths.
+- Jest linting was refined so helper assertions named with the `expect*`
+  convention, plus the LAPACK eigensolver assertion wrappers, are recognized by
+  `jest/expect-expect` without disabling the rule. Test callback factories that
+  hid assertions from ESLint were converted into explicit assertion helpers.
+- Maintainer documentation was added under `doc/`, covering the architecture,
+  interpreter flow, numeric array model, testing strategy, and a generated
+  Markdown API reference derived from exported declarations and JSDoc comments.
+- A local `docs:api` script was added to generate `doc/api-reference.md` from
+  exported TypeScript declarations and their JSDoc comments without introducing
+  an additional documentation dependency.
+
 ## 2.0.0
 
 - Releasing the latest version as 1.9.2 violated the concepts of Semantic

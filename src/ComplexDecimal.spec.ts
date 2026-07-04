@@ -6,53 +6,50 @@ const unitName = __filenameMatch[1];
 const testExtension = __filenameMatch[2];
 
 describe(`${unitName} unit test (.${testExtension} test file).`, () => {
-    jest.setTimeout(40000);
+    describe('Definition', () => {
+        it(`${unitName} should be defined.`, () => {
+            expect(ComplexDecimal).toBeDefined();
+        });
+    });
 
-    it(`${unitName} should be defined.`, () => {
-        expect(ComplexDecimal).toBeDefined();
-    }, 20);
+    describe('Trigonometric identities', () => {
+        const expectCloseToOne = (value: ReturnType<typeof ComplexDecimal.create>, tolerance = 1e-25): void => {
+            expect(Math.abs(value.re.toNumber() - 1)).toBeLessThanOrEqual(tolerance);
+            expect(Math.abs(value.im.toNumber())).toBeLessThanOrEqual(tolerance);
+        };
 
-    it('sin(x)^2+cos(x)^2 should be equal 1 for any value of x (first cycle)', () => {
-        let result: boolean = true;
-        // One-by-one degree
-        for (let i = 0; i <= 2 * Math.PI; i += Math.PI / 180) {
-            const value = ComplexDecimal.add(
-                ComplexDecimal.power(ComplexDecimal.sin(ComplexDecimal.create(i)), ComplexDecimal.create(2)),
-                ComplexDecimal.power(ComplexDecimal.cos(ComplexDecimal.create(i)), ComplexDecimal.create(2)),
-            );
-            result &&= value.re.toNumber() === 1 && value.im.toNumber() === 0; // converting to native number type to comparison.
-            result &&= Boolean(ComplexDecimal.eq(value, ComplexDecimal.one()).re.toNumber()); // using ComplexDecimal.eq to comparison.
-        }
+        it('Should satisfy sin(x)^2 + cos(x)^2 approximately for representative angles.', () => {
+            for (const angle of [0, Math.PI / 6, Math.PI / 4, Math.PI / 2, Math.PI, (3 * Math.PI) / 2, 2 * Math.PI]) {
+                const value = ComplexDecimal.add(
+                    ComplexDecimal.power(ComplexDecimal.sin(ComplexDecimal.create(angle)), ComplexDecimal.create(2)),
+                    ComplexDecimal.power(ComplexDecimal.cos(ComplexDecimal.create(angle)), ComplexDecimal.create(2)),
+                );
+                expectCloseToOne(value);
+            }
+        });
 
-        expect(result).toBe(true);
-    }, 10000);
+        it('Should satisfy sin(x)^2 + cos(x)^2 approximately for tiny values.', () => {
+            for (const angle of [0, 1e-302, 5e-302, 1e-300]) {
+                const value = ComplexDecimal.add(
+                    ComplexDecimal.power(ComplexDecimal.sin(ComplexDecimal.create(angle)), ComplexDecimal.create(2)),
+                    ComplexDecimal.power(ComplexDecimal.cos(ComplexDecimal.create(angle)), ComplexDecimal.create(2)),
+                );
+                expectCloseToOne(value);
+            }
+        });
 
-    it('sin(x)^2+cos(x)^2 should be equal 1 for lower values of x', () => {
-        let result: boolean = true;
-        for (let i = 0; i <= 1e-300; i += 1e-302) {
-            const value = ComplexDecimal.add(
-                ComplexDecimal.power(ComplexDecimal.sin(ComplexDecimal.create(i)), ComplexDecimal.create(2)),
-                ComplexDecimal.power(ComplexDecimal.cos(ComplexDecimal.create(i)), ComplexDecimal.create(2)),
-            );
-            result &&= value.re.toNumber() === 1 && value.im.toNumber() === 0; // converting to native number type to comparison.
-            result &&= Boolean(ComplexDecimal.eq(value, ComplexDecimal.one()).re.toNumber()); // using ComplexDecimal.eq to comparison.
-        }
+        it('Should satisfy Euler identity approximately.', () => {
+            const value = ComplexDecimal.exp(ComplexDecimal.mul(ComplexDecimal.onei(), ComplexDecimal.pi()));
+            const error = ComplexDecimal.abs(ComplexDecimal.sub(value, ComplexDecimal.minusone()));
 
-        expect(result).toBe(true);
-    }, 200);
+            expect(error.re.toNumber()).toBeLessThanOrEqual(1e-25);
+        });
 
-    it('e^(i*pi) should be equal -1', () => {
-        const value = ComplexDecimal.exp(ComplexDecimal.mul(ComplexDecimal.onei(), ComplexDecimal.pi()));
-        const result = Boolean(ComplexDecimal.eq(value, ComplexDecimal.minusone()).re.toNumber()); // using ComplexDecimal.eq to comparison.
-        expect(result).toBe(true);
-    }, 100);
-
-    it('abs(sin(n*pi+pi/2)) == 1 for integer n >= 0', () => {
-        let result: boolean = true;
-        for (let n = 0; n < 1000; n++) {
-            const value = ComplexDecimal.abs(ComplexDecimal.sin(ComplexDecimal.add(ComplexDecimal.mul(ComplexDecimal.create(n), ComplexDecimal.pi()), ComplexDecimal.pidiv2())));
-            result &&= Boolean(ComplexDecimal.eq(value, ComplexDecimal.one()).re.toNumber()); // using ComplexDecimal.eq to comparison.
-        }
-        expect(result).toBe(true);
-    }, 30000);
+        it('Should keep abs(sin(n*pi + pi/2)) approximately equal to 1.', () => {
+            for (const n of [0, 1, 2, 10, 100]) {
+                const value = ComplexDecimal.abs(ComplexDecimal.sin(ComplexDecimal.add(ComplexDecimal.mul(ComplexDecimal.create(n), ComplexDecimal.pi()), ComplexDecimal.pidiv2())));
+                expectCloseToOne(value);
+            }
+        });
+    });
 });

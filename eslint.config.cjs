@@ -35,6 +35,13 @@ const tsConfigRules = {
     '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
 };
 
+const jestExpectExpectRule = [
+    'warn',
+    {
+        assertFunctionNames: ['expect', 'expect*', 'testHermitianEigenDecomposition', 'testJacobiDiagonalization'],
+    },
+];
+
 const esmComplyRules = {
     /* ----------------------------- ESM Modules ----------------------------- */
     /* Disallows the use of TS internal namespaces and modules. */
@@ -265,6 +272,7 @@ module.exports = [
             'jest/no-disabled-tests': 'warn',
             'jest/no-focused-tests': 'error',
             'jest/no-identical-title': 'error',
+            'jest/expect-expect': jestExpectExpectRule,
             'jest/valid-expect': 'error',
         },
     },
@@ -301,6 +309,7 @@ module.exports = [
             'jest/no-disabled-tests': 'warn',
             'jest/no-focused-tests': 'error',
             'jest/no-identical-title': 'error',
+            'jest/expect-expect': jestExpectExpectRule,
             'jest/valid-expect': 'error',
         },
     },

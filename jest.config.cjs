@@ -50,6 +50,14 @@ module.exports = {
             },
         },
         {
+            displayName: 'function-infrastructure-tests',
+            testEnvironment: 'node',
+            testMatch: ['<rootDir>/test/function-infrastructure/**/*.spec.{js,cjs,mjs,ts,cts,mts}'],
+            transform: {
+                '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.jest.json' }],
+            },
+        },
+        {
             displayName: 'node-cjs2022-tests',
             testEnvironment: 'node',
             testMatch: ['<rootDir>/test/node/**/*cjs2022.spec.{js,cjs,mjs,ts,cts,mts}'],

@@ -4,7 +4,8 @@ import { CharString } from './CharString';
 import { Structure } from './Structure';
 import { FunctionHandle } from './FunctionHandle';
 import { AST, NodeReturnList, ReturnHandlerResult } from './AST';
-import { Interpreter, Scope } from './Interpreter';
+import { Interpreter } from './Interpreter';
+import { Scope } from './Scope';
 
 /**
  * MultiArray Element type.
@@ -573,7 +574,7 @@ class MultiArray<ELEMENT = Elements> {
     //     // return M.dimension.length - 1;
     // }
     public static readonly firstNonSingleDimension = (M: MultiArray): number => {
-        /* Trate o caso escalar e qualquer array sem dimensões > 1 */
+        /* Treat scalars and arrays with no dimension greater than 1 as dimension 0. */
         if (!M.dimension || M.dimension.length === 0) return 0;
         const idx = M.dimension.findIndex((d) => d > 1);
         return idx >= 0 ? idx : 0;
@@ -820,7 +821,7 @@ class MultiArray<ELEMENT = Elements> {
      * @returns Copy of MultiArray.
      */
     public static readonly copy = (M: MultiArray): MultiArray => {
-        const result = new MultiArray(M.dimension);
+        const result = new MultiArray(M.dimension, undefined, M.isCell);
         result.array = M.array.map((row) => row.map((value) => value!.copy()));
         result.type = M.type;
         return result;
@@ -831,7 +832,7 @@ class MultiArray<ELEMENT = Elements> {
      * @returns
      */
     public copy(): MultiArray {
-        const result = new MultiArray(this.dimension);
+        const result = new MultiArray(this.dimension, undefined, this.isCell);
         result.array = this.array.map((row) => row.map((value: ElementType<ELEMENT>) => (value as any).copy()));
         result.type = this.type;
         return result;
@@ -2518,7 +2519,7 @@ class MultiArray<ELEMENT = Elements> {
         const result: number[] = [];
         for (let i = 0; i < mask.length; i++) {
             if (Complex.realToNumber(mask[i])) {
-                result.push(i); // 🔥 índice linear 0-based
+                result.push(i); // 0-based linear index.
             }
         }
         return result;
@@ -2799,12 +2800,12 @@ class MultiArray<ELEMENT = Elements> {
      *
      * Shape reconstruction:
      * - If the original array is a vector:
-     *     • Row vector → result remains a row vector
-     *     • Column vector → result remains a column vector
+     *     - Row vector: result remains a row vector
+     *     - Column vector: result remains a column vector
      *
      * - If the original array is not a vector:
-     *     • The result is converted to a column vector
-     *     • This matches MATLAB behavior for ambiguous linear deletions
+     *     - The result is converted to a column vector
+     *     - This matches MATLAB behavior for ambiguous linear deletions
      *
      * Notes:
      * - Indices are assumed to be 0-based and already validated

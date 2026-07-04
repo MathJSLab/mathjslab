@@ -241,6 +241,7 @@ abstract class MathML {
             expr + '<mrow><mo fence="true" stretchy="true">' + left + '</mo>' + list.join('<mo>,</mo>') + '<mo fence="true" stretchy="true">' + right + '</mo></mrow>',
         RETLIST: () => '<mi>RETLIST</mi>',
         CMDWLIST: (cmd, list) => '<mrow><mtext>' + cmd + '</mtext> ' + list.join(' ') + '</mrow>',
+        PERSIST: () => '',
         FCNDEF: () => '',
         VOID: () => '',
         INVALID: () => '<mi>invalid</mi>',

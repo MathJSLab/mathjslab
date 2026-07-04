@@ -1,6 +1,6 @@
 import { CharString, StringQuoteCharacter } from './CharString';
 import { Complex, ComplexType } from './Complex';
-import { Scope } from './Interpreter';
+import { Scope } from './Scope';
 import { FunctionHandle } from './FunctionHandle';
 import { type ElementType, MultiArray } from './MultiArray';
 
@@ -62,6 +62,12 @@ type OperatorType =
     | '_++'
     | '_--';
 
+/**
+ * Delimiter used by an index expression.
+ *
+ * Parentheses mean ordinary array/function indexing; braces mean cell-array
+ * content indexing.
+ */
 type IndexingDelimiterType = '()' | '{}';
 
 /**
@@ -86,11 +92,15 @@ type NodeType =
     | 'ARGS'
     | 'GLOBAL'
     | 'PERSIST'
+    | 'RETURN'
     | 'IF'
     | 'ELSEIF'
     | 'ELSE'
     | OperatorType;
 
+/**
+ * Table of symbolic aliases recognized by the lexer/parser layer.
+ */
 type AliasNameTable = Record<string, RegExp>;
 
 /**
@@ -113,11 +123,17 @@ interface NodeBase {
     stop?: { line: number; column: number };
 }
 
+/**
+ * Explicit "no value" node.
+ */
 interface NodeVoid extends NodeBase {
     type: 'VOID';
 }
 
-type NodeInput = NodeExpr | NodeList | NodeDeclaration | NodeIf;
+/**
+ * Any AST node that can be used as an executable/evaluable input.
+ */
+type NodeInput = NodeExpr | NodeList | NodeDeclaration | NodeReturn | NodeIf;
 
 /**
  * Expression node.
@@ -172,10 +188,16 @@ interface NodeRange extends NodeBase {
     stride_: NodeExpr | null;
 }
 
+/**
+ * Colon token node used by ranges and indexing.
+ */
 interface NodeColon extends NodeBase {
     type: ':';
 }
 
+/**
+ * `end` token node used inside indexing ranges.
+ */
 interface NodeEndRange extends NodeBase {
     type: 'ENDRANGE';
 }
@@ -212,6 +234,9 @@ interface BinaryOperation extends NodeBase {
     right: NodeExpr;
 }
 
+/**
+ * Ignored return target (`~`) in a return or assignment list.
+ */
 interface NodeIgnoredTarget extends NodeBase {
     type: '<~>';
 }
@@ -224,15 +249,33 @@ interface NodeList extends NodeBase {
     list: NodeInput[];
 }
 
+/**
+ * Dot-reference node for structures and chained field access.
+ */
 interface NodeIndirectRef extends NodeBase {
     type: '.';
     obj: NodeExpr;
     field: (string | NodeExpr)[];
 }
 
+/**
+ * Lazily evaluated return values keyed by result name.
+ */
 type ReturnHandlerResult = { length: number } & Record<string, NodeExpr>;
+
+/**
+ * Select a single output from a realized return handler result.
+ */
 type ReturnSelector = (evaluated: ReturnHandlerResult, index: number) => NodeExpr;
+
+/**
+ * Materialize the outputs requested by a caller.
+ */
 type ReturnHandler = (length: number) => ReturnHandlerResult;
+
+/**
+ * Error callback used by AST helpers that should not depend on Interpreter.
+ */
 type ThrowError = (message: string) => never;
 
 /**
@@ -244,6 +287,9 @@ interface NodeReturnList extends NodeBase {
     handler: ReturnHandler;
 }
 
+/**
+ * Common fields shared by user-defined and built-in functions.
+ */
 interface NodeFunction extends NodeBase {
     type: 'FCNDEF' | 'BUILTIN';
     id: string;
@@ -252,10 +298,28 @@ interface NodeFunction extends NodeBase {
     func: Function;
     definingScope?: Scope;
     attributes?: {
-        persistent?: Set<string>;
+        /**
+         * Per-function persistent variable storage.
+         *
+         * Values are copied into the call scope at function entry and copied
+         * back after execution. The table lives on the function node so it
+         * survives between calls while the definition remains registered.
+         */
+        persistent?: Record<string, NodeInput>;
+
+        /**
+         * Marks function definitions registered from inside another function.
+         *
+         * Nested functions share selected parent-scope bindings and are reported
+         * as nested by introspection helpers such as `which` and `functions`.
+         */
+        nested?: boolean;
     };
 }
 
+/**
+ * AST node for a MATLAB/Octave-like user function definition.
+ */
 interface NodeFunctionDefinition extends NodeFunction {
     type: 'FCNDEF';
 
@@ -271,8 +335,11 @@ interface NodeFunctionDefinition extends NodeFunction {
     parameter: NodeList;
 
     /**
-     * Argument validation blocks (MATLAB-style)
-     * NOT used by interpreter yet
+     * Argument validation blocks (MATLAB-style).
+     *
+     * These blocks are validated during definition registration and function
+     * calls. They support Input, Output, Repeating, defaults, name-value
+     * declarations, size/class declarations, and supported validator functions.
      */
     arguments: NodeList;
 
@@ -282,8 +349,93 @@ interface NodeFunctionDefinition extends NodeFunction {
     statements: NodeList;
 }
 
+/**
+ * Declarative arity shape for built-ins.
+ *
+ * `arity < 0` denotes a variadic signature. The absolute value is the 1-based
+ * position where variadic arguments begin, matching the convention used by
+ * MATLAB/Octave `nargin`/`nargout` introspection.
+ */
+interface BuiltInFunctionArity {
+    arity: number;
+    min?: number;
+    max?: number;
+}
+
+/**
+ * Supported declarative validators for built-in function parameters.
+ */
+type BuiltInFunctionParameterValidator =
+    | 'numeric'
+    | 'numericOrLogical'
+    | 'text'
+    | 'textScalar'
+    | 'scalar'
+    | 'scalarOrEmpty'
+    | 'scalarOrVector'
+    | 'empty'
+    | 'matrix2d'
+    | 'squareMatrix'
+    | 'vector'
+    | 'twoElement'
+    | 'oneOrTwoElement'
+    | 'dimension'
+    | 'dimensionGreaterThanOne'
+    | 'dimensionVector'
+    | 'reshapeDimension'
+    | 'reshapeDimensionVector'
+    | 'nonempty'
+    | 'positive'
+    | 'nonnegative'
+    | 'nonzero'
+    | 'zeroOrOne'
+    | 'integer'
+    | 'finite'
+    | 'real';
+
+/**
+ * One declarative built-in parameter.
+ *
+ * The signature validator uses these records to replace ad hoc argument checks
+ * inside individual built-ins.
+ */
+interface BuiltInFunctionParameter {
+    name: string;
+    classes?: string[];
+    validators?: BuiltInFunctionParameterValidator[];
+    allowedStrings?: string[];
+    identifier?: boolean;
+    alternatives?: BuiltInFunctionParameter[];
+    variadicGroup?: BuiltInFunctionParameter[];
+    allowInfinity?: boolean;
+    optional?: boolean;
+    variadic?: boolean;
+}
+
+/**
+ * One input overload for a built-in function.
+ */
+interface BuiltInFunctionInputSignature extends BuiltInFunctionArity {
+    parameters?: BuiltInFunctionParameter[];
+}
+
+/**
+ * Declarative built-in signature metadata.
+ */
+interface BuiltInFunctionSignature {
+    inputs?: BuiltInFunctionInputSignature | BuiltInFunctionInputSignature[];
+    outputs?: BuiltInFunctionArity | BuiltInFunctionArity[];
+}
+
+/**
+ * Built-in function node registered by the runtime.
+ */
 interface NodeBuiltInFunction extends NodeFunction {
     type: 'BUILTIN';
+    /**
+     * Optional declarative call signature used by the shared validator.
+     */
+    signature?: BuiltInFunctionSignature;
     UnparserMathML?: (tree: NodeInput) => string;
 }
 
@@ -292,15 +444,39 @@ interface NodeBuiltInFunction extends NodeFunction {
  */
 type BuiltInFunctionTable = Record<string, NodeBuiltInFunction>;
 
+/**
+ * User-defined function table keyed by function name.
+ */
 type FunctionTable = Record<string, NodeFunctionDefinition>;
 
+/**
+ * One variable binding in a scope name table.
+ */
 type NameEntry = {
+    /**
+     * Identifier that blocked evaluation when forward references are enabled.
+     */
     undefinedReference?: string;
+
+    /**
+     * Bound value, if the entry has been assigned.
+     */
     node?: NodeInput;
+
+    /**
+     * Marks shared entries created by `global`.
+     */
+    global?: boolean;
 };
 
+/**
+ * Variable binding table keyed by identifier.
+ */
 type NameTable = Record<string, NameEntry>;
 
+/**
+ * Forward-reference dependency table keyed by identifier.
+ */
 type UndefinedReferenceTable = Record<string, string[]>;
 
 /**
@@ -320,26 +496,60 @@ type CommandWordListEntry = {
  */
 type CommandWordListTable = Record<string, CommandWordListEntry>;
 
+/**
+ * One declaration inside an `arguments` block.
+ */
 interface NodeArgumentValidation extends NodeBase {
     type: 'ARGVALID';
-    name: NodeIdentifier;
+    /**
+     * Identifier or name-value target such as `opts.Name`.
+     */
+    name: NodeExpr;
+    /**
+     * Literal/symbolic size declaration.
+     */
     size: NodeInput[];
-    class: NodeIdentifier | null;
+    /**
+     * Class declaration. May be a single identifier or a list.
+     */
+    class: NodeInput | null;
+    /**
+     * Validator function declarations.
+     */
     functions: NodeInput[];
+    /**
+     * Default expression, when declared for an input argument.
+     */
     default: NodeExpr;
 }
 
+/**
+ * `arguments` block node.
+ */
 interface NodeArguments extends NodeBase {
     type: 'ARGS';
     attribute: NodeIdentifier | null;
     validation: NodeArgumentValidation[];
 }
 
+/**
+ * Declaration node for `global` and `persistent`.
+ */
 interface NodeDeclaration extends NodeBase {
     type: 'GLOBAL' | 'PERSIST';
     list: NodeExpr[];
 }
 
+/**
+ * `return` statement node.
+ */
+interface NodeReturn extends NodeBase {
+    type: 'RETURN';
+}
+
+/**
+ * `if` statement node.
+ */
 interface NodeIf extends NodeBase {
     type: 'IF';
     expression: NodeExpr[];
@@ -347,12 +557,18 @@ interface NodeIf extends NodeBase {
     else: NodeList | null;
 }
 
+/**
+ * `elseif` clause node.
+ */
 interface NodeElseIf extends NodeBase {
     type: 'ELSEIF';
     expression: NodeExpr;
     then: NodeList;
 }
 
+/**
+ * `else` clause node.
+ */
 interface NodeElse extends NodeBase {
     type: 'ELSE';
     else: NodeList;
@@ -366,9 +582,21 @@ abstract class AST {
      * External node factory methods.
      */
     public static nodeString: (str: string, quote?: StringQuoteCharacter) => CharString;
+    /**
+     * External number factory, rebound by `reload`.
+     */
     public static nodeNumber: (value: string) => ComplexType;
+    /**
+     * External first-row matrix factory, rebound by `reload`.
+     */
     public static firstRow: (row: ElementType[], iscell?: boolean) => MultiArray;
+    /**
+     * External row-append matrix factory, rebound by `reload`.
+     */
     public static appendRow: (M: MultiArray, row: ElementType[]) => MultiArray;
+    /**
+     * External empty-array factory, rebound by `reload`.
+     */
     public static emptyArray: (iscell?: boolean | undefined) => MultiArray;
 
     /**
@@ -389,6 +617,9 @@ abstract class AST {
      */
     public static readonly nodeCopy = <T = object>(node: T): T => Object.assign({}, node);
 
+    /**
+     * Create an explicit no-value node.
+     */
     public static readonly nodeVoid = (): NodeVoid => ({
         type: 'VOID',
         omitAnswer: true,
@@ -474,12 +705,18 @@ abstract class AST {
         return result;
     };
 
+    /**
+     * Create a colon token node.
+     */
     public static readonly nodeColon = (): NodeColon => ({
         type: ':',
         omitAnswer: false,
         omitOutput: false,
     });
 
+    /**
+     * Create an `end` token node for indexing ranges.
+     */
     public static readonly nodeEndRange = (): NodeEndRange => ({
         type: 'ENDRANGE',
         omitAnswer: false,
@@ -590,6 +827,9 @@ abstract class AST {
         return result;
     };
 
+    /**
+     * Create an ignored return/assignment target node.
+     */
     public static readonly nodeIgnoredTarget = (): NodeIgnoredTarget => ({
         type: '<~>',
         omitAnswer: true,
@@ -817,21 +1057,16 @@ abstract class AST {
     };
 
     /**
+     * Create one `arguments` block declaration.
      *
-     * @param name
-     * @param size
-     * @param cl
-     * @param functions
-     * @param dflt
-     * @returns
+     * @param name Identifier or name-value field target.
+     * @param size Size declaration list.
+     * @param cl Class declaration node.
+     * @param functions Validator function list.
+     * @param dflt Default expression.
+     * @returns Argument validation node.
      */
-    public static readonly nodeArgumentValidation = (
-        name: NodeIdentifier,
-        size: NodeList,
-        cl: NodeIdentifier | null = null,
-        functions: NodeList,
-        dflt: NodeExpr = null,
-    ): NodeArgumentValidation => ({
+    public static readonly nodeArgumentValidation = (name: NodeExpr, size: NodeList, cl: NodeInput | null = null, functions: NodeList, dflt: NodeExpr = null): NodeArgumentValidation => ({
         type: 'ARGVALID',
         name,
         size: size.list,
@@ -843,10 +1078,11 @@ abstract class AST {
     });
 
     /**
+     * Create an `arguments` block.
      *
-     * @param attribute
-     * @param validationList
-     * @returns
+     * @param attribute Optional block attribute (`Input`, `Output`, `Repeating`).
+     * @param validationList Declaration list.
+     * @returns Arguments block node.
      */
     public static readonly nodeArguments = (attribute: NodeIdentifier | null, validationList: NodeList): NodeArguments => ({
         type: 'ARGS',
@@ -857,9 +1093,7 @@ abstract class AST {
     });
 
     /**
-     *
-     * @param type
-     * @returns
+     * Create the first node for a `global` or `persistent` declaration list.
      */
     public static readonly nodeDeclarationFirst = (type: 'GLOBAL' | 'PERSIST'): NodeDeclaration => ({
         type,
@@ -867,6 +1101,26 @@ abstract class AST {
         omitAnswer: true,
         omitOutput: true,
     });
+
+    /**
+     * Create a `return` statement node.
+     */
+    public static readonly nodeReturn = (): NodeReturn => ({
+        type: 'RETURN',
+        omitAnswer: true,
+        omitOutput: true,
+    });
+
+    /**
+     * Normalize declaration list entries.
+     *
+     * Older generated parser code may append the parser context instead of
+     * the AST node itself; in that case the actual node is stored in `.node`.
+     *
+     * @param declaration Declaration list entry.
+     * @returns AST node for the declaration entry.
+     */
+    public static readonly getDeclarationNode = (declaration: NodeExpr | { node: NodeExpr }): NodeExpr => ('node' in declaration ? declaration.node : declaration);
 
     /**
      *
@@ -982,6 +1236,10 @@ export type {
     NodeReturnList,
     NodeFunction,
     NodeFunctionDefinition,
+    BuiltInFunctionParameterValidator,
+    BuiltInFunctionParameter,
+    BuiltInFunctionInputSignature,
+    BuiltInFunctionSignature,
     NodeBuiltInFunction,
     BuiltInFunctionTable,
     FunctionTable,
@@ -994,6 +1252,7 @@ export type {
     NodeArgumentValidation,
     NodeArguments,
     NodeDeclaration,
+    NodeReturn,
     NodeIf,
     NodeElseIf,
     NodeElse,

@@ -1,6 +1,9 @@
 import { Complex, ComplexType } from './Complex';
 import { type ElementType, MultiArray } from './MultiArray';
 
+/**
+ * Runtime configuration for BLAS helper implementations.
+ */
 type BLASConfig = {
     /**
      * Minimal value for block multiplication version. Tune as needed.
@@ -17,8 +20,19 @@ const defaultSettings: Partial<BLASConfig> = {
     blockSize: 64,
 };
 
+/**
+ * Side selector used by BLAS/LAPACK-style routines.
+ */
 type SideType = 'L' | 'R';
+
+/**
+ * Triangle selector used by BLAS/LAPACK-style routines.
+ */
 type UploType = 'U' | 'L';
+
+/**
+ * Operation selector for no-transpose, transpose, and conjugate-transpose.
+ */
 type TransType = 'N' | 'T' | 'C';
 
 /**
@@ -208,9 +222,14 @@ abstract class BLAS {
     };
 
     /**
+     * Deep-copy a raw BLAS vector or row-major matrix.
      *
-     * @param A
-     * @returns
+     * The function assumes a rectangular matrix when `A[0]` is an array. It
+     * preserves the vector-versus-matrix shape and copies every complex cell so
+     * callers can mutate the result without aliasing the source.
+     *
+     * @param A Raw complex vector or row-major matrix.
+     * @returns A shape-preserving deep copy.
      */
     public static readonly copy = (A: ComplexType[][] | ComplexType[]): ComplexType[][] | ComplexType[] => {
         if (Array.isArray(A)) {
@@ -488,18 +507,18 @@ abstract class BLAS {
      * For complex-case conjugate on second vector (gerc style).
      * A: m x n as ComplexType[][], x length m, y length n
      *
-     * @param A ComplexType[][] contendo matriz base
-     * @param startRow linha inicial do bloco `A` a ser atualizado
-     * @param startCol coluna inicial do bloco `A` a ser atualizado
-     * @param m Comprimento do vetor `x`
-     * @param n comprimento do vetor `y`
+     * @param A Base matrix updated in place.
+     * @param startRow First row of the `A` block to update.
+     * @param startCol First column of the `A` block to update.
+     * @param m Length of vector `x`.
+     * @param n Length of vector `y`.
      * @param alpha
-     * @param xA ComplexType[][] contendo o vetor `x` (parte real)
-     * @param xRow linha inicial do vetor `x`
-     * @param xCol coluna inicial do vetor `x`
-     * @param yA ComplexType[][] contendo o vetor `y` (parte imaginária)
-     * @param yRow linha inicial do vetor `y`
-     * @param yCol coluna inicial do vetor `y`
+     * @param xA Matrix storage containing vector `x`.
+     * @param xRow First row of vector `x`.
+     * @param xCol Column of vector `x`.
+     * @param yA Matrix storage containing vector `y`.
+     * @param yRow First row of vector `y`.
+     * @param yCol Column of vector `y`.
      */
     public static readonly ger = (
         A: ComplexType[][],
@@ -549,8 +568,8 @@ abstract class BLAS {
      * Complex rank-1 update with conjugation on `y`
      * > > `C := C + alpha * x * y^H`
      *
-     * @param x `ComplexType[]` vetor (`m`)
-     * @param y `ComplexType[]` vetor (`n`)
+     * @param x `ComplexType[]` vector with length `m`.
+     * @param y `ComplexType[]` vector with length `n`.
      * @param C `ComplexType[][]` [`m x n`] (complex)
      */
     public static readonly gerc = (x: ComplexType[], y: ComplexType[], alpha: ComplexType, C: ComplexType[][], rowOffset = 0, colOffset = 0): void => {
@@ -798,7 +817,7 @@ abstract class BLAS {
             throw new Error('BLAS.gemm_block: output dimension mismatch with C');
         }
 
-        // Quick exit: alpha == 0  →  C := beta * C
+        // Quick exit: alpha == 0, so only C := beta * C is required.
         if (Complex.realIsZero(Complex.abs(alpha))) {
             if (Complex.realIsZero(Complex.abs(beta))) {
                 // C := 0
@@ -815,7 +834,7 @@ abstract class BLAS {
                     }
                 }
             }
-            // beta == 1 → nothing to do
+            // beta == 1, so nothing remains to do.
             return;
         }
 
@@ -973,6 +992,13 @@ abstract class BLAS {
         return X;
     };
 
+    /**
+     * Export table used by the interpreter/function registry.
+     *
+     * Keys mirror the static BLAS helper names. Values are callable function
+     * objects and should remain behaviorally identical to the corresponding
+     * static properties.
+     */
     public static readonly functions: { [F in keyof BLAS]: Function } = {
         /* Level 1 BLAS: vector, O(n) operations */
         axpy: BLAS.axpy,

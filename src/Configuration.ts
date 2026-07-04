@@ -2,7 +2,7 @@ import { CharString } from './CharString';
 import { type Rounding, type Modulo, type RoundingName, type ModuloName, roundingName, moduloName } from './ComplexInterface';
 import { RealTypeDescriptor, Complex, ComplexType } from './Complex';
 import { ElementType, MultiArray } from './MultiArray';
-import { AST } from './AST';
+import { AST, type BuiltInFunctionSignature } from './AST';
 import { BLAS } from './BLAS';
 
 /**
@@ -191,6 +191,46 @@ abstract class Configuration {
     public static readonly functions: Record<string, Function> = {
         configure: Configuration.configure,
         getconfig: Configuration.getconfig,
+    };
+
+    public static readonly signatures: Record<string, BuiltInFunctionSignature> = {
+        configure: {
+            inputs: {
+                arity: -2,
+                min: 0,
+                max: 2,
+                parameters: [
+                    {
+                        name: 'configuration',
+                        optional: true,
+                        alternatives: [
+                            { name: 'name', classes: ['char'] },
+                            { name: 'configurationList', classes: ['cell'] },
+                        ],
+                    },
+                    { name: 'value', optional: true },
+                ],
+            },
+            outputs: { arity: 1 },
+        },
+        getconfig: {
+            inputs: {
+                arity: -1,
+                min: 0,
+                max: 1,
+                parameters: [
+                    {
+                        name: 'configuration',
+                        optional: true,
+                        alternatives: [
+                            { name: 'name', classes: ['char'] },
+                            { name: 'configurationList', classes: ['cell'] },
+                        ],
+                    },
+                ],
+            },
+            outputs: { arity: 1 },
+        },
     };
 }
 export { Configuration };

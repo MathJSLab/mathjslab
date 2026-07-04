@@ -2,7 +2,7 @@ import { type ComplexType, Complex } from './Complex';
 import { type ElementType, MultiArray } from './MultiArray';
 import { BLAS } from './BLAS';
 import { LAPACK } from './LAPACK';
-import { type NodeExpr, type NodeReturnList, AST, ReturnHandlerResult } from './AST';
+import { type BuiltInFunctionSignature, type NodeExpr, type NodeReturnList, AST, ReturnHandlerResult } from './AST';
 
 /**
  * `LinearAlgebra` configuration options type.
@@ -263,7 +263,7 @@ abstract class LinearAlgebra {
             if (Math.abs(Complex.realToNumber(right)) != 1) {
                 let temp2: MultiArray;
                 for (let i = 1; i < Math.abs(Complex.realToNumber(right)); i++) {
-                    temp2 = new MultiArray([temp1.dimension[0], temp1.dimension[1]]); // já vem preenchido com zeros
+                    temp2 = new MultiArray([temp1.dimension[0], temp1.dimension[1]]); // Initialized with zeros.
                     BLAS.gemm(
                         Complex.one(), // alpha = 1
                         temp1.array as ComplexType[][], // A raw
@@ -271,8 +271,8 @@ abstract class LinearAlgebra {
                         temp1.dimension[1],
                         temp1.array as ComplexType[][], // B raw
                         temp1.dimension[1],
-                        Complex.zero(), // beta = 0 → ignora C anterior
-                        temp2.array as ComplexType[][], // escreve aqui
+                        Complex.zero(), // beta = 0, so the previous C value is ignored.
+                        temp2.array as ComplexType[][], // Output storage.
                     );
                 }
                 temp1 = temp2!;
@@ -725,7 +725,9 @@ abstract class LinearAlgebra {
      * @param B
      * @returns
      */
-    public static readonly kron = (A: MultiArray, B: MultiArray): MultiArray => {
+    public static readonly kron = (A: ElementType, B: ElementType): MultiArray => {
+        A = MultiArray.scalarToMultiArray(A);
+        B = MultiArray.scalarToMultiArray(B);
         // Validate input dimensions
         if (!A || A.dimension.length < 2 || !B || B.dimension.length < 2) {
             throw new Error('kron: inputs must be at least 2-D arrays');
@@ -825,7 +827,7 @@ abstract class LinearAlgebra {
     //         }
     //     }
 
-    //     // Sanity checks (simétricos ao QR)
+    //     // Sanity checks, symmetric to QR.
     //     if (
     //         Complex.imagGreaterThan(
     //             Complex.abs(L.array[0][0] as ComplexType),
@@ -922,7 +924,7 @@ abstract class LinearAlgebra {
 
     //         if (Q) {
     //             const phiConj = Complex.conj(phi);
-    //             // ✅ and on COLUMN k of Q
+    //             // And on column k of Q.
     //             for (let i = 0; i < Q.dimension[0]; i++) {
     //                 Q.array[i][k] = Complex.mul(Q.array[i][k] as ComplexType, phiConj);
     //             }
@@ -930,6 +932,17 @@ abstract class LinearAlgebra {
     //     }
     // };
 
+    /**
+     * Normalize LQ Householder phases in place.
+     *
+     * `phis` must come from the same LQ factorization that produced `L`.
+     * When `Q` is supplied, the inverse phase adjustment is applied there so
+     * the product represented by the factorization is preserved.
+     *
+     * @param phis Phase factors produced during LQ factorization.
+     * @param L Lower/trapezoidal factor to normalize.
+     * @param Q Optional unitary/orthogonal factor to update consistently.
+     */
     public static readonly lqPhaseNormalize = (phis: ComplexType[], L: MultiArray, Q?: MultiArray): void => {
         const kmax = Math.min(L.dimension[0], L.dimension[1]);
 
@@ -1050,33 +1063,11 @@ abstract class LinearAlgebra {
     };
 
     /**
-     * Eigenvalue decomposition wrapper - similar à qrDecomposition.
-     * Retorno varia com o parâmetro `result`:
-     *   1 → λ
-     *   2 → V, λ
-     *   3 → V, λ, T (tridiagonal)
-     */
-    /**
-     * eigDecomposition - wrapper that performs eigen decomposition using blocked tridiagonalization.
-     *
-     * Returns object depending on `result`:
-     *  1 -> { values: MultiArray }            (column vector n x 1)
-     *  2 -> { values: MultiArray, vectors: MultiArray }  (vectors columns = eigenvectors)
-     *  3 -> { values: MultiArray, vectors: MultiArray, T: MultiArray } (T = tridiagonal matrix)
-     *
-     * Uses:
-     *  - LAPACK.sytrd_blocked_w(Acopy, nb) -> { diag: ComplexType[], offdiag: ComplexType[], taus: ComplexType[] }
-     *  - LAPACK.steqr_values(diag, offdiag) -> ComplexType[]
-     *  - LAPACK.steqr_vectors(diag, offdiag) -> { D: ComplexType[], V: MultiArray }
-     *  - LAPACK.orgtr_blocked_w(Acopy, taus, nb) -> MultiArray Q0
-     *  - BLAS.gemm_block(Q0, Z, Vout, Complex.one(), Complex.zero(), nb)
-     */
-    /**
      * eigDecomposition - wrapper that performs eigen decomposition using blocked tridiagonalization.
      *
      * Returns object depending on `result`:
      *  1 -> { values: MultiArray }                          (column vector n x 1)
-     *  2 -> { values: MultiArray, vectors: MultiArray }     (vectors columns = eigenvectors)
+     *  2 -> { values: MultiArray, vectors: MultiArray } (vector columns are eigenvectors)
      *  3 -> { values: MultiArray, vectors: MultiArray, T: MultiArray } (T = tridiagonal matrix)
      *
      * Uses:
@@ -1220,6 +1211,19 @@ abstract class LinearAlgebra {
         }
     };
 
+    /**
+     * Compute a Hermitian/symmetric eigenvalue decomposition.
+     *
+     * The `result` selector mirrors MATLAB/Octave output arity: `1` computes
+     * eigenvalues only, `2` computes eigenvectors and eigenvalues, and `3` also
+     * exposes the tridiagonal intermediate matrix for diagnostics.
+     *
+     * @param A Square Hermitian/symmetric input matrix.
+     * @param result Requested output shape.
+     * @param order Eigenvalue ordering policy.
+     * @param blockSize Optional block size for blocked tridiagonalization.
+     * @returns Decomposition result with fields determined by `result`.
+     */
     public static readonly eigDecomposition = (
         A: MultiArray,
         result: 1 | 2 | 3,
@@ -1254,8 +1258,13 @@ abstract class LinearAlgebra {
     };
 
     /**
-     * Wrapper MATLAB/Octave-style para eig.
-     * Permite múltiplos retornos via AST.nodeReturnList + handler.
+     * MATLAB/Octave-style wrapper for `eig`.
+     *
+     * The returned `NodeReturnList` delays the actual decomposition until the
+     * caller asks for a specific number of outputs. One output returns the
+     * eigenvalues, two outputs return `[V, D]`, and three outputs return
+     * `[V, D, T]` where `T` is the tridiagonal intermediate used for
+     * diagnostics.
      */
     public static eig = (M: MultiArray): NodeReturnList => {
         return AST.nodeReturnList(
@@ -1276,10 +1285,10 @@ abstract class LinearAlgebra {
                     } else if (index === 1) {
                         return evaluated.values;
                     } else if (index === 2) {
-                        return evaluated.T; // tridiagonal, para debug/inspeção
+                        return evaluated.T; // Tridiagonal value for debugging and inspection.
                     }
                 }
-                // se index inválido, undefined (ou erro, conforme convenção)
+                // Invalid indexes return undefined by the NodeReturnList convention.
                 return undefined;
             },
             (length: number): ReturnHandlerResult => {
@@ -1298,6 +1307,15 @@ abstract class LinearAlgebra {
         );
     };
 
+    /**
+     * Small return-list fixture used by tests of multiple-output plumbing.
+     *
+     * The argument is intentionally unused; it keeps the signature parallel to
+     * runtime helpers that receive a matrix before building a lazy return list.
+     *
+     * @param A Matrix argument kept for call-shape compatibility.
+     * @returns A lazy return list with deterministic placeholder values.
+     */
     public static test(A: MultiArray) {
         return AST.nodeReturnList(
             (evaluated: ReturnHandlerResult, index: number): NodeExpr | undefined => {
@@ -1320,7 +1338,7 @@ abstract class LinearAlgebra {
                         return Complex.two();
                     }
                 }
-                // se index inválido, undefined (ou erro, conforme convenção)
+                // Invalid indexes return undefined by the NodeReturnList convention.
                 return undefined;
             },
             (length: number): ReturnHandlerResult => {
@@ -1352,6 +1370,115 @@ abstract class LinearAlgebra {
         qr: LinearAlgebra.qr,
         eig: LinearAlgebra.eig,
         test: LinearAlgebra.test,
+    };
+
+    /**
+     * Declarative signatures for linear-algebra built-ins.
+     *
+     * The interpreter uses this table for shared arity/class validation before
+     * dispatching to the functions table.
+     */
+    public static readonly signatures: Record<string, BuiltInFunctionSignature> = {
+        eye: {
+            inputs: [
+                { arity: 0 },
+                {
+                    arity: 1,
+                    parameters: [
+                        {
+                            name: 'dimensions',
+                            classes: ['double'],
+                            alternatives: [
+                                { name: 'dimension', validators: ['dimension'] },
+                                { name: 'dimensions', validators: ['dimensionVector', 'oneOrTwoElement'] },
+                            ],
+                        },
+                    ],
+                },
+                {
+                    arity: 2,
+                    parameters: [
+                        { name: 'rows', classes: ['double'], validators: ['dimension'] },
+                        { name: 'columns', classes: ['double'], validators: ['dimension'] },
+                    ],
+                },
+            ],
+            outputs: { arity: 1 },
+        },
+        diag: {
+            inputs: [
+                { arity: 1, parameters: [{ name: 'value', classes: ['double'] }] },
+                {
+                    arity: 2,
+                    parameters: [
+                        { name: 'value', classes: ['double'] },
+                        { name: 'offset', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer'] },
+                    ],
+                },
+                {
+                    arity: 3,
+                    parameters: [
+                        { name: 'value', classes: ['double'], validators: ['vector'] },
+                        { name: 'rows', classes: ['double'], validators: ['dimension'] },
+                        { name: 'columns', classes: ['double'], validators: ['dimension'] },
+                    ],
+                },
+            ],
+            outputs: { arity: 1 },
+        },
+        trace: { inputs: { arity: 1, parameters: [{ name: 'matrix', classes: ['double'], validators: ['matrix2d'] }] }, outputs: { arity: 1 } },
+        det: { inputs: { arity: 1, parameters: [{ name: 'matrix', classes: ['double'], validators: ['squareMatrix'] }] }, outputs: { arity: 1 } },
+        inv: { inputs: { arity: 1, parameters: [{ name: 'matrix', classes: ['double'], validators: ['squareMatrix'] }] }, outputs: { arity: 1 } },
+        gauss: {
+            inputs: {
+                arity: 2,
+                parameters: [
+                    { name: 'matrix', classes: ['double'], validators: ['squareMatrix'] },
+                    { name: 'rightHandSide', classes: ['double'] },
+                ],
+            },
+            outputs: { arity: 1 },
+        },
+        lu: { inputs: { arity: 1, parameters: [{ name: 'matrix', classes: ['double'], validators: ['squareMatrix'] }] }, outputs: { arity: -3 } },
+        dot: {
+            inputs: {
+                arity: -3,
+                min: 2,
+                max: 3,
+                parameters: [
+                    { name: 'left', classes: ['double'] },
+                    { name: 'right', classes: ['double'] },
+                    { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true },
+                ],
+            },
+            outputs: { arity: 1 },
+        },
+        cross: {
+            inputs: {
+                arity: -3,
+                min: 2,
+                max: 3,
+                parameters: [
+                    { name: 'left', classes: ['double'] },
+                    { name: 'right', classes: ['double'] },
+                    { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true },
+                ],
+            },
+            outputs: { arity: 1 },
+        },
+        kron: {
+            inputs: {
+                arity: 2,
+                parameters: [
+                    { name: 'left', classes: ['double'], validators: ['matrix2d'] },
+                    { name: 'right', classes: ['double'], validators: ['matrix2d'] },
+                ],
+            },
+            outputs: { arity: 1 },
+        },
+        qr: { inputs: { arity: 1, parameters: [{ name: 'matrix', classes: ['double'], validators: ['matrix2d'] }] }, outputs: { arity: -3 } },
+        eig: { inputs: { arity: 1, parameters: [{ name: 'matrix', classes: ['double'], validators: ['squareMatrix'] }] }, outputs: { arity: -3 } },
+        test: { inputs: { arity: 1, parameters: [{ name: 'matrix', classes: ['double'], validators: ['squareMatrix'] }] }, outputs: { arity: -3 } },
     };
 }
 

@@ -3,7 +3,6 @@ import { Interpreter as InterpreterDefinition } from '../../src/Interpreter';
 
 // @ts-expect-error ignore
 import { Interpreter as namedInterpreter } from '../../lib/mathjslab.web.umd2022';
-// import * as mathjslabNamespace from '../../lib/mathjslab.web.umd2022';
 
 const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.sep}]+)\\.spec\\.([cm]?[jt]s)\$`))!;
 const __bundleName = __filenameMatch[1];
@@ -24,42 +23,4 @@ describe(`${__bundleName} bundle test (.${testExtension} test file).`, () => {
         expect(value.list[0].re.toNumber()).toBe(7);
         expect(unparsed === '1+2*3\n').toBe(true);
     }, 200);
-
-    // it('mathjslab (namespace) should be defined, interpreter can be instantiated and should parse, evaluate and unparse a simple real expression: 1+2*3.', () => {
-    //     // @ts-expect-error ignore
-    //     expect(mathjslabNamespace).toBeDefined();
-    //     // @ts-expect-error ignore
-    //     const interpreterNamespace = new mathjslabNamespace.Evaluator() as InterpreterDefinition;
-    //     // @ts-expect-error ignore
-    //     expect(interpreterNamespace).toBeInstanceOf(mathjslabNamespace.Evaluator);
-    //     const tree = interpreterNamespace.Parse('1+2*3');
-    //     const value = interpreterNamespace.Evaluate(tree);
-    //     const unparsed = interpreterNamespace.Unparse(tree);
-    //     expect(value.list[0].re.toNumber()).toBe(7);
-    //     expect(unparsed === '1+2*3\n').toBe(true);
-    // }, 200);
-
-    // it('mathjslab (commonjs) should be defined, interpreter can be instantiated and should parse, evaluate and unparse a simple real expression: 1+2*3.', () => {
-    //     const mathjslabCJS = require(`../../lib/${__bundleName}`);
-    //     expect(mathjslabCJS).toBeDefined();
-    //     const interpreterCJS = new mathjslabCJS.Evaluator();
-    //     expect(interpreterCJS).toBeInstanceOf(mathjslabCJS.Evaluator);
-    //     const tree = interpreterCJS.Parse('1+2*3');
-    //     const value = interpreterCJS.Evaluate(tree);
-    //     const unparsed = interpreterCJS.Unparse(tree);
-    //     expect(value.list[0].re.toNumber()).toBe(7);
-    //     expect(unparsed === '1+2*3\n').toBe(true);
-    // }, 200);
-
-    // it('mathjslab (dynamic) should be defined, interpreter can be instantiated and should parse, evaluate and unparse a simple real expression: 1+2*3.', async () => {
-    //     const mathjslabDynamic = await import(`../../lib/${__bundleName}`);
-    //     expect(mathjslabDynamic).toBeDefined();
-    //     const interpreterDynamic = new mathjslabDynamic.Evaluator() as InterpreterDefinition;
-    //     expect(interpreterDynamic).toBeInstanceOf(mathjslabDynamic.Evaluator);
-    //     const tree = interpreterDynamic.Parse('1+2*3');
-    //     const value = interpreterDynamic.Evaluate(tree);
-    //     const unparsed = interpreterDynamic.Unparse(tree);
-    //     expect(value.list[0].re.toNumber()).toBe(7);
-    //     expect(unparsed === '1+2*3\n').toBe(true);
-    // }, 200);
 });

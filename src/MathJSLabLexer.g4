@@ -279,7 +279,16 @@ IDENTIFIER
                 }
             } else {
                 i = this.commandNames.indexOf(this.text);
-                if (i >= 0) {
+                const isCommandPosition =
+                    this.previousTokenType === Token.EOF ||
+                    this.previousTokenType === MathJSLabLexer.NEWLINE ||
+                    this.previousTokenType === MathJSLabLexer.SEMICOLON;
+                let offset = 1;
+                let next = this._input.LA(offset);
+                while (next === 9 || next === 32) {
+                    next = this._input.LA(++offset);
+                }
+                if (i >= 0 && isCommandPosition && next !== 40) {
                     this.pushMode(MathJSLabLexer.ANY_AS_STRING_UNTIL_END_OF_LINE);
                 }
                 this.previousTokenType = MathJSLabLexer.IDENTIFIER;

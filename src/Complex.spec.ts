@@ -9,10 +9,10 @@ const unitName = __filenameMatch[1];
 const testExtension = __filenameMatch[2];
 
 describe(`${unitName} unit test (.${testExtension} test file).`, () => {
-    jest.setTimeout(1000);
+    describe('Behavior', () => {
+        jest.setTimeout(1000);
 
-    const ComplexFacadeTestFactory = (engine: ComplexInterfaceStatic<any, any>) => {
-        return () => {
+        const expectComplexFacade = (engine: ComplexInterfaceStatic<any, any>) => {
             expect(engine).toBeDefined();
             expect(engine.isInstanceOf).toBeDefined();
             expect(engine.defaultSettings).toBeDefined();
@@ -159,23 +159,27 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(engine.REAL).toBe(numberClass.REAL);
             expect(engine.COMPLEX).toBe(numberClass.COMPLEX);
         };
-    };
 
-    it(`The backend class ComplexNumber of the ${unitName} facade and its static properties and methods must be defined.`, ComplexFacadeTestFactory(ComplexNumber), 70);
+        it(`The backend class ComplexNumber of the ${unitName} facade and its static properties and methods must be defined.`, () => {
+            expectComplexFacade(ComplexNumber);
+        }, 70);
 
-    it(`The backend class ComplexDecimal of the ${unitName} facade and its static properties and methods must be defined.`, ComplexFacadeTestFactory(ComplexDecimal), 70);
+        it(`The backend class ComplexDecimal of the ${unitName} facade and its static properties and methods must be defined.`, () => {
+            expectComplexFacade(ComplexDecimal);
+        }, 70);
 
-    it(`The abstract class ${unitName} and its static properties and methods must be defined (Complex.engine = 'number').`, () => {
-        Complex.engine = 'number';
-        expect(Complex.engineBackend).toBeDefined();
-        expect(Complex.engine).toBeDefined();
-        ComplexFacadeTestFactory(Complex as unknown as ComplexInterfaceStatic<any, any>)();
-    }, 70);
+        it(`The abstract class ${unitName} and its static properties and methods must be defined (Complex.engine = 'number').`, () => {
+            Complex.engine = 'number';
+            expect(Complex.engineBackend).toBeDefined();
+            expect(Complex.engine).toBeDefined();
+            expectComplexFacade(Complex as unknown as ComplexInterfaceStatic<any, any>);
+        }, 70);
 
-    it(`The abstract class ${unitName} and its static properties and methods must be defined (Complex.engine = 'decimal').`, () => {
-        Complex.engine = 'decimal';
-        expect(Complex.engineBackend).toBeDefined();
-        expect(Complex.engine).toBeDefined();
-        ComplexFacadeTestFactory(Complex as unknown as ComplexInterfaceStatic<any, any>)();
-    }, 70);
+        it(`The abstract class ${unitName} and its static properties and methods must be defined (Complex.engine = 'decimal').`, () => {
+            Complex.engine = 'decimal';
+            expect(Complex.engineBackend).toBeDefined();
+            expect(Complex.engine).toBeDefined();
+            expectComplexFacade(Complex as unknown as ComplexInterfaceStatic<any, any>);
+        }, 70);
+    });
 });

@@ -19,13 +19,13 @@ import type {
     NodeType,
     NodeFunctionDefinition,
     NodeBuiltInFunction,
+    NodeArgumentValidation,
+    BuiltInFunctionInputSignature,
+    BuiltInFunctionSignature,
     NameEntry,
-    NameTable,
-    FunctionTable,
     AliasNameTable,
     BuiltInFunctionTable,
     CommandWordListTable,
-    UndefinedReferenceTable,
 } from './AST';
 import { AST, CharString, Complex, ComplexType, MultiArray, Structure, FunctionHandle } from './AST';
 import type { MathObject, MathOperationType, UnaryMathOperation, BinaryMathOperation, KeyOfTypeOfMathOperation } from './MathOperation';
@@ -35,471 +35,24 @@ import { CoreFunctions } from './CoreFunctions';
 import { LinearAlgebra } from './LinearAlgebra';
 import { Configuration } from './Configuration';
 import { MathML } from './MathML';
+import { FunctionValidation } from './FunctionValidation';
+import { FunctionSignature } from './FunctionSignature';
+import { FunctionArguments } from './FunctionArguments';
+import { FunctionArity } from './FunctionArity';
+import { FunctionCall } from './FunctionCall';
+import { FunctionStack } from './FunctionStack';
+import { FunctionWorkspace } from './FunctionWorkspace';
+import { FunctionIntrospection } from './FunctionIntrospection';
+import { FunctionLookup } from './FunctionLookup';
+import { Scope } from './Scope';
+import { CallFrame } from './CallFrame';
+import { Callables, type Callable, type FunctionDefinitionCallable } from './Callable';
 
 /**
  * `response` type
  */
 type ExitStatus = number;
 type ExitStatusValues = Record<string, ExitStatus>;
-
-/**
- * # Scope
- *
- * Represents a **lexical scope**.
- *
- * A `Scope` stores:
- * - variable bindings (`nameTable`)
- * - function bindings (`functionTable`)
- * - unresolved references for forward reference resolution (`undefinedReferenceTable`)
- *
- * Scopes are organized in a **parent chain**, forming a lexical environment.
- *
- * ---
- *
- * ## Resolution Model
- *
- * Name and function resolution follow this order:
- *
- * 1. Current scope
- * 2. Parent scope
- * 3. Recursively upward
- *
- * ---
- *
- * ## Mutation Semantics
- *
- * - `define*` → affects **current scope only**
- * - `remove*` → removes from **current scope only**
- * - `clear*` → removes from **entire scope chain**
- *
- * ---
- *
- * ## Notes
- *
- * - Tables use `Object.create(null)` to avoid prototype pollution.
- * - Resolution is read-only (no mutation).
- * - Supports shadowing (local overrides parent).
- */
-class Scope {
-    /**
-     * Private constructor.
-     *
-     * Use {@link Scope.create} to create a new `Scope` instance.
-     *
-     * @param parent - Parent scope (optional)
-     * @param nameTable - Variable table (optional)
-     * @param functionTable - Function table (optional)
-     * @param undefinedReferenceTable - Undefined references table (optional)
-     */
-    private constructor(
-        public parent?: Scope,
-        public nameTable: NameTable = Object.create(null),
-        public functionTable: FunctionTable = Object.create(null),
-        public undefinedReferenceTable: UndefinedReferenceTable = Object.create(null),
-    ) {}
-
-    /**
-     * Factory method for creating a new scope.
-     *
-     * @param parent - Parent scope (optional)
-     * @returns New `Scope` instance
-     */
-    public static readonly create = (parent?: Scope) => new Scope(parent);
-
-    /**
-     * Defines a variable in the current scope.
-     *
-     * Overwrites existing local definition if present.
-     *
-     * @param name - Identifier
-     * @param node - Value node
-     * @param undefinedReference - Optional unresolved reference tag
-     * @returns Created/updated entry
-     */
-    public defineName(name: string, node: NodeInput, undefinedReference?: string): NameEntry {
-        return undefinedReference ? (this.nameTable[name] = { undefinedReference, node }) : (this.nameTable[name] = { node });
-    }
-
-    /**
-     * Defines multiple variables in the current scope.
-     *
-     * @param table - Map of name → node
-     */
-    public defineNameTable(table: Record<string, NodeInput>): void {
-        for (const name in table) {
-            this.nameTable[name] = { node: table[name] };
-        }
-    }
-
-    /**
-     * Resolves a variable using lexical lookup.
-     *
-     * @param name - Identifier
-     * @returns First matching entry or `undefined`
-     */
-    public resolveName(name: string): NameEntry | undefined {
-        const entry = this.nameTable[name];
-        return entry ? entry : this.parent ? this.parent.resolveName(name) : undefined;
-    }
-
-    /**
-     * Checks if a variable exists in the current scope.
-     *
-     * @param name - Identifier
-     * @returns `true` if exists locally
-     */
-    public hasLocalName(name: string): boolean {
-        return name in this.nameTable;
-    }
-
-    /**
-     * Removes a variable from the current scope only.
-     *
-     * @param name - Identifier
-     */
-    public removeName(name: string): void {
-        delete this.nameTable[name];
-    }
-
-    /**
-     * Removes a variable from the entire scope chain.
-     *
-     * @param name - Identifier
-     */
-    public clearName(name: string): void {
-        let scope: Scope | undefined = this;
-        while (scope) {
-            delete scope.nameTable[name];
-            scope = scope.parent;
-        }
-    }
-
-    /**
-     * Defines a function in the current scope.
-     *
-     * @param name - Function name
-     * @param func - Function definition
-     * @returns Stored function
-     */
-    public defineFunction(name: string, func: NodeFunctionDefinition): NodeFunctionDefinition {
-        return (this.functionTable[name] = func);
-    }
-
-    /**
-     * Defines multiple functions in the current scope.
-     *
-     * @param table - Function table
-     */
-    public defineFunctionTable(table: FunctionTable): void {
-        Object.assign(this.functionTable, table);
-    }
-
-    /**
-     * Resolves a function using lexical lookup.
-     *
-     * @param name - Function name
-     * @returns Function or `undefined`
-     */
-    public resolveFunction(name: string): NodeFunctionDefinition | NodeBuiltInFunction | undefined {
-        const entry = this.functionTable[name];
-        return entry ? entry : this.parent ? this.parent.resolveFunction(name) : undefined;
-    }
-
-    /**
-     * Checks if a function exists in the current scope.
-     *
-     * @param name - Function name
-     * @returns `true` if exists locally
-     */
-    public hasLocalFunction(name: string): boolean {
-        return name in this.functionTable;
-    }
-
-    /**
-     * Removes a function from the current scope only.
-     *
-     * @param name - Function name
-     */
-    public removeFunction(name: string): void {
-        delete this.functionTable[name];
-    }
-
-    /**
-     * Removes a function from the entire scope chain.
-     *
-     * @param name - Function name
-     */
-    public clearFunction(name: string): void {
-        let scope: Scope | undefined = this;
-        while (scope) {
-            delete scope.functionTable[name];
-            scope = scope.parent;
-        }
-    }
-
-    /**
-     * Binds parameters to arguments in the current scope.
-     *
-     * No validation is performed.
-     *
-     * @param names - Parameter names
-     * @param args - Argument expressions
-     */
-    public bindParameters(names: string[], args: NodeExpr[]): void {
-        for (let i = 0; i < names.length; i++) {
-            this.defineName(names[i], args[i]);
-        }
-    }
-
-    /**
-     * Binds parameters to arguments with arity checking.
-     *
-     * Throws an error if the number of arguments does not match
-     * the number of parameters.
-     *
-     * @param names - Parameter names
-     * @param args - Argument expressions
-     * @throws Error if arity mismatch
-     */
-    public bindParametersChecked(names: string[], args: NodeExpr[]): void {
-        if (names.length !== args.length) {
-            throw new Error(`Arity mismatch: expected ${names.length} argument(s), got ${args.length}`);
-        }
-        this.bindParameters(names, args);
-    }
-
-    /**
-     * Registers an unresolved reference (forward reference).
-     *
-     * @param name - Identifier
-     * @param undefinedReference - Reference id
-     * @returns Updated reference list
-     */
-    public defineUndefinedReference(name: string, undefinedReference: string) {
-        const entry = this.resolveUndefinedReference(name);
-        if (entry) {
-            if (!entry.includes(undefinedReference)) {
-                entry.push(undefinedReference);
-            }
-            return entry;
-        } else {
-            return (this.undefinedReferenceTable[name] = [undefinedReference]);
-        }
-    }
-
-    /**
-     * Resolves unresolved references using lexical lookup.
-     *
-     * @param name - Identifier
-     * @returns Array of references or `undefined`
-     */
-    public resolveUndefinedReference(name: string): string[] | undefined {
-        const entry = this.undefinedReferenceTable[name];
-        return entry ? entry : this.parent ? this.parent.resolveUndefinedReference(name) : undefined;
-    }
-
-    /**
-     * Removes unresolved references from the current scope only.
-     *
-     * @param name - Identifier
-     */
-    public removeUndefinedReference(name: string): void {
-        delete this.undefinedReferenceTable[name];
-    }
-
-    /**
-     * Removes unresolved references from the entire scope chain.
-     *
-     * @param name - Identifier
-     */
-    public clearUndefinedReference(name: string): void {
-        let scope: Scope | undefined = this;
-        while (scope) {
-            delete scope.undefinedReferenceTable[name];
-            scope = scope.parent;
-        }
-    }
-}
-
-/**
- * # Callable
- *
- * Discriminated union representing any **callable entity** in the engine.
- *
- * A callable is anything that can be invoked during evaluation.
- *
- * ---
- *
- * ## Variants
- *
- * - `BUILTIN` → Built-in function implemented in the runtime
- * - `LAMBDA` → Anonymous function (function handle with expression)
- * - `FCNDEF` → User-defined function (declared with `function`)
- *
- * ---
- *
- * ## Design Notes
- *
- * This abstraction allows the interpreter to treat all callable entities
- * uniformly, while preserving their specific execution semantics.
- *
- * Each variant wraps a different underlying AST/runtime representation.
- */
-type Callable = BuiltinCallable | LambdaCallable | FunctionDefinitionCallable;
-
-/**
- * Represents a **built-in callable function**.
- *
- * Built-in functions are implemented directly in the runtime
- * (e.g., `sin`, `cos`, `exp`).
- */
-interface BuiltinCallable {
-    /**
-     * Discriminator tag.
-     */
-    type: 'BUILTIN';
-
-    /**
-     * AST node representing the built-in function.
-     */
-    node: NodeBuiltInFunction;
-}
-
-/**
- * Represents an **anonymous function (lambda)**.
- *
- * This wraps a {@link FunctionHandle} whose `id` is `undefined`
- * and contains:
- * - parameter list
- * - expression body
- * - optional closure
- */
-interface LambdaCallable {
-    /**
-     * Discriminator tag.
-     */
-    type: 'LAMBDA';
-
-    /**
-     * Function handle representing the lambda.
-     */
-    node: FunctionHandle & { id: undefined };
-}
-
-/**
- * Represents a **defined function**.
- *
- * Typically declared using a function definition construct.
- */
-interface FunctionDefinitionCallable {
-    /**
-     * Discriminator tag.
-     */
-    type: 'FCNDEF';
-
-    /**
-     * AST node representing the function definition.
-     */
-    node: NodeFunctionDefinition;
-}
-
-/**
- * # CallFrame
- *
- * Represents a **function call frame** in the evaluation stack ({@link InterpreterContext.callStack}).
- *
- * A call frame encapsulates:
- * - the **execution scope** for the call
- * - the **callable being executed**
- * - a link to the **caller frame** (stack chain)
- *
- * ---
- *
- * ## Role in Evaluation
- *
- * During function invocation, a new `CallFrame` is created:
- *
- * 1. A new `Scope` is created (child of the defining scope or global scope)
- * 2. Parameters are bound in that scope
- * 3. The callable is associated with the frame
- * 4. The frame is pushed onto the call stack
- *
- * This enables:
- * - proper lexical scoping
- * - recursion
- * - nested calls
- * - stack trace reconstruction
- *
- * ---
- *
- * ## Stack Structure
- *
- * Frames form a linked structure:
- *
- * ```text
- * currentFrame → parentFrame → parentFrame → ...
- * ```
- *
- * ---
- *
- * ## Debugging Support
- *
- * Additional metadata is stored to support stack traces:
- *
- * - `callSite` → AST node where the call occurred
- * - `name` → human-readable function name
- *
- * ---
- *
- * ## Notes
- *
- * - `func` may be `undefined` for temporary frames
- * - `parentFrame` should be consistent with the call stack array
- */
-class CallFrame {
-    /**
-     * Creates a new call frame.
-     *
-     * @param scope - Execution {@link Scope} for this frame
-     * @param func - Callable associated with this frame (optional)
-     * @param callSite - {@link AST} node representing the call site (optional)
-     * @param name - Human-readable function name (optional)
-     * @param parentFrame - Caller frame (optional)
-     */
-    public constructor(
-        /**
-         * Execution {@link Scope} for this frame.
-         */
-        public scope: Scope,
-
-        /**
-         * {@link Callable} being executed in this frame.
-         */
-        public func?: Callable,
-
-        /**
-         * AST node where the function call originated.
-         *
-         * Useful for error reporting (line/column in future).
-         */
-        public callSite?: NodeExpr,
-
-        /**
-         * Human-readable function name.
-         *
-         * Examples:
-         * - "sin"
-         * - "f"
-         * - "@(x)x^2"
-         */
-        public name?: string,
-
-        /**
-         * Parent frame in the call stack.
-         */
-        public parentFrame?: CallFrame,
-    ) {}
-}
 
 /**
  * # InterpreterError
@@ -697,14 +250,21 @@ class SyntaxError extends InterpreterError {
     }
 }
 
-class InterpreterContext {
+class ReturnSignal extends Error {
+    public constructor() {
+        super('return');
+        this.name = 'ReturnSignal';
+    }
+}
+
+class Context {
     /**
      * Reset the execution context to a provided scope/stack or to a fresh global state.
      *
      * @param globalScope Optional global scope to install.
      * @param callStack Optional call stack to install.
      */
-    public loadInterpreterContext(globalScope?: Scope, callStack?: CallFrame[]): void {
+    public loadContext(globalScope?: Scope, callStack?: CallFrame[]): void {
         if (globalScope) {
             this.globalScope = globalScope;
         } else {
@@ -713,6 +273,7 @@ class InterpreterContext {
             this.globalScope.functionTable = Object.create(null);
             this.globalScope.undefinedReferenceTable = Object.create(null);
         }
+        this.globalNameSet = new Set<string>();
         this.callStack = callStack ?? [new CallFrame(this.globalScope)];
     }
 
@@ -743,24 +304,31 @@ class InterpreterContext {
          */
         public allowForwardReference: boolean = true,
         /**
+         * Names declared as global in the current context.
+         */
+        public globalNameSet: Set<string> = new Set<string>(),
+        /**
          * Assignment targets whose right-hand side is currently being evaluated.
          *
          * This stack lets undefined-reference handling distinguish a local
          * forward reference from a dependency cycle such as `A -> B -> A`.
          */
         private forwardReferenceTargetStack: string[][] = [],
+        /**
+         * Requested output counts for expressions currently being evaluated.
+         */
+        private requestedOutputCountStack: number[] = [],
     ) {
-        this.loadInterpreterContext(globalScope, callStack);
+        this.loadContext(globalScope, callStack);
     }
     /**
-     * Create {@link InterpreterContext} object.
+     * Create {@link Context} object.
      * @param interpreter Optional interpreter instance associated with the context.
      * @param globalScope Optional global scope reference.
      * @param callStack Optional function call stack reference.
      * @returns New interpreter context.
      */
-    public static readonly create = (interpreter?: Interpreter, globalScope?: Scope, callStack?: CallFrame[]): InterpreterContext =>
-        new InterpreterContext(interpreter, globalScope, callStack);
+    public static readonly create = (interpreter?: Interpreter, globalScope?: Scope, callStack?: CallFrame[]): Context => new Context(interpreter, globalScope, callStack);
     /**
      * Native constants inserted into the global name table during interpreter loading.
      */
@@ -861,6 +429,26 @@ class InterpreterContext {
     public popForwardReferenceTargets(): string[] | undefined {
         return this.forwardReferenceTargetStack.pop();
     }
+    /**
+     * Track how many outputs the current expression context asks from a call.
+     * @param count Requested output count.
+     */
+    public pushRequestedOutputCount(count: number): void {
+        this.requestedOutputCountStack.push(count);
+    }
+    /**
+     * Stop tracking the current requested output count.
+     * @returns Removed requested output count, if any.
+     */
+    public popRequestedOutputCount(): number | undefined {
+        return this.requestedOutputCountStack.pop();
+    }
+    /**
+     * Output count requested by the nearest evaluation context.
+     */
+    public get requestedOutputCount(): number {
+        return this.requestedOutputCountStack[this.requestedOutputCountStack.length - 1] ?? 1;
+    }
     private get currentForwardReferenceTargets(): string[] {
         return this.forwardReferenceTargetStack[this.forwardReferenceTargetStack.length - 1] ?? [];
     }
@@ -955,22 +543,15 @@ class InterpreterContext {
         if (FunctionHandle.isInstanceOf(expr)) {
             /* Named handle, for example `@sin`. */
             if (expr.id) {
-                const func = this.resolveFunction(expr.id);
+                const canonical = this.aliasNameFunction(expr.id);
+                const func = expr.closure?.resolveFunction(canonical) ?? this.resolveFunction(expr.id);
                 if (!func) {
                     this.throwReferenceError(`'${expr.id}' undefined.`);
                 }
-                if (func.type === 'BUILTIN') {
-                    return { type: 'BUILTIN', node: func };
-                }
-                if (func.type === 'FCNDEF') {
-                    return { type: 'FCNDEF', node: func };
-                }
+                return Callables.fromFunctionNode(func);
             }
             /* Lambda handle, for example `@(x)x^2`. */
-            return {
-                type: 'LAMBDA',
-                node: expr as FunctionHandle & { id: undefined },
-            };
+            return Callables.lambda(expr as FunctionHandle & { id: undefined });
         }
         return undefined;
     }
@@ -986,7 +567,14 @@ class InterpreterContext {
             entry.node.parent = tree;
             return entry.node;
         }
-        /* 2. Function lookup. */
+        /* 2. Function call-frame metadata. */
+        if (name === 'nargin' && !(tree.parent && tree.parent.type === 'IDX')) {
+            return this.currentFunctionArgumentCount(name);
+        }
+        if (name === 'nargout' && !(tree.parent && tree.parent.type === 'IDX')) {
+            return this.currentFunctionOutputCount(name);
+        }
+        /* 3. Function lookup. */
         const func = this.resolveFunction(name);
         if (func) {
             /* A function name may be converted to a handle when it is being called. */
@@ -998,7 +586,7 @@ class InterpreterContext {
             /* Otherwise a bare function name is an invalid MATLAB-like call. */
             AST.throwInvalidCallError(name, true, (message) => this.throwSyntaxError(message));
         }
-        /* 3. Undefined identifier. */
+        /* 4. Undefined identifier. */
         this.throwUndefinedReferenceError(name);
     }
     private evaluateArgs(args: NodeExpr[], parent: NodeInput, mode: 'all' | boolean[]): NodeExpr[] {
@@ -1006,10 +594,23 @@ class InterpreterContext {
             arg.parent = parent;
             arg.index = i;
             if (mode === 'all') {
-                return AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(arg, this.currentScope));
+                this.pushRequestedOutputCount(1);
+                try {
+                    return AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(arg, this.currentScope));
+                } finally {
+                    this.popRequestedOutputCount();
+                }
             }
             const ev = mode;
-            return ev.length > 0 && i < ev.length && !ev[i] ? arg : AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(arg, this.currentScope));
+            if (ev.length > 0 && i < ev.length && !ev[i]) {
+                return arg;
+            }
+            this.pushRequestedOutputCount(1);
+            try {
+                return AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(arg, this.currentScope));
+            } finally {
+                this.popRequestedOutputCount();
+            }
         });
     }
     public throwEvalError(message: string): never {
@@ -1027,6 +628,71 @@ class InterpreterContext {
     public throwSyntaxError(message: string): never {
         throw new SyntaxError(message, this.getStackTrace());
     }
+    private getCurrentFunctionDefinition(): NodeFunctionDefinition | undefined {
+        return FunctionStack.currentFunctionDefinition(this.callStack);
+    }
+    private getCurrentFunctionCountFrame(): CallFrame | undefined {
+        return FunctionStack.currentFunctionCountFrame(this.callStack) as CallFrame | undefined;
+    }
+    private getCallerWorkspace(forAssignment = false): Scope {
+        return FunctionStack.callerWorkspace(this.callStack, this.globalScope!, (parent) => Scope.create(parent as Scope | undefined), forAssignment) as Scope;
+    }
+    public resolveWorkspace(name: string, forAssignment = false): Scope {
+        return FunctionWorkspace.resolveWorkspace(name, this.globalScope!, this.getCallerWorkspace(forAssignment), (message) => this.throwSyntaxError(message)) as Scope;
+    }
+    public currentFunctionArgumentCount(name: 'nargin' | 'nargout'): ComplexType {
+        const count = FunctionStack.currentArgumentCount(this.callStack);
+        if (typeof count === 'undefined') {
+            this.throwEvalError(`${name} is only valid inside a function.`);
+        }
+        return Complex.create(count);
+    }
+    public currentFunctionArgumentCountOrZero(): ComplexType {
+        return Complex.create(FunctionStack.currentArgumentCount(this.callStack) ?? 0);
+    }
+    public currentFunctionOutputCount(name: 'nargin' | 'nargout'): ComplexType {
+        const count = FunctionStack.currentOutputCount(this.callStack);
+        if (typeof count === 'undefined') {
+            this.throwEvalError(`${name} is only valid inside a function.`);
+        }
+        return Complex.create(count);
+    }
+    public currentFunctionOutputCountOrZero(): ComplexType {
+        return Complex.create(FunctionStack.currentOutputCount(this.callStack) ?? 0);
+    }
+    public currentFunctionInputName(indexNode: NodeInput): CharString {
+        const frame = this.getCurrentFunctionCountFrame();
+        if (!frame) {
+            this.throwEvalError('inputname is only valid inside a function.');
+        }
+        return FunctionWorkspace.inputName(frame.inputArgs, indexNode, (message) => this.throwSyntaxError(message));
+    }
+    public currentFunctionName(): string {
+        return FunctionStack.currentFunctionName(this.callStack);
+    }
+    public declarePersistent(name: string, value: NodeInput | undefined, scope: Scope): void {
+        const func = this.getCurrentFunctionDefinition();
+        if (!func) {
+            this.throwSyntaxError('persistent declaration is only valid inside a function.');
+        }
+        FunctionWorkspace.declarePersistent(name, value, func, scope);
+    }
+    public loadPersistentVariables(func: NodeFunctionDefinition, scope: Scope): void {
+        FunctionWorkspace.loadPersistentVariables(func, scope);
+    }
+    public storePersistentVariables(func: NodeFunctionDefinition, scope: Scope): void {
+        FunctionWorkspace.storePersistentVariables(func, scope);
+    }
+    public declareGlobal(name: string, value: NodeInput | undefined, scope: Scope): void {
+        FunctionWorkspace.declareGlobal(name, value, this.globalNameSet, this.globalScope!.nameTable, scope.nameTable);
+    }
+    public clearGlobalVariables(): void {
+        FunctionWorkspace.clearGlobalVariables(
+            this.globalNameSet,
+            this.globalScope,
+            this.callStack.map((frame) => frame.scope),
+        );
+    }
     private resolveCallSite(node: NodeInput | undefined): NodeExpr | undefined {
         let current: any = node;
         while (current) {
@@ -1035,17 +701,136 @@ class InterpreterContext {
         }
         return undefined;
     }
+    public builtInInputSignatures(node: NodeBuiltInFunction): BuiltInFunctionInputSignature[] {
+        return FunctionSignature.inputSignatures(node);
+    }
+    public builtInOutputSignatures(node: NodeBuiltInFunction): BuiltInFunctionInputSignature[] {
+        return FunctionSignature.outputSignatures(node);
+    }
+    public builtInDeclaredArity(signatures: BuiltInFunctionInputSignature[]): number | undefined {
+        return FunctionSignature.declaredArity(signatures);
+    }
+    private validateBuiltInInputArity(node: NodeBuiltInFunction, argCount: number): void {
+        AST.throwInvalidCallError(node.id, !FunctionSignature.inputArityIsValid(node, argCount), (message) => this.throwSyntaxError(message));
+    }
+    private validateBuiltInInputParameters(node: NodeBuiltInFunction, args: NodeInput[]): void {
+        AST.throwInvalidCallError(node.id, !FunctionSignature.inputParametersAreValid(node, args), (message) => this.throwSyntaxError(message));
+    }
+    private valueDimensions(value: NodeInput): number[] {
+        return MultiArray.isInstanceOf(value) ? (value as MultiArray).dimension.slice() : [1, 1];
+    }
+    private sizeReturnList(value: NodeInput): NodeReturnList {
+        const size = this.valueDimensions(value);
+        return AST.nodeReturnList(
+            (evaluated, index) => {
+                const value = evaluated[`dim${index}`];
+                if (value === undefined) {
+                    AST.throwErrorIfGreaterThanReturnList(evaluated.length, index + 1, (message) => this.throwEvalError(message));
+                }
+                return value;
+            },
+            (length: number) => {
+                const dims = size.slice();
+                MultiArray.appendSingletonTail(dims, Math.max(length, 2));
+                const out: ReturnHandlerResult = { length };
+                for (let index = 0; index < length; index++) {
+                    const value = index === length - 1 ? dims.slice(index).reduce((product, dim) => product * dim, 1) : dims[index];
+                    out[`dim${index}`] = Complex.create(value);
+                }
+                return out;
+            },
+        );
+    }
+    private callFunctionDefinition(callable: FunctionDefinitionCallable, args: NodeExpr[], parent: NodeInput, requestedOutputCount: number): NodeExpr {
+        const func = callable.node;
+        const { inputLayout, returnLayout, callArguments, inputDefaults } = FunctionCall.prepareFunctionCall(func, args, requestedOutputCount, {
+            nameValueParameters: (item) => this.interpreter!.getFunctionNameValueParameters(item),
+            splitCallArguments: (item, itemArgs) => this.interpreter!.splitFunctionCallNameValueArguments(item, itemArgs),
+            inputDefaults: (item) => this.interpreter!.getFunctionInputArgumentDefaults(item),
+            throwEvalError: (message) => this.throwEvalError(message),
+        });
+        /* Create a function scope, preserving the definition scope when available. */
+        const functionScope = Scope.create(func.definingScope ?? this.currentScope);
+        functionScope.assignExistingParentNames = Boolean(func.attributes?.nested);
+        FunctionCall.initializeFixedReturnSlots(returnLayout.returnNames, functionScope.nameTable);
+        /* Bind evaluated arguments to formal parameter names. */
+        const evaluateCallArgument = (arg: NodeExpr): NodeInput => {
+            this.pushRequestedOutputCount(1);
+            try {
+                return AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(arg, this.currentScope));
+            } finally {
+                this.popRequestedOutputCount();
+            }
+        };
+        const evaluatedArgs = FunctionCall.evaluateCallArguments(callArguments.positional, parent, evaluateCallArgument);
+        const evaluatedNameValueArgs = FunctionCall.evaluateNameValueArguments(callArguments.named, parent, evaluateCallArgument);
+        FunctionCall.bindPositionalInputs(
+            func,
+            inputLayout,
+            evaluatedArgs,
+            inputDefaults,
+            (name, value) => functionScope.defineName(name, value),
+            (_name, defaultValue) => {
+                this.pushRequestedOutputCount(1);
+                try {
+                    return AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(defaultValue, functionScope));
+                } finally {
+                    this.popRequestedOutputCount();
+                }
+            },
+            (message) => this.throwEvalError(message),
+        );
+        this.interpreter!.bindFunctionNameValueArguments(func, functionScope, evaluatedNameValueArgs);
+        FunctionCall.bindVarargin(inputLayout, evaluatedArgs, (name, value) => functionScope.defineName(name, value));
+        FunctionCall.bindVarargout(returnLayout, requestedOutputCount, (name, value) => functionScope.defineName(name, value));
+        /* Push the user-defined function frame for stack trace reporting. */
+        this.pushCallStackFrame(new CallFrame(functionScope, callable, this.resolveCallSite(parent), func.id, args.length, requestedOutputCount, args));
+        this.loadPersistentVariables(func, functionScope);
+        let result: NodeExpr;
+        try {
+            this.interpreter!.registerNestedFunctions(func, functionScope);
+            this.interpreter!.validateFunctionInputArguments(func, functionScope);
+            this.interpreter!.validateFunctionRepeatingArguments(func, functionScope, evaluatedArgs.slice(inputLayout.positionalParamCount));
+            /* Execute the function body. */
+            try {
+                if (func.statements.list.length > 0) {
+                    this.interpreter!.Evaluator(func.statements, functionScope);
+                }
+            } catch (e: unknown) {
+                if (!(e instanceof ReturnSignal)) {
+                    throw e;
+                }
+            }
+            this.interpreter!.validateFunctionOutputArguments(func, functionScope, requestedOutputCount);
+            /* Build a lazy return list backed by the function scope. */
+            result = FunctionCall.createReturnList(returnLayout, functionScope.nameTable, (message) => this.throwEvalError(message));
+        } finally {
+            this.storePersistentVariables(func, functionScope);
+            this.popCallStackFrame();
+        }
+        return result;
+    }
+
     callCallable(callable: Callable, args: NodeExpr[], parent: NodeInput): NodeExpr {
+        const requestedOutputCount = this.requestedOutputCount;
         switch (callable.type) {
             case 'BUILTIN': {
                 const node = callable.node;
                 const alias = this.aliasNameFunction(node.id);
-                const evaluatedArgs = this.evaluateArgs(args, parent, node.ev);
+                this.validateBuiltInInputArity(node, args.length);
+                const evaluatedArgs =
+                    (node.id === 'feval' || node.id === 'builtin') && args.length > 0
+                        ? [this.evaluateArgs([args[0]], parent, 'all')[0], ...args.slice(1)]
+                        : this.evaluateArgs(args, parent, node.ev);
                 /* Push a frame before entering the built-in so errors can capture this call. */
-                this.pushCallStackFrame(new CallFrame(this.currentScope, callable, this.resolveCallSite(parent), node.id));
+                this.pushCallStackFrame(new CallFrame(this.currentScope, callable, this.resolveCallSite(parent), node.id, evaluatedArgs.length, requestedOutputCount, args));
                 try {
+                    this.validateBuiltInInputParameters(node, evaluatedArgs);
                     if (node.mapper && evaluatedArgs.length !== 1) {
                         this.throwEvalError(`Invalid call to ${alias}.`);
+                    }
+                    if (alias === 'size' && evaluatedArgs.length === 1 && requestedOutputCount > 1) {
+                        return this.sizeReturnList(evaluatedArgs[0]);
                     }
                     return node.mapper && evaluatedArgs.length === 1 && MultiArray.isInstanceOf(evaluatedArgs[0])
                         ? MultiArray.rawMap(evaluatedArgs[0], node.func)
@@ -1057,80 +842,36 @@ class InterpreterContext {
             }
             case 'LAMBDA': {
                 const lambda = callable.node;
-                if (lambda.parameter.length !== args.length) {
-                    this.throwEvalError(`invalid number of arguments.`);
-                }
+                const params = lambda.parameter as NodeIdentifier[];
+                const { hasVarargin, fixedParamCount } = FunctionCall.lambdaInputLayout(params);
+                FunctionCall.validateLambdaInputArity(args.length, hasVarargin, fixedParamCount, (message) => this.throwEvalError(message));
                 const lambdaScope = Scope.create(lambda.closure ?? this.currentScope);
-                for (let i = 0; i < args.length; i++) {
-                    args[i].parent = parent;
-                    args[i].index = i;
-                    const value = AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(args[i], this.currentScope));
-                    lambdaScope.defineName(lambda.parameter[i].id, value);
-                }
-                this.pushCallStackFrame(new CallFrame(lambdaScope, callable, this.resolveCallSite(parent), FunctionHandle.toString(lambda)));
+                FunctionCall.bindLambdaInputs(
+                    params,
+                    args,
+                    parent,
+                    hasVarargin,
+                    fixedParamCount,
+                    (name, value) => lambdaScope.defineName(name, value),
+                    (arg) => {
+                        this.pushRequestedOutputCount(1);
+                        try {
+                            return AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(arg, this.currentScope));
+                        } finally {
+                            this.popRequestedOutputCount();
+                        }
+                    },
+                );
+                this.pushCallStackFrame(new CallFrame(lambdaScope, callable, this.resolveCallSite(parent), FunctionHandle.toString(lambda), args.length, requestedOutputCount, args));
                 try {
-                    const result = AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(lambda.expression, lambdaScope));
+                    const result = this.interpreter!.Evaluator(lambda.expression, lambdaScope);
                     return result;
                 } finally {
                     this.popCallStackFrame();
                 }
             }
             case 'FCNDEF': {
-                const func = callable.node;
-                const paramCount = func.parameter.list.length;
-                if (paramCount !== args.length) {
-                    this.throwEvalError(`invalid number of arguments in function ${func.id}`);
-                }
-                /* Create a function scope, preserving the definition scope when available. */
-                const functionScope = Scope.create(func.definingScope ?? this.currentScope);
-                /* Bind evaluated arguments to formal parameter names. */
-                for (let i = 0; i < paramCount; i++) {
-                    args[i].parent = parent;
-                    args[i].index = i;
-                    const value = AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(args[i], this.currentScope));
-                    const paramName = func.parameter.list[i].id;
-                    functionScope.defineName(paramName, value);
-                }
-                /* Push the user-defined function frame for stack trace reporting. */
-                this.pushCallStackFrame(new CallFrame(functionScope, callable, this.resolveCallSite(parent), func.id));
-                let result: NodeExpr;
-                try {
-                    /* Execute the function body. */
-                    if (func.statements.list.length > 0) {
-                        this.interpreter!.Evaluator(func.statements, functionScope);
-                    }
-                    /* Build a lazy return list backed by the function scope. */
-                    if (func.return.list.length > 0) {
-                        const names = func.return.list.map((r) => r.id);
-                        result = AST.nodeReturnList(
-                            (evaluated, index) => {
-                                const key = names[index];
-                                const value = evaluated[key];
-                                if (value === undefined) {
-                                    this.throwEvalError(`Undefined return value '${key}'`);
-                                }
-                                return value;
-                            },
-                            (length: number) => {
-                                const out: any = { length };
-                                for (let i = 0; i < length; i++) {
-                                    const name = names[i];
-                                    const entry = functionScope.resolveName(name);
-                                    if (!entry || !entry.node) {
-                                        this.throwEvalError(`Undefined return variable '${name}'`);
-                                    }
-                                    out[name] = entry.node as NodeExpr;
-                                }
-                                return out;
-                            },
-                        );
-                    } else {
-                        result = AST.nodeVoid();
-                    }
-                } finally {
-                    this.popCallStackFrame();
-                }
-                return result;
+                return this.callFunctionDefinition(callable, args, parent, requestedOutputCount);
             }
             default:
                 throw new Error('Invalid callable.');
@@ -1189,8 +930,8 @@ class InterpreterContext {
      * be evaluated before executing the function. If array is zero-length all
      * arguments are evaluated.
      */
-    public defineBuiltInFunction(id: string, func: Function, mapper: boolean = false, ev: boolean[] = []): void {
-        this.builtInFunctionTable[id] = { type: 'BUILTIN', id, mapper, ev, func, definingScope: this.globalScope! };
+    public defineBuiltInFunction(id: string, func: Function, mapper: boolean = false, ev: boolean[] = [], signature?: BuiltInFunctionSignature): void {
+        this.builtInFunctionTable[id] = { type: 'BUILTIN', id, mapper, ev, func, definingScope: this.globalScope!, signature };
     }
 
     /**
@@ -1222,6 +963,7 @@ class InterpreterContext {
                 }
             },
             definingScope: this.globalScope!,
+            signature: { inputs: { arity: 1 }, outputs: { arity: 1 } },
         };
     }
 
@@ -1244,6 +986,7 @@ class InterpreterContext {
                 }
             },
             definingScope: this.globalScope!,
+            signature: { inputs: { arity: 2 }, outputs: { arity: 1 } },
         };
     }
 
@@ -1272,6 +1015,7 @@ class InterpreterContext {
                 }
             },
             definingScope: this.globalScope!,
+            signature: { inputs: { arity: -2 }, outputs: { arity: 1 } },
         };
     }
 
@@ -1328,7 +1072,7 @@ type IncDecOperator = (tree: NodeIdentifier) => MathObject;
  */
 interface InterpreterInterface {
     debug: boolean;
-    context: InterpreterContext;
+    context: Context;
     exitStatus: ExitStatus;
     precedenceTable: { [key: string]: number };
     Parse(input: string): NodeInput;
@@ -1382,14 +1126,30 @@ class Interpreter implements InterpreterInterface {
     /**
      * Interpreter context.
      */
-    public context: InterpreterContext;
+    public context: Context;
 
     /**
      * Command word list table.
      */
     private commandWordListTable: CommandWordListTable = {
         clear: {
-            func: (...args: string[]): void => this.Clear(...args),
+            func: (...args: string[]): NodeInput => {
+                this.Clear(...args);
+                return AST.nodeVoid();
+            },
+        },
+        which: {
+            func: (...args: string[]): CharString => {
+                const source = args.join(' ');
+                const expressionMatch = source.match(/^\(([\s\S]*)\)$/);
+                if (expressionMatch) {
+                    const evaluated = AST.reduceToFirstIfReturnList(this.Evaluator(this.Parse(expressionMatch[1]), this.context.currentScope));
+                    const value = evaluated.type === 'LIST' && evaluated.list.length === 1 ? evaluated.list[0] : evaluated;
+                    return this.functions.which(value);
+                }
+                AST.throwInvalidCallError('which', args.length !== 1, (message) => this.context.throwSyntaxError(message));
+                return this.whichResult(args[0]);
+            },
         },
         /* Debug purpose commands */
         __operators__: {
@@ -1419,12 +1179,6 @@ class Interpreter implements InterpreterInterface {
             },
         },
         __list_functions__: {
-            /* eslint-disable-next-line  @typescript-eslint/no-unused-vars */
-            func: (...args: string[]): MultiArray => {
-                return MultiArray.emptyArray(true);
-            },
-        },
-        localfunctions: {
             /* eslint-disable-next-line  @typescript-eslint/no-unused-vars */
             func: (...args: string[]): MultiArray => {
                 return MultiArray.emptyArray(true);
@@ -1577,8 +1331,337 @@ class Interpreter implements InterpreterInterface {
     /**
      * User functions.
      */
+    private functionArityCallable(name: 'nargin' | 'nargout', arg: NodeInput): Callable {
+        let target: NodeExpr;
+        if (FunctionHandle.isInstanceOf(arg)) {
+            target = arg;
+        } else if (CharString.isInstanceOf(arg)) {
+            const source = arg.str.trim();
+            target = source.startsWith('@') ? this.functions.str2func(arg) : FunctionHandle.create(source);
+        } else {
+            this.context.throwSyntaxError(`${name}: argument must be a function handle or function name.`);
+        }
+        const callable = this.context.resolveCallable(target);
+        if (!callable) {
+            this.context.throwEvalError(`${name}: invalid function.`);
+        }
+        return callable;
+    }
+
+    private functionArgumentArity(callable: Callable): number {
+        return FunctionArity.inputArity(callable);
+    }
+
+    private functionOutputArity(callable: Callable): number {
+        return FunctionArity.outputArity(callable);
+    }
+
+    private localFunctionHandles(): MultiArray {
+        return FunctionIntrospection.localFunctionHandles(this.context.currentFrame, this.context.currentScope);
+    }
+
+    private dbstackResult(args: NodeInput[]): MultiArray {
+        return FunctionIntrospection.dbstackResult(args, this.context.callStack, (message) => this.context.throwSyntaxError(message));
+    }
+
+    private evalStringInScope(source: string, scope: Scope): NodeInput {
+        const tree = this.Parse(source);
+        tree.parent = null;
+        this.context.pushCallStackFrame(new CallFrame(scope));
+        try {
+            this.context.pushRequestedOutputCount(1);
+            try {
+                return this.Evaluator(tree, scope);
+            } finally {
+                this.context.popRequestedOutputCount();
+            }
+        } finally {
+            this.context.popCallStackFrame();
+        }
+    }
+
+    private checkFunctionCount(name: 'narginchk' | 'nargoutchk', min: NodeInput, max: NodeInput): NodeInput {
+        const count = name === 'narginchk' ? Complex.realToNumber(this.context.currentFunctionArgumentCountOrZero()) : Complex.realToNumber(this.context.currentFunctionOutputCountOrZero());
+        FunctionArity.checkFunctionCount(
+            name,
+            min,
+            max,
+            count,
+            (message) => this.context.throwSyntaxError(message),
+            (message) => this.context.throwEvalError(message),
+        );
+        return AST.nodeVoid();
+    }
+
+    private existCode(name: string, kind?: string): number {
+        return FunctionLookup.existCode(name, kind, this.context.resolveName(name), this.context.resolveFunction(name));
+    }
+
+    private whichResult(name: string, handle?: FunctionHandle): CharString {
+        const func = handle
+            ? FunctionLookup.resolveHandleFunction(
+                  handle,
+                  name,
+                  (item) => this.context.aliasNameFunction(item),
+                  (item) => this.context.resolveFunction(item),
+              )
+            : this.context.resolveFunction(name);
+        return FunctionLookup.whichResult(name, this.context.resolveName(name), func, handle, (item) => FunctionHandle.unparse(item, this));
+    }
+
+    private valueIsRuntimeClass(value: NodeInput, className: string): boolean {
+        switch (className) {
+            case 'double':
+            case 'char':
+            case 'cell':
+            case 'struct':
+            case 'function_handle':
+                return this.getValueClassName(value) === className;
+            default:
+                return false;
+        }
+    }
+
+    private readonly interpreterFunctionSignatures: Record<string, BuiltInFunctionSignature> = {
+        unparse: { inputs: { arity: 1 }, outputs: { arity: 1 } },
+        class: { inputs: { arity: 1 }, outputs: { arity: 1 } },
+        isa: { inputs: { arity: 2, parameters: [{ name: 'value' }, { name: 'className', classes: ['char'] }] }, outputs: { arity: 1 } },
+        mfilename: {
+            inputs: { arity: -1, min: 0, max: 1, parameters: [{ name: 'option', classes: ['char'], allowedStrings: ['fullpath', 'class'], optional: true }] },
+            outputs: { arity: 1 },
+        },
+        dbstack: {
+            inputs: {
+                arity: -2,
+                min: 0,
+                max: 2,
+                parameters: [
+                    {
+                        name: 'optionOrCount',
+                        optional: true,
+                        variadic: true,
+                        alternatives: [
+                            { name: 'option', classes: ['char'], allowedStrings: ['-completenames'] },
+                            { name: 'count', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
+                        ],
+                    },
+                ],
+            },
+            outputs: { arity: 1 },
+        },
+        exist: {
+            inputs: {
+                arity: -2,
+                min: 1,
+                max: 2,
+                parameters: [
+                    { name: 'name', classes: ['char'] },
+                    { name: 'kind', classes: ['char'], optional: true },
+                ],
+            },
+            outputs: { arity: 1 },
+        },
+        which: { inputs: { arity: 1, parameters: [{ name: 'name', classes: ['char', 'function_handle'] }] }, outputs: { arity: 1 } },
+        func2str: { inputs: { arity: 1, parameters: [{ name: 'functionHandle', classes: ['function_handle'] }] }, outputs: { arity: 1 } },
+        str2func: { inputs: { arity: 1, parameters: [{ name: 'source', classes: ['char'] }] }, outputs: { arity: 1 } },
+        builtin: {
+            inputs: {
+                arity: -1,
+                min: 1,
+                parameters: [
+                    { name: 'function', classes: ['char'] },
+                    { name: 'argument', variadic: true },
+                ],
+            },
+            outputs: { arity: -1 },
+        },
+        feval: {
+            inputs: {
+                arity: -1,
+                min: 1,
+                parameters: [
+                    { name: 'function', classes: ['char', 'function_handle'] },
+                    { name: 'argument', variadic: true },
+                ],
+            },
+            outputs: { arity: -1 },
+        },
+        functions: { inputs: { arity: 1, parameters: [{ name: 'functionHandle', classes: ['function_handle'] }] }, outputs: { arity: 1 } },
+        localfunctions: { inputs: { arity: 0 }, outputs: { arity: 1 } },
+        nargin: { inputs: { arity: -1, min: 0, max: 1, parameters: [{ name: 'function', classes: ['char', 'function_handle'], optional: true }] }, outputs: { arity: 1 } },
+        narginchk: {
+            inputs: {
+                arity: 2,
+                parameters: [
+                    { name: 'min', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
+                    { name: 'max', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'integer', 'nonnegative'], allowInfinity: true },
+                ],
+            },
+            outputs: { arity: 0 },
+        },
+        nargout: { inputs: { arity: -1, min: 0, max: 1, parameters: [{ name: 'function', classes: ['char', 'function_handle'], optional: true }] }, outputs: { arity: 1 } },
+        nargoutchk: {
+            inputs: {
+                arity: 2,
+                parameters: [
+                    { name: 'min', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
+                    { name: 'max', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'integer', 'nonnegative'], allowInfinity: true },
+                ],
+            },
+            outputs: { arity: 0 },
+        },
+        inputname: {
+            inputs: { arity: 1, parameters: [{ name: 'argumentNumber', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'positive'] }] },
+            outputs: { arity: 1 },
+        },
+        eval: {
+            inputs: {
+                arity: -2,
+                min: 1,
+                max: 2,
+                parameters: [
+                    { name: 'code', classes: ['char'] },
+                    { name: 'catchCode', classes: ['char'], optional: true },
+                ],
+            },
+            outputs: { arity: 1 },
+        },
+        evalin: {
+            inputs: {
+                arity: -3,
+                min: 2,
+                max: 3,
+                parameters: [
+                    { name: 'workspace', classes: ['char'], allowedStrings: ['base', 'caller'] },
+                    { name: 'code', classes: ['char'] },
+                    { name: 'catchCode', classes: ['char'], optional: true },
+                ],
+            },
+            outputs: { arity: 1 },
+        },
+        assignin: {
+            inputs: {
+                arity: 3,
+                parameters: [{ name: 'workspace', classes: ['char'], allowedStrings: ['base', 'caller'] }, { name: 'name', classes: ['char'], identifier: true }, { name: 'value' }],
+            },
+            outputs: { arity: 0 },
+        },
+        logb: {
+            inputs: {
+                arity: 2,
+                parameters: [
+                    { name: 'value', classes: ['double'] },
+                    { name: 'base', classes: ['double'] },
+                ],
+            },
+            outputs: { arity: 1 },
+        },
+        log2: { inputs: { arity: 1, parameters: [{ name: 'value', classes: ['double'] }] }, outputs: { arity: 1 } },
+        log10: { inputs: { arity: 1, parameters: [{ name: 'value', classes: ['double'] }] }, outputs: { arity: 1 } },
+        factorial: { inputs: { arity: 1, parameters: [{ name: 'value', classes: ['double'] }] }, outputs: { arity: 1 } },
+    };
+
     private readonly functions: Record<string, Function> = {
         unparse: (tree: NodeInput): CharString => new CharString(this.Unparse(tree)),
+        class: (...args: NodeInput[]): CharString => {
+            return new CharString(this.getValueClassName(args[0]));
+        },
+        isa: (...args: NodeInput[]): ComplexType => {
+            return this.valueIsRuntimeClass(args[0], (args[1] as CharString).str) ? Complex.true() : Complex.false();
+        },
+        mfilename: (...args: NodeInput[]): CharString => {
+            if (args.length === 1 && (args[0] as CharString).str === 'class') {
+                return new CharString('');
+            }
+            return new CharString(this.context.currentFunctionName());
+        },
+        dbstack: (...args: NodeInput[]): MultiArray => {
+            return this.dbstackResult(args);
+        },
+        exist: (...args: NodeInput[]): ComplexType => {
+            return Complex.create(this.existCode((args[0] as CharString).str, args.length === 2 ? (args[1] as CharString).str : undefined));
+        },
+        which: (...args: NodeInput[]): CharString => {
+            if (FunctionHandle.isInstanceOf(args[0])) {
+                const handle = args[0] as FunctionHandle;
+                return this.whichResult(handle.id ?? FunctionHandle.unparse(handle, this).trim(), handle);
+            }
+            return this.whichResult((args[0] as CharString).str);
+        },
+        func2str: (...args: NodeInput[]): CharString => {
+            return FunctionLookup.func2str(args[0] as FunctionHandle, (handle) => FunctionHandle.unparse(handle, this));
+        },
+        str2func: (...args: NodeInput[]): FunctionHandle => {
+            return FunctionLookup.str2func(
+                (args[0] as CharString).str,
+                (source) => {
+                    const evaluated = AST.reduceToFirstIfReturnList(this.Evaluator(this.Parse(source), this.context.currentScope));
+                    return evaluated.type === 'LIST' && evaluated.list.length === 1 ? evaluated.list[0] : evaluated;
+                },
+                (message) => this.context.throwEvalError(message),
+            );
+        },
+        builtin: (...args: NodeInput[]): NodeExpr => {
+            const source = (args[0] as CharString).str.trim();
+            const canonical = this.context.aliasNameFunction(source);
+            const builtin = this.context.builtInFunctionTable[canonical];
+            if (!builtin) {
+                this.context.throwEvalError(`builtin: '${source}' is not a built-in function.`);
+            }
+            return this.context.callCallable(Callables.builtin(builtin), args.slice(1) as NodeExpr[], AST.nodeIdentifier('builtin'));
+        },
+        feval: (...args: NodeInput[]): NodeExpr => {
+            let target = args[0] as NodeExpr;
+            if (CharString.isInstanceOf(target)) {
+                const source = target.str.trim();
+                target = source.startsWith('@') ? this.functions.str2func(target) : FunctionHandle.create(source);
+            }
+            const callable = this.context.resolveCallable(target);
+            if (!callable) {
+                this.context.throwEvalError('feval: first argument must be a function handle or function name.');
+            }
+            return this.context.callCallable(callable, args.slice(1) as NodeExpr[], AST.nodeIdentifier('feval'));
+        },
+        functions: (...args: NodeInput[]): Structure => {
+            return FunctionLookup.functionsInfo(
+                args[0] as FunctionHandle,
+                (name) => this.context.aliasNameFunction(name),
+                (name) => this.context.resolveFunction(name),
+                (handle) => FunctionHandle.unparse(handle, this),
+            );
+        },
+        localfunctions: (...args: NodeInput[]): MultiArray => {
+            return this.localFunctionHandles();
+        },
+        nargin: (...args: NodeInput[]): ComplexType => {
+            return args.length === 0 ? this.context.currentFunctionArgumentCount('nargin') : Complex.create(this.functionArgumentArity(this.functionArityCallable('nargin', args[0])));
+        },
+        narginchk: (...args: NodeInput[]): NodeInput => {
+            return this.checkFunctionCount('narginchk', args[0], args[1]);
+        },
+        nargout: (...args: NodeInput[]): ComplexType => {
+            return args.length === 0 ? this.context.currentFunctionOutputCount('nargout') : Complex.create(this.functionOutputArity(this.functionArityCallable('nargout', args[0])));
+        },
+        nargoutchk: (...args: NodeInput[]): NodeInput => {
+            return this.checkFunctionCount('nargoutchk', args[0], args[1]);
+        },
+        inputname: (...args: NodeInput[]): CharString => {
+            return this.context.currentFunctionInputName(args[0]);
+        },
+        eval: (...args: NodeInput[]): NodeInput => {
+            return FunctionWorkspace.evaluateWithCatch(this.context.currentScope, (args[0] as CharString).str, args.length === 2 ? (args[1] as CharString).str : undefined, (source, scope) =>
+                this.evalStringInScope(source, scope as Scope),
+            );
+        },
+        evalin: (...args: NodeInput[]): NodeInput => {
+            const scope = this.context.resolveWorkspace((args[0] as CharString).str);
+            return FunctionWorkspace.evaluateWithCatch(scope, (args[1] as CharString).str, args.length === 3 ? (args[2] as CharString).str : undefined, (source, itemScope) =>
+                this.evalStringInScope(source, itemScope as Scope),
+            );
+        },
+        assignin: (...args: NodeInput[]): NodeInput => {
+            return FunctionWorkspace.assignIn(this.context.resolveWorkspace((args[0] as CharString).str, true), (args[1] as CharString).str, args[2]);
+        },
     };
 
     /**
@@ -1622,13 +1705,13 @@ class Interpreter implements InterpreterInterface {
     private loadInterpreter(config?: InterpreterConfig) {
         this._exitStatus = Interpreter.response.OK;
         AST.reload();
-        this.context.loadInterpreterContext();
+        this.context.loadContext();
         this.context.nativeNameTable = Interpreter.nativeNameTableFactory();
         this.context.nativeNameTableList = Object.keys(this.context.nativeNameTable);
         this.context.globalScope!.defineNameTable(this.context.nativeNameTable);
         /* Define Interpreter functions */
         for (const func in this.functions) {
-            this.context.defineBuiltInFunction(func, this.functions[func]);
+            this.context.defineBuiltInFunction(func, this.functions[func], false, [], this.interpreterFunctionSignatures[func]);
         }
         /* Define function operators */
         for (const func in MathOperation.leftAssociativeMultipleOperations) {
@@ -1641,24 +1724,35 @@ class Interpreter implements InterpreterInterface {
             this.context.defineUnaryOperatorFunction(func as KeyOfTypeOfMathOperation, MathOperation.unaryOperations[func as KeyOfTypeOfMathOperation]!);
         }
         /* Define function mappers */
+        const complexMapFunctionSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value', classes: ['double'] }] }, outputs: { arity: 1 } };
         for (const func in Complex.mapFunction) {
-            this.context.defineBuiltInFunction(func, Complex.mapFunction[func], true);
+            this.context.defineBuiltInFunction(func, Complex.mapFunction[func], true, [], this.interpreterFunctionSignatures[func] ?? complexMapFunctionSignature);
         }
         /* Define other functions */
+        const complexTwoArgFunctionSignature: BuiltInFunctionSignature = {
+            inputs: {
+                arity: 2,
+                parameters: [
+                    { name: 'left', classes: ['double'] },
+                    { name: 'right', classes: ['double'] },
+                ],
+            },
+            outputs: { arity: 1 },
+        };
         for (const func in Complex.twoArgFunction) {
-            this.context.defineBuiltInFunction(func, Complex.twoArgFunction[func]);
+            this.context.defineBuiltInFunction(func, Complex.twoArgFunction[func], false, [], this.interpreterFunctionSignatures[func] ?? complexTwoArgFunctionSignature);
         }
         /* Define Configuration functions */
         for (const func in Configuration.functions) {
-            this.context.defineBuiltInFunction(func, Configuration.functions[func]);
+            this.context.defineBuiltInFunction(func, Configuration.functions[func], false, [], Configuration.signatures[func]);
         }
         /* Define CoreFunctions functions */
         for (const func in CoreFunctions.functions) {
-            this.context.defineBuiltInFunction(func, CoreFunctions.functions[func]);
+            this.context.defineBuiltInFunction(func, CoreFunctions.functions[func], false, [], CoreFunctions.signatures[func]);
         }
         /* Define LinearAlgebra functions */
         for (const func in LinearAlgebra.functions) {
-            this.context.defineBuiltInFunction(func, LinearAlgebra.functions[func as keyof LinearAlgebra]);
+            this.context.defineBuiltInFunction(func, LinearAlgebra.functions[func as keyof LinearAlgebra], false, [], LinearAlgebra.signatures[func]);
         }
         /* Load UnparserMathML for special functions */
         for (const func in this.unparseMathMLFunctions) {
@@ -1678,7 +1772,7 @@ class Interpreter implements InterpreterInterface {
     /**
      * `Interpreter` object private constructor
      */
-    private constructor(config?: InterpreterConfig, context?: InterpreterContext) {
+    private constructor(config?: InterpreterConfig, context?: Context) {
         /* Set opTable aliases */
         this.opTable['**'] = this.opTable['^'];
         this.opTable['.**'] = this.opTable['.^'];
@@ -1702,7 +1796,7 @@ class Interpreter implements InterpreterInterface {
             this.context = context;
             this.context.interpreter = this;
         } else {
-            this.context = InterpreterContext.create(this);
+            this.context = Context.create(this);
         }
         this.loadInterpreter(config);
     }
@@ -1713,7 +1807,7 @@ class Interpreter implements InterpreterInterface {
      * @param context Optional pre-built interpreter context.
      * @returns New interpreter instance.
      */
-    public static readonly Create = (config?: InterpreterConfig, context?: InterpreterContext): Interpreter => new Interpreter(config, context);
+    public static readonly Create = (config?: InterpreterConfig, context?: Context): Interpreter => new Interpreter(config, context);
 
     /**
      * Parse input string.
@@ -1776,8 +1870,8 @@ class Interpreter implements InterpreterInterface {
     }
 
     /**
-     * Clear variables. When no names are provided, restart the interpreter.
-     * @param names Variable names to clear in nameTable and builtInFunctionTable.
+     * Clear variables/functions. When no names are provided, restart the interpreter.
+     * @param names Variable/function names to clear in the current scope.
      */
     public Clear(...names: string[]): void {
         if (names.length === 0) {
@@ -1787,7 +1881,23 @@ class Interpreter implements InterpreterInterface {
             this.Restart();
         } else {
             names.forEach((name) => {
+                if (name === 'functions') {
+                    for (const functionName of Object.keys(this.context.currentScope.functionTable)) {
+                        if (this.context.currentScope.functionTable[functionName]?.type === 'FCNDEF') {
+                            this.context.currentScope.removeFunction(functionName);
+                        }
+                    }
+                    return;
+                }
+                if (name === 'global') {
+                    this.context.clearGlobalVariables();
+                    return;
+                }
                 this.context.currentScope.removeName(name);
+                const func = this.context.currentScope.functionTable[name];
+                if (func?.type === 'FCNDEF') {
+                    this.context.currentScope.removeFunction(name);
+                }
                 if (this.context.nativeNameTableList.includes(name)) {
                     this.context.globalScope!.defineName(name, this.context.nativeNameTable[name]);
                 }
@@ -1934,6 +2044,162 @@ class Interpreter implements InterpreterInterface {
         return error.stackFrames?.[0] === currentCallableFrame;
     }
 
+    private getArgumentValidationName(validation: NodeArgumentValidation): string {
+        return FunctionArguments.validationName(validation, (message) => this.context.throwSyntaxError(message));
+    }
+
+    private getNameValueArgumentTarget(validation: NodeArgumentValidation): { parameter: string; field: string } | undefined {
+        return FunctionArguments.nameValueTarget(validation, (message) => this.context.throwSyntaxError(message));
+    }
+
+    private getArgumentValidationDisplayName(validation: NodeArgumentValidation): string {
+        return FunctionArguments.validationDisplayName(validation, (message) => this.context.throwSyntaxError(message));
+    }
+
+    private validateFunctionArgumentsBlocks(func: NodeFunctionDefinition): void {
+        FunctionArguments.validateBlocks(func, (message) => this.context.throwSyntaxError(message));
+    }
+
+    private getValueClassName(value: NodeInput): string {
+        return FunctionValidation.className(value);
+    }
+
+    private getArgumentValidationEntry(validation: NodeArgumentValidation, scope: Scope, localNamesOnly: boolean): { node?: NodeInput } | undefined {
+        const nameValue = this.getNameValueArgumentTarget(validation);
+        if (!nameValue) {
+            const name = this.getArgumentValidationName(validation);
+            return localNamesOnly ? scope.nameTable[name] : scope.resolveName(name);
+        }
+        const entry = localNamesOnly ? scope.nameTable[nameValue.parameter] : scope.resolveName(nameValue.parameter);
+        if (!entry || typeof entry.node === 'undefined') {
+            return undefined;
+        }
+        try {
+            return { node: Structure.getField(entry.node, [nameValue.field]) };
+        } catch {
+            return undefined;
+        }
+    }
+
+    private validateArgumentValidation(
+        validation: NodeArgumentValidation,
+        scope: Scope,
+        symbolicDimensions: Map<string, number>,
+        localNamesOnly = false,
+        displayName = this.getArgumentValidationDisplayName(validation),
+    ): void {
+        FunctionArguments.validateArgumentValidation(
+            validation,
+            symbolicDimensions,
+            {
+                resolveEntry: (item, namesOnly) => this.getArgumentValidationEntry(item, scope, namesOnly),
+                evaluate: (expr) => AST.reduceToFirstIfReturnList(this.Evaluator(expr, scope)),
+                throwEvalError: (message) => this.context.throwEvalError(message),
+                throwSyntaxError: (message) => this.context.throwSyntaxError(message),
+            },
+            localNamesOnly,
+            displayName,
+        );
+    }
+
+    private validateFunctionArguments(func: NodeFunctionDefinition, scope: Scope, targetAttribute: 'Input' | 'Output', namesToValidate?: Set<string>, localNamesOnly = false): void {
+        FunctionArguments.validateFunctionArguments(
+            func,
+            targetAttribute,
+            {
+                resolveEntry: (validation, namesOnly) => this.getArgumentValidationEntry(validation, scope, namesOnly),
+                evaluate: (expr) => AST.reduceToFirstIfReturnList(this.Evaluator(expr, scope)),
+                throwEvalError: (message) => this.context.throwEvalError(message),
+                throwSyntaxError: (message) => this.context.throwSyntaxError(message),
+            },
+            namesToValidate,
+            localNamesOnly,
+        );
+    }
+
+    public validateFunctionInputArguments(func: NodeFunctionDefinition, scope: Scope): void {
+        this.validateFunctionArguments(func, scope, 'Input');
+    }
+
+    public validateFunctionRepeatingArguments(func: NodeFunctionDefinition, scope: Scope, values: NodeInput[]): void {
+        FunctionArguments.validateRepeatingArguments(func, values, {
+            evaluate: (expr) => AST.reduceToFirstIfReturnList(this.Evaluator(expr, scope)),
+            throwEvalError: (message) => this.context.throwEvalError(message),
+            throwSyntaxError: (message) => this.context.throwSyntaxError(message),
+            validateRepeatingValue: (validation, validationName, value, displayName, symbolicDimensions) => {
+                const validationScope = Scope.create(scope);
+                validationScope.defineName(validationName, value);
+                this.validateArgumentValidation(validation, validationScope, symbolicDimensions, true, displayName);
+            },
+        });
+    }
+
+    public getFunctionNameValueParameters(func: NodeFunctionDefinition): Set<string> {
+        return FunctionArguments.nameValueParameters(func, (message) => this.context.throwSyntaxError(message));
+    }
+
+    private getFunctionNameValueDeclarations(func: NodeFunctionDefinition): Map<string, Map<string, NodeArgumentValidation>> {
+        return FunctionArguments.nameValueDeclarations(func, (message) => this.context.throwSyntaxError(message));
+    }
+
+    public splitFunctionCallNameValueArguments(func: NodeFunctionDefinition, args: NodeExpr[]): { positional: NodeExpr[]; named: Map<string, NodeExpr> } {
+        return FunctionArguments.splitCallNameValueArguments(
+            func,
+            args,
+            (message) => this.context.throwEvalError(message),
+            (message) => this.context.throwSyntaxError(message),
+        );
+    }
+
+    public bindFunctionNameValueArguments(func: NodeFunctionDefinition, scope: Scope, values: Map<string, NodeInput>): void {
+        const declarations = this.getFunctionNameValueDeclarations(func);
+        for (const [parameter, fields] of declarations) {
+            const options = new Structure({});
+            for (const [field, validation] of fields) {
+                this.context.pushRequestedOutputCount(1);
+                try {
+                    Structure.setNewField(options, [field], AST.reduceToFirstIfReturnList(this.Evaluator(validation.default, scope)));
+                } finally {
+                    this.context.popRequestedOutputCount();
+                }
+            }
+            for (const [field, value] of values) {
+                if (fields.has(field)) {
+                    Structure.setNewField(options, [field], value);
+                }
+            }
+            scope.defineName(parameter, options);
+        }
+    }
+
+    public registerNestedFunctions(func: NodeFunctionDefinition, scope: Scope): void {
+        for (const statement of func.statements.list) {
+            if (statement.type !== 'FCNDEF') {
+                continue;
+            }
+            const nested = {
+                ...(statement as NodeFunctionDefinition),
+                attributes: { ...((statement as NodeFunctionDefinition).attributes ?? {}) },
+            } as NodeFunctionDefinition;
+            this.validateFunctionArgumentsBlocks(nested);
+            nested.definingScope = scope;
+            nested.attributes = { ...(nested.attributes ?? {}), nested: true };
+            scope.defineFunction(nested.id, nested);
+        }
+    }
+
+    public validateFunctionOutputArguments(func: NodeFunctionDefinition, scope: Scope, requestedOutputCount: number): void {
+        const requestedNames = FunctionArguments.outputNamesToValidate(func, requestedOutputCount);
+        if (!requestedNames) {
+            return;
+        }
+        this.validateFunctionArguments(func, scope, 'Output', requestedNames, true);
+    }
+
+    public getFunctionInputArgumentDefaults(func: NodeFunctionDefinition): Map<string, NodeExpr> {
+        return FunctionArguments.inputArgumentDefaults(func, (message) => this.context.throwSyntaxError(message));
+    }
+
     /**
      * Expression tree recursive interpreter.
      * @param tree Expression to evaluate.
@@ -1945,7 +2211,19 @@ class Interpreter implements InterpreterInterface {
             console.log(`Interpreter(\ntree:${JSON.stringify(tree, (key: string, value: NodeInput) => (key !== 'parent' ? value : value === null ? 'root' : true), 2)},\n);`);
         }
         if (tree) {
-            if (Complex.isInstanceOf(tree) || FunctionHandle.isInstanceOf(tree) || CharString.isInstanceOf(tree) || Structure.isInstanceOf(tree)) {
+            if (FunctionHandle.isInstanceOf(tree)) {
+                if (tree.id && !tree.closure && scope.resolveFunction(this.context.aliasNameFunction(tree.id))) {
+                    const handle = FunctionHandle.copy(tree);
+                    handle.closure = scope.capture((node) => MathOperation.copy(node), this.context.allowForwardReference);
+                    return handle;
+                }
+                if (!tree.id && !tree.closure) {
+                    const handle = FunctionHandle.copy(tree);
+                    handle.closure = scope.snapshot((node) => MathOperation.copy(node));
+                    return handle;
+                }
+                return tree;
+            } else if (Complex.isInstanceOf(tree) || CharString.isInstanceOf(tree) || Structure.isInstanceOf(tree)) {
                 return tree;
             } else if (MultiArray.isInstanceOf(tree)) {
                 return MultiArray.evaluate(tree, this, scope);
@@ -2028,6 +2306,7 @@ class Interpreter implements InterpreterInterface {
                         let undefinedReference: string | undefined;
                         let error: Error | undefined;
                         this.context.pushForwardReferenceTargets(assignment.map(({ id }) => id).filter((id) => id !== '~'));
+                        this.context.pushRequestedOutputCount(assignment.length);
                         try {
                             right = MathOperation.copy(this.Evaluator(tree.right, scope));
                         } catch (e: unknown) {
@@ -2041,6 +2320,7 @@ class Interpreter implements InterpreterInterface {
                             right = MathOperation.copy(tree.right);
                             undefinedReference = e.identifier;
                         } finally {
+                            this.context.popRequestedOutputCount();
                             this.context.popForwardReferenceTargets();
                         }
                         /* Convert `right` to `'RETLIST'` if the node is not already of that type. */
@@ -2050,7 +2330,7 @@ class Interpreter implements InterpreterInterface {
                                 if (index === 0) {
                                     return result;
                                 } else {
-                                    AST.throwErrorIfGreaterThanReturnList(evaluated.length, index, (message) => this.context.throwEvalError(message));
+                                    AST.throwErrorIfGreaterThanReturnList(1, index + 1, (message) => this.context.throwEvalError(message));
                                 }
                             });
                         }
@@ -2136,13 +2416,13 @@ class Interpreter implements InterpreterInterface {
                                             if (undefinedReference) {
                                                 if (this.context.allowForwardReference) {
                                                     scope.defineUndefinedReference(undefinedReference, id);
-                                                    entry = scope.defineName(id, AST.reduceToFirstIfReturnList(expr), undefinedReference);
+                                                    entry = scope.assignName(id, AST.reduceToFirstIfReturnList(expr), undefinedReference);
                                                 } else {
                                                     if (error) throw error;
                                                     this.context.throwUndefinedReferenceError(undefinedReference);
                                                 }
                                             } else {
-                                                entry = scope.defineName(id, AST.reduceToFirstIfReturnList(expr));
+                                                entry = scope.assignName(id, AST.reduceToFirstIfReturnList(expr));
                                             }
                                             this.solveUndefined(id, scope);
                                             AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), entry.node));
@@ -2150,7 +2430,7 @@ class Interpreter implements InterpreterInterface {
                                         }
                                     } catch (e: unknown) {
                                         if (this.context.allowForwardReference) {
-                                            scope.defineName(id, expr, undefinedReference);
+                                            scope.assignName(id, expr, undefinedReference);
                                         }
                                         throw e as Error;
                                     }
@@ -2173,13 +2453,61 @@ class Interpreter implements InterpreterInterface {
                     }
                     case 'IDENT':
                         return this.context.resolveIdentifier(tree, scope);
+                    case 'RETURN':
+                        if (this.context.currentFrame?.func?.type !== 'FCNDEF') {
+                            this.context.throwEvalError('return is only valid inside a function.');
+                        }
+                        throw new ReturnSignal();
                     case 'FCNDEF': {
                         const func = tree as NodeFunctionDefinition;
+                        if (this.context.currentFrame?.func?.type === 'FCNDEF' && scope.hasLocalFunction(func.id)) {
+                            return AST.nodeVoid();
+                        }
+                        this.validateFunctionArgumentsBlocks(func);
                         /* Register function in the current scope. */
                         scope.defineFunction(func.id, func);
-                        /* Store the definition scope so calls can resolve lexical captures. */
-                        func.definingScope = scope;
+                        if (this.context.currentFrame?.func?.type === 'FCNDEF') {
+                            func.definingScope = scope;
+                            func.attributes = { ...(func.attributes ?? {}), nested: true };
+                        } else {
+                            /* Store a lexical capture overlay while keeping live fallback for forward references. */
+                            func.definingScope = scope.capture((node) => MathOperation.copy(node), this.context.allowForwardReference);
+                            if (func.attributes?.nested) {
+                                func.attributes = { ...func.attributes };
+                                delete func.attributes.nested;
+                            }
+                        }
                         /* MATLAB-like behavior: function definition does not execute anything. */
+                        return AST.nodeVoid();
+                    }
+                    case 'GLOBAL': {
+                        for (const declaration of tree.list) {
+                            const declarationNode = AST.getDeclarationNode(declaration);
+                            if (declarationNode.type === 'IDENT') {
+                                this.context.declareGlobal(declarationNode.id, undefined, scope);
+                            } else if (declarationNode.type === '=' && declarationNode.left.type === 'IDENT') {
+                                declarationNode.right.parent = declarationNode;
+                                const value = AST.reduceToFirstIfReturnList(this.Evaluator(declarationNode.right, scope));
+                                this.context.declareGlobal(declarationNode.left.id, value, scope);
+                            } else {
+                                this.context.throwSyntaxError('invalid global declaration.');
+                            }
+                        }
+                        return AST.nodeVoid();
+                    }
+                    case 'PERSIST': {
+                        for (const declaration of tree.list) {
+                            const declarationNode = AST.getDeclarationNode(declaration);
+                            if (declarationNode.type === 'IDENT') {
+                                this.context.declarePersistent(declarationNode.id, undefined, scope);
+                            } else if (declarationNode.type === '=' && declarationNode.left.type === 'IDENT') {
+                                declarationNode.right.parent = declarationNode;
+                                const value = AST.reduceToFirstIfReturnList(this.Evaluator(declarationNode.right, scope));
+                                this.context.declarePersistent(declarationNode.left.id, value, scope);
+                            } else {
+                                this.context.throwSyntaxError('invalid persistent declaration.');
+                            }
+                        }
                         return AST.nodeVoid();
                     }
                     case '.': {
@@ -2238,7 +2566,15 @@ class Interpreter implements InterpreterInterface {
                                     n++;
                                 }
                             } else {
-                                if (item.type !== 'VOID') {
+                                if (item.type === 'VOID') {
+                                    const placeholder = tree.list[i];
+                                    placeholder.omitAnswer = true;
+                                    placeholder.omitOutput = true;
+                                    placeholder.parent = result;
+                                    placeholder.index = n;
+                                    result.list[n] = placeholder;
+                                    n++;
+                                } else {
                                     /* PHASE 2: Adjust evaluated node. */
                                     item.parent = result;
                                     item.index = n;
@@ -2251,6 +2587,14 @@ class Interpreter implements InterpreterInterface {
                             }
                         }
                         result.list.length = n;
+                        const visible = result.list.filter((node: NodeInput) => !node.omitOutput);
+                        if (visible.length > 0 && visible.length < result.list.length) {
+                            result.list = visible;
+                            result.list.forEach((node: NodeInput, index: number) => {
+                                node.parent = result;
+                                node.index = index;
+                            });
+                        }
                         return result;
                     }
                     case 'RANGE':
@@ -2368,6 +2712,7 @@ class Interpreter implements InterpreterInterface {
      * @returns Expression `tree` unparsed.
      */
     public Unparse(tree: NodeInput, parentPrecedence = 0): string {
+        const declarationUnparse = (keyword: string, tree: NodeInput): string => keyword + ' ' + tree.list.map((node: NodeExpr) => this.Unparse(AST.getDeclarationNode(node))).join(' ');
         const leftUnparse = (type: NodeType | number, tree: NodeInput) => {
             const precedence = this.nodePrecedence(tree);
             const leftUnparse = this.Unparse(tree.left, precedence);
@@ -2494,6 +2839,12 @@ class Interpreter implements InterpreterInterface {
                             return '<RETLIST>';
                         case 'CMDWLIST':
                             return (tree.id + ' ' + tree.args.map((arg: CharString) => this.Unparse(arg)).join(' ')).trimEnd();
+                        case 'GLOBAL':
+                            return declarationUnparse('global', tree);
+                        case 'PERSIST':
+                            return declarationUnparse('persistent', tree);
+                        case 'RETURN':
+                            return 'return';
                         case 'IF':
                             let ifstr = 'IF ' + this.Unparse(tree.expression[0]) + '\n';
                             ifstr += this.Unparse(tree.then[0]) + '\n';
@@ -2527,6 +2878,8 @@ class Interpreter implements InterpreterInterface {
      * @returns String of expression `tree` unparsed as MathML language.
      */
     public UnparserMathML(tree: NodeInput, parentPrecedence = 0): string {
+        const declarationUnparseMathML = (keyword: string, tree: NodeInput): string =>
+            `<mrow><mi>${keyword}</mi><mspace width="0.4em"/>${tree.list.map((node: NodeExpr) => this.UnparserMathML(AST.getDeclarationNode(node))).join('<mspace width="0.4em"/>')}</mrow>`;
         try {
             if (tree) {
                 if (tree === undefined) {
@@ -2669,6 +3022,12 @@ class Interpreter implements InterpreterInterface {
                                 tree.id,
                                 tree.args.map((arg: CharString) => this.UnparserMathML(arg)),
                             );
+                        case 'GLOBAL':
+                            return declarationUnparseMathML('global', tree);
+                        case 'PERSIST':
+                            return declarationUnparseMathML('persistent', tree);
+                        case 'RETURN':
+                            return '<mi>return</mi>';
                         case 'IF':
                             const ifThenArray = tree.expression.map(
                                 (expr: NodeInput, i: number) =>
@@ -2723,5 +3082,6 @@ class Interpreter implements InterpreterInterface {
 }
 
 export type { InterpreterConfig, IncDecOperator };
-export { Scope, CallFrame, InterpreterError, EvalError, ReferenceError, UndefinedReferenceError, CircularReferenceError, SyntaxError, InterpreterContext, Interpreter };
-export default { Scope, CallFrame, InterpreterError, EvalError, ReferenceError, UndefinedReferenceError, CircularReferenceError, SyntaxError, InterpreterContext, Interpreter };
+export type { BuiltinCallable, Callable, FunctionDefinitionCallable, LambdaCallable } from './Callable';
+export { Scope, CallFrame, InterpreterError, EvalError, ReferenceError, UndefinedReferenceError, CircularReferenceError, SyntaxError, Context, Interpreter };
+export default { Scope, CallFrame, InterpreterError, EvalError, ReferenceError, UndefinedReferenceError, CircularReferenceError, SyntaxError, Context, Interpreter };

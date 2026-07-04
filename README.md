@@ -27,7 +27,7 @@
 
 **[ISBN 978-65-00-82338-7](https://grp.isbn-international.org/search/piid_solr?keys=978-65-00-82338-7)**
 
-This package emulates a parser and interpreter for a subset of
+This package emulates an interpreter for a subset of
 [MATLAB&reg;](https://www.mathworks.com/products/matlab.html)/[Octave](https://www.gnu.org/software/octave/)
 language. It is written completely in
 [TypeScript](https://www.typescriptlang.org/).
@@ -59,7 +59,7 @@ a [parser](https://en.wikipedia.org/wiki/Parsing) that create an
 input.
 
 Other components besides the [parser](https://en.wikipedia.org/wiki/Parsing)
-are the interpreter, which computes the inputs, and the
+are the evaluator, which computes the inputs, and the
 [MathML](https://www.w3.org/Math/) unparser, that generates mathematical
 representations of the inputs and results.
 
@@ -88,6 +88,9 @@ also be accessed directly from the
 Additional documentation, beyond the operations, functions and commands, is
 available in the
 [demo Web application `doc` directory](https://github.com/MathJSLab/mathjslab-app/tree/main/doc).
+This repository also includes maintainer-focused documentation in the local
+[`doc`](doc/) directory, including architecture notes, testing strategy, and a
+generated Markdown API reference.
 
 ## Features
 

@@ -2,7 +2,7 @@ import { CharString } from './CharString';
 import { Complex, ComplexType } from './Complex';
 import { type ElementType, MultiArray } from './MultiArray';
 import { Structure } from './Structure';
-import { type NodeReturnList, AST, ReturnHandlerResult } from './AST';
+import { type BuiltInFunctionSignature, type NodeReturnList, AST, ReturnHandlerResult } from './AST';
 
 abstract class CoreFunctions {
     /**
@@ -160,6 +160,110 @@ abstract class CoreFunctions {
             });
             return Complex.create(index.reduce((p, c) => p * c, 1));
         }
+    };
+
+    /**
+     * Find indices and values of nonzero elements.
+     * @param M Input value.
+     * @param args Optional count and direction.
+     * @returns Linear indices or row/column/value return list.
+     */
+    public static readonly find = (M: ElementType, ...args: ElementType[]): NodeReturnList => {
+        AST.throwInvalidCallError('find', args.length > 2);
+        const MA = MultiArray.scalarToMultiArray(M);
+        let count = Infinity;
+        let direction = 'first';
+        if (args.length >= 1) {
+            count = Complex.realToNumber(MultiArray.firstElement(args[0]) as ComplexType);
+        }
+        if (args.length === 2) {
+            direction = (args[1] as CharString).str;
+        }
+        const values = MultiArray.linearize(MA) as ComplexType[];
+        let entries = values.map((value, index) => ({ index, value })).filter(({ value }) => Boolean(Complex.realToNumber(value) || Complex.imagToNumber(value)));
+        if (direction === 'last') {
+            entries = entries.slice(Math.max(0, entries.length - count));
+        } else {
+            entries = entries.slice(0, count);
+        }
+        const indices = entries.map(({ index }) => Complex.create(index + 1));
+        const rows = entries.map(({ index }) => Complex.create(MultiArray.linearIndexToSubscript(MA.dimension, index)[0] ?? 1));
+        const columns = entries.map(({ index }) => Complex.create(MultiArray.linearIndexToSubscript(MA.dimension, index)[1] ?? 1));
+        const foundValues = entries.map(({ value }) => value);
+        const toColumn = (items: ElementType[]): ElementType => MultiArray.MultiArrayToScalar(MultiArray.toColumnVector(items));
+        return AST.nodeReturnList((evaluated: ReturnHandlerResult, index: number): ElementType => {
+            if (evaluated.length === 1) {
+                return toColumn(indices);
+            }
+            switch (index) {
+                case 0:
+                    return toColumn(rows);
+                case 1:
+                    return toColumn(columns);
+                case 2:
+                    return toColumn(foundValues);
+                default:
+                    return MultiArray.emptyArray();
+            }
+        });
+    };
+
+    /**
+     * Sort elements along a dimension.
+     * @param M Input value.
+     * @param args Optional dimension and direction.
+     * @returns Sorted values and sorting indices.
+     */
+    public static readonly sort = (M: ElementType, ...args: ElementType[]): NodeReturnList => {
+        AST.throwInvalidCallError('sort', args.length > 2);
+        const MA = MultiArray.scalarToMultiArray(M);
+        let dim: number | undefined;
+        let direction = 'ascend';
+        if (args.length >= 1) {
+            if (CharString.isInstanceOf(args[0])) {
+                direction = args[0].str;
+            } else {
+                dim = Complex.realToNumber(MultiArray.firstElement(args[0]) as ComplexType) - 1;
+            }
+        }
+        if (args.length === 2) {
+            direction = (args[1] as CharString).str;
+        }
+        dim = typeof dim === 'undefined' ? MultiArray.firstNonSingleDimension(MA) : dim;
+        const sorted = new MultiArray(MA.dimension);
+        const indices = new MultiArray(MA.dimension);
+        const outerShape = MA.dimension.slice();
+        outerShape[dim] = 1;
+        const outerLength = outerShape.reduce((p, c) => p * c, 1);
+        for (let n = 0; n < outerLength; n++) {
+            const baseSubscript = MultiArray.linearIndexToSubscript(outerShape, n);
+            const slice = Array.from({ length: MA.dimension[dim] ?? 1 }, (_, index) => {
+                const subscript = baseSubscript.slice();
+                subscript[dim] = index + 1;
+                const linearIndex = MultiArray.subscriptToLinearIndex(MA.dimension, subscript);
+                const [row, column] = MultiArray.linearIndexToMultiArrayRowColumn(MA.dimension[0], MA.dimension[1], linearIndex);
+                return { index, value: MA.array[row][column] as ComplexType };
+            }).sort((left, right) => {
+                if (Complex.toBoolean(Complex.eq(left.value, right.value))) {
+                    return left.index - right.index;
+                }
+                const leftBeforeRight = direction === 'descend' ? Complex.gt(left.value, right.value) : Complex.lt(left.value, right.value);
+                return Complex.toBoolean(leftBeforeRight) ? -1 : 1;
+            });
+            for (let index = 0; index < slice.length; index++) {
+                const subscript = baseSubscript.slice();
+                subscript[dim] = index + 1;
+                const linearIndex = MultiArray.subscriptToLinearIndex(MA.dimension, subscript);
+                const [row, column] = MultiArray.linearIndexToMultiArrayRowColumn(MA.dimension[0], MA.dimension[1], linearIndex);
+                sorted.array[row][column] = slice[index].value;
+                indices.array[row][column] = Complex.create(slice[index].index + 1);
+            }
+        }
+        MultiArray.setType(sorted);
+        indices.type = Complex.REAL;
+        return AST.nodeReturnList((evaluated: ReturnHandlerResult, index: number): ElementType =>
+            index === 0 || evaluated.length === 1 ? MultiArray.MultiArrayToScalar(sorted) : MultiArray.MultiArrayToScalar(indices),
+        );
     };
 
     /**
@@ -433,18 +537,21 @@ abstract class CoreFunctions {
                     for (let i = 0; i < result.array.length; i++) {
                         result.array[i] = args[0];
                     }
+                    break;
                 case 1:
                     for (let p = 0; p < result.array.length; p += result.dimension[0]) {
                         for (let i = 0; i < result.dimension[0]; i++) {
                             result.array[p + i] = new Array(result.dimension[1]).fill(args[1][i]);
                         }
                     }
+                    break;
                 case 2:
                     for (let p = 0, n = 0; p < result.array.length; p += result.dimension[0], n++) {
                         for (let i = 0; i < result.dimension[0]; i++) {
                             result.array[p + i] = new Array(result.dimension[1]).fill(args[2][n]);
                         }
                     }
+                    break;
             }
             return MultiArray.MultiArrayToScalar(result);
         });
@@ -576,10 +683,10 @@ abstract class CoreFunctions {
             return fill;
         } else if (dimension.length === 1) {
             const m = MultiArray.scalarToMultiArray(dimension[0]);
-            if (m.dimension.length > 2 || m.dimension[0] !== 1) {
+            if (!MultiArray.isVector(m)) {
                 throw new Error(`${name} (A): use ${name} (size (A)) instead.`);
             }
-            dims = m.array[0].map((data) => Complex.realToNumber(data as ComplexType));
+            dims = (MultiArray.linearize(m) as ComplexType[]).map((data) => Complex.realToNumber(data));
             if (dims.length === 1) {
                 dims[dims.length] = dims[0];
             }
@@ -661,7 +768,7 @@ abstract class CoreFunctions {
         let imax: ComplexType;
         if (MultiArray.isInstanceOf(range)) {
             const rangeLinearized = MultiArray.linearize(range) as ComplexType[];
-            if (rangeLinearized.length > 1) {
+            if (rangeLinearized.length === 2) {
                 imin = rangeLinearized[0];
                 imax = rangeLinearized[1];
             } else if (rangeLinearized.length > 0) {
@@ -710,6 +817,9 @@ abstract class CoreFunctions {
      * @returns Concatenated arrays horizontally.
      */
     public static readonly horzcat = (...ARRAY: ElementType[]): MultiArray => {
+        if (ARRAY.length === 0) {
+            return MultiArray.emptyArray();
+        }
         return MultiArray.concatenate(1, 'horzcat', ...ARRAY.map((m) => MultiArray.scalarToMultiArray(m)));
     };
 
@@ -719,6 +829,9 @@ abstract class CoreFunctions {
      * @returns Concatenated arrays vertically.
      */
     public static readonly vertcat = (...ARRAY: ElementType[]): MultiArray => {
+        if (ARRAY.length === 0) {
+            return MultiArray.emptyArray();
+        }
         return MultiArray.concatenate(0, 'vertcat', ...ARRAY.map((m) => MultiArray.scalarToMultiArray(m)));
     };
 
@@ -763,17 +876,15 @@ abstract class CoreFunctions {
         let dim: number;
         if (typeof FLAG !== 'undefined') {
             const firstFlag = MultiArray.firstElement(FLAG) as ComplexType;
-            /* if FLAG looks like a dimension and DIM not given */
-            if (Complex.realIsInteger(firstFlag) && Complex.realToNumber(firstFlag) >= 1 && typeof DIM === 'undefined') {
-                dim = Complex.realToNumber(firstFlag) - 1; /* interpret FLAG as DIM */
+            if (typeof DIM === 'undefined' && Complex.realIsInteger(firstFlag) && Complex.realToNumber(firstFlag) > 1) {
+                dim = Complex.realToNumber(firstFlag) - 1;
+            } else if (typeof DIM !== 'undefined') {
+                flag = Complex.realToNumber(firstFlag) === 1 ? 1 : 0;
+                const dimElem = MultiArray.firstElement(DIM) as ComplexType;
+                dim = MultiArray.testInteger(dimElem, 'var', 'DIM', [1, Infinity]) - 1;
             } else {
                 flag = Complex.realToNumber(firstFlag) === 1 ? 1 : 0;
-                if (typeof DIM !== 'undefined') {
-                    const dimElem = MultiArray.firstElement(DIM) as ComplexType;
-                    dim = MultiArray.testInteger(dimElem, 'var', 'DIM', [1, Infinity]) - 1;
-                } else {
-                    dim = MultiArray.firstNonSingleDimension(MA);
-                }
+                dim = MultiArray.firstNonSingleDimension(MA);
             }
         } else {
             /* FLAG undefined */
@@ -895,32 +1006,550 @@ abstract class CoreFunctions {
     };
 
     public static readonly norm = (...args: ElementType[]): ElementType => {
-        if (args.length === 1) {
-            return null as ElementType;
-        } else if (args.length === 2) {
-            if (MultiArray.isInstanceOf(args[0]) && CharString.isInstanceOf(args[1]) && (args[1] as CharString).str === 'fro') {
-                const A = args[0];
-                let sum = Complex.zero();
-                const rows = A.dimension[0];
-                const cols = A.dimension[1];
-                const arr = A.array;
-
-                for (let i = 0; i < rows; i++) {
-                    const row = arr[i];
-                    for (let j = 0; j < cols; j++) {
-                        const a = row[j];
-                        // abs^2
-                        const mag = Complex.abs(a as ComplexType); // retorna ComplexType (real magnitude stored as real)
-                        const magNum = Complex.realToNumber(mag); // pega o número JS
-                        sum = Complex.add(sum, Complex.mul(mag, mag));
-                    }
-                }
-                return Complex.sqrt(sum);
+        AST.throwInvalidCallError('norm', args.length < 1 || args.length > 2);
+        const absValues = (MultiArray.linearize(MultiArray.scalarToMultiArray(args[0])) as ComplexType[]).map((value) => Complex.abs(value));
+        const normOrder = args.length === 2 ? args[1] : Complex.create(2);
+        if (CharString.isInstanceOf(normOrder)) {
+            if (normOrder.str !== 'fro') {
+                AST.throwInvalidCallError('norm');
             }
-            return null as ElementType;
+            return Complex.sqrt(absValues.reduce((sum, value) => Complex.add(sum, Complex.mul(value, value)), Complex.zero()));
+        }
+        const p = Complex.realToNumber(MultiArray.firstElement(normOrder) as ComplexType);
+        if (p === Infinity) {
+            return absValues.reduce((max, value) => (Complex.realToNumber(value) > Complex.realToNumber(max) ? value : max), Complex.zero());
+        } else if (p === 1) {
+            return absValues.reduce((sum, value) => Complex.add(sum, value), Complex.zero());
+        } else if (p === 2) {
+            return Complex.sqrt(absValues.reduce((sum, value) => Complex.add(sum, Complex.mul(value, value)), Complex.zero()));
+        } else if (p > 0 && Number.isFinite(p)) {
+            const sum = absValues.reduce((acc, value) => Complex.add(acc, Complex.power(value, Complex.create(p))), Complex.zero());
+            return Complex.power(sum, Complex.create(1 / p));
         } else {
             AST.throwInvalidCallError('norm');
         }
+    };
+
+    public static readonly signatures: Record<string, BuiltInFunctionSignature> = {
+        isempty: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
+        isscalar: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
+        ismatrix: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
+        isvector: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
+        iscell: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
+        isrow: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
+        iscolumn: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
+        isstruct: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
+        ndims: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
+        rows: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
+        columns: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
+        length: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
+        numel: { inputs: { arity: -2, min: 1, parameters: [{ name: 'value' }, { name: 'index', variadic: true }] }, outputs: { arity: 1 } },
+        find: {
+            inputs: [
+                { arity: 1, parameters: [{ name: 'value', classes: ['double'] }] },
+                {
+                    arity: 2,
+                    parameters: [
+                        { name: 'value', classes: ['double'] },
+                        { name: 'count', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
+                    ],
+                },
+                {
+                    arity: 3,
+                    parameters: [
+                        { name: 'value', classes: ['double'] },
+                        { name: 'count', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
+                        { name: 'direction', classes: ['char'], allowedStrings: ['first', 'last'] },
+                    ],
+                },
+            ],
+            outputs: { arity: -3 },
+        },
+        sort: {
+            inputs: [
+                { arity: 1, parameters: [{ name: 'value', classes: ['double'] }] },
+                {
+                    arity: 2,
+                    parameters: [
+                        { name: 'value', classes: ['double'] },
+                        {
+                            name: 'dimensionOrDirection',
+                            alternatives: [
+                                { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
+                                { name: 'direction', classes: ['char'], allowedStrings: ['ascend', 'descend'] },
+                            ],
+                        },
+                    ],
+                },
+                {
+                    arity: 3,
+                    parameters: [
+                        { name: 'value', classes: ['double'] },
+                        { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
+                        { name: 'direction', classes: ['char'], allowedStrings: ['ascend', 'descend'] },
+                    ],
+                },
+            ],
+            outputs: { arity: -2 },
+        },
+        ind2sub: {
+            inputs: {
+                arity: 2,
+                parameters: [
+                    {
+                        name: 'dimensions',
+                        classes: ['double'],
+                        alternatives: [
+                            { name: 'dimension', validators: ['dimension'] },
+                            { name: 'dimensions', validators: ['dimensionVector'] },
+                        ],
+                    },
+                    { name: 'index', classes: ['double'], validators: ['numeric', 'real', 'finite', 'integer', 'positive'] },
+                ],
+            },
+            outputs: { arity: -1 },
+        },
+        sub2ind: {
+            inputs: {
+                arity: -2,
+                min: 2,
+                parameters: [
+                    {
+                        name: 'dimensions',
+                        classes: ['double'],
+                        alternatives: [
+                            { name: 'dimension', validators: ['dimension'] },
+                            { name: 'dimensions', validators: ['dimensionVector'] },
+                        ],
+                    },
+                    { name: 'subscript', classes: ['double'], validators: ['numeric', 'real', 'finite', 'integer', 'positive'], variadic: true },
+                ],
+            },
+            outputs: { arity: 1 },
+        },
+        size: {
+            inputs: [
+                { arity: 1, parameters: [{ name: 'value' }] },
+                {
+                    arity: -2,
+                    min: 2,
+                    parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['numeric', 'positive', 'integer', 'real'], variadic: true }],
+                },
+            ],
+            outputs: { arity: -1 },
+        },
+        zeros: {
+            inputs: [
+                { arity: 0 },
+                {
+                    arity: 1,
+                    parameters: [
+                        {
+                            name: 'dimension',
+                            classes: ['double'],
+                            alternatives: [
+                                { name: 'dimension', validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
+                                { name: 'dimensions', validators: ['numeric', 'vector', 'real', 'finite', 'integer', 'nonnegative'] },
+                            ],
+                        },
+                    ],
+                },
+                {
+                    arity: -2,
+                    min: 2,
+                    parameters: [{ name: 'dimension', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'], variadic: true }],
+                },
+            ],
+            outputs: { arity: 1 },
+        },
+        ones: {
+            inputs: [
+                { arity: 0 },
+                {
+                    arity: 1,
+                    parameters: [
+                        {
+                            name: 'dimension',
+                            classes: ['double'],
+                            alternatives: [
+                                { name: 'dimension', validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
+                                { name: 'dimensions', validators: ['numeric', 'vector', 'real', 'finite', 'integer', 'nonnegative'] },
+                            ],
+                        },
+                    ],
+                },
+                {
+                    arity: -2,
+                    min: 2,
+                    parameters: [{ name: 'dimension', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'], variadic: true }],
+                },
+            ],
+            outputs: { arity: 1 },
+        },
+        rand: {
+            inputs: [
+                { arity: 0 },
+                {
+                    arity: 1,
+                    parameters: [
+                        {
+                            name: 'dimension',
+                            classes: ['double'],
+                            alternatives: [
+                                { name: 'dimension', validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
+                                { name: 'dimensions', validators: ['numeric', 'vector', 'real', 'finite', 'integer', 'nonnegative'] },
+                            ],
+                        },
+                    ],
+                },
+                {
+                    arity: -2,
+                    min: 2,
+                    parameters: [{ name: 'dimension', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'], variadic: true }],
+                },
+            ],
+            outputs: { arity: 1 },
+        },
+        randi: {
+            inputs: [
+                {
+                    arity: 1,
+                    parameters: [
+                        {
+                            name: 'range',
+                            alternatives: [
+                                { name: 'imax', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'positive'] },
+                                { name: 'bounds', classes: ['double'], validators: ['numeric', 'vector', 'twoElement', 'real', 'finite', 'integer'] },
+                            ],
+                        },
+                    ],
+                },
+                {
+                    arity: 2,
+                    parameters: [
+                        {
+                            name: 'range',
+                            alternatives: [
+                                { name: 'imax', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'positive'] },
+                                { name: 'bounds', classes: ['double'], validators: ['numeric', 'vector', 'twoElement', 'real', 'finite', 'integer'] },
+                            ],
+                        },
+                        {
+                            name: 'dimension',
+                            classes: ['double'],
+                            alternatives: [
+                                { name: 'dimension', validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
+                                { name: 'dimensions', validators: ['numeric', 'vector', 'real', 'finite', 'integer', 'nonnegative'] },
+                            ],
+                        },
+                    ],
+                },
+                {
+                    arity: -3,
+                    min: 3,
+                    parameters: [
+                        {
+                            name: 'range',
+                            alternatives: [
+                                { name: 'imax', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'positive'] },
+                                { name: 'bounds', classes: ['double'], validators: ['numeric', 'vector', 'twoElement', 'real', 'finite', 'integer'] },
+                            ],
+                        },
+                        { name: 'dimension', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'], variadic: true },
+                    ],
+                },
+            ],
+            outputs: { arity: 1 },
+        },
+        reshape: {
+            inputs: [
+                {
+                    arity: 2,
+                    parameters: [
+                        { name: 'value' },
+                        {
+                            name: 'dimensions',
+                            classes: ['double'],
+                            alternatives: [
+                                { name: 'dimension', validators: ['reshapeDimension'] },
+                                { name: 'dimensions', validators: ['reshapeDimensionVector'] },
+                            ],
+                        },
+                    ],
+                },
+                {
+                    arity: -3,
+                    min: 3,
+                    parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['reshapeDimension'], variadic: true }],
+                },
+            ],
+            outputs: { arity: 1 },
+        },
+        repmat: {
+            inputs: [
+                {
+                    arity: 2,
+                    parameters: [
+                        { name: 'value' },
+                        {
+                            name: 'dimensions',
+                            classes: ['double'],
+                            alternatives: [
+                                { name: 'dimension', validators: ['dimension'] },
+                                { name: 'dimensions', validators: ['dimensionVector'] },
+                            ],
+                        },
+                    ],
+                },
+                {
+                    arity: -3,
+                    min: 3,
+                    parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension'], variadic: true }],
+                },
+            ],
+            outputs: { arity: 1 },
+        },
+        squeeze: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
+        colon: {
+            inputs: {
+                arity: -3,
+                min: 2,
+                max: 3,
+                parameters: [
+                    { name: 'start', classes: ['double'], validators: ['scalar'] },
+                    { name: 'incrementOrEnd', classes: ['double'], validators: ['scalar'] },
+                    { name: 'end', classes: ['double'], validators: ['scalar'], optional: true },
+                ],
+            },
+            outputs: { arity: 1 },
+        },
+        linspace: {
+            inputs: {
+                arity: -3,
+                min: 2,
+                max: 3,
+                parameters: [
+                    { name: 'start', classes: ['double'], validators: ['scalarOrVector'] },
+                    { name: 'end', classes: ['double'], validators: ['scalarOrVector'] },
+                    { name: 'count', classes: ['double'], validators: ['numeric', 'scalar', 'real'], optional: true },
+                ],
+            },
+            outputs: { arity: 1 },
+        },
+        logspace: {
+            inputs: {
+                arity: -3,
+                min: 2,
+                max: 3,
+                parameters: [
+                    { name: 'start', classes: ['double'], validators: ['scalarOrVector'] },
+                    { name: 'end', classes: ['double'], validators: ['scalarOrVector'] },
+                    { name: 'count', classes: ['double'], validators: ['numeric', 'scalar', 'real'], optional: true },
+                ],
+            },
+            outputs: { arity: 1 },
+        },
+        meshgrid: {
+            inputs: { arity: -3, min: 1, max: 3, parameters: [{ name: 'vector', classes: ['double'], validators: ['scalarOrVector'], variadic: true }] },
+            outputs: { arity: -3 },
+        },
+        ndgrid: {
+            inputs: { arity: -1, min: 1, parameters: [{ name: 'vector', classes: ['double'], validators: ['scalarOrVector'], variadic: true }] },
+            outputs: { arity: -1 },
+        },
+        cat: {
+            inputs: {
+                arity: -2,
+                min: 2,
+                parameters: [
+                    { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
+                    { name: 'array', variadic: true },
+                ],
+            },
+            outputs: { arity: 1 },
+        },
+        horzcat: { inputs: { arity: -1, min: 0, parameters: [{ name: 'array', variadic: true }] }, outputs: { arity: 1 } },
+        vertcat: { inputs: { arity: -1, min: 0, parameters: [{ name: 'array', variadic: true }] }, outputs: { arity: 1 } },
+        all: {
+            inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
+            outputs: { arity: 1 },
+        },
+        any: {
+            inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
+            outputs: { arity: 1 },
+        },
+        sum: {
+            inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
+            outputs: { arity: 1 },
+        },
+        prod: {
+            inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
+            outputs: { arity: 1 },
+        },
+        sumsq: {
+            inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
+            outputs: { arity: 1 },
+        },
+        cumsum: {
+            inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
+            outputs: { arity: 1 },
+        },
+        cumprod: {
+            inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
+            outputs: { arity: 1 },
+        },
+        min: {
+            inputs: [
+                { arity: 1, parameters: [{ name: 'value' }] },
+                {
+                    arity: 2,
+                    parameters: [{ name: 'value' }, { name: 'valueOrDimension', classes: ['double'] }],
+                },
+                {
+                    arity: 3,
+                    parameters: [
+                        { name: 'value' },
+                        { name: 'empty', classes: ['double'], validators: ['empty'] },
+                        { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
+                    ],
+                },
+            ],
+            outputs: { arity: -2 },
+        },
+        max: {
+            inputs: [
+                { arity: 1, parameters: [{ name: 'value' }] },
+                {
+                    arity: 2,
+                    parameters: [{ name: 'value' }, { name: 'valueOrDimension', classes: ['double'] }],
+                },
+                {
+                    arity: 3,
+                    parameters: [
+                        { name: 'value' },
+                        { name: 'empty', classes: ['double'], validators: ['empty'] },
+                        { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
+                    ],
+                },
+            ],
+            outputs: { arity: -2 },
+        },
+        cummin: {
+            inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
+            outputs: { arity: -2 },
+        },
+        cummax: {
+            inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
+            outputs: { arity: -2 },
+        },
+        mean: {
+            inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
+            outputs: { arity: 1 },
+        },
+        var: {
+            inputs: [
+                { arity: 1, parameters: [{ name: 'value' }] },
+                {
+                    arity: 2,
+                    parameters: [
+                        { name: 'value' },
+                        {
+                            name: 'flagOrDimension',
+                            classes: ['double'],
+                            alternatives: [
+                                { name: 'flag', validators: ['numeric', 'scalar', 'real', 'finite', 'zeroOrOne'] },
+                                { name: 'dimension', validators: ['dimensionGreaterThanOne'] },
+                            ],
+                        },
+                    ],
+                },
+                {
+                    arity: 3,
+                    parameters: [
+                        { name: 'value' },
+                        { name: 'flag', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'zeroOrOne'] },
+                        { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
+                    ],
+                },
+            ],
+            outputs: { arity: 1 },
+        },
+        std: {
+            inputs: [
+                { arity: 1, parameters: [{ name: 'value' }] },
+                {
+                    arity: 2,
+                    parameters: [
+                        { name: 'value' },
+                        {
+                            name: 'flagOrDimension',
+                            classes: ['double'],
+                            alternatives: [
+                                { name: 'flag', validators: ['numeric', 'scalar', 'real', 'finite', 'zeroOrOne'] },
+                                { name: 'dimension', validators: ['dimensionGreaterThanOne'] },
+                            ],
+                        },
+                    ],
+                },
+                {
+                    arity: 3,
+                    parameters: [
+                        { name: 'value' },
+                        { name: 'flag', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'zeroOrOne'] },
+                        { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
+                    ],
+                },
+            ],
+            outputs: { arity: 1 },
+        },
+        struct: {
+            inputs: [
+                {
+                    arity: 1,
+                    parameters: [
+                        {
+                            name: 'structOrEmptyArray',
+                            alternatives: [
+                                { name: 'field', classes: ['char'] },
+                                { name: 'struct', classes: ['struct'] },
+                                { name: 'emptyArray', classes: ['double', 'cell', 'array'] },
+                            ],
+                        },
+                    ],
+                },
+                {
+                    arity: -1,
+                    min: 0,
+                    parameters: [
+                        {
+                            name: 'field',
+                            variadic: true,
+                            variadicGroup: [{ name: 'field', classes: ['char'] }, { name: 'value' }],
+                        },
+                    ],
+                },
+            ],
+            outputs: { arity: 1 },
+        },
+        norm: {
+            inputs: [
+                { arity: 1, parameters: [{ name: 'value', classes: ['double'] }] },
+                {
+                    arity: 2,
+                    parameters: [
+                        { name: 'value', classes: ['double'] },
+                        {
+                            name: 'order',
+                            alternatives: [
+                                { name: 'numericOrder', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'positive'], allowInfinity: true },
+                                { name: 'frobeniusOrder', classes: ['char'], allowedStrings: ['fro'] },
+                            ],
+                        },
+                    ],
+                },
+            ],
+            outputs: { arity: 1 },
+        },
     };
 
     /**
@@ -940,6 +1569,8 @@ abstract class CoreFunctions {
         columns: CoreFunctions.columns,
         length: CoreFunctions.Length,
         numel: CoreFunctions.numel,
+        find: CoreFunctions.find,
+        sort: CoreFunctions.sort,
         ind2sub: CoreFunctions.ind2sub,
         sub2ind: CoreFunctions.sub2ind,
         size: CoreFunctions.size,
@@ -973,6 +1604,7 @@ abstract class CoreFunctions {
         var: CoreFunctions.variance,
         std: CoreFunctions.std,
         struct: CoreFunctions.struct,
+        norm: CoreFunctions.norm,
     };
 }
 

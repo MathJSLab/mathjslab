@@ -406,6 +406,9 @@ command returns [node: NodeInput]
     : declaration {
         localctx.node = localctx.declaration().node;
     }
+    | RETURN {
+        localctx.node = AST.nodeReturn();
+    }
     | select_command {
         localctx.node = localctx.select_command().node;
     }
@@ -425,7 +428,7 @@ declaration returns [node: NodeInput]
     } | PERSISTENT {
         localctx.node = AST.nodeDeclarationFirst('PERSIST');
     }) (declaration_element {
-        localctx.node = AST.nodeAppendDeclaration(localctx.node, localctx.declaration_element(localctx.i++));
+        localctx.node = AST.nodeAppendDeclaration(localctx.node, localctx.declaration_element(localctx.i++).node);
     })+
     ;
 
@@ -545,7 +548,7 @@ arguments_block_list returns [node: NodeList]
     ;
 
 arguments_block returns [node: NodeArguments]
-    : ARGUMENTS sep? (LPAREN identifier RPAREN)? args_validation_list sep? END {
+    : ARGUMENTS sep? (LPAREN identifier RPAREN sep?)? args_validation_list sep? END {
         localctx.node = AST.nodeArguments(localctx.identifier() ? localctx.identifier().node : null, localctx.args_validation_list().node);
     }
     ;
@@ -560,15 +563,24 @@ args_validation_list returns [node: NodeList]
     ;
 
 arg_validation returns [node: NodeArgumentValidation]
-    : identifier (LPAREN arg_list RPAREN)? identifier? (LCURLYBR arg_list RCURLYBR)? (EQ expression)? {
+    : arg_validation_name (LPAREN arg_list RPAREN)? identifier? (LCURLYBR arg_list RCURLYBR)? (EQ expression)? {
         localctx.node = AST.nodeArgumentValidation(
-            localctx.identifier(0).node,
+            localctx.arg_validation_name().node,
             localctx.LPAREN() ? localctx.arg_list(0).node : AST.nodeListFirst(),
-            localctx.identifier(1) ? localctx.identifier(1).node : AST.nodeListFirst(),
+            localctx.identifier() ? localctx.identifier().node : AST.nodeListFirst(),
             localctx.LCURLYBR() ? (localctx.LPAREN() ? localctx.arg_list(1).node : localctx.arg_list(0).node) : AST.nodeListFirst(),
             localctx.expression() ? localctx.expression().node : null,
         );
     }
+    ;
+
+arg_validation_name returns [node: NodeExpr]
+    locals [i: number = 1]
+    : identifier {
+        localctx.node = localctx.identifier(0).node;
+    } (DOT identifier {
+        localctx.node = AST.nodeIndirectRef(localctx.node, localctx.identifier(localctx.i++).node.id);
+    })*
     ;
 
 /**
