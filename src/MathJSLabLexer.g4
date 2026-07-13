@@ -1,6 +1,6 @@
 lexer grammar MathJSLabLexer;
 
-tokens { GLOBAL, PERSISTENT, IF, ENDIF, END, ENDRANGE, ELSEIF, ELSE, SWITCH, ENDSWITCH, CASE, OTHERWISE, WHILE, ENDWHILE, DO, UNTIL, FOR, ENDFOR, PARFOR, ENDPARFOR,
+tokens { GLOBAL, PERSISTENT, IF, ENDIF, END, ENDRANGE, ELSEIF, ELSE, SWITCH, ENDSWITCH, CASE, OTHERWISE, WHILE, ENDWHILE, DO, UNTIL, FOR, ENDFOR, PARFOR, ENDPARFOR, SPMD, ENDSPMD,
 BREAK, CONTINUE, RETURN, FUNCTION, ENDFUNCTION, TRY, CATCH, END_TRY_CATCH, UNWIND_PROTECT, UNWIND_PROTECT_CLEANUP, END_UNWIND_PROTECT, CLASSDEF, ENDCLASSDEF,
 ENUMERATION, ENDENUMERATION, PROPERTIES, ENDPROPERTIES, EVENTS, ENDEVENTS, METHODS, ENDMETHODS, WSPACE, STRING, ARGUMENTS }
 
@@ -29,6 +29,8 @@ ENUMERATION, ENDENUMERATION, PROPERTIES, ENDPROPERTIES, EVENTS, ENDEVENTS, METHO
 	    'endfor',
 	    'parfor',
 	    'endparfor',
+        'spmd',
+        'endspmd',
 	    'break',
 	    'continue',
 	    'return',
@@ -76,6 +78,8 @@ ENUMERATION, ENDENUMERATION, PROPERTIES, ENDPROPERTIES, EVENTS, ENDEVENTS, METHO
         MathJSLabLexer.ENDFOR,
         MathJSLabLexer.PARFOR,
         MathJSLabLexer.ENDPARFOR,
+        MathJSLabLexer.SPMD,
+        MathJSLabLexer.ENDSPMD,
         MathJSLabLexer.BREAK,
         MathJSLabLexer.CONTINUE,
         MathJSLabLexer.RETURN,
@@ -99,14 +103,19 @@ ENUMERATION, ENDENUMERATION, PROPERTIES, ENDPROPERTIES, EVENTS, ENDEVENTS, METHO
         MathJSLabLexer.ENDMETHODS,
         MathJSLabLexer.ARGUMENTS,
     ];
+    public static readonly keywordTypeByName: Map<string, number> = new Map(
+        MathJSLabLexer.keywordNames
+            .map((name, index): [string, number] | undefined => (name ? [name, MathJSLabLexer.keywordTypes[index]] : undefined))
+            .filter((entry): entry is [string, number] => typeof entry !== 'undefined')
+    );
     /**
      * Word-list commands.
      */
-    public commandNames: string[] = [];
+    public commandNames: Set<string> = new Set();
     /**
      * Expression marks that indicate non-termination.
      */
-    public static readonly nonTerminalSign: number[] = [
+    public static readonly nonTerminalSign: Set<number> = new Set([
         MathJSLabLexer.PLUS,
         MathJSLabLexer.MINUS,
         MathJSLabLexer.MUL,
@@ -116,6 +125,7 @@ ENUMERATION, ENDENUMERATION, PROPERTIES, ENDPROPERTIES, EVENTS, ENDEVENTS, METHO
         MathJSLabLexer.TILDE,
         MathJSLabLexer.EXCLAMATION,
         MathJSLabLexer.COMMAT,
+        MathJSLabLexer.QUESTION,
         MathJSLabLexer.LPAREN,
         MathJSLabLexer.LBRACKET,
         MathJSLabLexer.LCURLYBR,
@@ -149,7 +159,7 @@ ENUMERATION, ENDENUMERATION, PROPERTIES, ENDPROPERTIES, EVENTS, ENDEVENTS, METHO
         MathJSLabLexer.MINUS_MINUS,
         MathJSLabLexer.POW,
         MathJSLabLexer.EPOW
-    ];
+    ]);
     /**
      * Lexer context.
      */
@@ -157,6 +167,10 @@ ENUMERATION, ENDENUMERATION, PROPERTIES, ENDPROPERTIES, EVENTS, ENDEVENTS, METHO
     public previousTokenType: number = Token.EOF;
     /* Open parenthesis count. */
     public parenthesisCount: number = 0;
+    /* Token that is waiting for a logical-line continuation. */
+    public continuedTokenType: number | null = null;
+    /* Whether command-style arguments are waiting after an ellipsis. */
+    public commandContinued: boolean = false;
     /* Matrix reading context stack. */
     public matrixContext: number[] = [];
     /* String accumulator. */
@@ -178,6 +192,7 @@ DOT: '.' { this.previousTokenType = MathJSLabLexer.DOT; };
 TILDE: '~' { this.previousTokenType = MathJSLabLexer.TILDE; };
 EXCLAMATION: '!' { this.previousTokenType = MathJSLabLexer.EXCLAMATION; };
 COMMAT: '@' { this.previousTokenType = MathJSLabLexer.COMMAT; };
+QUESTION: '?' { this.previousTokenType = MathJSLabLexer.QUESTION; };
 LPAREN: '(' {
     if (this.matrixContext.length > 0) {
         this.matrixContext.push(MathJSLabLexer.LPAREN);
@@ -189,7 +204,7 @@ RPAREN: ')' {
     if (this.matrixContext.length > 0) {
         this.matrixContext.pop();
     }
-    this.parenthesisCount--;
+    this.parenthesisCount = Math.max(0, this.parenthesisCount - 1);
     this.previousTokenType = MathJSLabLexer.RPAREN;
 };
 LBRACKET: '[' {
@@ -268,17 +283,17 @@ IDENTIFIER
         if (this.previousTokenType === MathJSLabLexer.DOT) {
             this.previousTokenType = MathJSLabLexer.IDENTIFIER;
         } else {
-            let i = MathJSLabLexer.keywordNames.indexOf(this.text);
-            if (i >= 0) {
-                switch (MathJSLabLexer.keywordTypes[i]) {
+            const keywordType = MathJSLabLexer.keywordTypeByName.get(this.text);
+            if (typeof keywordType !== 'undefined') {
+                switch (keywordType) {
                     case MathJSLabLexer.END:
                         this._type = this.previousTokenType = (this.parenthesisCount > 0 || this.matrixContext.length > 0) ? MathJSLabLexer.ENDRANGE : MathJSLabLexer.END;
                         break;
                     default:
-                        this._type = this.previousTokenType = MathJSLabLexer.keywordTypes[i];
+                        this._type = this.previousTokenType = keywordType;
                 }
             } else {
-                i = this.commandNames.indexOf(this.text);
+                const isCommandName = this.commandNames.has(this.text);
                 const isCommandPosition =
                     this.previousTokenType === Token.EOF ||
                     this.previousTokenType === MathJSLabLexer.NEWLINE ||
@@ -288,7 +303,7 @@ IDENTIFIER
                 while (next === 9 || next === 32) {
                     next = this._input.LA(++offset);
                 }
-                if (i >= 0 && isCommandPosition && next !== 40) {
+                if (isCommandName && isCommandPosition && next !== 40) {
                     this.pushMode(MathJSLabLexer.ANY_AS_STRING_UNTIL_END_OF_LINE);
                 }
                 this.previousTokenType = MathJSLabLexer.IDENTIFIER;
@@ -315,14 +330,24 @@ NUMBER_DOT_OP
     }
     ;
 
+LINE_CONTINUATION
+    : '...' ~[\r\n]* NL {
+        this.continuedTokenType = this.previousTokenType;
+        this.skip();
+    }
+    ;
+
 SPACE_OR_CONTINUATION
     : SPACE ( '...' ~[\r\n]* NL )? {
+        if (this.text.includes('...')) {
+            this.continuedTokenType = this.previousTokenType;
+        }
         if (this.matrixContext.length > 0 &&
             this.previousTokenType !== MathJSLabLexer.LBRACKET &&
             this.previousTokenType !== MathJSLabLexer.COMMA &&
             this.previousTokenType !== MathJSLabLexer.SEMICOLON &&
             this.matrixContext[this.matrixContext.length-1] !== MathJSLabLexer.LPAREN &&
-            MathJSLabLexer.nonTerminalSign.indexOf(this.previousTokenType) < 0
+            !MathJSLabLexer.nonTerminalSign.has(this.previousTokenType)
         ) {
             this._type = this.previousTokenType = MathJSLabLexer.WSPACE;
         } else {
@@ -333,7 +358,11 @@ SPACE_OR_CONTINUATION
 
 NEWLINE
     : NL {
-        if (this.matrixContext.length > 0 &&
+        if (this.continuedTokenType === this.previousTokenType) {
+            this.skip();
+        } else if (this.parenthesisCount > 0) {
+            this.skip();
+        } else if (this.matrixContext.length > 0 &&
             (this.previousTokenType === MathJSLabLexer.LBRACKET ||
             this.previousTokenType === MathJSLabLexer.COMMA ||
             this.previousTokenType === MathJSLabLexer.SEMICOLON)
@@ -348,13 +377,23 @@ NEWLINE
 BLOCK_COMMENT_START
     : SPACE? CCHAR '{' SPACE? NL {
         this.pushMode(MathJSLabLexer.BLOCK_COMMENT);
-        this._type = this.previousTokenType = MathJSLabLexer.NEWLINE;
+        if (this.continuedTokenType === this.previousTokenType || this.parenthesisCount > 0) {
+            this.skip();
+        } else {
+            this._type = this.previousTokenType = MathJSLabLexer.NEWLINE;
+        }
     }
     ;
 
 COMMENT_LINE
     : CCHAR ~[\r\n]* (NL {
-        this._type = this.previousTokenType = MathJSLabLexer.NEWLINE;
+        if (this.continuedTokenType === this.previousTokenType) {
+            this.skip();
+        } else if (this.parenthesisCount > 0) {
+            this.skip();
+        } else {
+            this._type = this.previousTokenType = MathJSLabLexer.NEWLINE;
+        }
     } | EOF {
         this._type = this.previousTokenType = MathJSLabLexer.EOF;
     })
@@ -485,8 +524,48 @@ BLOCK_COMMENT_EOF
 
 mode ANY_AS_STRING_UNTIL_END_OF_LINE;
 
+COMMAND_LINE_CONTINUATION
+    : '...' ~[\r\n]* NL {
+        this.commandContinued = true;
+        this.skip();
+    }
+    ;
+
+COMMAND_CONTINUED_BLOCK_COMMENT_START
+    : {this.commandContinued}? SPACE? CCHAR '{' SPACE? NL {
+        this.pushMode(MathJSLabLexer.BLOCK_COMMENT);
+        this.skip();
+    }
+    ;
+
+COMMAND_CONTINUED_COMMENT_LINE
+    : {this.commandContinued}? CCHAR ~[\r\n]* NL -> skip
+    ;
+
+COMMAND_CONTINUED_NEWLINE
+    : {this.commandContinued}? NL -> skip
+    ;
+
 SKIP_SPACE
     : SPACE -> skip
+    ;
+
+COMMAND_DQSTRING
+    : '"' {
+        this.commandContinued = false;
+        this.pushMode(MathJSLabLexer.DQ_STRING);
+        this.quotedString = '';
+        this.skip();
+    }
+    ;
+
+COMMAND_SQSTRING
+    : '\'' {
+        this.commandContinued = false;
+        this.pushMode(MathJSLabLexer.SQ_STRING);
+        this.quotedString = '';
+        this.skip();
+    }
     ;
 
 SKIP_COMMENT_LINE
@@ -495,6 +574,7 @@ SKIP_COMMENT_LINE
 
 EXIT_AT_NEWLINE
     : NL {
+        this.commandContinued = false;
         this.popMode();
         this._type = this.previousTokenType = MathJSLabLexer.NEWLINE;
     }
@@ -502,13 +582,15 @@ EXIT_AT_NEWLINE
 
 EXIT_AT_EOF
     : EOF {
+        this.commandContinued = false;
         this.popMode();
         this._type = this.previousTokenType = MathJSLabLexer.EOF;
     }
     ;
 
 UNQUOTED_STRING
-    : ~[ \t\r\n]+ {
+    : ~[ \t\r\n"']+ {
+        this.commandContinued = false;
         this.previousTokenType = MathJSLabLexer.UNQUOTED_STRING;
     }
     ;

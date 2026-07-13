@@ -2,21 +2,27 @@ import { type ComplexType, Complex } from './Complex';
 import { type ElementType, MultiArray } from './MultiArray';
 import { BLAS } from './BLAS';
 import { LAPACK } from './LAPACK';
-import { type BuiltInFunctionSignature, type NodeExpr, type NodeReturnList, AST, ReturnHandlerResult } from './AST';
+import { type BuiltInFunctionSignature, type NodeExpr, type NodeReturnList, AST, type FunctionSignatureEntry, ReturnHandlerResult } from './AST';
 
 /**
- * `LinearAlgebra` configuration options type.
+ * Runtime configuration for higher-level linear algebra algorithms.
  */
 type LinearAlgebraConfig = {
     /**
-     * LU Waste.
+     * Numerical tolerance used to treat small LU pivots/residuals as zero.
      */
     wasteLU: number;
+    /**
+     * Small phase-normalization threshold used by QR/LQ decompositions.
+     */
     qrPhaseEpsilon: number;
 };
 
+/** Public list of accepted `LinearAlgebra.set` configuration keys. */
 export const LinearAlgebraConfigKeyTable: (keyof LinearAlgebraConfig)[] = ['wasteLU', 'qrPhaseEpsilon'];
+const LinearAlgebraConfigKeySet = new Set<keyof LinearAlgebraConfig>(LinearAlgebraConfigKeyTable);
 
+/** Default configuration values used to initialize `LinearAlgebra.settings`. */
 const defaultSettings: Partial<LinearAlgebraConfig> = {
     wasteLU: 1e-15,
     qrPhaseEpsilon: 1e-300,
@@ -25,7 +31,12 @@ const defaultSettings: Partial<LinearAlgebraConfig> = {
 /**
  * # LinearAlgebra
  *
- * LinearAlgebra abstract class. Implements static methods related to linear algebra operations and algorithms.
+ * MATLAB/Octave-facing linear algebra built-ins and decomposition helpers.
+ *
+ * This layer adapts `MultiArray` values to the lower-level BLAS/LAPACK-style
+ * routines and publishes built-in signature metadata used by interpreter call
+ * validation. Keep public methods aligned with MATLAB/Octave behavior first;
+ * internal helper methods may expose more algorithm-specific shapes.
  *
  * ## References
  *
@@ -35,23 +46,25 @@ const defaultSettings: Partial<LinearAlgebraConfig> = {
  */
 abstract class LinearAlgebra {
     /**
-     * `LinearAlgebra` default settings.
+     * Immutable snapshot of default linear-algebra settings.
      */
     public static readonly defaultSettings: LinearAlgebraConfig = Object.assign({}, defaultSettings as LinearAlgebraConfig);
 
     /**
-     * `LinearAlgebra` current settings.
+     * Mutable current linear-algebra settings.
      */
     public static readonly settings: LinearAlgebraConfig = LinearAlgebra.defaultSettings;
 
     /**
-     * Set configuration options for `LinearAlgebra`.
-     * @param config Configuration options.
+     * Update linear-algebra runtime configuration.
+     *
+     * @param config Partial configuration object.
+     * @throws Error when a configuration key is unknown.
      */
     public static readonly set = (config: Partial<LinearAlgebraConfig>): void => {
         const entries = Object.entries(config);
         entries.forEach((entry) => {
-            if (LinearAlgebraConfigKeyTable.includes(entry[0] as keyof LinearAlgebraConfig)) {
+            if (LinearAlgebraConfigKeySet.has(entry[0] as keyof LinearAlgebraConfig)) {
                 LinearAlgebra.settings[entry[0] as keyof LinearAlgebraConfig] = entry[1];
             } else {
                 throw new Error(`LinearAlgebra.set: invalid configuration parameter: ${entry[0]}`);
@@ -60,12 +73,43 @@ abstract class LinearAlgebra {
     };
 
     /**
-     * Identity matrix
+     * Signature metadata for the MATLAB/Octave `eye` built-in.
+     */
+    public static readonly eyeSignature: BuiltInFunctionSignature = {
+        inputs: [
+            { arity: 0 },
+            {
+                arity: 1,
+                parameters: [
+                    {
+                        name: 'dimensions',
+                        classes: ['double'],
+                        alternatives: [
+                            { name: 'dimension', validators: ['dimension'] },
+                            { name: 'dimensions', validators: ['dimensionVector', 'oneOrTwoElement'] },
+                        ],
+                    },
+                ],
+            },
+            {
+                arity: 2,
+                parameters: [
+                    { name: 'rows', classes: ['double'], validators: ['dimension'] },
+                    { name: 'columns', classes: ['double'], validators: ['dimension'] },
+                ],
+            },
+        ],
+        outputs: { arity: 1 },
+    };
+    /**
+     * Create an identity matrix or scalar identity value.
+     *
+     * Supported forms mirror MATLAB/Octave: `eye()`, `eye(n)`, `eye([m n])`,
+     * and `eye(m, n)`.
+     *
      * @param args
-     * * `eye(N)` - create identity N x N
-     * * `eye(N,M)` - create identity N x M
-     * * `eye([N,M])` - create identity N x M
-     * @returns Identity matrix
+     * Dimension arguments.
+     * @returns Identity scalar or matrix.
      */
     public static readonly eye = (...args: MultiArray[] | ComplexType[]): MultiArray | ComplexType => {
         let rows: number = 0;
@@ -108,9 +152,38 @@ abstract class LinearAlgebra {
     };
 
     /**
-     * Return a diagonal matrix with vector V on diagonal K.
-     * @param args
-     * @returns
+     * Signature metadata for the MATLAB/Octave `diag` built-in.
+     */
+    public static readonly diagSignature: BuiltInFunctionSignature = {
+        inputs: [
+            { arity: 1, parameters: [{ name: 'value', classes: ['double'] }] },
+            {
+                arity: 2,
+                parameters: [
+                    { name: 'value', classes: ['double'] },
+                    { name: 'offset', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer'] },
+                ],
+            },
+            {
+                arity: 3,
+                parameters: [
+                    { name: 'value', classes: ['double'], validators: ['vector'] },
+                    { name: 'rows', classes: ['double'], validators: ['dimension'] },
+                    { name: 'columns', classes: ['double'], validators: ['dimension'] },
+                ],
+            },
+        ],
+        outputs: { arity: 1 },
+    };
+    /**
+     * Extract a diagonal vector from a matrix or create a diagonal matrix from
+     * a vector/scalar.
+     *
+     * The one- and two-argument forms follow MATLAB/Octave `diag`; the
+     * three-argument form creates an explicit `m` by `n` diagonal matrix.
+     *
+     * @param args Value, optional offset, and optional explicit dimensions.
+     * @returns Diagonal vector or matrix.
      */
     public static readonly diag = (...args: MultiArray[] | ComplexType[]): MultiArray => {
         let result: MultiArray;
@@ -166,6 +239,10 @@ abstract class LinearAlgebra {
         return result!;
     };
 
+    public static readonly traceSignature: BuiltInFunctionSignature = {
+        inputs: { arity: 1, parameters: [{ name: 'matrix', classes: ['double'], validators: ['matrix2d'] }] },
+        outputs: { arity: 1 },
+    };
     /**
      * Sum of diagonal elements.
      * @param M Matrix.
@@ -200,24 +277,42 @@ abstract class LinearAlgebra {
         }
     };
 
+    public static readonly transposeSignature: BuiltInFunctionSignature = {
+        inputs: { arity: 1, parameters: [{ name: 'value', classes: ['double'] }] },
+        outputs: { arity: 1 },
+    };
     /**
      * Transpose.
      * @param M Matrix.
      * @returns Transpose matrix.
      */
-    public static readonly transpose = (M: MultiArray): MultiArray => {
-        return LinearAlgebra.applyTranspose(M);
+    public static readonly transpose = <T extends MultiArray | ComplexType>(M: T): T => {
+        return (Complex.isInstanceOf(M) ? Complex.copy(M as ComplexType) : LinearAlgebra.applyTranspose(M as MultiArray)) as T;
     };
 
+    public static readonly ctransposeSignature: BuiltInFunctionSignature = {
+        inputs: { arity: 1, parameters: [{ name: 'value', classes: ['double'] }] },
+        outputs: { arity: 1 },
+    };
     /**
      * Complex conjugate transpose.
      * @param M Matrix.
      * @returns Complex conjugate transpose matrix.
      */
-    public static readonly ctranspose = (M: MultiArray): MultiArray => {
-        return LinearAlgebra.applyTranspose(M, (value: ComplexType) => Complex.conj(value));
+    public static readonly ctranspose = <T extends MultiArray | ComplexType>(M: T): T => {
+        return (Complex.isInstanceOf(M) ? Complex.conj(M as ComplexType) : LinearAlgebra.applyTranspose(M as MultiArray, (value: ComplexType) => Complex.conj(value))) as T;
     };
 
+    public static readonly mulSignature: BuiltInFunctionSignature = {
+        inputs: {
+            arity: 2,
+            parameters: [
+                { name: 'left', classes: ['double'], validators: ['matrix2d'] },
+                { name: 'right', classes: ['double'], validators: ['matrix2d'] },
+            ],
+        },
+        outputs: { arity: 1 },
+    };
     /**
      * Matrix product.
      * @param left Matrix.
@@ -244,6 +339,16 @@ abstract class LinearAlgebra {
         }
     }
 
+    public static readonly powerSignature: BuiltInFunctionSignature = {
+        inputs: {
+            arity: 2,
+            parameters: [
+                { name: 'matrix', classes: ['double'], validators: ['squareMatrix'] },
+                { name: 'exponent', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer'] },
+            ],
+        },
+        outputs: { arity: 1 },
+    };
     /**
      * Matrix power (multiple multiplication).
      * @param left
@@ -283,6 +388,10 @@ abstract class LinearAlgebra {
         }
     };
 
+    public static readonly detSignature: BuiltInFunctionSignature = {
+        inputs: { arity: 1, parameters: [{ name: 'matrix', classes: ['double'], validators: ['squareMatrix'] }] },
+        outputs: { arity: 1 },
+    };
     /**
      * Matrix determinant using LU decomposition with pivot sign correction.
      * Uses `LinearAlgebra.luDecomposition`.
@@ -358,6 +467,10 @@ abstract class LinearAlgebra {
         return { L, U, P, swaps };
     };
 
+    public static readonly luSignature: BuiltInFunctionSignature = {
+        inputs: { arity: 1, parameters: [{ name: 'matrix', classes: ['double'], validators: ['squareMatrix'] }] },
+        outputs: { arity: -3 },
+    };
     /**
      * PLU matrix factorization.
      * @param M Matrix.
@@ -389,6 +502,10 @@ abstract class LinearAlgebra {
         );
     };
 
+    public static readonly invSignature: BuiltInFunctionSignature = {
+        inputs: { arity: 1, parameters: [{ name: 'matrix', classes: ['double'], validators: ['squareMatrix'] }] },
+        outputs: { arity: 1 },
+    };
     /**
      * Returns the inverse of matrix `M`.
      * inv(A) wrapper using LAPACK.getrf_blocked + LAPACK.getrs.
@@ -431,6 +548,16 @@ abstract class LinearAlgebra {
         }
     };
 
+    public static readonly gaussSignature: BuiltInFunctionSignature = {
+        inputs: {
+            arity: 2,
+            parameters: [
+                { name: 'matrix', classes: ['double'], validators: ['squareMatrix'] },
+                { name: 'rightHandSide', classes: ['double'] },
+            ],
+        },
+        outputs: { arity: 1 },
+    };
     /**
      * Gaussian elimination algorithm for solving systems of linear equations.
      * Adapted from: https://github.com/itsravenous/gaussian-elimination
@@ -448,7 +575,7 @@ abstract class LinearAlgebra {
         let i: number, k: number, j: number;
         const DMin = Math.min(m.dimension[0], m.dimension[1]);
         if (DMin === m.dimension[1]) {
-            m = LinearAlgebra.transpose(m);
+            m = LinearAlgebra.transpose(m) as MultiArray;
         }
         /* Just make a single matrix */
         for (i = 0; i < A.dimension[0]; i++) {
@@ -495,6 +622,19 @@ abstract class LinearAlgebra {
         return X;
     };
 
+    public static readonly dotSignature: BuiltInFunctionSignature = {
+        inputs: {
+            arity: -3,
+            min: 2,
+            max: 3,
+            parameters: [
+                { name: 'left', classes: ['double'] },
+                { name: 'right', classes: ['double'] },
+                { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true },
+            ],
+        },
+        outputs: { arity: 1 },
+    };
     /**
      * High-performance dot product. Fully ND-aware, column-major, no index
      * conversions (≈2-3× faster). Computes sum(conj(A).*B, dim) with minimal
@@ -592,6 +732,19 @@ abstract class LinearAlgebra {
         return result;
     };
 
+    public static readonly crossSignature: BuiltInFunctionSignature = {
+        inputs: {
+            arity: -3,
+            min: 2,
+            max: 3,
+            parameters: [
+                { name: 'left', classes: ['double'] },
+                { name: 'right', classes: ['double'] },
+                { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true },
+            ],
+        },
+        outputs: { arity: 1 },
+    };
     /**
      * Cross product along dimension `dim` (MATLAB semantics).
      * A and B must have the same size except along `dim` where size must be 3.
@@ -719,6 +872,16 @@ abstract class LinearAlgebra {
         return C;
     };
 
+    public static readonly kronSignature: BuiltInFunctionSignature = {
+        inputs: {
+            arity: 2,
+            parameters: [
+                { name: 'left', classes: ['double'], validators: ['matrix2d'] },
+                { name: 'right', classes: ['double'], validators: ['matrix2d'] },
+            ],
+        },
+        outputs: { arity: 1 },
+    };
     /**
      *
      * @param A
@@ -1002,6 +1165,10 @@ abstract class LinearAlgebra {
         }
     };
 
+    public static readonly qrSignature: BuiltInFunctionSignature = {
+        inputs: { arity: 1, parameters: [{ name: 'matrix', classes: ['double'], validators: ['matrix2d'] }] },
+        outputs: { arity: -3 },
+    };
     /**
      *
      * @param M
@@ -1257,6 +1424,10 @@ abstract class LinearAlgebra {
         }
     };
 
+    public static readonly eigSignature: BuiltInFunctionSignature = {
+        inputs: { arity: 1, parameters: [{ name: 'matrix', classes: ['double'], validators: ['squareMatrix'] }] },
+        outputs: { arity: -3 },
+    };
     /**
      * MATLAB/Octave-style wrapper for `eig`.
      *
@@ -1307,6 +1478,10 @@ abstract class LinearAlgebra {
         );
     };
 
+    public static readonly testSignature: BuiltInFunctionSignature = {
+        inputs: { arity: 1, parameters: [{ name: 'matrix', classes: ['double'], validators: ['squareMatrix'] }] },
+        outputs: { arity: -3 },
+    };
     /**
      * Small return-list fixture used by tests of multiple-output plumbing.
      *
@@ -1356,129 +1531,20 @@ abstract class LinearAlgebra {
     /**
      * LinearAlgebra functions.
      */
-    public static readonly functions: { [F in keyof LinearAlgebra]: Function } = {
-        eye: LinearAlgebra.eye,
-        diag: LinearAlgebra.diag,
-        trace: LinearAlgebra.trace,
-        det: LinearAlgebra.det,
-        inv: LinearAlgebra.inv,
-        gauss: LinearAlgebra.gauss,
-        lu: LinearAlgebra.lu,
-        dot: LinearAlgebra.dot,
-        cross: LinearAlgebra.cross,
-        kron: LinearAlgebra.kron,
-        qr: LinearAlgebra.qr,
-        eig: LinearAlgebra.eig,
-        test: LinearAlgebra.test,
-    };
-
-    /**
-     * Declarative signatures for linear-algebra built-ins.
-     *
-     * The interpreter uses this table for shared arity/class validation before
-     * dispatching to the functions table.
-     */
-    public static readonly signatures: Record<string, BuiltInFunctionSignature> = {
-        eye: {
-            inputs: [
-                { arity: 0 },
-                {
-                    arity: 1,
-                    parameters: [
-                        {
-                            name: 'dimensions',
-                            classes: ['double'],
-                            alternatives: [
-                                { name: 'dimension', validators: ['dimension'] },
-                                { name: 'dimensions', validators: ['dimensionVector', 'oneOrTwoElement'] },
-                            ],
-                        },
-                    ],
-                },
-                {
-                    arity: 2,
-                    parameters: [
-                        { name: 'rows', classes: ['double'], validators: ['dimension'] },
-                        { name: 'columns', classes: ['double'], validators: ['dimension'] },
-                    ],
-                },
-            ],
-            outputs: { arity: 1 },
-        },
-        diag: {
-            inputs: [
-                { arity: 1, parameters: [{ name: 'value', classes: ['double'] }] },
-                {
-                    arity: 2,
-                    parameters: [
-                        { name: 'value', classes: ['double'] },
-                        { name: 'offset', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer'] },
-                    ],
-                },
-                {
-                    arity: 3,
-                    parameters: [
-                        { name: 'value', classes: ['double'], validators: ['vector'] },
-                        { name: 'rows', classes: ['double'], validators: ['dimension'] },
-                        { name: 'columns', classes: ['double'], validators: ['dimension'] },
-                    ],
-                },
-            ],
-            outputs: { arity: 1 },
-        },
-        trace: { inputs: { arity: 1, parameters: [{ name: 'matrix', classes: ['double'], validators: ['matrix2d'] }] }, outputs: { arity: 1 } },
-        det: { inputs: { arity: 1, parameters: [{ name: 'matrix', classes: ['double'], validators: ['squareMatrix'] }] }, outputs: { arity: 1 } },
-        inv: { inputs: { arity: 1, parameters: [{ name: 'matrix', classes: ['double'], validators: ['squareMatrix'] }] }, outputs: { arity: 1 } },
-        gauss: {
-            inputs: {
-                arity: 2,
-                parameters: [
-                    { name: 'matrix', classes: ['double'], validators: ['squareMatrix'] },
-                    { name: 'rightHandSide', classes: ['double'] },
-                ],
-            },
-            outputs: { arity: 1 },
-        },
-        lu: { inputs: { arity: 1, parameters: [{ name: 'matrix', classes: ['double'], validators: ['squareMatrix'] }] }, outputs: { arity: -3 } },
-        dot: {
-            inputs: {
-                arity: -3,
-                min: 2,
-                max: 3,
-                parameters: [
-                    { name: 'left', classes: ['double'] },
-                    { name: 'right', classes: ['double'] },
-                    { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true },
-                ],
-            },
-            outputs: { arity: 1 },
-        },
-        cross: {
-            inputs: {
-                arity: -3,
-                min: 2,
-                max: 3,
-                parameters: [
-                    { name: 'left', classes: ['double'] },
-                    { name: 'right', classes: ['double'] },
-                    { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true },
-                ],
-            },
-            outputs: { arity: 1 },
-        },
-        kron: {
-            inputs: {
-                arity: 2,
-                parameters: [
-                    { name: 'left', classes: ['double'], validators: ['matrix2d'] },
-                    { name: 'right', classes: ['double'], validators: ['matrix2d'] },
-                ],
-            },
-            outputs: { arity: 1 },
-        },
-        qr: { inputs: { arity: 1, parameters: [{ name: 'matrix', classes: ['double'], validators: ['matrix2d'] }] }, outputs: { arity: -3 } },
-        eig: { inputs: { arity: 1, parameters: [{ name: 'matrix', classes: ['double'], validators: ['squareMatrix'] }] }, outputs: { arity: -3 } },
-        test: { inputs: { arity: 1, parameters: [{ name: 'matrix', classes: ['double'], validators: ['squareMatrix'] }] }, outputs: { arity: -3 } },
+    public static readonly functions: { [F in keyof LinearAlgebra | string]: FunctionSignatureEntry } = {
+        eye: { func: LinearAlgebra.eye, signature: LinearAlgebra.eyeSignature },
+        diag: { func: LinearAlgebra.diag, signature: LinearAlgebra.diagSignature },
+        trace: { func: LinearAlgebra.trace, signature: LinearAlgebra.traceSignature },
+        det: { func: LinearAlgebra.det, signature: LinearAlgebra.detSignature },
+        inv: { func: LinearAlgebra.inv, signature: LinearAlgebra.invSignature },
+        gauss: { func: LinearAlgebra.gauss, signature: LinearAlgebra.gaussSignature },
+        lu: { func: LinearAlgebra.lu, signature: LinearAlgebra.luSignature },
+        dot: { func: LinearAlgebra.dot, signature: LinearAlgebra.dotSignature },
+        cross: { func: LinearAlgebra.cross, signature: LinearAlgebra.crossSignature },
+        kron: { func: LinearAlgebra.kron, signature: LinearAlgebra.kronSignature },
+        qr: { func: LinearAlgebra.qr, signature: LinearAlgebra.qrSignature },
+        eig: { func: LinearAlgebra.eig, signature: LinearAlgebra.eigSignature },
+        test: { func: LinearAlgebra.test, signature: LinearAlgebra.testSignature },
     };
 }
 

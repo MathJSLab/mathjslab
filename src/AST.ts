@@ -5,11 +5,20 @@ import { FunctionHandle } from './FunctionHandle';
 import { type ElementType, MultiArray } from './MultiArray';
 
 /**
- * AST (Abstract Syntax Tree).
+ * Normalized AST and runtime node contracts used by parser, evaluator,
+ * unparser, MathML rendering, and diagnostics.
+ *
+ * Parser actions should create nodes through `AST` factory methods whenever
+ * possible. The factories encode parent-pointer conventions, output/answer
+ * suppression flags, and MATLAB/Octave-specific structural choices such as
+ * return lists, command-form calls, `arguments` blocks, and `classdef` sections.
  */
 
 /**
- * Operator type.
+ * Operators accepted by the normalized expression AST.
+ *
+ * Suffix/prefix encodings such as `+_`, `_++`, and `.'` disambiguate source
+ * syntax that shares a token but has different precedence or operand position.
  */
 type OperatorType =
     | '+'
@@ -71,7 +80,12 @@ type OperatorType =
 type IndexingDelimiterType = '()' | '{}';
 
 /**
- * NodeType
+ * Discriminant values for AST nodes and runtime objects that participate in
+ * generic interpreter dispatch.
+ *
+ * Numeric runtime tags are used by value classes such as `Complex`,
+ * `MultiArray`, and class infrastructure objects. String tags are reserved for
+ * parser-created AST nodes.
  */
 type NodeType =
     | 'IDENT'
@@ -93,11 +107,27 @@ type NodeType =
     | 'GLOBAL'
     | 'PERSIST'
     | 'RETURN'
+    | 'BREAK'
+    | 'CONTINUE'
     | 'IF'
     | 'ELSEIF'
     | 'ELSE'
     | 'SWITCH'
     | 'CASE'
+    | 'WHILE'
+    | 'DO_UNTIL'
+    | 'FOR'
+    | 'SPMD'
+    | 'TRY'
+    | 'UNWIND_PROTECT'
+    | 'CLASSDEF'
+    | 'CLASS_SECTION'
+    | 'CLASS_PROPERTY'
+    | 'CLASS_EVENT'
+    | 'CLASS_ENUMERATION'
+    | 'CLASS_ATTRIBUTE'
+    | 'SUPERCLASS_CTOR'
+    | 'METACLASS'
     | OperatorType;
 
 /**
@@ -106,22 +136,27 @@ type NodeType =
 type AliasNameTable = Record<string, RegExp>;
 
 /**
- * Node base.
+ * Common metadata carried by all AST nodes.
+ *
+ * `parent` and `index` are best-effort navigation aids; evaluation logic should
+ * not require them for correctness. `omitOutput` models MATLAB/Octave semicolon
+ * suppression, while `omitAnswer` prevents helper statements such as
+ * declarations and function definitions from updating `ans`.
  */
 interface NodeBase {
-    /* Type of node. */
+    /** Node discriminant. */
     type: NodeType | number;
-    /* Parent node. */
+    /** Parent AST node or runtime wrapper, when known. */
     parent?: any;
-    /* Index number in a parent list. */
+    /** Index inside a parent list, when the node belongs to a list. */
     index?: number;
-    /* To omit output result. */
+    /** Whether evaluation output should be suppressed. */
     omitOutput?: boolean;
-    /* To omit result to be stored in 'ans' variable. */
+    /** Whether the result should avoid assignment to `ans`. */
     omitAnswer?: boolean;
-    /* Source start position */
+    /** Source start position, when supplied by the parser. */
     start?: { line: number; column: number };
-    /* Source stop position */
+    /** Source stop position, when supplied by the parser. */
     stop?: { line: number; column: number };
 }
 
@@ -135,12 +170,36 @@ interface NodeVoid extends NodeBase {
 /**
  * Any AST node that can be used as an executable/evaluable input.
  */
-type NodeInput = NodeExpr | NodeList | NodeDeclaration | NodeReturn | NodeIf | NodeSwitch;
+type NodeInput =
+    | NodeExpr
+    | NodeList
+    | NodeDeclaration
+    | NodeReturn
+    | NodeBreak
+    | NodeContinue
+    | NodeIf
+    | NodeSwitch
+    | NodeWhile
+    | NodeDoUntil
+    | NodeFor
+    | NodeSpmd
+    | NodeTry
+    | NodeUnwindProtect
+    | NodeClassDef
+    | NodeClassSection
+    | NodeClassProperty
+    | NodeClassEvent
+    | NodeClassEnumeration
+    | NodeClassAttribute;
 
 /**
- * Expression node.
+ * AST node that can appear in expression position.
+ *
+ * The `any` tail is retained for historical compatibility with runtime value
+ * classes and generated parser actions. New code should prefer the concrete
+ * node/value types exported from this module.
  */
-type NodeExpr = ElementType | NodeIdentifier | NodeIndexExpr | NodeOperation | NodeRange | NodeIndirectRef | NodeReturnList | any;
+type NodeExpr = ElementType | NodeIdentifier | NodeIndexExpr | NodeSuperclassConstructor | NodeOperation | NodeRange | NodeIndirectRef | NodeReturnList | any;
 
 /**
  * Reserved node.
@@ -178,6 +237,24 @@ interface NodeIndexExpr extends NodeBase {
     exprEvaluated?: NodeExpr;
     args: NodeExpr[];
     delim: IndexingDelimiterType;
+}
+
+/**
+ * Explicit superclass constructor call, e.g. `obj@Base(args...)`.
+ */
+interface NodeSuperclassConstructor extends NodeBase {
+    type: 'SUPERCLASS_CTOR';
+    instance: NodeExpr;
+    superclass: NodeIdentifier;
+    args: NodeExpr[];
+}
+
+/**
+ * Metaclass literal, e.g. `?ClassName`.
+ */
+interface NodeMetaClass extends NodeBase {
+    type: 'METACLASS';
+    className: NodeIdentifier;
 }
 
 /**
@@ -281,6 +358,15 @@ type ReturnHandler = (length: number) => ReturnHandlerResult;
 type ThrowError = (message: string) => never;
 
 /**
+ * Callable implementation stored in built-in registration tables.
+ *
+ * The concrete built-ins use specialized parameter and return types, so the
+ * registry keeps only the common "callable" shape and lets the interpreter
+ * perform the runtime dispatch.
+ */
+type BuiltInFunctionImplementation = (...args: never[]) => unknown;
+
+/**
  * Return list node
  */
 interface NodeReturnList extends NodeBase {
@@ -316,6 +402,11 @@ interface NodeFunction extends NodeBase {
          * as nested by introspection helpers such as `which` and `functions`.
          */
         nested?: boolean;
+
+        /**
+         * Marks a classdef method declaration without an inline function body.
+         */
+        prototype?: boolean;
     };
 }
 
@@ -429,6 +520,11 @@ interface BuiltInFunctionSignature {
     outputs?: BuiltInFunctionArity | BuiltInFunctionArity[];
 }
 
+interface FunctionSignatureEntry {
+    func: BuiltInFunctionImplementation;
+    signature: BuiltInFunctionSignature;
+}
+
 /**
  * Built-in function node registered by the runtime.
  */
@@ -479,7 +575,7 @@ type NameTable = Record<string, NameEntry>;
 /**
  * Forward-reference dependency table keyed by identifier.
  */
-type UndefinedReferenceTable = Record<string, string[]>;
+type UndefinedReferenceTable = Record<string, Set<string>>;
 
 /**
  * `commandWordListFunction` type.
@@ -550,6 +646,20 @@ interface NodeReturn extends NodeBase {
 }
 
 /**
+ * `break` statement node.
+ */
+interface NodeBreak extends NodeBase {
+    type: 'BREAK';
+}
+
+/**
+ * `continue` statement node.
+ */
+interface NodeContinue extends NodeBase {
+    type: 'CONTINUE';
+}
+
+/**
  * `if` statement node.
  */
 interface NodeIf extends NodeBase {
@@ -593,6 +703,123 @@ interface NodeSwitch extends NodeBase {
     expression: NodeExpr;
     cases: NodeSwitchCase[];
     otherwise: NodeList | null;
+}
+
+/**
+ * `while` statement node.
+ */
+interface NodeWhile extends NodeBase {
+    type: 'WHILE';
+    expression: NodeExpr;
+    body: NodeList;
+}
+
+/**
+ * `do ... until` statement node.
+ */
+interface NodeDoUntil extends NodeBase {
+    type: 'DO_UNTIL';
+    body: NodeList;
+    expression: NodeExpr;
+}
+
+/**
+ * `for` statement node.
+ */
+interface NodeFor extends NodeBase {
+    type: 'FOR';
+    target: NodeExpr;
+    expression: NodeExpr;
+    body: NodeList;
+    parallel: boolean;
+}
+
+/**
+ * `spmd` statement node.
+ */
+interface NodeSpmd extends NodeBase {
+    type: 'SPMD';
+    body: NodeList;
+}
+
+/**
+ * `try ... catch` statement node.
+ */
+interface NodeTry extends NodeBase {
+    type: 'TRY';
+    body: NodeList;
+    catchIdentifier: NodeIdentifier | null;
+    catchBody: NodeList | null;
+}
+
+/**
+ * `unwind_protect ... unwind_protect_cleanup` statement node.
+ */
+interface NodeUnwindProtect extends NodeBase {
+    type: 'UNWIND_PROTECT';
+    body: NodeList;
+    cleanup: NodeList;
+}
+
+type ClassSectionKind = 'PROPERTIES' | 'METHODS' | 'EVENTS' | 'ENUMERATION';
+type ClassAttributeTable = Record<string, NodeClassAttribute[]>;
+
+/**
+ * Minimal `classdef` node.
+ */
+interface NodeClassDef extends NodeBase {
+    type: 'CLASSDEF';
+    id: string;
+    attributes: NodeClassAttribute[];
+    attributeTable: ClassAttributeTable;
+    superclasses: NodeIdentifier[];
+    sections: NodeClassSection[];
+}
+
+/**
+ * Section inside a `classdef` block.
+ */
+interface NodeClassSection extends NodeBase {
+    type: 'CLASS_SECTION';
+    kind: ClassSectionKind;
+    attributes: NodeClassAttribute[];
+    attributeTable: ClassAttributeTable;
+    members: NodeList;
+}
+
+/**
+ * Property declaration inside a `properties` section.
+ */
+interface NodeClassProperty extends NodeBase {
+    type: 'CLASS_PROPERTY';
+    id: string;
+    defaultValue: NodeExpr | null;
+}
+
+/**
+ * Event declaration inside an `events` section.
+ */
+interface NodeClassEvent extends NodeBase {
+    type: 'CLASS_EVENT';
+    id: string;
+}
+
+/**
+ * Enumeration declaration inside an `enumeration` section.
+ */
+interface NodeClassEnumeration extends NodeBase {
+    type: 'CLASS_ENUMERATION';
+    id: string;
+    args: NodeExpr[];
+}
+
+/**
+ * Attribute declaration for `classdef`, `properties`, and `methods`.
+ */
+interface NodeClassAttribute extends NodeBase {
+    type: 'CLASS_ATTRIBUTE';
+    id: string;
+    value: NodeExpr | null;
 }
 
 /**
@@ -660,6 +887,16 @@ abstract class AST {
     });
 
     /**
+     * Create a metaclass literal node (`?ClassName`).
+     */
+    public static readonly nodeMetaClass = (className: NodeIdentifier): NodeMetaClass => ({
+        type: 'METACLASS',
+        className,
+        omitAnswer: false,
+        omitOutput: false,
+    });
+
+    /**
      * Create command word list node.
      * @param nodename
      * @param nodelist
@@ -696,6 +933,26 @@ abstract class AST {
             omitOutput: false,
         };
         result.expr.parent = result;
+        result.args.forEach((node) => {
+            node.parent = result;
+        });
+        return result;
+    };
+
+    /**
+     * Create an explicit superclass constructor call node.
+     */
+    public static readonly nodeSuperclassConstructor = (instance: NodeExpr, superclass: NodeIdentifier, args: NodeList | null = null): NodeSuperclassConstructor => {
+        const result: NodeSuperclassConstructor = {
+            type: 'SUPERCLASS_CTOR',
+            instance,
+            superclass,
+            args: args ? (args.list as NodeExpr[]) : [],
+            omitAnswer: false,
+            omitOutput: false,
+        };
+        result.instance.parent = result;
+        result.superclass.parent = result;
         result.args.forEach((node) => {
             node.parent = result;
         });
@@ -748,7 +1005,7 @@ abstract class AST {
      * Node types that, by definition, should omit writing to the `ans`
      * variable.
      */
-    private static readonly omitAnswerNodeOperation: (NodeType | number)[] = [
+    private static readonly omitAnswerNodeOperation = new Set<NodeType | number>([
         '=',
         '+=',
         '-=',
@@ -768,7 +1025,7 @@ abstract class AST {
         '--_',
         '_++',
         '_--',
-    ];
+    ]);
 
     /**
      * Create operator node.
@@ -843,7 +1100,7 @@ abstract class AST {
                 result = { type: `INVALID:${op}` as NodeType } as NodeOperation;
                 break;
         }
-        result.omitAnswer = AST.omitAnswerNodeOperation.includes(result.type);
+        result.omitAnswer = AST.omitAnswerNodeOperation.has(result.type);
         result.omitOutput = false;
         return result;
     };
@@ -1078,6 +1335,18 @@ abstract class AST {
     };
 
     /**
+     * Build a name-keyed view of class attributes while preserving duplicates.
+     */
+    private static readonly nodeClassAttributeTable = (attributes: NodeClassAttribute[]): ClassAttributeTable => {
+        const table: ClassAttributeTable = {};
+        for (const attribute of attributes) {
+            table[attribute.id] ??= [];
+            table[attribute.id].push(attribute);
+        }
+        return table;
+    };
+
+    /**
      * Create one `arguments` block declaration.
      *
      * @param name Identifier or name-value field target.
@@ -1087,16 +1356,28 @@ abstract class AST {
      * @param dflt Default expression.
      * @returns Argument validation node.
      */
-    public static readonly nodeArgumentValidation = (name: NodeExpr, size: NodeList, cl: NodeInput | null = null, functions: NodeList, dflt: NodeExpr = null): NodeArgumentValidation => ({
-        type: 'ARGVALID',
-        name,
-        size: size.list,
-        class: cl,
-        functions: functions.list,
-        default: dflt,
-        omitAnswer: true,
-        omitOutput: true,
-    });
+    public static readonly nodeArgumentValidation = (name: NodeExpr, size: NodeList, cl: NodeInput | null = null, functions: NodeList, dflt: NodeExpr = null): NodeArgumentValidation => {
+        const result = {
+            type: 'ARGVALID',
+            name,
+            size: size.list,
+            class: cl,
+            functions: functions.list,
+            default: dflt,
+            omitAnswer: true,
+            omitOutput: true,
+        } as NodeArgumentValidation;
+        result.name.parent = result;
+        result.size.forEach((node) => (node.parent = result));
+        if (result.class) {
+            result.class.parent = result;
+        }
+        result.functions.forEach((node) => (node.parent = result));
+        if (result.default) {
+            result.default.parent = result;
+        }
+        return result;
+    };
 
     /**
      * Create an `arguments` block.
@@ -1105,13 +1386,20 @@ abstract class AST {
      * @param validationList Declaration list.
      * @returns Arguments block node.
      */
-    public static readonly nodeArguments = (attribute: NodeIdentifier | null, validationList: NodeList): NodeArguments => ({
-        type: 'ARGS',
-        attribute,
-        validation: validationList.list as unknown as NodeArgumentValidation[],
-        omitAnswer: true,
-        omitOutput: true,
-    });
+    public static readonly nodeArguments = (attribute: NodeIdentifier | null, validationList: NodeList): NodeArguments => {
+        const result = {
+            type: 'ARGS',
+            attribute,
+            validation: validationList.list as unknown as NodeArgumentValidation[],
+            omitAnswer: true,
+            omitOutput: true,
+        } as NodeArguments;
+        if (result.attribute) {
+            result.attribute.parent = result;
+        }
+        result.validation.forEach((node) => (node.parent = result));
+        return result;
+    };
 
     /**
      * Create the first node for a `global` or `persistent` declaration list.
@@ -1128,6 +1416,24 @@ abstract class AST {
      */
     public static readonly nodeReturn = (): NodeReturn => ({
         type: 'RETURN',
+        omitAnswer: true,
+        omitOutput: true,
+    });
+
+    /**
+     * Create a `break` statement node.
+     */
+    public static readonly nodeBreak = (): NodeBreak => ({
+        type: 'BREAK',
+        omitAnswer: true,
+        omitOutput: true,
+    });
+
+    /**
+     * Create a `continue` statement node.
+     */
+    public static readonly nodeContinue = (): NodeContinue => ({
+        type: 'CONTINUE',
         omitAnswer: true,
         omitOutput: true,
     });
@@ -1261,6 +1567,214 @@ abstract class AST {
         result.then.parent = result;
         return result;
     };
+
+    /**
+     * Create a `while` statement node.
+     */
+    public static readonly nodeWhile = (expression: NodeExpr, body: NodeList): NodeWhile => {
+        const result = {
+            type: 'WHILE',
+            expression,
+            body,
+            omitAnswer: true,
+            omitOutput: true,
+        } as NodeWhile;
+        result.expression.parent = result;
+        result.body.parent = result;
+        return result;
+    };
+
+    /**
+     * Create a `do ... until` statement node.
+     */
+    public static readonly nodeDoUntil = (body: NodeList, expression: NodeExpr): NodeDoUntil => {
+        const result = {
+            type: 'DO_UNTIL',
+            body,
+            expression,
+            omitAnswer: true,
+            omitOutput: true,
+        } as NodeDoUntil;
+        result.body.parent = result;
+        result.expression.parent = result;
+        return result;
+    };
+
+    /**
+     * Create a `for` statement node.
+     */
+    public static readonly nodeFor = (target: NodeExpr, expression: NodeExpr, body: NodeList, parallel: boolean = false): NodeFor => {
+        const result = {
+            type: 'FOR',
+            target,
+            expression,
+            body,
+            parallel,
+            omitAnswer: true,
+            omitOutput: true,
+        } as NodeFor;
+        result.target.parent = result;
+        result.expression.parent = result;
+        result.body.parent = result;
+        return result;
+    };
+
+    /**
+     * Create an `spmd` statement node.
+     */
+    public static readonly nodeSpmd = (body: NodeList): NodeSpmd => {
+        const result = {
+            type: 'SPMD',
+            body,
+            omitAnswer: true,
+            omitOutput: true,
+        } as NodeSpmd;
+        result.body.parent = result;
+        return result;
+    };
+
+    /**
+     * Create a `try ... catch` statement node.
+     */
+    public static readonly nodeTry = (body: NodeList, catchBody: NodeList | null = null, catchIdentifier: NodeIdentifier | null = null): NodeTry => {
+        const result = {
+            type: 'TRY',
+            body,
+            catchIdentifier,
+            catchBody,
+            omitAnswer: true,
+            omitOutput: true,
+        } as NodeTry;
+        result.body.parent = result;
+        if (result.catchIdentifier) {
+            result.catchIdentifier.parent = result;
+        }
+        if (result.catchBody) {
+            result.catchBody.parent = result;
+        }
+        return result;
+    };
+
+    /**
+     * Create an `unwind_protect ... unwind_protect_cleanup` statement node.
+     */
+    public static readonly nodeUnwindProtect = (body: NodeList, cleanup: NodeList): NodeUnwindProtect => {
+        const result = {
+            type: 'UNWIND_PROTECT',
+            body,
+            cleanup,
+            omitAnswer: true,
+            omitOutput: true,
+        } as NodeUnwindProtect;
+        result.body.parent = result;
+        result.cleanup.parent = result;
+        return result;
+    };
+
+    /**
+     * Create a minimal `classdef` node.
+     */
+    public static readonly nodeClassDef = (
+        id: NodeIdentifier,
+        sections: NodeList,
+        attributes: NodeList = AST.nodeListFirst(),
+        superclasses: NodeList = AST.nodeListFirst(),
+    ): NodeClassDef => {
+        const result = {
+            type: 'CLASSDEF',
+            id: id.id,
+            attributes: attributes.list as unknown as NodeClassAttribute[],
+            attributeTable: {},
+            superclasses: superclasses.list as unknown as NodeIdentifier[],
+            sections: sections.list as unknown as NodeClassSection[],
+            omitAnswer: true,
+            omitOutput: true,
+        } as NodeClassDef;
+        result.attributeTable = AST.nodeClassAttributeTable(result.attributes);
+        result.attributes.forEach((node) => (node.parent = result));
+        result.superclasses.forEach((node) => (node.parent = result));
+        result.sections.forEach((node) => (node.parent = result));
+        return result;
+    };
+
+    /**
+     * Create a `properties` or `methods` section.
+     */
+    public static readonly nodeClassSection = (kind: ClassSectionKind, members: NodeList, attributes: NodeList = AST.nodeListFirst()): NodeClassSection => {
+        const result = {
+            type: 'CLASS_SECTION',
+            kind,
+            attributes: attributes.list as unknown as NodeClassAttribute[],
+            attributeTable: {},
+            members,
+            omitAnswer: true,
+            omitOutput: true,
+        } as NodeClassSection;
+        result.attributeTable = AST.nodeClassAttributeTable(result.attributes);
+        result.attributes.forEach((node) => (node.parent = result));
+        result.members.parent = result;
+        result.members.list.forEach((node) => (node.parent = result));
+        return result;
+    };
+
+    /**
+     * Create a simple class property declaration.
+     */
+    public static readonly nodeClassProperty = (id: NodeIdentifier, defaultValue: NodeExpr | null = null): NodeClassProperty => {
+        const result = {
+            type: 'CLASS_PROPERTY',
+            id: id.id,
+            defaultValue,
+            omitAnswer: true,
+            omitOutput: true,
+        } as NodeClassProperty;
+        if (result.defaultValue) {
+            result.defaultValue.parent = result;
+        }
+        return result;
+    };
+
+    /**
+     * Create a simple class event declaration.
+     */
+    public static readonly nodeClassEvent = (id: NodeIdentifier): NodeClassEvent => ({
+        type: 'CLASS_EVENT',
+        id: id.id,
+        omitAnswer: true,
+        omitOutput: true,
+    });
+
+    /**
+     * Create a class enumeration declaration.
+     */
+    public static readonly nodeClassEnumeration = (id: NodeIdentifier, args: NodeList = AST.nodeListFirst()): NodeClassEnumeration => {
+        const result = {
+            type: 'CLASS_ENUMERATION',
+            id: id.id,
+            args: args.list as unknown as NodeExpr[],
+            omitAnswer: true,
+            omitOutput: true,
+        } as NodeClassEnumeration;
+        result.args.forEach((node) => (node.parent = result));
+        return result;
+    };
+
+    /**
+     * Create a class attribute declaration.
+     */
+    public static readonly nodeClassAttribute = (id: NodeIdentifier, value: NodeExpr | null = null): NodeClassAttribute => {
+        const result = {
+            type: 'CLASS_ATTRIBUTE',
+            id: id.id,
+            value,
+            omitAnswer: true,
+            omitOutput: true,
+        } as NodeClassAttribute;
+        if (result.value) {
+            result.value.parent = result;
+        }
+        return result;
+    };
 }
 
 export type {
@@ -1276,6 +1790,8 @@ export type {
     NodeIdentifier,
     NodeCmdWList,
     NodeIndexExpr,
+    NodeSuperclassConstructor,
+    NodeMetaClass,
     NodeRange,
     NodeColon,
     NodeEndRange,
@@ -1297,6 +1813,8 @@ export type {
     BuiltInFunctionParameter,
     BuiltInFunctionInputSignature,
     BuiltInFunctionSignature,
+    BuiltInFunctionImplementation,
+    FunctionSignatureEntry,
     NodeBuiltInFunction,
     BuiltInFunctionTable,
     FunctionTable,
@@ -1310,11 +1828,27 @@ export type {
     NodeArguments,
     NodeDeclaration,
     NodeReturn,
+    NodeBreak,
+    NodeContinue,
     NodeIf,
     NodeElseIf,
     NodeElse,
     NodeSwitch,
     NodeSwitchCase,
+    NodeWhile,
+    NodeDoUntil,
+    NodeFor,
+    NodeSpmd,
+    NodeTry,
+    NodeUnwindProtect,
+    ClassSectionKind,
+    ClassAttributeTable,
+    NodeClassDef,
+    NodeClassSection,
+    NodeClassProperty,
+    NodeClassEvent,
+    NodeClassEnumeration,
+    NodeClassAttribute,
 };
 export { AST };
 export default { AST };
@@ -1330,3 +1864,18 @@ export type { ElementType } from './MultiArray';
 export { MultiArray } from './MultiArray';
 export { Structure } from './Structure';
 export { FunctionHandle } from './FunctionHandle';
+export type { ClassAccess, ClassPropertyDefinition, ClassMethodDefinition, ClassEventDefinition, ClassEnumerationDefinition } from './ClassMember';
+export type { ClassMethodTable } from './ClassDefinition';
+export type { ClassInstancePropertyTable } from './ClassInstance';
+export { ClassMember } from './ClassMember';
+export { ClassDefinition } from './ClassDefinition';
+export { ClassInstance } from './ClassInstance';
+export { ClassBoundMethod } from './ClassBoundMethod';
+export { ClassStaticMethod } from './ClassStaticMethod';
+export { ClassEmptyMethod } from './ClassEmptyMethod';
+export { ClassEnumerationValue } from './ClassEnumerationValue';
+export { ClassEventListener } from './ClassEventListener';
+export { ClassEventData } from './ClassEventData';
+export { ClassPropertyEvent } from './ClassPropertyEvent';
+export type { ClassMetaKind } from './ClassMeta';
+export { ClassMetaObject, ClassMetaClass, ClassMetaMember, ClassMetaProperty, ClassMetaMethod, ClassMetaEvent, ClassMetaEnumerationMember } from './ClassMeta';

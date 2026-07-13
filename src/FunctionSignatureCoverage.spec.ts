@@ -1,5 +1,6 @@
+/// <reference types="jest" />
 import path from 'node:path';
-import type { BuiltInFunctionInputSignature, BuiltInFunctionParameter, BuiltInFunctionSignature, NodeBuiltInFunction } from './AST';
+import type { BuiltInFunctionInputSignature, BuiltInFunctionParameter, BuiltInFunctionSignature, FunctionSignatureEntry, NodeBuiltInFunction } from './AST';
 import { Configuration } from './Configuration';
 import { CoreFunctions } from './CoreFunctions';
 import { FunctionSignature } from './FunctionSignature';
@@ -12,12 +13,11 @@ const testExtension = __filenameMatch[2];
 
 const modules: Array<{
     name: string;
-    functions: Record<string, unknown>;
-    signatures: Record<string, BuiltInFunctionSignature>;
+    functions: Record<string, FunctionSignatureEntry>;
 }> = [
-    { name: 'Configuration', functions: Configuration.functions, signatures: Configuration.signatures },
-    { name: 'CoreFunctions', functions: CoreFunctions.functions, signatures: CoreFunctions.signatures },
-    { name: 'LinearAlgebra', functions: LinearAlgebra.functions, signatures: LinearAlgebra.signatures },
+    { name: 'Configuration', functions: Configuration.functions },
+    { name: 'CoreFunctions', functions: CoreFunctions.functions },
+    { name: 'LinearAlgebra', functions: LinearAlgebra.functions },
 ];
 
 const asArray = <T>(value: T | T[] | undefined): T[] => {
@@ -33,7 +33,7 @@ const validateParameter = (moduleName: string, functionName: string, pathName: s
         failures.push(`${moduleName}.${functionName}: ${pathName} has no name`);
     }
     if (parameter.validators) {
-        const knownValidatorNames = [
+        const knownValidatorNames = new Set([
             'numeric',
             'numericOrLogical',
             'text',
@@ -60,9 +60,9 @@ const validateParameter = (moduleName: string, functionName: string, pathName: s
             'integer',
             'finite',
             'real',
-        ];
+        ]);
         for (const validator of parameter.validators) {
-            if (!knownValidatorNames.includes(validator)) {
+            if (!knownValidatorNames.has(validator)) {
                 failures.push(`${moduleName}.${functionName}: ${pathName} has unsupported validator '${validator}'`);
             }
         }
@@ -113,21 +113,26 @@ const validateSignature = (moduleName: string, functionName: string, signature: 
 
 describe(`${unitName} unit test (.${testExtension} test file).`, () => {
     describe('Built-in signature coverage', () => {
-        it('Should keep module function tables and signature tables synchronized.', () => {
-            const failures = modules.flatMap((moduleItem) => {
-                const functionNames = Object.keys(moduleItem.functions);
-                const signatureNames = Object.keys(moduleItem.signatures);
-                const missing = functionNames.filter((name) => !(name in moduleItem.signatures)).map((name) => `${moduleItem.name}: missing signature for ${name}`);
-                const orphan = signatureNames.filter((name) => !(name in moduleItem.functions)).map((name) => `${moduleItem.name}: orphan signature for ${name}`);
-                return [...missing, ...orphan];
-            });
+        it('Should keep module function table entries complete.', () => {
+            const failures = modules.flatMap((moduleItem) =>
+                Object.entries(moduleItem.functions).flatMap(([functionName, entry]) => {
+                    const entryFailures: string[] = [];
+                    if (typeof entry.func !== 'function') {
+                        entryFailures.push(`${moduleItem.name}: missing function implementation for ${functionName}`);
+                    }
+                    if (!entry.signature) {
+                        entryFailures.push(`${moduleItem.name}: missing signature for ${functionName}`);
+                    }
+                    return entryFailures;
+                }),
+            );
 
             expect(failures).toEqual([]);
         });
 
         it('Should provide structurally valid signatures for all module built-ins.', () => {
             const failures = modules.flatMap((moduleItem) =>
-                Object.entries(moduleItem.signatures).flatMap(([functionName, signature]) => validateSignature(moduleItem.name, functionName, signature)),
+                Object.entries(moduleItem.functions).flatMap(([functionName, entry]) => validateSignature(moduleItem.name, functionName, entry.signature)),
             );
 
             expect(failures).toEqual([]);

@@ -13,9 +13,9 @@ import type { Scope } from './Scope';
  * - metadata used by `nargin`, `nargout`, `inputname`, and stack traces,
  * - a linked `parentFrame` chain for MATLAB/Octave-like caller lookup.
  *
- * `InterpreterError` remains in `Interpreter.ts`; this class is intentionally a
- * small data holder so stack-management helpers can use it without depending on
- * the full interpreter implementation.
+ * Stack/error formatting lives outside this class; this remains a small data
+ * holder so stack-management helpers can use it without depending on the full
+ * interpreter implementation.
  */
 class CallFrame {
     /**

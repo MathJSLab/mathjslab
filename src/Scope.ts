@@ -35,6 +35,7 @@ class Scope {
      *
      * @param parent Optional parent scope for lexical lookup.
      * @param resolveParentNames Whether variable lookup may continue into the parent chain.
+     * @returns New scope with prototype-less tables.
      */
     public static readonly create = (parent?: Scope, resolveParentNames: boolean = true) =>
         new Scope(parent, Object.create(null), Object.create(null), Object.create(null), resolveParentNames);
@@ -45,6 +46,11 @@ class Scope {
      * Existing entries are mutated in place so global aliases, persistent
      * bindings, and UI references that point at the entry object continue to see
      * updates.
+     *
+     * @param name Variable name.
+     * @param node Value node to bind.
+     * @param undefinedReference Optional unresolved-reference marker.
+     * @returns The created or updated name-table entry.
      */
     public defineName(name: string, node: NodeInput, undefinedReference?: string): NameEntry {
         const entry = this.nameTable[name];
@@ -66,6 +72,11 @@ class Scope {
      * Ordinary scopes define locally. Nested-function scopes can opt into
      * parent assignment through `assignExistingParentNames`, which preserves
      * MATLAB/Octave shared-variable behavior.
+     *
+     * @param name Variable name.
+     * @param node Value node to assign.
+     * @param undefinedReference Optional unresolved-reference marker.
+     * @returns The created or updated name-table entry.
      */
     public assignName(name: string, node: NodeInput, undefinedReference?: string): NameEntry {
         if (this.assignExistingParentNames && !this.hasLocalName(name) && this.parent) {
@@ -85,6 +96,8 @@ class Scope {
 
     /**
      * Define several local variables at once.
+     *
+     * @param table Name/value table to merge into the local scope.
      */
     public defineNameTable(table: Record<string, NodeInput>): void {
         for (const name in table) {
@@ -94,6 +107,9 @@ class Scope {
 
     /**
      * Resolve a variable through this scope and, when allowed, its parents.
+     *
+     * @param name Variable name.
+     * @returns Matching entry, if found.
      */
     public resolveName(name: string): NameEntry | undefined {
         const entry = this.nameTable[name];
@@ -102,6 +118,9 @@ class Scope {
 
     /**
      * Check whether a name is defined directly in this scope.
+     *
+     * @param name Variable name.
+     * @returns `true` when the name exists locally.
      */
     public hasLocalName(name: string): boolean {
         return name in this.nameTable;
@@ -109,6 +128,8 @@ class Scope {
 
     /**
      * Remove a local variable binding.
+     *
+     * @param name Variable name to remove.
      */
     public removeName(name: string): void {
         delete this.nameTable[name];
@@ -116,6 +137,8 @@ class Scope {
 
     /**
      * Remove a variable binding from this scope and all parents.
+     *
+     * @param name Variable name to clear.
      */
     public clearName(name: string): void {
         let scope: Scope | undefined = this;
@@ -127,6 +150,10 @@ class Scope {
 
     /**
      * Define or replace a function in the current scope only.
+     *
+     * @param name Function name.
+     * @param func Function definition node.
+     * @returns Stored function definition.
      */
     public defineFunction(name: string, func: NodeFunctionDefinition): NodeFunctionDefinition {
         return (this.functionTable[name] = func);
@@ -134,6 +161,8 @@ class Scope {
 
     /**
      * Merge a function table into this scope.
+     *
+     * @param table Function table to merge.
      */
     public defineFunctionTable(table: FunctionTable): void {
         Object.assign(this.functionTable, table);
@@ -145,6 +174,9 @@ class Scope {
      * Function lookup intentionally remains parent-aware even when
      * `resolveParentNames` is false; captured scopes still need live fallback
      * for forward-referenced local/nested functions.
+     *
+     * @param name Function name.
+     * @returns Matching user or built-in function node, if found.
      */
     public resolveFunction(name: string): NodeFunctionDefinition | NodeBuiltInFunction | undefined {
         const entry = this.functionTable[name];
@@ -153,6 +185,9 @@ class Scope {
 
     /**
      * Check whether a function is defined directly in this scope.
+     *
+     * @param name Function name.
+     * @returns `true` when the function exists locally.
      */
     public hasLocalFunction(name: string): boolean {
         return name in this.functionTable;
@@ -160,6 +195,8 @@ class Scope {
 
     /**
      * Remove a local function binding.
+     *
+     * @param name Function name to remove.
      */
     public removeFunction(name: string): void {
         delete this.functionTable[name];
@@ -167,6 +204,8 @@ class Scope {
 
     /**
      * Remove a function binding from this scope and all parents.
+     *
+     * @param name Function name to clear.
      */
     public clearFunction(name: string): void {
         let scope: Scope | undefined = this;
@@ -178,6 +217,9 @@ class Scope {
 
     /**
      * Bind formal parameter names to already evaluated argument nodes.
+     *
+     * @param names Formal parameter names.
+     * @param args Evaluated argument nodes.
      */
     public bindParameters(names: string[], args: NodeExpr[]): void {
         for (let i = 0; i < names.length; i++) {
@@ -190,6 +232,10 @@ class Scope {
      *
      * This low-level helper predates the richer function-call pipeline and is
      * kept for focused tests and simple call paths.
+     *
+     * @param names Formal parameter names.
+     * @param args Evaluated argument nodes.
+     * @throws Error when the list lengths differ.
      */
     public bindParametersChecked(names: string[], args: NodeExpr[]): void {
         if (names.length !== args.length) {
@@ -203,28 +249,35 @@ class Scope {
      *
      * Forward references are stored per scope so assigning a missing name can
      * later trigger re-resolution without confusing unrelated workspaces.
+     *
+     * @param name Name that depends on an unresolved reference.
+     * @param undefinedReference Missing identifier name.
+     * @returns Mutable set of unresolved references for `name`.
      */
-    public defineUndefinedReference(name: string, undefinedReference: string): string[] {
+    public defineUndefinedReference(name: string, undefinedReference: string): Set<string> {
         const entry = this.resolveUndefinedReference(name);
         if (entry) {
-            if (!entry.includes(undefinedReference)) {
-                entry.push(undefinedReference);
-            }
+            entry.add(undefinedReference);
             return entry;
         }
-        return (this.undefinedReferenceTable[name] = [undefinedReference]);
+        return (this.undefinedReferenceTable[name] = new Set([undefinedReference]));
     }
 
     /**
      * Resolve unresolved-reference metadata through the parent chain.
+     *
+     * @param name Name to inspect.
+     * @returns Set of unresolved references, if any.
      */
-    public resolveUndefinedReference(name: string): string[] | undefined {
+    public resolveUndefinedReference(name: string): Set<string> | undefined {
         const entry = this.undefinedReferenceTable[name];
         return entry ? entry : this.parent ? this.parent.resolveUndefinedReference(name) : undefined;
     }
 
     /**
      * Remove a local unresolved-reference entry.
+     *
+     * @param name Name to remove from the local unresolved-reference table.
      */
     public removeUndefinedReference(name: string): void {
         delete this.undefinedReferenceTable[name];
@@ -232,6 +285,8 @@ class Scope {
 
     /**
      * Remove unresolved-reference metadata from this scope and all parents.
+     *
+     * @param name Name to clear from all reachable unresolved-reference tables.
      */
     public clearUndefinedReference(name: string): void {
         let scope: Scope | undefined = this;
@@ -248,6 +303,9 @@ class Scope {
      * they had when the handle was created. Function tables and unresolved
      * reference lists are also copied so later forward-reference resolution
      * remains deterministic for the captured environment.
+     *
+     * @param copyNode Callback used to copy bound AST/runtime values.
+     * @returns Detached scope chain.
      */
     public snapshot(copyNode: (node: NodeInput) => NodeInput): Scope {
         const parent = this.parent ? this.parent.snapshot(copyNode) : undefined;
@@ -262,7 +320,7 @@ class Scope {
         scope.functionTable = { ...this.functionTable };
         scope.undefinedReferenceTable = Object.create(null);
         for (const name in this.undefinedReferenceTable) {
-            scope.undefinedReferenceTable[name] = [...this.undefinedReferenceTable[name]];
+            scope.undefinedReferenceTable[name] = new Set(this.undefinedReferenceTable[name]);
         }
         return scope;
     }
@@ -274,6 +332,10 @@ class Scope {
      * parent scope. Named local/nested function handles use this mode: existing
      * bindings are stable, but later function definitions can still be resolved
      * through the parent chain.
+     *
+     * @param copyNode Callback used to copy local AST/runtime values.
+     * @param resolveParentNames Whether variable lookup may continue to the parent.
+     * @returns Captured overlay scope.
      */
     public capture(copyNode: (node: NodeInput) => NodeInput, resolveParentNames: boolean = true): Scope {
         const scope = Scope.create(this, resolveParentNames);
@@ -287,7 +349,7 @@ class Scope {
         scope.functionTable = { ...this.functionTable };
         scope.undefinedReferenceTable = Object.create(null);
         for (const name in this.undefinedReferenceTable) {
-            scope.undefinedReferenceTable[name] = [...this.undefinedReferenceTable[name]];
+            scope.undefinedReferenceTable[name] = new Set(this.undefinedReferenceTable[name]);
         }
         return scope;
     }

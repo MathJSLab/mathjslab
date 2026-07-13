@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import path from 'node:path';
 import type { BuiltInFunctionParameter } from './AST';
 import { CharString, Complex, MultiArray } from './AST';
@@ -20,6 +21,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const cell = new MultiArray([1, 1], [[Complex.create(1)]], true);
 
             expect(FunctionValidation.className(Complex.create(1))).toBe('double');
+            expect(FunctionValidation.className(Complex.true())).toBe('logical');
             expect(FunctionValidation.className(matrix)).toBe('double');
             expect(FunctionValidation.className(cell)).toBe('cell');
             expect(FunctionValidation.className(new CharString('x'))).toBe('char');

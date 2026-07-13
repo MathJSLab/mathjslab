@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import path from 'node:path';
 import type { NodeArgumentValidation, NodeExpr, NodeFunctionDefinition, NodeInput } from './AST';
 import { AST, CharString, Complex, MultiArray } from './AST';

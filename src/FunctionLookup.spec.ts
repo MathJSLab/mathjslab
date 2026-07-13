@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import path from 'node:path';
 import type { NodeBuiltInFunction, NodeFunctionDefinition } from './AST';
 import { AST, CharString, Complex } from './AST';
@@ -52,6 +53,10 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(FunctionLookup.existCode('f', undefined, undefined, functionDefinition('f'))).toBe(2);
             expect(FunctionLookup.existCode('sum', undefined, undefined, builtInFunction('sum'))).toBe(5);
             expect(FunctionLookup.existCode('double', 'class', undefined, undefined)).toBe(8);
+            expect(FunctionLookup.existCode('logical', 'class', undefined, undefined)).toBe(8);
+            expect(FunctionLookup.existCode('meta.class', 'class', undefined, undefined)).toBe(8);
+            expect(FunctionLookup.existCode('ExternalPoint', undefined, undefined, undefined, true)).toBe(8);
+            expect(FunctionLookup.existCode('ExternalPoint', 'class', undefined, undefined, true)).toBe(8);
             expect(FunctionLookup.existCode('sum', 'builtin', undefined, builtInFunction('sum'))).toBe(5);
             expect(FunctionLookup.existCode('x', 'function', { node: Complex.create(1) }, undefined)).toBe(0);
         });
@@ -63,6 +68,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(FunctionLookup.whichResult('f', undefined, functionDefinition('f'), undefined, () => '')).toEqual(new CharString('f is a user-defined function'));
             expect(FunctionLookup.whichResult('nested', undefined, functionDefinition('nested', true), undefined, () => '')).toEqual(new CharString('nested is a nested function'));
             expect(FunctionLookup.whichResult('sum', undefined, builtInFunction('sum'), undefined, () => '')).toEqual(new CharString('sum is a built-in function'));
+            expect(FunctionLookup.whichResult('meta.class', undefined, undefined, undefined, () => '')).toEqual(new CharString('meta.class is a class'));
+            expect(FunctionLookup.whichResult('ExternalPoint', undefined, undefined, undefined, () => '', true)).toEqual(new CharString('ExternalPoint is a class'));
             expect(FunctionLookup.whichResult('@(x)x', undefined, undefined, anonymous, () => '@(x) x')).toEqual(new CharString('@(x) x is an anonymous function'));
             expect(FunctionLookup.whichResult('missing', undefined, undefined, undefined, () => '')).toEqual(new CharString('missing not found'));
         });

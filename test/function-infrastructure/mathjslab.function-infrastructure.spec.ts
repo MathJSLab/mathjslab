@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import { Interpreter } from '../../src/Interpreter';
 
 const unparse = (interpreter: Interpreter, source: string): string => interpreter.Unparse(interpreter.Execute(source));

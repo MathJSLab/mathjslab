@@ -1,5 +1,5 @@
 import type { NameEntry, NodeBuiltInFunction, NodeFunctionDefinition, NodeInput } from './AST';
-import { CharString, Complex, Structure } from './AST';
+import { CharString, ClassDefinition, Complex, Structure } from './AST';
 import { FunctionHandle } from './FunctionHandle';
 
 type LookupFunction = NodeBuiltInFunction | NodeFunctionDefinition;
@@ -18,16 +18,35 @@ type EvaluateAnonymousHandle = (source: string) => NodeInput;
  * and the small runtime class-name set.
  */
 class FunctionLookup {
+    private static readonly runtimeClassNames = new Set([
+        'double',
+        'single',
+        'logical',
+        'char',
+        'cell',
+        'struct',
+        'function_handle',
+        'event.listener',
+        'event.EventData',
+        'event.PropertyEvent',
+        'meta.class',
+        'meta.property',
+        'meta.method',
+        'meta.event',
+        'meta.EnumerationMember',
+    ]);
+
     /**
      * Compute the numeric result of `exist(name, kind)`.
      */
-    public static existCode(name: string, kind: string | undefined, variable: NameEntry | undefined, func: LookupFunction | undefined): number {
+    public static existCode(name: string, kind: string | undefined, variable: NameEntry | undefined, func: LookupFunction | undefined, classDefined = false): number {
         const normalizedKind = kind?.toLowerCase();
-        const variableCode = variable && typeof variable.node !== 'undefined' ? 1 : 0;
+        const variableCode = variable && typeof variable.node !== 'undefined' && !ClassDefinition.isInstanceOf(variable.node) ? 1 : 0;
         const functionCode = func?.type === 'FCNDEF' ? 2 : func?.type === 'BUILTIN' ? 5 : 0;
+        const classCode = classDefined || (variable && ClassDefinition.isInstanceOf(variable.node)) || this.isRuntimeClassName(name) ? 8 : 0;
         switch (normalizedKind) {
             case undefined:
-                return variableCode || functionCode;
+                return variableCode || functionCode || classCode;
             case 'var':
             case 'variable':
                 return variableCode;
@@ -37,7 +56,7 @@ class FunctionLookup {
             case 'function':
                 return functionCode === 2 ? 2 : functionCode === 5 ? 5 : 0;
             case 'class':
-                return this.isRuntimeClassName(name) ? 8 : 0;
+                return classCode;
             default:
                 return 0;
         }
@@ -46,11 +65,18 @@ class FunctionLookup {
     /**
      * Produce the user-facing result for `which`.
      */
-    public static whichResult(name: string, variable: NameEntry | undefined, func: LookupFunction | undefined, handle: FunctionHandle | undefined, unparseHandle: UnparseHandle): CharString {
+    public static whichResult(
+        name: string,
+        variable: NameEntry | undefined,
+        func: LookupFunction | undefined,
+        handle: FunctionHandle | undefined,
+        unparseHandle: UnparseHandle,
+        classDefined = false,
+    ): CharString {
         if (handle && !handle.id) {
             return new CharString(`${unparseHandle(handle).trim()} is an anonymous function`);
         }
-        if (!handle && variable && typeof variable.node !== 'undefined') {
+        if (!handle && variable && typeof variable.node !== 'undefined' && !ClassDefinition.isInstanceOf(variable.node)) {
             return new CharString(`${name} is a variable`);
         }
         if (func?.type === 'FCNDEF') {
@@ -58,6 +84,9 @@ class FunctionLookup {
         }
         if (func?.type === 'BUILTIN') {
             return new CharString(`${func.id} is a built-in function`);
+        }
+        if (classDefined || (variable && ClassDefinition.isInstanceOf(variable.node)) || this.isRuntimeClassName(name)) {
+            return new CharString(`${name} is a class`);
         }
         return new CharString(`${name} not found`);
     }
@@ -118,8 +147,8 @@ class FunctionLookup {
     /**
      * Runtime class names currently recognized by `exist(name, 'class')`.
      */
-    private static isRuntimeClassName(name: string): boolean {
-        return ['double', 'single', 'char', 'cell', 'struct', 'function_handle'].includes(name);
+    public static isRuntimeClassName(name: string): boolean {
+        return this.runtimeClassNames.has(name);
     }
 }
 

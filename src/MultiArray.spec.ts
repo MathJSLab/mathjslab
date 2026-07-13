@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import path from 'node:path';
 import { ComplexDecimal } from './ComplexDecimal';
 import { Interpreter } from './Interpreter';

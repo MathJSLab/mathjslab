@@ -31,7 +31,7 @@ jobs:
 
       - run:
           name: Detect circular dependecies and run unitary tests
-          command: npm run test:circ:unit
+          command: npm run test:circ:unit:integration
 
       - run:
           name: Production build

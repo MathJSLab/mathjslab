@@ -10,5 +10,7 @@
         /* Avoids unnecessary noise in tests. */
         "noEmit": true /* Disable emitting files from a compilation. */,
         "skipLibCheck": true /* Skip type checking all .d.ts files. */
-    }
+    },
+    "include": ["src/**/*.ts", "test/**/*.ts"],
+    "exclude": ["node_modules", "lib", "report", "res"]
 }

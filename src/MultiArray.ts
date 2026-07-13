@@ -3,14 +3,43 @@ import { Complex, ComplexType } from './Complex';
 import { CharString } from './CharString';
 import { Structure } from './Structure';
 import { FunctionHandle } from './FunctionHandle';
+import { ClassDefinition } from './ClassDefinition';
+import { ClassInstance } from './ClassInstance';
+import { ClassBoundMethod } from './ClassBoundMethod';
+import { ClassStaticMethod } from './ClassStaticMethod';
+import { ClassEmptyMethod } from './ClassEmptyMethod';
+import { ClassEnumerationValue } from './ClassEnumerationValue';
+import type { ClassMetaObject } from './ClassMeta';
 import { AST, NodeReturnList, ReturnHandlerResult } from './AST';
 import { Interpreter } from './Interpreter';
 import { Scope } from './Scope';
 
 /**
- * MultiArray Element type.
+ * Scalar runtime values that may be stored directly inside a `MultiArray`.
+ *
+ * Nested `MultiArray` values are handled by `ElementType` because MATLAB cell
+ * arrays can contain arrays as elements, while numeric arrays generally store
+ * scalar `ComplexType` values.
  */
-type Elements = ComplexType | CharString | Structure | FunctionHandle;
+type Elements =
+    | ComplexType
+    | CharString
+    | Structure
+    | FunctionHandle
+    | ClassDefinition
+    | ClassInstance
+    | ClassBoundMethod
+    | ClassStaticMethod
+    | ClassEmptyMethod
+    | ClassEnumerationValue
+    | ClassMetaObject;
+/**
+ * Runtime value accepted in array slots and expression evaluation results.
+ *
+ * `null` and `undefined` are tolerated because parser/evaluator paths use empty
+ * slots while constructing MATLAB-like empty arrays, structure fields, and
+ * omitted values.
+ */
 type ElementType<ELEMENT = Elements> = MultiArray | ELEMENT | null | undefined;
 
 /**
@@ -28,61 +57,82 @@ type ReduceComparisonHandlerType<ELEMENT = Elements> = (...args: ElementType<ELE
 type ReduceHandlerType = ReduceReduceHandlerType | ReduceComparisonHandlerType;
 
 /**
- * # MultiArray
+ * MATLAB/Octave-like multidimensional array container.
  *
- * Multimensional array library. This class represents common arrays and cell arrays.
+ * `dimension` stores MATLAB-style shape metadata: `[rows, columns, pages, ...]`.
+ * The backing `array` is a two-dimensional row-major page-flattened structure:
+ * rows for all pages are stacked into the first dimension, while columns remain
+ * the second dimension. Indexing helpers translate MATLAB column-major logical
+ * indexing semantics into this internal representation.
+ *
+ * `isCell` distinguishes ordinary arrays from cell arrays. Cell arrays preserve
+ * element identity and may contain nested arrays; ordinary arrays usually
+ * contain scalar numeric/logical/string/runtime values.
  */
 class MultiArray<ELEMENT = Elements> {
     /**
-     * Dimensions property ([lines, columns, pages, blocks, ...]).
+     * MATLAB-style dimensions (`[rows, columns, pages, blocks, ...]`).
      */
     public dimension: number[];
 
     /**
-     * Dimensions excluding columns getter ([lines, pages, blocks, ...]).
+     * Dimensions excluding the column axis (`[rows, pages, blocks, ...]`).
      */
     public get dimensionR(): number[] {
         return [this.dimension[0], ...this.dimension.slice(2)];
     }
 
     /**
-     * Array content.
+     * Row-major page-flattened storage.
      */
     public array: ElementType<ELEMENT>[][];
 
     /**
-     * Type attribute.
+     * Runtime type tag inferred from contained values.
      */
     public type: number;
 
     /**
-     * Test if an object is a instance of `MultiArray`.
+     * Test whether an object is a `MultiArray` instance.
+     *
      * @param obj Object to test.
-     * @returns `true` if `obj` is an instance of `MultiArray`. `false` otherwise.
+     * @returns `true` when `obj` is a `MultiArray`.
      */
     public static readonly isInstanceOf = (obj: unknown): obj is MultiArray => obj instanceof MultiArray;
 
+    /** Runtime tag for logical arrays. */
     public static readonly LOGICAL = Complex.LOGICAL;
+    /** Runtime tag for real numeric arrays. */
     public static readonly REAL = Complex.REAL;
+    /** Runtime tag for complex numeric arrays. */
     public static readonly COMPLEX = Complex.COMPLEX;
+    /** Runtime tag for string arrays. */
     public static readonly STRING = CharString.STRING;
+    /** Runtime tag for structure arrays. */
     public static readonly STRUCTURE = Structure.STRUCTURE;
+    /** Runtime tag for function-handle arrays. */
     public static readonly FUNCTION_HANDLE = FunctionHandle.FUNCTION_HANDLE;
 
     /**
-     * True if cell array.
+     * Whether this array uses cell-array semantics.
      */
     public isCell: boolean;
 
     /**
-     * Parent node property.
+     * Optional AST-style parent pointer used by generic value handling.
      */
     public parent: any;
 
     /**
-     * MultiArray constructor.
+     * Create a multidimensional array.
+     *
+     * Scalar object fills are copied when they have value semantics (`MultiArray`,
+     * `Structure`, and value-class instances). Primitive/scalar immutable values
+     * are reused. Function fills receive MATLAB-style subscripts.
+     *
      * @param shape Dimensions ([rows, columns, pages, blocks, ...]).
-     * @param fill Data to fill MultiArray. The same object will be put in all elements of MultiArray.
+     * @param fill Fill value, fill callback, or row-major storage.
+     * @param iscell Whether to create a cell array.
      */
     public constructor(shape?: number[], fill?: ElementType | ((...dims: number[]) => ElementType) | ElementType[][], iscell?: boolean) {
         if (shape) {
@@ -98,7 +148,7 @@ class MultiArray<ELEMENT = Elements> {
                     this.array = fill.map((row: ElementType[]) => row.map((elem: ElementType) => elem!.copy() as ElementType)) as any;
                 } else {
                     this.array = new Array(this.dimensionR.reduce((p, c) => p * c, 1));
-                    if (fill instanceof MultiArray || fill instanceof Structure) {
+                    if (fill instanceof MultiArray || fill instanceof Structure || ClassInstance.isInstanceOf(fill)) {
                         for (let i = 0; i < this.array.length; i++) {
                             this.array[i] = new Array(this.dimension[1]);
                             for (let j = 0; j < this.dimension[1]; j++) {
@@ -742,6 +792,16 @@ class MultiArray<ELEMENT = Elements> {
         return result;
     };
 
+    private static readonly blankValueForExpansion = (reference?: ElementType): ElementType => {
+        if (reference instanceof Structure) {
+            return Structure.cloneFields(reference);
+        }
+        if (ClassInstance.isInstanceOf(reference)) {
+            return ClassInstance.copy(reference);
+        }
+        return Complex.zero();
+    };
+
     /**
      * Convert scalar to MultiArray with aditional test if it is MultiArray.
      * @param value
@@ -883,7 +943,7 @@ class MultiArray<ELEMENT = Elements> {
      * @param M Multidimensional array.
      * @param dim New dimensions.
      */
-    public static readonly expand = (M: MultiArray, dim: number[]): void => {
+    public static readonly expand = (M: MultiArray, dim: number[], fill?: ElementType): void => {
         let dimM = M.dimension.slice();
         let dimension = dim.slice();
         if (dimM.length < dimension.length) {
@@ -896,7 +956,7 @@ class MultiArray<ELEMENT = Elements> {
         if (MultiArray.arrayEquals(dimM, resultDimension)) {
             return;
         }
-        const blankValue: ElementType = M.array[0][0] instanceof Structure ? Structure.cloneFields(M.array[0][0]) : Complex.zero();
+        const blankValue: ElementType = MultiArray.blankValueForExpansion(fill ?? M.array[0][0]);
         const result = new MultiArray(resultDimension, blankValue);
         for (let n = 0; n < MultiArray.linearLength(M); n++) {
             const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(M.dimension[0], M.dimension[1], n);
@@ -1527,6 +1587,16 @@ class MultiArray<ELEMENT = Elements> {
      * @returns Concatenated arrays along `dimension` parameter.
      */
     public static readonly concatenate = (dimension: number, fname: string, ...ARRAY: MultiArray[]): MultiArray => {
+        let classDefinition: ClassDefinition | undefined;
+        for (const array of ARRAY) {
+            for (const instance of MultiArray.linearize(array).filter(ClassInstance.isInstanceOf)) {
+                if (!classDefinition) {
+                    classDefinition = instance.classDefinition;
+                } else if (instance.classDefinition !== classDefinition) {
+                    throw new Error(`${fname}: object arrays must contain objects of the same class.`);
+                }
+            }
+        }
         /* Get all ARRAY dimension and set 0 at dimension[dimension] */
         const catDims: number[] = [];
         const dims = ARRAY.map((array) => {
@@ -1612,6 +1682,18 @@ class MultiArray<ELEMENT = Elements> {
     public static readonly evaluate = (M: MultiArray, interpreter?: Interpreter | null | undefined, scope?: Scope): MultiArray => {
         if (MultiArray.isEmpty(M)) {
             return M;
+        } else if (M.isCell) {
+            const result = new MultiArray(M.dimension, undefined, true);
+            result.array = M.array.map((row) =>
+                row.map((element) => {
+                    const value = interpreter ? AST.reduceToFirstIfReturnList(interpreter.Evaluator(element, scope)) : element;
+                    if (value) {
+                        value.parent = result;
+                    }
+                    return value as ElementType;
+                }),
+            );
+            return result;
         } else {
             const result = MultiArray.evaluateRecursive(M, interpreter, scope);
             result.isCell = M.isCell;
@@ -3065,7 +3147,7 @@ class MultiArray<ELEMENT = Elements> {
                 }
             } else {
                 const value = entry.node;
-                const blankValue: ElementType = value instanceof Structure ? Structure.cloneFields(value) : Complex.zero();
+                const blankValue: ElementType = MultiArray.blankValueForExpansion(value);
                 if (idx.isLinear) {
                     entry = scope.defineName(id, new MultiArray([1, argsMax[0]], blankValue));
                 } else {
@@ -3074,7 +3156,7 @@ class MultiArray<ELEMENT = Elements> {
                 entry.node.array[0][0] = value;
             }
         } else {
-            const blankValue: ElementType = field.length > 0 ? new Structure(field) : Complex.zero();
+            const blankValue: ElementType = field.length > 0 ? new Structure(field) : MultiArray.blankValueForExpansion(linearizedRight[0]);
             if (idx.isLinear) {
                 entry = scope.defineName(id, new MultiArray([1, argsMax[0]], blankValue));
             } else {

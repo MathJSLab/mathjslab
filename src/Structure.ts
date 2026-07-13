@@ -2,17 +2,30 @@ import { Complex, ComplexType } from './Complex';
 import { type ElementType, MultiArray } from './MultiArray';
 import { Interpreter } from './Interpreter';
 
+/**
+ * Runtime representation of a MATLAB/Octave structure scalar.
+ *
+ * Structure arrays are represented as `MultiArray` values whose elements are
+ * `Structure` instances. A scalar `Structure` stores fields in a plain object
+ * keyed by field name.
+ */
 class Structure {
+    /** Runtime type tag used by interpreter predicates. */
     public static readonly STRUCTURE = 4;
+    /** Runtime type tag stored on the structure value. */
     public readonly type = Structure.STRUCTURE;
+    /** Optional AST-style parent pointer used by generic value handling. */
     public parent: any;
+    /** Field storage keyed by field name. */
     public field: Record<string, ElementType>;
+    /** Shared diagnostic for invalid dot-indexing targets. */
     private static readonly invalidReferenceMessage = 'value cannot be indexed with .';
 
     /**
-     * Test if an object is a instance of `Structure`.
+     * Test whether an object is a `Structure` instance.
+     *
      * @param obj Object to test.
-     * @returns `true` if `obj` is an instance of `Structure`. `false` otherwise.
+     * @returns `true` when `obj` is a `Structure`.
      */
     public static isInstanceOf = (obj: unknown): obj is Structure => obj instanceof Structure;
 
@@ -21,6 +34,7 @@ class Structure {
      * a Structure with same fields and values of object. If an array of field
      * names as string is passed then create a Structure with this field
      * branch and nested field value set to empty array.
+     *
      * @param field An object with fields and values or an array of field names.
      */
     constructor(field: Record<string, ElementType> | string[]) {
@@ -40,18 +54,21 @@ class Structure {
     }
 
     /**
-     * Return true if obj is a structure or a structure array.
-     * @param obj
-     * @returns
+     * Test whether a value is a structure scalar or non-empty structure array.
+     *
+     * @param obj Value to test.
+     * @returns `true` when the value can be dot-indexed as a structure.
      */
     public static isStructure = (obj: ElementType): boolean =>
         obj instanceof Structure || (obj instanceof MultiArray && !obj.isCell && obj.dimension[0] > 0 && obj.dimension[1] > 0 && obj.array[0][0] instanceof Structure);
 
     /**
+     * Assign a nested field path, replacing intermediate values with
+     * structures.
      *
-     * @param S
-     * @param field
-     * @param value
+     * @param S Structure to mutate.
+     * @param field Field path to assign.
+     * @param value Value to store, or an empty array when omitted.
      */
     public static setField = (S: Structure, field: string[], value?: ElementType): void => {
         // TODO: check if struct.field[field[i]] exists, if it is a MultiArray of Structure...
@@ -64,10 +81,12 @@ class Structure {
     };
 
     /**
+     * Assign a nested field path while preserving existing non-structure values.
      *
-     * @param S
-     * @param field
-     * @param value
+     * @param S Structure to mutate.
+     * @param field Field path to assign.
+     * @param value Value to store, or an empty array when omitted.
+     * @throws EvalError when an intermediate field cannot be dot-indexed.
      */
     public static setNewField = (S: Structure, field: string[], value?: ElementType): void => {
         let struct = S;
@@ -85,10 +104,12 @@ class Structure {
     };
 
     /**
+     * Read a nested field path from a structure scalar.
      *
-     * @param obj
-     * @param field
-     * @returns
+     * @param obj Value to read from.
+     * @param field Field path to resolve.
+     * @returns Field value.
+     * @throws EvalError when the target or path cannot be dot-indexed.
      */
     public static getField = (obj: ElementType, field: string[]): ElementType => {
         if (obj instanceof Structure) {
@@ -112,10 +133,11 @@ class Structure {
     };
 
     /**
+     * Read a nested field path from a structure scalar or structure array.
      *
-     * @param obj
-     * @param field
-     * @returns
+     * @param obj Structure scalar or structure array.
+     * @param field Field path to resolve.
+     * @returns Field values in linear order.
      */
     public static getFields = (obj: ElementType, field: string[]): ElementType[] => {
         return obj instanceof MultiArray && obj.array.length > 0 && obj.array[0].length > 0 && obj.array[0][0] instanceof Structure
@@ -124,10 +146,12 @@ class Structure {
     };
 
     /**
+     * Render a structure as source-like text.
      *
-     * @param S
-     * @param interpreter
-     * @returns
+     * @param S Structure to render.
+     * @param interpreter Interpreter that owns the unparser.
+     * @param parentPrecedence Parent operator precedence, unused.
+     * @returns Source-like structure representation.
      */
     public static unparse = (S: Structure, interpreter: Interpreter, parentPrecedence = 0): string => {
         return `struct {\n${Object.entries(S.field)
@@ -136,10 +160,12 @@ class Structure {
     };
 
     /**
+     * Render a structure as MathML.
      *
-     * @param S
-     * @param interpreter
-     * @returns
+     * @param S Structure to render.
+     * @param interpreter Interpreter that owns the MathML unparser.
+     * @param parentPrecedence Parent operator precedence, unused.
+     * @returns MathML table fragment.
      */
     public static unparseMathML = (S: Structure, interpreter: Interpreter, parentPrecedence = 0): string => {
         let result = `<mtr><mtd columnspan="2"><mtext>struct {</mtext></mtd></mtr>`;
@@ -151,9 +177,10 @@ class Structure {
     };
 
     /**
+     * Deep-copy a structure scalar.
      *
-     * @param S
-     * @returns
+     * @param S Structure to copy.
+     * @returns Copied structure with copied field values.
      */
     public static copy = (S: Structure): Structure => {
         const result = new Structure({});
@@ -164,17 +191,20 @@ class Structure {
     };
 
     /**
+     * Deep-copy this structure scalar.
      *
-     * @returns
+     * @returns Copied structure.
      */
     public copy(): Structure {
         return Structure.copy(this);
     }
 
     /**
+     * Clone only the field names of a structure, filling every field with an
+     * empty array.
      *
-     * @param S
-     * @returns
+     * @param S Structure whose field names should be cloned.
+     * @returns Structure with the same field names and empty values.
      */
     public static cloneFields = (S: Structure): Structure => {
         const result = new Structure({});
@@ -185,24 +215,29 @@ class Structure {
     };
 
     /**
+     * Convert a structure to a logical scalar.
      *
-     * @param S
-     * @returns
+     * @param S Structure to convert.
+     * @returns `true` when the structure has at least one field.
      */
     public static toLogical = (S: Structure): ComplexType => (Object.keys(S.field).length > 0 ? Complex.true() : Complex.false());
 
     /**
+     * Convert this structure to a logical scalar.
      *
-     * @returns
+     * @returns `true` when this structure has at least one field.
      */
     public toLogical(): ComplexType {
         return Structure.toLogical(this);
     }
 
     /**
-     * Set empty field in all elements of MultiArray if it is not cell array and if field not defined.
-     * @param M
-     * @param field
+     * Add an empty field to every element of a structure array when the field
+     * does not already exist.
+     *
+     * @param M Structure array to mutate.
+     * @param field Field name to add.
+     * @throws EvalError when the array does not contain structures.
      */
     public static setEmptyField = (M: MultiArray, field: string): void => {
         if (M.array[0][0] instanceof Structure) {

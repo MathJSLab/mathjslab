@@ -247,7 +247,7 @@ abstract class MathML {
         INVALID: () => '<mi>invalid</mi>',
         UNDEFINED: () => '<mi>undefined tree</mi>',
         ERROR: () => '<mi>error</mi>',
-        math: (inner, display) => '<math xmlns = "http://www.w3.org/1998/Math/MathML" display="' + display + '">' + inner + '</math>',
+        math: (inner, display) => (display === 'none' ? inner : '<math xmlns = "http://www.w3.org/1998/Math/MathML" display="' + display + '">' + inner + '</math>'),
         errorReplace: (expr) => expr.replace(/\<mo\>\(\<\/mo\>\<mi\>error\<\/mi\><\mi\>error\<\/mi\>\<mi\>i\<\/mi\>\<mo\>\)\<\/mo\>/gi, '<mi>error</mi>'),
         abs: (...args) => '<mrow><mo fence="true" stretchy="true">|</mo>' + args[0] + '<mo fence="true" stretchy="true">|</mo></mrow>',
         conj: (...args) => '<mover accent="true"><mrow>' + args[0] + '</mrow><mo stretchy="true">‾</mo></mover>',

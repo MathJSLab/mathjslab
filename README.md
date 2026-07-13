@@ -338,17 +338,17 @@ After run this command you will need to do workspace setup running
 
 ## Language subset
 
-Currently only the mathematical expressions of the language are implemented.
-The control and loop structures are not yet implemented. Most of the
-infrastructure for function support is already implemented, and a large set of
-native functions is also already available.
+The engine implements a practical subset of
+[MATLAB&reg;](https://www.mathworks.com/products/matlab.html)/[Octave](https://www.gnu.org/software/octave/)
+syntax, including expressions, arrays, cell arrays, structures, control flow,
+loops, user functions, anonymous functions, function handles, `arguments`
+blocks, command syntax, and initial `classdef` support.
 
-There are some differences from the original
-[MATLAB&reg;](https://www.mathworks.com/products/matlab.html)/[Octave](https://www.gnu.org/software/octave/).
-The main difference is that there are only one a complex numeric type. Other
-implemented types is boolean, character string, structure and function handle.
-
-Common arrays (not only cell arrays) can hold any type of element.
+The main remaining limitations are browser-oriented external loading,
+incomplete MATLAB/Octave library coverage, and class semantics that are still
+being expanded. Numeric values use one complex numeric type; other implemented
+runtime types include logical values, character strings, structures, function
+handles, and class objects. Common arrays can hold any runtime value.
 
 ## Trademark Notes
 

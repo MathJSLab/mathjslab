@@ -3,6 +3,77 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 2.1.2
+
+- Continued the interpreter modularization started in the function
+  infrastructure work. The execution `Context` was extracted from
+  `Interpreter.ts` into `Context.ts`, and the `InterpreterError` hierarchy was
+  moved into `InterpreterError.ts`, while keeping the public exports from
+  `Interpreter.ts` compatible with existing imports.
+- Tightened `Context` initialization so `Context.create()` now installs the
+  expected global call frame immediately, and updated the `CallFrame`
+  documentation to reflect that stack/error formatting is handled outside the
+  frame data holder.
+- Added focused unit tests for the extracted `Context` and `InterpreterError`
+  modules, covering context construction, scope and built-in lookup, aliases,
+  call-stack management, typed interpreter errors, and stack-trace formatting.
+- Reworked internal set-like collections to use ES2015 `Set` and `Map`
+  structures where membership or uniqueness is the intended behavior. This
+  includes lexer keyword and command lookup, non-terminal token checks,
+  undefined-reference dependency tracking, function argument validator tables,
+  runtime class-name checks, and BLAS/LAPACK/linear-algebra configuration key
+  validation, while preserving arrays where ordering, indexing, or duplicates
+  are part of the engine semantics.
+- Consolidated built-in function registration metadata with the functions that
+  implement it. The new `FunctionSignatureEntry` interface allows each built-in
+  registration table to keep its implementation and declarative call signature
+  side by side, so `Configuration`, `CoreFunctions`, `LinearAlgebra`, and
+  `Interpreter` can load callable functions and their validation metadata from
+  the same source of truth.
+- Reviewed and completed the migrated built-in signatures used by the
+  interpreter call-validation layer, replacing placeholder signature entries
+  with explicit arity and parameter metadata where appropriate. This keeps
+  invalid-call diagnostics, `nargin`/`nargout` introspection, and overload
+  validation aligned with the functions currently registered by the engine.
+- Refined the Jest and TypeScript test setup after the signature-table
+  migration. Additional focused test scripts were added for function-related
+  suites, signature coverage tests were restored to exercise the new
+  registration model, and `.spec.ts` files now declare their Jest globals
+  locally with `/// <reference types="jest" />` instead of requiring the root
+  `tsconfig.json` to include Jest types.
+- Kept the production TypeScript configuration isolated from test-only globals.
+  The root and build TypeScript configurations continue to type-check the
+  engine with Node types only, while `tsconfig.jest.json` remains responsible
+  for Jest-oriented command-line test compilation. This prevents browser and
+  package builds from depending on Jest ambient declarations.
+- Pinned the TypeScript development dependency to the last version known to
+  work with the current build pipeline, avoiding accidental upgrades to a newer
+  compiler release that breaks the existing `build:key` compiler-API helper.
+  The `buildKeyTable` script remains based on the TypeScript compiler API so
+  generated key tables continue to follow the project’s established generation
+  path.
+- Added dedicated unit test coverage for `AST.ts`, `BLAS.ts`, and
+  `substSymbol.ts`. BLAS-specific test groups that had been living in
+  `LAPACK.spec.ts` were moved into the new `BLAS.spec.ts`, keeping LAPACK tests
+  focused on LAPACK behavior while preserving the existing BLAS coverage.
+- Advanced parser and AST compatibility coverage for MATLAB/Octave-like source
+  forms reviewed against GNU Octave grammar behavior. Dedicated parser fixtures
+  now cover continuation/comment handling, command syntax, cell values before
+  chained indexing, class method prototypes, negated class attributes, and
+  empty `arguments` blocks.
+- Preserved `arguments ... end` blocks as first-class AST and unparse
+  structures even when their validation list is empty. `NodeArguments` and
+  `NodeArgumentValidation` factories now maintain parent links consistently,
+  and the interpreter unparser emits `ARGUMENTS`/`ENDARGUMENTS` blocks instead
+  of dropping them.
+- Added `doc/parser-ast-compatibility.md` to document the parser/AST
+  compatibility contract, current coverage, release-oriented verification
+  commands, and known boundaries before future grammar increments.
+- Expanded in-code JSDoc coverage across the runtime infrastructure with
+  non-mechanical contract documentation for class support, scope handling,
+  structures, AST node invariants, `MultiArray` layout, BLAS/linear-algebra
+  configuration, core built-ins, and the main interpreter pipeline.
+
 ## 2.1.1
 
 - Documentation in the `doc/` directory listed in the `DOC.md` file,

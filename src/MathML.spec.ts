@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import path from 'node:path';
 import { MathML } from './MathML';
 

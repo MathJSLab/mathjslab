@@ -32,6 +32,17 @@ Binary mathematical operations.
 
 Binary operation.
 
+## BuiltInFunctionImplementation
+
+- Kind: `type`
+- Source: `src/AST.ts`
+
+Callable implementation stored in built-in registration tables.
+
+The concrete built-ins use specialized parameter and return types, so the
+registry keeps only the common "callable" shape and lets the interpreter
+perform the runtime dispatch.
+
 ## BuiltInFunctionInputSignature
 
 - Kind: `interface`
@@ -82,14 +93,43 @@ semantic operations treat `str` as the canonical value. Truthiness follows
 MATLAB/Octave-like string behavior: empty strings are false and non-empty
 strings are true.
 
-## CircularReferenceError
+## ClassAttributeTable
 
-- Kind: `class`
+- Kind: `type`
+- Source: `src/AST.ts`
+
+No JSDoc documentation is available yet.
+
+## ClassSectionKind
+
+- Kind: `type`
+- Source: `src/AST.ts`
+
+No JSDoc documentation is available yet.
+
+## ClassSource
+
+- Kind: `type`
 - Source: `src/Interpreter.ts`
 
-# CircularReferenceError
+Host-provided class source entry.
 
-Represents a circular dependency between unresolved forward references.
+Browser-first execution cannot assume filesystem access, so external classes
+are supplied by explicit source strings or providers.
+
+## ClassSourceProvider
+
+- Kind: `type`
+- Source: `src/Interpreter.ts`
+
+Callback used to provide classdef source for a class name.
+
+## ClassSourceTable
+
+- Kind: `type`
+- Source: `src/Interpreter.ts`
+
+Table of host-provided class sources keyed by class name.
 
 ## CommandWordListEntry
 
@@ -177,19 +217,19 @@ No JSDoc documentation is available yet.
 
 MathJSLab configuration.
 
-## Context
-
-- Kind: `class`
-- Source: `src/Interpreter.ts`
-
-No JSDoc documentation is available yet.
-
 ## CoreFunctions
 
 - Kind: `class`
 - Source: `src/CoreFunctions.ts`
 
-No JSDoc documentation is available yet.
+Core MATLAB/Octave built-ins that are independent of heavy numerical
+algorithms.
+
+This module owns shape predicates, type predicates, structure/object
+introspection helpers, concatenation guards, and other functions that the
+interpreter should register before optional linear-algebra functionality.
+Each public built-in has adjacent signature metadata so call validation and
+implementation stay synchronized.
 
 ## doubleQuoteCharacter
 
@@ -210,20 +250,11 @@ Double quote string character type.
 - Kind: `type`
 - Source: `src/MultiArray.ts`
 
-No JSDoc documentation is available yet.
+Runtime value accepted in array slots and expression evaluation results.
 
-## EvalError
-
-- Kind: `class`
-- Source: `src/Interpreter.ts`
-
-# EvalError
-
-Represents a general runtime evaluation error.
-
-Examples:
-- invalid operations
-- domain errors
+`null` and `undefined` are tolerated because parser/evaluator paths use empty
+slots while constructing MATLAB-like empty arrays, structure fields, and
+omitted values.
 
 ## format
 
@@ -325,6 +356,13 @@ This enables proper implementation of:
 - https://docs.octave.org/latest/Anonymous-Functions.html
 - https://en.wikipedia.org/wiki/Closure_(computer_programming)
 
+## FunctionSignatureEntry
+
+- Kind: `interface`
+- Source: `src/AST.ts`
+
+No JSDoc documentation is available yet.
+
 ## FunctionTable
 
 - Kind: `type`
@@ -354,42 +392,23 @@ content indexing.
 - Kind: `class`
 - Source: `src/Interpreter.ts`
 
-`Interpreter` object.
+MATLAB/Octave-like parser, evaluator, unparser, and host integration point.
+
+`Interpreter` owns the ANTLR parser pipeline, runtime context, built-in
+tables, command-form functions, class loading contracts, and display
+unparsers. Most semantic helpers are delegated to smaller modules; this
+class coordinates them around one active `Context`.
 
 ## InterpreterConfig
 
 - Kind: `type`
 - Source: `src/Interpreter.ts`
 
-InterpreterConfig type.
+Interpreter construction options.
 
-## InterpreterError
-
-- Kind: `class`
-- Source: `src/Interpreter.ts`
-
-# InterpreterError
-
-Base class for all evaluation-related errors.
-
-This class extends the native `Error` and adds optional
-support for stack trace frames (`CallFrame[]`), enabling
-MATLAB/Octave-like error reporting.
-
----
-
-## Design Goals
-
-- Backward compatible with existing `throw new Error(...)`
-- Allows incremental adoption of stack traces
-- Provides a unified error hierarchy
-
----
-
-## Notes
-
-- `stackFrames` is optional to support legacy code paths
-- Formatting is deferred to `toString()` / `format()`
+All extension points are explicit so the engine remains browser-compatible:
+callers can inject aliases, built-ins, command-form functions, and class
+sources without requiring ambient filesystem or module loading.
 
 ## KeyOfFormatRegistry
 
@@ -410,7 +429,7 @@ Keys of union of format functions registry and generic format functions registry
 - Kind: `type`
 - Source: `src/MathOperation.ts`
 
-Key of type of `MathOperation`. The keys of `MathOperation` class.
+Key of type `MathOperation`. Keys of the `MathOperation` class that are static methods.
 
 ## LinearAlgebra
 
@@ -419,7 +438,12 @@ Key of type of `MathOperation`. The keys of `MathOperation` class.
 
 # LinearAlgebra
 
-LinearAlgebra abstract class. Implements static methods related to linear algebra operations and algorithms.
+MATLAB/Octave-facing linear algebra built-ins and decomposition helpers.
+
+This layer adapts `MultiArray` values to the lower-level BLAS/LAPACK-style
+routines and publishes built-in signature metadata used by interpreter call
+validation. Keep public methods aligned with MATLAB/Octave behavior first;
+internal helper methods may expose more algorithm-specific shapes.
 
 ## References
 
@@ -432,7 +456,7 @@ LinearAlgebra abstract class. Implements static methods related to linear algebr
 - Kind: `constant`
 - Source: `src/LinearAlgebra.ts`
 
-No JSDoc documentation is available yet.
+Public list of accepted `LinearAlgebra.set` configuration keys.
 
 ## MathML
 
@@ -520,9 +544,17 @@ Unary mathematical operations.
 - Kind: `class`
 - Source: `src/MultiArray.ts`
 
-# MultiArray
+MATLAB/Octave-like multidimensional array container.
 
-Multimensional array library. This class represents common arrays and cell arrays.
+`dimension` stores MATLAB-style shape metadata: `[rows, columns, pages, ...]`.
+The backing `array` is a two-dimensional row-major page-flattened structure:
+rows for all pages are stacked into the first dimension, while columns remain
+the second dimension. Indexing helpers translate MATLAB column-major logical
+indexing semantics into this internal representation.
+
+`isCell` distinguishes ordinary arrays from cell arrays. Cell arrays preserve
+element identity and may contain nested arrays; ordinary arrays usually
+contain scalar numeric/logical/string/runtime values.
 
 ## NameEntry
 
@@ -557,7 +589,19 @@ One declaration inside an `arguments` block.
 - Kind: `interface`
 - Source: `src/AST.ts`
 
-Node base.
+Common metadata carried by all AST nodes.
+
+`parent` and `index` are best-effort navigation aids; evaluation logic should
+not require them for correctness. `omitOutput` models MATLAB/Octave semicolon
+suppression, while `omitAnswer` prevents helper statements such as
+declarations and function definitions from updating `ans`.
+
+## NodeBreak
+
+- Kind: `interface`
+- Source: `src/AST.ts`
+
+`break` statement node.
 
 ## NodeBuiltInFunction
 
@@ -565,6 +609,48 @@ Node base.
 - Source: `src/AST.ts`
 
 Built-in function node registered by the runtime.
+
+## NodeClassAttribute
+
+- Kind: `interface`
+- Source: `src/AST.ts`
+
+Attribute declaration for `classdef`, `properties`, and `methods`.
+
+## NodeClassDef
+
+- Kind: `interface`
+- Source: `src/AST.ts`
+
+Minimal `classdef` node.
+
+## NodeClassEnumeration
+
+- Kind: `interface`
+- Source: `src/AST.ts`
+
+Enumeration declaration inside an `enumeration` section.
+
+## NodeClassEvent
+
+- Kind: `interface`
+- Source: `src/AST.ts`
+
+Event declaration inside an `events` section.
+
+## NodeClassProperty
+
+- Kind: `interface`
+- Source: `src/AST.ts`
+
+Property declaration inside a `properties` section.
+
+## NodeClassSection
+
+- Kind: `interface`
+- Source: `src/AST.ts`
+
+Section inside a `classdef` block.
 
 ## NodeCmdWList
 
@@ -580,12 +666,26 @@ Command word list node.
 
 Colon token node used by ranges and indexing.
 
+## NodeContinue
+
+- Kind: `interface`
+- Source: `src/AST.ts`
+
+`continue` statement node.
+
 ## NodeDeclaration
 
 - Kind: `interface`
 - Source: `src/AST.ts`
 
 Declaration node for `global` and `persistent`.
+
+## NodeDoUntil
+
+- Kind: `interface`
+- Source: `src/AST.ts`
+
+`do ... until` statement node.
 
 ## NodeElse
 
@@ -613,7 +713,18 @@ Declaration node for `global` and `persistent`.
 - Kind: `type`
 - Source: `src/AST.ts`
 
-Expression node.
+AST node that can appear in expression position.
+
+The `any` tail is retained for historical compatibility with runtime value
+classes and generated parser actions. New code should prefer the concrete
+node/value types exported from this module.
+
+## NodeFor
+
+- Kind: `interface`
+- Source: `src/AST.ts`
+
+`for` statement node.
 
 ## NodeFunction
 
@@ -685,6 +796,13 @@ List node
 
 Literal node.
 
+## NodeMetaClass
+
+- Kind: `interface`
+- Source: `src/AST.ts`
+
+Metaclass literal, e.g. `?ClassName`.
+
 ## NodeOperation
 
 - Kind: `type`
@@ -720,6 +838,20 @@ Reserved node.
 
 Return list node
 
+## NodeSpmd
+
+- Kind: `interface`
+- Source: `src/AST.ts`
+
+`spmd` statement node.
+
+## NodeSuperclassConstructor
+
+- Kind: `interface`
+- Source: `src/AST.ts`
+
+Explicit superclass constructor call, e.g. `obj@Base(args...)`.
+
 ## NodeSwitch
 
 - Kind: `interface`
@@ -734,12 +866,38 @@ Return list node
 
 `case` clause node.
 
+## NodeTry
+
+- Kind: `interface`
+- Source: `src/AST.ts`
+
+`try ... catch` statement node.
+
 ## NodeType
 
 - Kind: `type`
 - Source: `src/AST.ts`
 
-NodeType
+Discriminant values for AST nodes and runtime objects that participate in
+generic interpreter dispatch.
+
+Numeric runtime tags are used by value classes such as `Complex`,
+`MultiArray`, and class infrastructure objects. String tags are reserved for
+parser-created AST nodes.
+
+## NodeUnwindProtect
+
+- Kind: `interface`
+- Source: `src/AST.ts`
+
+`unwind_protect ... unwind_protect_cleanup` statement node.
+
+## NodeWhile
+
+- Kind: `interface`
+- Source: `src/AST.ts`
+
+`while` statement node.
 
 ## NumberObjectType
 
@@ -760,7 +918,10 @@ No JSDoc documentation is available yet.
 - Kind: `type`
 - Source: `src/AST.ts`
 
-Operator type.
+Operators accepted by the normalized expression AST.
+
+Suffix/prefix encodings such as `+_`, `_++`, and `.'` disambiguate source
+syntax that shares a token but has different precedence or operand position.
 
 ## RealType
 
@@ -775,19 +936,6 @@ External type complex facade definitions.
 - Source: `src/Complex.ts`
 
 No JSDoc documentation is available yet.
-
-## ReferenceError
-
-- Kind: `class`
-- Source: `src/Interpreter.ts`
-
-# ReferenceError
-
-Represents errors related to undefined identifiers.
-
-Examples:
-- undefined variable
-- undefined function
 
 ## ReturnHandler
 
@@ -843,16 +991,11 @@ String quote character type.
 - Kind: `class`
 - Source: `src/Structure.ts`
 
-No JSDoc documentation is available yet.
+Runtime representation of a MATLAB/Octave structure scalar.
 
-## SyntaxError
-
-- Kind: `class`
-- Source: `src/Interpreter.ts`
-
-# SyntaxError
-
-Represents syntax-related errors detected during parsing or preprocessing.
+Structure arrays are represented as `MultiArray` values whose elements are
+`Structure` instances. A scalar `Structure` stores fields in a plain object
+keyed by field name.
 
 ## toNumber
 
@@ -888,16 +1031,6 @@ Left unary operation node.
 - Source: `src/AST.ts`
 
 Right unary operation node.
-
-## UndefinedReferenceError
-
-- Kind: `class`
-- Source: `src/Interpreter.ts`
-
-# UndefinedReferenceError
-
-Represents an unresolved identifier that may be registered as a
-forward reference when the current evaluation mode allows it.
 
 ## UndefinedReferenceTable
 

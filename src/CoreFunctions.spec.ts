@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import path from 'node:path';
 import { CharString } from './CharString';
 import { Complex } from './Complex';
@@ -13,8 +14,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
     describe('Definition', () => {
         it(`${unitName} and its methods should be defined.`, () => {
             expect(CoreFunctions).toBeDefined();
-            expect(CoreFunctions.functions.isempty).toBe(CoreFunctions.isempty);
-            expect(CoreFunctions.signatures.isempty).toBeDefined();
+            expect(CoreFunctions.functions.isempty.func).toBe(CoreFunctions.isempty);
+            expect(CoreFunctions.functions.isempty.signature).toBe(CoreFunctions.isemptySignature);
         });
     });
 

@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import type { NodeBuiltInFunction } from './AST';
 import { AST } from './AST';
 import { Callables } from './Callable';

@@ -7,6 +7,7 @@
         "script/helper/downloadIfNotExist.ts",
         "script/helper/getHtmlParsed.ts",
         "script/helper/httpGet.ts",
+        "script/helper/mark-crono.ts",
         "script/helper/mkDirIfNotExist.ts",
         "script/helper/git-commit.cjs",
         {

@@ -10,10 +10,16 @@ import { type ComplexType, Complex } from './Complex';
 import { type ElementType, MultiArray } from './MultiArray';
 import { Structure } from './Structure';
 import { FunctionHandle } from './FunctionHandle';
+import { ClassDefinition } from './ClassDefinition';
+import { ClassInstance } from './ClassInstance';
+import { ClassBoundMethod } from './ClassBoundMethod';
+import { ClassStaticMethod } from './ClassStaticMethod';
+import { ClassEmptyMethod } from './ClassEmptyMethod';
+import { ClassEnumerationValue } from './ClassEnumerationValue';
+import { ClassMetaObject } from './ClassMeta';
 import { BLAS } from './BLAS';
 import { LinearAlgebra } from './LinearAlgebra';
 import { LAPACK } from './LAPACK';
-import { AST } from './AST';
 
 /**
  * Generic mathematical object.
@@ -36,9 +42,9 @@ type BinaryMathOperation = (left: MathObject, right: MathObject) => MathObject;
 type MathOperationType = UnaryMathOperation | BinaryMathOperation;
 
 /**
- * Key of type of `MathOperation`. The keys of `MathOperation` class.
+ * Key of type `MathOperation`. Keys of the `MathOperation` class that are static methods.
  */
-type KeyOfTypeOfMathOperation = keyof typeof MathOperation;
+type KeyOfTypeOfMathOperation = Exclude<keyof typeof MathOperation, 'prototype' | 'unaryOperations' | 'binaryOperations' | 'leftAssociativeMultipleOperations'>;
 
 /**
  * # `MathOperation`
@@ -63,6 +69,20 @@ abstract class MathOperation {
             return Structure.copy(value as Structure);
         } else if (FunctionHandle.isInstanceOf(value)) {
             return FunctionHandle.copy(value as FunctionHandle);
+        } else if (ClassDefinition.isInstanceOf(value)) {
+            return ClassDefinition.copy(value as ClassDefinition);
+        } else if (ClassInstance.isInstanceOf(value)) {
+            return ClassInstance.copy(value as ClassInstance);
+        } else if (ClassBoundMethod.isInstanceOf(value)) {
+            return ClassBoundMethod.copy(value as ClassBoundMethod);
+        } else if (ClassStaticMethod.isInstanceOf(value)) {
+            return ClassStaticMethod.copy(value as ClassStaticMethod);
+        } else if (ClassEmptyMethod.isInstanceOf(value)) {
+            return ClassEmptyMethod.copy(value as ClassEmptyMethod);
+        } else if (ClassEnumerationValue.isInstanceOf(value)) {
+            return ClassEnumerationValue.copy(value as ClassEnumerationValue);
+        } else if (ClassMetaObject.isInstanceOf(value)) {
+            return ClassMetaObject.copy(value as ClassMetaObject);
         } else {
             return value;
         }
@@ -82,6 +102,11 @@ abstract class MathOperation {
         if (CharString.isInstanceOf(right)) {
             right = MultiArray.fromCharString(right as CharString);
         }
+        if (op === 'eq' || op === 'ne') {
+            if (MathOperation.hasClassInstanceOperand(left) || MathOperation.hasClassInstanceOperand(right)) {
+                return MathOperation.classInstanceEqualityOperation(op, left, right);
+            }
+        }
         if (Complex.isInstanceOf(left) && Complex.isInstanceOf(right)) {
             return Complex[op](left as ComplexType, right as ComplexType);
         } else if (Complex.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
@@ -93,6 +118,68 @@ abstract class MathOperation {
         } else {
             throw new EvalError(`binary operator '${op}' not implemented for 'scalar struct' operands.`);
         }
+    };
+
+    private static readonly hasClassInstanceOperand = (value: MathObject): boolean =>
+        ClassInstance.isInstanceOf(value) || (MultiArray.isInstanceOf(value) && MultiArray.linearize(value).some((element) => ClassInstance.isInstanceOf(element)));
+
+    private static readonly classInstanceEqualityOperation = (op: 'eq' | 'ne', left: MathObject, right: MathObject): MathObject => {
+        const compare = (leftValue: ElementType, rightValue: ElementType): ComplexType => {
+            if (!ClassInstance.isInstanceOf(leftValue) || !ClassInstance.isInstanceOf(rightValue)) {
+                throw new EvalError(`binary operator '${op}' not implemented for class instance operands.`);
+            }
+            if (!leftValue.classDefinition.isHandleClass() || !rightValue.classDefinition.isHandleClass()) {
+                throw new EvalError(`binary operator '${op}' not implemented for value class operands.`);
+            }
+            const same = leftValue === rightValue;
+            return (op === 'eq' ? same : !same) ? Complex.true() : Complex.false();
+        };
+        const leftArray = MultiArray.scalarToMultiArray(left);
+        const rightArray = MultiArray.scalarToMultiArray(right);
+        const leftDim = leftArray.dimension.slice();
+        const rightDim = rightArray.dimension.slice();
+        const maxDim = Math.max(leftDim.length, rightDim.length);
+        while (leftDim.length < maxDim) leftDim.push(1);
+        while (rightDim.length < maxDim) rightDim.push(1);
+        const resultDim = new Array<number>(maxDim);
+        const leftBroadcast = new Array<boolean>(maxDim);
+        const rightBroadcast = new Array<boolean>(maxDim);
+        for (let i = 0; i < maxDim; i++) {
+            if (leftDim[i] === rightDim[i]) {
+                resultDim[i] = leftDim[i];
+                leftBroadcast[i] = rightBroadcast[i] = false;
+            } else if (leftDim[i] === 1) {
+                resultDim[i] = rightDim[i];
+                leftBroadcast[i] = true;
+                rightBroadcast[i] = false;
+            } else if (rightDim[i] === 1) {
+                resultDim[i] = leftDim[i];
+                leftBroadcast[i] = false;
+                rightBroadcast[i] = true;
+            } else {
+                throw new EvalError(`operator ${op}: nonconformant arguments (op1 is ${leftDim.join('x')}, op2 is ${rightDim.join('x')}).`);
+            }
+        }
+        const leftStrides = MultiArray.computeStrides(leftDim);
+        const rightStrides = MultiArray.computeStrides(rightDim);
+        const resultStrides = MultiArray.computeStrides(resultDim);
+        const result = new MultiArray(resultDim);
+        const totalElements = resultDim.reduce((a, b) => a * b, 1);
+        for (let n = 0; n < totalElements; n++) {
+            let leftIndexLinear = 0;
+            let rightIndexLinear = 0;
+            for (let d = 0; d < maxDim; d++) {
+                const coord = Math.floor(n / resultStrides[d]) % resultDim[d];
+                leftIndexLinear += (leftBroadcast[d] ? 0 : coord) * leftStrides[d];
+                rightIndexLinear += (rightBroadcast[d] ? 0 : coord) * rightStrides[d];
+            }
+            const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(leftDim[0], leftDim[1], leftIndexLinear);
+            const [k, l] = MultiArray.linearIndexToMultiArrayRowColumn(rightDim[0], rightDim[1], rightIndexLinear);
+            const [o, p] = MultiArray.linearIndexToMultiArrayRowColumn(resultDim[0], resultDim[1], n);
+            result.array[o][p] = compare(leftArray.array[i][j], rightArray.array[k][l]);
+        }
+        result.type = Complex.LOGICAL;
+        return MultiArray.MultiArrayToScalar(result) as MathObject;
     };
 
     /**

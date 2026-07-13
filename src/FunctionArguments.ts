@@ -1,4 +1,4 @@
-import type { NodeArgumentValidation, NodeArguments, NodeExpr, NodeFunctionDefinition, NodeIdentifier, NodeInput } from './AST';
+import type { NodeArgumentValidation, NodeArguments, NodeExpr, NodeFunctionDefinition, NodeIdentifier, NodeIgnoredTarget, NodeInput } from './AST';
 import { AST, CharString, Complex, ComplexType, MultiArray } from './AST';
 import { FunctionValidation } from './FunctionValidation';
 
@@ -6,6 +6,8 @@ type ThrowSyntaxError = (message: string) => never;
 type ThrowEvalError = (message: string) => never;
 type ArgumentSizeDimension = number | { type: 'symbol'; name: string } | { type: 'any' };
 type ArgumentValidatorSpec = { name: string; value?: NodeExpr; bounds?: NodeExpr[]; custom?: 'implicit' | 'explicit'; expression?: NodeExpr };
+type ReturnName = NodeIdentifier | NodeIgnoredTarget;
+type FunctionParameter = NodeIdentifier | NodeIgnoredTarget;
 type ValidationEntry = { node?: NodeInput };
 type ArgumentValidationCallbacks = {
     resolveEntry: (validation: NodeArgumentValidation, localNamesOnly: boolean) => ValidationEntry | undefined;
@@ -35,13 +37,41 @@ type RepeatingArgumentValidationCallbacks = Omit<ArgumentValidationCallbacks, 'r
  * construction so validation rules remain independent from `Interpreter.ts`.
  */
 class FunctionArguments {
+    private static isIdentifier(node: FunctionParameter): node is NodeIdentifier {
+        return node.type === 'IDENT';
+    }
+
     /**
      * Classes currently supported by the function infrastructure.
      *
      * A future class-system implementation can expand this list without
      * changing the parser representation of `arguments` blocks.
      */
-    private static readonly supportedArgumentClasses = ['double', 'single', 'char', 'cell', 'struct', 'function_handle'];
+    private static readonly supportedArgumentClasses = new Set(['double', 'single', 'char', 'cell', 'struct', 'function_handle']);
+    private static readonly supportedArgumentValidators = new Set([
+        'mustBeNumeric',
+        'mustBeNumericOrLogical',
+        'mustBeText',
+        'mustBeTextScalar',
+        'mustBeScalarOrEmpty',
+        'mustBeScalar',
+        'mustBeMatrix',
+        'mustBeSquare',
+        'mustBeVector',
+        'mustBeNonempty',
+        'mustBePositive',
+        'mustBeNonnegative',
+        'mustBeNonzero',
+        'mustBeInteger',
+        'mustBeOdd',
+        'mustBeFinite',
+        'mustBeReal',
+    ]);
+    private static readonly supportedComparatorValidators = new Set(['mustBeGreaterThan', 'mustBeGreaterThanOrEqual', 'mustBeLessThan', 'mustBeLessThanOrEqual']);
+    private static readonly supportedRangeValidators = new Set(['mustBeInRange']);
+    private static readonly supportedMembershipValidators = new Set(['mustBeMember']);
+    private static readonly supportedRangeOptions = new Set(['inclusive', 'exclude-lower', 'exclude-upper', 'exclude-both']);
+    private static readonly supportedBlockAttributes = new Set(['Input', 'Output', 'Repeating']);
 
     /**
      * Render one argument-size dimension for diagnostics.
@@ -141,7 +171,7 @@ class FunctionArguments {
             throwSyntaxError(`arguments block class validation for '${validationName}' is not implemented yet.`);
         }
         const classNames: string[] = classNodes.map((node: NodeInput) => (node as NodeIdentifier).id);
-        if (!classNames.every((className: string) => this.supportedArgumentClasses.includes(className))) {
+        if (!classNames.every((className: string) => this.supportedArgumentClasses.has(className))) {
             throwSyntaxError(`arguments block class validation for '${validationName}' is not implemented yet.`);
         }
         return [...new Set(classNames)];
@@ -172,54 +202,32 @@ class FunctionArguments {
      */
     public static argumentValidators(validation: NodeArgumentValidation, throwSyntaxError: ThrowSyntaxError): ArgumentValidatorSpec[] {
         const validationName = this.validationDisplayName(validation, throwSyntaxError);
-        const supported = [
-            'mustBeNumeric',
-            'mustBeNumericOrLogical',
-            'mustBeText',
-            'mustBeTextScalar',
-            'mustBeScalarOrEmpty',
-            'mustBeScalar',
-            'mustBeMatrix',
-            'mustBeSquare',
-            'mustBeVector',
-            'mustBeNonempty',
-            'mustBePositive',
-            'mustBeNonnegative',
-            'mustBeNonzero',
-            'mustBeInteger',
-            'mustBeOdd',
-            'mustBeFinite',
-            'mustBeReal',
-        ];
-        const supportedComparators = ['mustBeGreaterThan', 'mustBeGreaterThanOrEqual', 'mustBeLessThan', 'mustBeLessThanOrEqual'];
-        const supportedRangeValidators = ['mustBeInRange'];
-        const supportedMembershipValidators = ['mustBeMember'];
         return validation.functions.map((node) => {
-            if (node?.type === 'IDENT' && supported.includes(node.id)) {
+            if (node?.type === 'IDENT' && this.supportedArgumentValidators.has(node.id)) {
                 return { name: node.id };
             }
             if (node?.type === 'IDENT') {
                 return { name: node.id, custom: 'implicit' };
             }
-            if (node?.type === 'IDX' && node.delim === '()' && node.expr.type === 'IDENT' && supportedComparators.includes(node.expr.id) && node.args.length === 2) {
+            if (node?.type === 'IDX' && node.delim === '()' && node.expr.type === 'IDENT' && this.supportedComparatorValidators.has(node.expr.id) && node.args.length === 2) {
                 return { name: node.expr.id, value: node.args[0], bounds: [node.args[1]] };
             }
             if (
                 node?.type === 'IDX' &&
                 node.delim === '()' &&
                 node.expr.type === 'IDENT' &&
-                supportedRangeValidators.includes(node.expr.id) &&
+                this.supportedRangeValidators.has(node.expr.id) &&
                 (node.args.length === 3 || node.args.length === 4)
             ) {
                 return { name: node.expr.id, value: node.args[0], bounds: node.args.slice(1) };
             }
-            if (node?.type === 'IDX' && node.delim === '()' && node.expr.type === 'IDENT' && supportedMembershipValidators.includes(node.expr.id) && node.args.length === 2) {
+            if (node?.type === 'IDX' && node.delim === '()' && node.expr.type === 'IDENT' && this.supportedMembershipValidators.has(node.expr.id) && node.args.length === 2) {
                 return { name: node.expr.id, value: node.args[0], bounds: [node.args[1]] };
             }
             if (
                 node?.type === 'IDX' &&
                 node.expr.type === 'IDENT' &&
-                (supportedComparators.includes(node.expr.id) || supportedRangeValidators.includes(node.expr.id) || supportedMembershipValidators.includes(node.expr.id))
+                (this.supportedComparatorValidators.has(node.expr.id) || this.supportedRangeValidators.has(node.expr.id) || this.supportedMembershipValidators.has(node.expr.id))
             ) {
                 throwSyntaxError(`arguments block function validation for '${validationName}' is not implemented yet.`);
             }
@@ -288,7 +296,7 @@ class FunctionArguments {
                 const upper = getRealBound(1);
                 const option = bounds[2];
                 const optionText = typeof option === 'undefined' ? 'inclusive' : CharString.isInstanceOf(option) ? option.str : undefined;
-                if (typeof optionText === 'undefined' || !['inclusive', 'exclude-lower', 'exclude-upper', 'exclude-both'].includes(optionText)) {
+                if (typeof optionText === 'undefined' || !this.supportedRangeOptions.has(optionText)) {
                     fail();
                 }
                 const lowerTest =
@@ -447,13 +455,13 @@ class FunctionArguments {
      * assume the block structure is coherent.
      */
     public static validateBlocks(func: NodeFunctionDefinition, throwSyntaxError: ThrowSyntaxError): void {
-        const inputNames = new Set((func.parameter.list as NodeIdentifier[]).map((node) => node.id));
-        const outputNames = new Set((func.return.list as NodeIdentifier[]).map((node) => node.id));
+        const inputNames = new Set((func.parameter.list as FunctionParameter[]).filter(this.isIdentifier).map((node) => node.id));
+        const outputNames = new Set((func.return.list as ReturnName[]).filter((node): node is NodeIdentifier => node.type !== '<~>').map((node) => node.id));
         const hasVarargin = inputNames.has('varargin');
         const nameValueFields = new Set<string>();
         for (const block of func.arguments.list as NodeArguments[]) {
             const attribute = block.attribute?.id ?? 'Input';
-            if (!['Input', 'Output', 'Repeating'].includes(attribute)) {
+            if (!this.supportedBlockAttributes.has(attribute)) {
                 throwSyntaxError(`unsupported arguments block attribute '${attribute}'.`);
             }
             if (attribute === 'Repeating' && !hasVarargin) {
@@ -587,14 +595,19 @@ class FunctionArguments {
     ): { positional: NodeExpr[]; named: Map<string, NodeExpr> } {
         const declarations = this.nameValueDeclarations(func, throwSyntaxError);
         const knownFields = new Set([...declarations.values()].flatMap((fields) => [...fields.keys()]));
-        const params = func.parameter.list as NodeIdentifier[];
-        const hasVarargin = params.length > 0 && params[params.length - 1].id === 'varargin';
+        const params = func.parameter.list as FunctionParameter[];
+        const lastParam = params[params.length - 1];
+        const hasVarargin = params.length > 0 && lastParam.type === 'IDENT' && lastParam.id === 'varargin';
         const fixedParamCount = hasVarargin ? params.length - 1 : params.length;
         const nameValueParameters = this.nameValueParameters(func, throwSyntaxError);
-        const positionalParams = params.slice(0, fixedParamCount).filter((param) => !nameValueParameters.has(param.id));
+        const positionalParams = params.slice(0, fixedParamCount).filter((param) => (param.type === '<~>' ? true : !nameValueParameters.has(param.id)));
         const inputDefaults = this.inputArgumentDefaults(func, throwSyntaxError);
         let minPositionalCount = positionalParams.length;
-        while (minPositionalCount > 0 && inputDefaults.has(positionalParams[minPositionalCount - 1].id)) {
+        while (minPositionalCount > 0) {
+            const param = positionalParams[minPositionalCount - 1];
+            if (param.type !== 'IDENT' || !inputDefaults.has(param.id)) {
+                break;
+            }
             minPositionalCount--;
         }
         const positional: NodeExpr[] = [];
@@ -655,13 +668,13 @@ class FunctionArguments {
      * variables to be assigned.
      */
     public static outputNamesToValidate(func: NodeFunctionDefinition, requestedOutputCount: number): Set<string> | undefined {
-        const returnNames = (func.return.list as NodeIdentifier[]).map((node) => node.id);
+        const returnNames = (func.return.list as ReturnName[]).map((node) => (node.type === '<~>' ? null : node.id));
         const hasVarargout = returnNames.length > 0 && returnNames[returnNames.length - 1] === 'varargout';
         if (returnNames.length === 1 && hasVarargout) {
             return undefined;
         }
         const fixedReturnNames = hasVarargout ? returnNames.slice(0, -1) : returnNames;
-        return new Set(fixedReturnNames.slice(0, Math.min(Math.max(requestedOutputCount, 1), fixedReturnNames.length)));
+        return new Set(fixedReturnNames.slice(0, Math.min(Math.max(requestedOutputCount, 1), fixedReturnNames.length)).filter((name): name is string => name !== null));
     }
 }
 

@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import path from 'node:path';
 import type { BuiltInFunctionInputSignature, NodeBuiltInFunction } from './AST';
 import { CharString, Complex } from './AST';

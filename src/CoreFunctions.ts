@@ -2,13 +2,31 @@ import { CharString } from './CharString';
 import { Complex, ComplexType } from './Complex';
 import { type ElementType, MultiArray } from './MultiArray';
 import { Structure } from './Structure';
-import { type BuiltInFunctionSignature, type NodeReturnList, AST, ReturnHandlerResult } from './AST';
+import { FunctionHandle } from './FunctionHandle';
+import { ClassDefinition } from './ClassDefinition';
+import { ClassInstance } from './ClassInstance';
+import { ClassEnumerationValue } from './ClassEnumerationValue';
+import { ClassEventListener } from './ClassEventListener';
+import { ClassMetaClass, ClassMetaObject } from './ClassMeta';
+import { type BuiltInFunctionSignature, type NodeReturnList, AST, type FunctionSignatureEntry, ReturnHandlerResult } from './AST';
 
+/**
+ * Core MATLAB/Octave built-ins that are independent of heavy numerical
+ * algorithms.
+ *
+ * This module owns shape predicates, type predicates, structure/object
+ * introspection helpers, concatenation guards, and other functions that the
+ * interpreter should register before optional linear-algebra functionality.
+ * Each public built-in has adjacent signature metadata so call validation and
+ * implementation stay synchronized.
+ */
 abstract class CoreFunctions {
     /**
+     * Reject cell arrays for built-ins that only accept ordinary arrays.
      *
-     * @param name
-     * @param M
+     * @param name Built-in name used in diagnostics.
+     * @param M Candidate value.
+     * @throws Error when `M` is a cell array.
      */
     public static readonly throwErrorIfCellArray = (name: string, M: MultiArray | ComplexType): void => {
         if (MultiArray.isInstanceOf(M) && (M as MultiArray).isCell) {
@@ -17,85 +35,386 @@ abstract class CoreFunctions {
     };
 
     /**
-     * Return true if M is an empty matrix
-     * @param X
-     * @returns
+     * Extract class instances from a scalar or array value.
+     *
+     * @param value Runtime value to inspect.
+     * @returns Class instances in linear order.
+     */
+    private static readonly classInstancesIn = (value: ElementType): ClassInstance[] => MultiArray.linearize(MultiArray.scalarToMultiArray(value)).filter(ClassInstance.isInstanceOf);
+
+    /**
+     * Enforce homogeneous object-array concatenation.
+     *
+     * MATLAB object arrays are homogeneous. This guard rejects concatenations
+     * that would mix unrelated class definitions before the array is built.
+     *
+     * @param name Built-in/operator name used in diagnostics.
+     * @param values Values that will be concatenated.
+     * @throws Error when object instances have different classes.
+     */
+    private static readonly validateObjectArrayConcatenation = (name: string, values: ElementType[]): void => {
+        let classDefinition: ClassDefinition | undefined;
+        for (const instance of values.flatMap((value) => CoreFunctions.classInstancesIn(value))) {
+            if (!classDefinition) {
+                classDefinition = instance.classDefinition;
+            } else if (instance.classDefinition !== classDefinition) {
+                throw new Error(`${name}: object arrays must contain objects of the same class.`);
+            }
+        }
+    };
+
+    /** Signature metadata for `isempty`. */
+    public static readonly isemptySignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
+
+    /**
+     * Test whether a value is empty.
+     *
+     * @param X Value to test.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @returns Logical scalar.
      */
     public static readonly isempty = (X?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('isempty', !(typeof X !== 'undefined' && rest.length === 0));
         return MultiArray.isEmpty(X) ? Complex.true() : Complex.false();
     };
 
+    /** Signature metadata for `isscalar`. */
+    public static readonly isscalarSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
+
     /**
      * Return true if X is a scalar.
-     * @param X
-     * @returns
+     *
+     * @param X Value to test.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @returns Logical scalar.
      */
     public static readonly isscalar = (X?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('isscalar', !(typeof X !== 'undefined' && rest.length === 0));
         return MultiArray.isScalar(X) ? Complex.true() : Complex.false();
     };
 
+    /** Signature metadata for `ismatrix`. */
+    public static readonly ismatrixSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
     /**
      * Return true if X is a 2-D array.
-     * @param X
-     * @returns
+     *
+     * @param X Value to test.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @returns Logical scalar.
      */
     public static readonly ismatrix = (X?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('ismatrix', !(typeof X !== 'undefined' && rest.length === 0));
         return MultiArray.isMatrix(X) ? Complex.true() : Complex.false();
     };
 
+    /** Signature metadata for `isvector`. */
+    public static readonly isvectorSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
     /**
      * Return true if X is a vector.
-     * @param X
-     * @returns
+     *
+     * @param X Value to test.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @returns Logical scalar.
      */
     public static readonly isvector = (X?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('isvector', !(typeof X !== 'undefined' && rest.length === 0));
         return MultiArray.isVector(X) ? Complex.true() : Complex.false();
     };
 
+    /** Signature metadata for `iscell`. */
+    public static readonly iscellSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
     /**
      * Return true if X is a cell array object.
-     * @param M
-     * @returns
+     *
+     * @param X Value to test.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @returns Logical scalar.
      */
     public static readonly iscell = (X?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('iscell', !(typeof X !== 'undefined' && rest.length === 0));
         return MultiArray.isCellArray(X) ? Complex.true() : Complex.false();
     };
 
+    /** Signature metadata for `isrow`. */
+    public static readonly isrowSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
     /**
      * Return true if X is a row vector.
-     * @param X
-     * @returns
+     *
+     * @param X Value to test.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @returns Logical scalar.
      */
     public static readonly isrow = (X?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('isrow', !(typeof X !== 'undefined' && rest.length === 0));
         return MultiArray.isRowVector(X) ? Complex.true() : Complex.false();
     };
 
+    /** Signature metadata for `iscolumn`. */
+    public static readonly iscolumnSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
     /**
      * Return true if X is a column vector.
-     * @param X
-     * @returns
+     *
+     * @param X Value to test.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @returns Logical scalar.
      */
     public static readonly iscolumn = (X?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('iscolumn', !(typeof X !== 'undefined' && rest.length === 0));
         return MultiArray.isColumnVector(X) ? Complex.true() : Complex.false();
     };
 
+    /** Signature metadata for `isstruct`. */
+    public static readonly isstructSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
     /**
-     * Return true if X is a column vector.
-     * @param X
-     * @returns
+     * Return true if X is a structure scalar or structure array.
+     *
+     * @param X Value to test.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @returns Logical scalar.
      */
     public static readonly isstruct = (X?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('isstruct', !(typeof X !== 'undefined' && rest.length === 0));
         return Structure.isStructure(X) ? Complex.true() : Complex.false();
     };
 
+    /** Signature metadata for `isvalid`. */
+    public static readonly isvalidSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'handle' }] }, outputs: { arity: 1 } };
+    /**
+     * Return true for valid handle class instances.
+     *
+     * @param X Handle object, listener, or array.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @returns Logical scalar or logical array.
+     */
+    public static readonly isvalid = (X?: ElementType, ...rest: unknown[]): ElementType => {
+        AST.throwInvalidCallError('isvalid', !(typeof X !== 'undefined' && rest.length === 0));
+        const isValidHandle = (value: ElementType): ComplexType => {
+            if (ClassEventListener.isInstanceOf(value)) {
+                return ClassEventListener.isValid(value) ? Complex.true() : Complex.false();
+            }
+            if (!ClassInstance.isInstanceOf(value) || !value.classDefinition.isHandleClass()) {
+                throw new EvalError('isvalid: H must be a handle object.');
+            }
+            return ClassInstance.isValid(value) ? Complex.true() : Complex.false();
+        };
+        return MultiArray.isInstanceOf(X) ? MultiArray.MultiArrayToScalar(MultiArray.rawMap(X, isValidHandle)) : isValidHandle(X);
+    };
+
+    /** Signature metadata for `isobject`. */
+    public static readonly isobjectSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
+    /**
+     * Return true if X is an object or object array.
+     *
+     * @param X Value to test.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @returns Logical scalar.
+     */
+    public static readonly isobject = (X?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('isobject', !(typeof X !== 'undefined' && rest.length === 0));
+        const isObjectValue = (value: ElementType): boolean => ClassInstance.isInstanceOf(value) || ClassEnumerationValue.isInstanceOf(value) || ClassMetaObject.isInstanceOf(value);
+        return (MultiArray.isInstanceOf(X) ? MultiArray.linearize(X).some(isObjectValue) : isObjectValue(X)) ? Complex.true() : Complex.false();
+    };
+
+    /**
+     * Resolve class metadata from class definitions, instances, enumeration
+     * values, meta.class objects, or arrays containing those values.
+     *
+     * @param value Value supplied to an introspection built-in.
+     * @param name Built-in name used in diagnostics.
+     * @returns Class metadata.
+     * @throws EvalError when the value is not class-related.
+     */
+    private static readonly classDefinitionFromValue = (value: ElementType, name: string): ClassDefinition => {
+        if (ClassDefinition.isInstanceOf(value)) {
+            return value;
+        }
+        if (ClassMetaClass.isInstanceOf(value)) {
+            return value.definition;
+        }
+        if (ClassInstance.isInstanceOf(value) || ClassEnumerationValue.isInstanceOf(value)) {
+            return value.classDefinition;
+        }
+        if (MultiArray.isInstanceOf(value)) {
+            const object = MultiArray.linearize(value).find((item) => ClassInstance.isInstanceOf(item) || ClassEnumerationValue.isInstanceOf(item) || ClassMetaClass.isInstanceOf(item));
+            if (ClassMetaClass.isInstanceOf(object)) {
+                return object.definition;
+            }
+            if (ClassInstance.isInstanceOf(object) || ClassEnumerationValue.isInstanceOf(object)) {
+                return object.classDefinition;
+            }
+        }
+        throw new EvalError(`${name}: input must be a class object.`);
+    };
+
+    /**
+     * Build a MATLAB-like cell column vector of strings.
+     *
+     * @param names Names to wrap.
+     * @returns Cell column vector.
+     */
+    private static readonly stringCellColumn = (names: string[]): MultiArray => {
+        const result = MultiArray.toColumnVector(names.map((name) => CharString.create(name)));
+        result.isCell = true;
+        return result;
+    };
+
+    /**
+     * Return sorted visible member names.
+     *
+     * Hidden class members are omitted to match user-facing introspection
+     * behavior.
+     *
+     * @param members Member metadata list.
+     * @returns Sorted visible names.
+     */
+    private static readonly visibleNames = <T extends { name: string; isHidden?: boolean }>(members: T[]): string[] => {
+        const names = new Set<string>();
+        for (const member of members) {
+            if (!member.isHidden) {
+                names.add(member.name);
+            }
+        }
+        return [...names].sort();
+    };
+
+    public static readonly propertiesSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'object' }] }, outputs: { arity: 1 } };
+    public static readonly properties = (X?: ElementType, ...rest: unknown[]): MultiArray => {
+        AST.throwInvalidCallError('properties', !(typeof X !== 'undefined' && rest.length === 0));
+        const definition = CoreFunctions.classDefinitionFromValue(X, 'properties');
+        return CoreFunctions.stringCellColumn(CoreFunctions.visibleNames(definition.allProperties()));
+    };
+
+    public static readonly fieldnamesSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
+    public static readonly fieldnames = (X?: ElementType, ...rest: unknown[]): MultiArray => {
+        AST.throwInvalidCallError('fieldnames', !(typeof X !== 'undefined' && rest.length === 0));
+        if (Structure.isInstanceOf(X)) {
+            return CoreFunctions.stringCellColumn(Object.keys(X.field).sort());
+        }
+        const definition = CoreFunctions.classDefinitionFromValue(X, 'fieldnames');
+        return CoreFunctions.stringCellColumn(CoreFunctions.visibleNames(definition.allProperties()));
+    };
+
+    public static readonly methodsSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'object' }] }, outputs: { arity: 1 } };
+    public static readonly methods = (X?: ElementType, ...rest: unknown[]): MultiArray => {
+        AST.throwInvalidCallError('methods', !(typeof X !== 'undefined' && rest.length === 0));
+        const definition = CoreFunctions.classDefinitionFromValue(X, 'methods');
+        return CoreFunctions.stringCellColumn(CoreFunctions.visibleNames(definition.allMethods()));
+    };
+
+    public static readonly eventsSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'object' }] }, outputs: { arity: 1 } };
+    public static readonly events = (X?: ElementType, ...rest: unknown[]): MultiArray => {
+        AST.throwInvalidCallError('events', !(typeof X !== 'undefined' && rest.length === 0));
+        const definition = CoreFunctions.classDefinitionFromValue(X, 'events');
+        return CoreFunctions.stringCellColumn(CoreFunctions.visibleNames(definition.allEvents()));
+    };
+
+    public static readonly enumerationSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'object' }] }, outputs: { arity: 1 } };
+    public static readonly enumeration = (X?: ElementType, ...rest: unknown[]): MultiArray => {
+        AST.throwInvalidCallError('enumeration', !(typeof X !== 'undefined' && rest.length === 0));
+        const definition = CoreFunctions.classDefinitionFromValue(X, 'enumeration');
+        return CoreFunctions.stringCellColumn(CoreFunctions.visibleNames(definition.allEnumerations()));
+    };
+
+    public static readonly superclassesSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'object' }] }, outputs: { arity: 1 } };
+    public static readonly superclasses = (X?: ElementType, ...rest: unknown[]): MultiArray => {
+        AST.throwInvalidCallError('superclasses', !(typeof X !== 'undefined' && rest.length === 0));
+        const definition = CoreFunctions.classDefinitionFromValue(X, 'superclasses');
+        return CoreFunctions.stringCellColumn(definition.superclasses.slice().sort());
+    };
+
+    private static readonly stringArgument = (value: ElementType, name: string, index: number): string => {
+        if (!CharString.isInstanceOf(value)) {
+            throw new EvalError(`${name}: argument ${index} must be a string.`);
+        }
+        return value.str;
+    };
+
+    public static readonly ispropSignature: BuiltInFunctionSignature = {
+        inputs: { arity: 2, parameters: [{ name: 'object' }, { name: 'propertyName', classes: ['char'] }] },
+        outputs: { arity: 1 },
+    };
+    public static readonly isprop = (X?: ElementType, propertyName?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('isprop', !(typeof X !== 'undefined' && typeof propertyName !== 'undefined' && rest.length === 0));
+        const definition = CoreFunctions.classDefinitionFromValue(X, 'isprop');
+        const name = CoreFunctions.stringArgument(propertyName, 'isprop', 2);
+        return definition.findProperty(name) ? Complex.true() : Complex.false();
+    };
+
+    public static readonly ismethodSignature: BuiltInFunctionSignature = {
+        inputs: { arity: 2, parameters: [{ name: 'object' }, { name: 'methodName', classes: ['char'] }] },
+        outputs: { arity: 1 },
+    };
+    public static readonly ismethod = (X?: ElementType, methodName?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('ismethod', !(typeof X !== 'undefined' && typeof methodName !== 'undefined' && rest.length === 0));
+        const definition = CoreFunctions.classDefinitionFromValue(X, 'ismethod');
+        const name = CoreFunctions.stringArgument(methodName, 'ismethod', 2);
+        return definition.findMethod(name) ? Complex.true() : Complex.false();
+    };
+
+    public static readonly isequalSignature: BuiltInFunctionSignature = { inputs: { arity: -1, min: 2, parameters: [{ name: 'value', variadic: true }] }, outputs: { arity: 1 } };
+    /**
+     * Return true if all input values are equal.
+     * @param first
+     * @param rest
+     * @returns
+     */
+    public static readonly isequal = (first?: ElementType, ...rest: ElementType[]): ComplexType => {
+        AST.throwInvalidCallError('isequal', !(typeof first !== 'undefined' && rest.length >= 1));
+        return rest.every((value) => CoreFunctions.valuesEqual(first, value)) ? Complex.true() : Complex.false();
+    };
+
+    private static readonly valuesEqual = (left: ElementType, right: ElementType): boolean => {
+        if (left === right) {
+            return true;
+        }
+        if (left === null || right === null || typeof left === 'undefined' || typeof right === 'undefined') {
+            return left === right;
+        }
+        if (Complex.isInstanceOf(left) && Complex.isInstanceOf(right)) {
+            return Boolean(Complex.toBoolean(Complex.eq(left, right)));
+        }
+        if (CharString.isInstanceOf(left) && CharString.isInstanceOf(right)) {
+            return left.str === right.str;
+        }
+        if (MultiArray.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
+            return CoreFunctions.multiArraysEqual(left, right);
+        }
+        if (Structure.isInstanceOf(left) && Structure.isInstanceOf(right)) {
+            return CoreFunctions.structuresEqual(left, right);
+        }
+        if (FunctionHandle.isInstanceOf(left) && FunctionHandle.isInstanceOf(right)) {
+            return left.id === right.id && FunctionHandle.toString(left) === FunctionHandle.toString(right);
+        }
+        if (ClassInstance.isInstanceOf(left) && ClassInstance.isInstanceOf(right)) {
+            if (left.classDefinition !== right.classDefinition) {
+                return false;
+            }
+            if (left.classDefinition.isHandleClass() || right.classDefinition.isHandleClass()) {
+                return left === right;
+            }
+            return CoreFunctions.propertyTablesEqual(left.properties, right.properties);
+        }
+        if (ClassEnumerationValue.isInstanceOf(left) && ClassEnumerationValue.isInstanceOf(right)) {
+            return left.classDefinition === right.classDefinition && left.enumeration.name === right.enumeration.name && CoreFunctions.elementListsEqual(left.args, right.args);
+        }
+        return false;
+    };
+
+    private static readonly multiArraysEqual = (left: MultiArray, right: MultiArray): boolean =>
+        left.isCell === right.isCell && MultiArray.arrayEquals(left.dimension, right.dimension) && CoreFunctions.elementListsEqual(MultiArray.linearize(left), MultiArray.linearize(right));
+
+    private static readonly structuresEqual = (left: Structure, right: Structure): boolean => CoreFunctions.propertyTablesEqual(left.field, right.field);
+
+    private static readonly propertyTablesEqual = (left: Record<string, ElementType>, right: Record<string, ElementType>): boolean => {
+        const leftKeys = Object.keys(left).sort();
+        const rightKeys = Object.keys(right).sort();
+        return MultiArray.arrayEquals(leftKeys, rightKeys) && leftKeys.every((key) => CoreFunctions.valuesEqual(left[key], right[key]));
+    };
+
+    private static readonly elementListsEqual = (left: ElementType[], right: ElementType[]): boolean =>
+        left.length === right.length && left.every((value, index) => CoreFunctions.valuesEqual(value, right[index]));
+
+    public static readonly ndimsSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
     /**
      * Return the number of dimensions of M.
      * @param M
@@ -106,6 +425,7 @@ abstract class CoreFunctions {
         return Complex.create(MultiArray.scalarToMultiArray(M).dimension.length);
     };
 
+    public static readonly rowsSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
     /**
      * eturn the number of rows of M.
      * @param M
@@ -116,6 +436,7 @@ abstract class CoreFunctions {
         return Complex.create(MultiArray.scalarToMultiArray(M).dimension[0]);
     };
 
+    public static readonly columnsSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
     /**
      * Return the number of columns of M.
      * @param M
@@ -126,6 +447,7 @@ abstract class CoreFunctions {
         return Complex.create(MultiArray.scalarToMultiArray(M).dimension[1]);
     };
 
+    public static readonly lengthSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
     /**
      * Return the length of the object M. The length is the number of elements
      * along the largest dimension.
@@ -138,6 +460,10 @@ abstract class CoreFunctions {
         return Complex.create(Math.max(...MultiArray.scalarToMultiArray(M).dimension));
     };
 
+    public static readonly numelSignature: BuiltInFunctionSignature = {
+        inputs: { arity: -2, min: 1, parameters: [{ name: 'value' }, { name: 'index', variadic: true }] },
+        outputs: { arity: 1 },
+    };
     /**
      *
      * @param M
@@ -162,6 +488,27 @@ abstract class CoreFunctions {
         }
     };
 
+    public static readonly findSignature: BuiltInFunctionSignature = {
+        inputs: [
+            { arity: 1, parameters: [{ name: 'value', classes: ['double'] }] },
+            {
+                arity: 2,
+                parameters: [
+                    { name: 'value', classes: ['double'] },
+                    { name: 'count', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
+                ],
+            },
+            {
+                arity: 3,
+                parameters: [
+                    { name: 'value', classes: ['double'] },
+                    { name: 'count', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
+                    { name: 'direction', classes: ['char'], allowedStrings: ['first', 'last'] },
+                ],
+            },
+        ],
+        outputs: { arity: -3 },
+    };
     /**
      * Find indices and values of nonzero elements.
      * @param M Input value.
@@ -208,6 +555,33 @@ abstract class CoreFunctions {
         });
     };
 
+    public static readonly sortSignature: BuiltInFunctionSignature = {
+        inputs: [
+            { arity: 1, parameters: [{ name: 'value', classes: ['double'] }] },
+            {
+                arity: 2,
+                parameters: [
+                    { name: 'value', classes: ['double'] },
+                    {
+                        name: 'dimensionOrDirection',
+                        alternatives: [
+                            { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
+                            { name: 'direction', classes: ['char'], allowedStrings: ['ascend', 'descend'] },
+                        ],
+                    },
+                ],
+            },
+            {
+                arity: 3,
+                parameters: [
+                    { name: 'value', classes: ['double'] },
+                    { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
+                    { name: 'direction', classes: ['char'], allowedStrings: ['ascend', 'descend'] },
+                ],
+            },
+        ],
+        outputs: { arity: -2 },
+    };
     /**
      * Sort elements along a dimension.
      * @param M Input value.
@@ -266,6 +640,23 @@ abstract class CoreFunctions {
         );
     };
 
+    public static readonly ind2subSignature: BuiltInFunctionSignature = {
+        inputs: {
+            arity: 2,
+            parameters: [
+                {
+                    name: 'dimensions',
+                    classes: ['double'],
+                    alternatives: [
+                        { name: 'dimension', validators: ['dimension'] },
+                        { name: 'dimensions', validators: ['dimensionVector'] },
+                    ],
+                },
+                { name: 'index', classes: ['double'], validators: ['numeric', 'real', 'finite', 'integer', 'positive'] },
+            ],
+        },
+        outputs: { arity: -1 },
+    };
     /**
      * Convert linear indices to subscripts.
      * @param DIMS
@@ -300,6 +691,24 @@ abstract class CoreFunctions {
         });
     };
 
+    public static readonly sub2indSignature: BuiltInFunctionSignature = {
+        inputs: {
+            arity: -2,
+            min: 2,
+            parameters: [
+                {
+                    name: 'dimensions',
+                    classes: ['double'],
+                    alternatives: [
+                        { name: 'dimension', validators: ['dimension'] },
+                        { name: 'dimensions', validators: ['dimensionVector'] },
+                    ],
+                },
+                { name: 'subscript', classes: ['double'], validators: ['numeric', 'real', 'finite', 'integer', 'positive'], variadic: true },
+            ],
+        },
+        outputs: { arity: 1 },
+    };
     /**
      * Convert subscripts to linear indices.
      * @param DIMS
@@ -329,6 +738,17 @@ abstract class CoreFunctions {
         return MultiArray.MultiArrayToScalar(result);
     };
 
+    public static readonly sizeSignature: BuiltInFunctionSignature = {
+        inputs: [
+            { arity: 1, parameters: [{ name: 'value' }] },
+            {
+                arity: -2,
+                min: 2,
+                parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['numeric', 'positive', 'integer', 'real'], variadic: true }],
+            },
+        ],
+        outputs: { arity: -1 },
+    };
     /**
      * Returns array dimensions.
      * @param M MultiArray
@@ -363,6 +783,19 @@ abstract class CoreFunctions {
         }
     };
 
+    public static readonly colonSignature: BuiltInFunctionSignature = {
+        inputs: {
+            arity: -3,
+            min: 2,
+            max: 3,
+            parameters: [
+                { name: 'start', classes: ['double'], validators: ['scalar'] },
+                { name: 'incrementOrEnd', classes: ['double'], validators: ['scalar'] },
+                { name: 'end', classes: ['double'], validators: ['scalar'], optional: true },
+            ],
+        },
+        outputs: { arity: 1 },
+    };
     /**
      * Return the result of the colon expression.
      * @param args
@@ -378,6 +811,19 @@ abstract class CoreFunctions {
         }
     };
 
+    public static readonly linspaceSignature: BuiltInFunctionSignature = {
+        inputs: {
+            arity: -3,
+            min: 2,
+            max: 3,
+            parameters: [
+                { name: 'start', classes: ['double'], validators: ['scalarOrVector'] },
+                { name: 'end', classes: ['double'], validators: ['scalarOrVector'] },
+                { name: 'count', classes: ['double'], validators: ['numeric', 'scalar', 'real'], optional: true },
+            ],
+        },
+        outputs: { arity: 1 },
+    };
     /**
      * Return a row vector with linearly spaced elements.
      * @param args
@@ -438,6 +884,19 @@ abstract class CoreFunctions {
         return MultiArray.MultiArrayToScalar(result);
     };
 
+    public static readonly logspaceSignature: BuiltInFunctionSignature = {
+        inputs: {
+            arity: -3,
+            min: 2,
+            max: 3,
+            parameters: [
+                { name: 'start', classes: ['double'], validators: ['scalarOrVector'] },
+                { name: 'end', classes: ['double'], validators: ['scalarOrVector'] },
+                { name: 'count', classes: ['double'], validators: ['numeric', 'scalar', 'real'], optional: true },
+            ],
+        },
+        outputs: { arity: 1 },
+    };
     /**
      * Return a row vector with elements logarithmically spaced.
      * @param args
@@ -501,6 +960,10 @@ abstract class CoreFunctions {
         return MultiArray.MultiArrayToScalar(result) as MultiArray | ComplexType;
     };
 
+    public static readonly meshgridSignature: BuiltInFunctionSignature = {
+        inputs: { arity: -3, min: 1, max: 3, parameters: [{ name: 'vector', classes: ['double'], validators: ['scalarOrVector'], variadic: true }] },
+        outputs: { arity: -3 },
+    };
     /**
      * Generate 2-D and 3-D grids.
      * @param args
@@ -557,6 +1020,10 @@ abstract class CoreFunctions {
         });
     };
 
+    public static readonly ndgridSignature: BuiltInFunctionSignature = {
+        inputs: { arity: -1, min: 1, parameters: [{ name: 'vector', classes: ['double'], validators: ['scalarOrVector'], variadic: true }] },
+        outputs: { arity: -1 },
+    };
     /**
      * Given n vectors X1, ..., Xn, returns n arrays of n dimensions.
      * @returns
@@ -591,6 +1058,30 @@ abstract class CoreFunctions {
         });
     };
 
+    public static readonly repmatSignature: BuiltInFunctionSignature = {
+        inputs: [
+            {
+                arity: 2,
+                parameters: [
+                    { name: 'value' },
+                    {
+                        name: 'dimensions',
+                        classes: ['double'],
+                        alternatives: [
+                            { name: 'dimension', validators: ['dimension'] },
+                            { name: 'dimensions', validators: ['dimensionVector'] },
+                        ],
+                    },
+                ],
+            },
+            {
+                arity: -3,
+                min: 3,
+                parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension'], variadic: true }],
+            },
+        ],
+        outputs: { arity: 1 },
+    };
     /**
      * Repeat N-D array.
      * @param A
@@ -620,6 +1111,30 @@ abstract class CoreFunctions {
         );
     };
 
+    public static readonly reshapeSignature: BuiltInFunctionSignature = {
+        inputs: [
+            {
+                arity: 2,
+                parameters: [
+                    { name: 'value' },
+                    {
+                        name: 'dimensions',
+                        classes: ['double'],
+                        alternatives: [
+                            { name: 'dimension', validators: ['reshapeDimension'] },
+                            { name: 'dimensions', validators: ['reshapeDimensionVector'] },
+                        ],
+                    },
+                ],
+            },
+            {
+                arity: -3,
+                min: 3,
+                parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['reshapeDimension'], variadic: true }],
+            },
+        ],
+        outputs: { arity: 1 },
+    };
     /**
      * Return a matrix with the specified dimensions whose elements are taken from the matrix M.
      * @param M
@@ -650,6 +1165,7 @@ abstract class CoreFunctions {
         return MultiArray.reshape(m, dims, d);
     };
 
+    public static readonly squeezeSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
     /**
      * Remove singleton dimensions.
      * @param args
@@ -729,6 +1245,30 @@ abstract class CoreFunctions {
         return MultiArray.MultiArrayToScalar(result);
     };
 
+    public static readonly zerosSignature: BuiltInFunctionSignature = {
+        inputs: [
+            { arity: 0 },
+            {
+                arity: 1,
+                parameters: [
+                    {
+                        name: 'dimension',
+                        classes: ['double'],
+                        alternatives: [
+                            { name: 'dimension', validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
+                            { name: 'dimensions', validators: ['numeric', 'vector', 'real', 'finite', 'integer', 'nonnegative'] },
+                        ],
+                    },
+                ],
+            },
+            {
+                arity: -2,
+                min: 2,
+                parameters: [{ name: 'dimension', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'], variadic: true }],
+            },
+        ],
+        outputs: { arity: 1 },
+    };
     /**
      * Create array of all zeros.
      * @param dimension
@@ -738,6 +1278,30 @@ abstract class CoreFunctions {
         return CoreFunctions.newFilled(Complex.zero(), 'zeros', ...dimension);
     };
 
+    public static readonly onesSignature: BuiltInFunctionSignature = {
+        inputs: [
+            { arity: 0 },
+            {
+                arity: 1,
+                parameters: [
+                    {
+                        name: 'dimension',
+                        classes: ['double'],
+                        alternatives: [
+                            { name: 'dimension', validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
+                            { name: 'dimensions', validators: ['numeric', 'vector', 'real', 'finite', 'integer', 'nonnegative'] },
+                        ],
+                    },
+                ],
+            },
+            {
+                arity: -2,
+                min: 2,
+                parameters: [{ name: 'dimension', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'], variadic: true }],
+            },
+        ],
+        outputs: { arity: 1 },
+    };
     /**
      * Create array of all ones.
      * @param dimension
@@ -747,6 +1311,30 @@ abstract class CoreFunctions {
         return CoreFunctions.newFilled(Complex.one(), 'ones', ...dimension);
     };
 
+    public static readonly randSignature: BuiltInFunctionSignature = {
+        inputs: [
+            { arity: 0 },
+            {
+                arity: 1,
+                parameters: [
+                    {
+                        name: 'dimension',
+                        classes: ['double'],
+                        alternatives: [
+                            { name: 'dimension', validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
+                            { name: 'dimensions', validators: ['numeric', 'vector', 'real', 'finite', 'integer', 'nonnegative'] },
+                        ],
+                    },
+                ],
+            },
+            {
+                arity: -2,
+                min: 2,
+                parameters: [{ name: 'dimension', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'], variadic: true }],
+            },
+        ],
+        outputs: { arity: 1 },
+    };
     /**
      * Uniformly distributed pseudorandom numbers distributed on the
      * interval (0, 1).
@@ -757,6 +1345,57 @@ abstract class CoreFunctions {
         return CoreFunctions.newFilledEach(() => Complex.random(), ...dimension);
     };
 
+    public static readonly randiSignature: BuiltInFunctionSignature = {
+        inputs: [
+            {
+                arity: 1,
+                parameters: [
+                    {
+                        name: 'range',
+                        alternatives: [
+                            { name: 'imax', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'positive'] },
+                            { name: 'bounds', classes: ['double'], validators: ['numeric', 'vector', 'twoElement', 'real', 'finite', 'integer'] },
+                        ],
+                    },
+                ],
+            },
+            {
+                arity: 2,
+                parameters: [
+                    {
+                        name: 'range',
+                        alternatives: [
+                            { name: 'imax', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'positive'] },
+                            { name: 'bounds', classes: ['double'], validators: ['numeric', 'vector', 'twoElement', 'real', 'finite', 'integer'] },
+                        ],
+                    },
+                    {
+                        name: 'dimension',
+                        classes: ['double'],
+                        alternatives: [
+                            { name: 'dimension', validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
+                            { name: 'dimensions', validators: ['numeric', 'vector', 'real', 'finite', 'integer', 'nonnegative'] },
+                        ],
+                    },
+                ],
+            },
+            {
+                arity: -3,
+                min: 3,
+                parameters: [
+                    {
+                        name: 'range',
+                        alternatives: [
+                            { name: 'imax', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'positive'] },
+                            { name: 'bounds', classes: ['double'], validators: ['numeric', 'vector', 'twoElement', 'real', 'finite', 'integer'] },
+                        ],
+                    },
+                    { name: 'dimension', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'], variadic: true },
+                ],
+            },
+        ],
+        outputs: { arity: 1 },
+    };
     /**
      * Uniformly distributed pseudorandom integers.
      * @param imax
@@ -800,6 +1439,17 @@ abstract class CoreFunctions {
         }
     };
 
+    public static readonly catSignature: BuiltInFunctionSignature = {
+        inputs: {
+            arity: -2,
+            min: 2,
+            parameters: [
+                { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
+                { name: 'array', variadic: true },
+            ],
+        },
+        outputs: { arity: 1 },
+    };
     /**
      * Return the concatenation of N-D array objects, ARRAY1, ARRAY2, ...,
      * ARRAYN along dimension `DIM`.
@@ -808,9 +1458,11 @@ abstract class CoreFunctions {
      * @returns Concatenated arrays along dimension `DIM`.
      */
     public static readonly cat = (DIM: ElementType, ...ARRAY: ElementType[]): MultiArray => {
+        CoreFunctions.validateObjectArrayConcatenation('cat', ARRAY);
         return MultiArray.concatenate(Complex.realToNumber(MultiArray.firstElement(DIM) as ComplexType) - 1, 'cat', ...ARRAY.map((m) => MultiArray.scalarToMultiArray(m)));
     };
 
+    public static readonly horzcatSignature: BuiltInFunctionSignature = { inputs: { arity: -1, min: 0, parameters: [{ name: 'array', variadic: true }] }, outputs: { arity: 1 } };
     /**
      * Concatenate arrays horizontally.
      * @param ARRAY Arrays to concatenate horizontally.
@@ -820,9 +1472,11 @@ abstract class CoreFunctions {
         if (ARRAY.length === 0) {
             return MultiArray.emptyArray();
         }
+        CoreFunctions.validateObjectArrayConcatenation('horzcat', ARRAY);
         return MultiArray.concatenate(1, 'horzcat', ...ARRAY.map((m) => MultiArray.scalarToMultiArray(m)));
     };
 
+    public static readonly vertcatSignature: BuiltInFunctionSignature = { inputs: { arity: -1, min: 0, parameters: [{ name: 'array', variadic: true }] }, outputs: { arity: 1 } };
     /**
      * Concatenate arrays vertically.
      * @param ARRAY Arrays to concatenate vertically.
@@ -832,21 +1486,98 @@ abstract class CoreFunctions {
         if (ARRAY.length === 0) {
             return MultiArray.emptyArray();
         }
+        CoreFunctions.validateObjectArrayConcatenation('vertcat', ARRAY);
         return MultiArray.concatenate(0, 'vertcat', ...ARRAY.map((m) => MultiArray.scalarToMultiArray(m)));
     };
 
+    public static readonly allSignature: BuiltInFunctionSignature = {
+        inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
+        outputs: { arity: 1 },
+    };
     public static readonly all = MultiArray.reduceFactory((p, c) => Complex.and(p as ComplexType, c as ComplexType), 'reduce', Complex.one());
+    public static readonly anySignature: BuiltInFunctionSignature = {
+        inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
+        outputs: { arity: 1 },
+    };
     public static readonly any = MultiArray.reduceFactory((p, c) => Complex.or(p as ComplexType, c as ComplexType), 'reduce', Complex.zero());
+    public static readonly sumSignature: BuiltInFunctionSignature = {
+        inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
+        outputs: { arity: 1 },
+    };
     public static readonly sum = MultiArray.reduceFactory((p, c) => Complex.add(p as ComplexType, c as ComplexType), 'reduce', Complex.zero());
+    public static readonly prodSignature: BuiltInFunctionSignature = {
+        inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
+        outputs: { arity: 1 },
+    };
     public static readonly prod = MultiArray.reduceFactory((p, c) => Complex.mul(p as ComplexType, c as ComplexType), 'reduce', Complex.one());
+    public static readonly sumsqSignature: BuiltInFunctionSignature = {
+        inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
+        outputs: { arity: 1 },
+    };
     public static readonly sumsq = MultiArray.reduceFactory((p, c) => Complex.add(p as ComplexType, Complex.mul(c as ComplexType, c as ComplexType)), 'reduce', Complex.zero());
+    public static readonly cumsumSignature: BuiltInFunctionSignature = {
+        inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
+        outputs: { arity: 1 },
+    };
     public static readonly cumsum = MultiArray.reduceFactory((acc, element) => Complex.add(acc as ComplexType, element as ComplexType), 'cumulative');
+    public static readonly cumprodSignature: BuiltInFunctionSignature = {
+        inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
+        outputs: { arity: 1 },
+    };
     public static readonly cumprod = MultiArray.reduceFactory((acc, element) => Complex.mul(acc as ComplexType, element as ComplexType), 'cumulative');
+    public static readonly minSignature: BuiltInFunctionSignature = {
+        inputs: [
+            { arity: 1, parameters: [{ name: 'value' }] },
+            {
+                arity: 2,
+                parameters: [{ name: 'value' }, { name: 'valueOrDimension', classes: ['double'] }],
+            },
+            {
+                arity: 3,
+                parameters: [
+                    { name: 'value' },
+                    { name: 'empty', classes: ['double'], validators: ['empty'] },
+                    { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
+                ],
+            },
+        ],
+        outputs: { arity: -2 },
+    };
     public static readonly min = MultiArray.reduceFactory('lt', 'comparison');
+    public static readonly maxSignature: BuiltInFunctionSignature = {
+        inputs: [
+            { arity: 1, parameters: [{ name: 'value' }] },
+            {
+                arity: 2,
+                parameters: [{ name: 'value' }, { name: 'valueOrDimension', classes: ['double'] }],
+            },
+            {
+                arity: 3,
+                parameters: [
+                    { name: 'value' },
+                    { name: 'empty', classes: ['double'], validators: ['empty'] },
+                    { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
+                ],
+            },
+        ],
+        outputs: { arity: -2 },
+    };
     public static readonly max = MultiArray.reduceFactory('gt', 'comparison');
+    public static readonly cumminSignature: BuiltInFunctionSignature = {
+        inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
+        outputs: { arity: -2 },
+    };
     public static readonly cummin = MultiArray.reduceFactory('lt', 'cumcomparison');
+    public static readonly cummaxSignature: BuiltInFunctionSignature = {
+        inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
+        outputs: { arity: -2 },
+    };
     public static readonly cummax = MultiArray.reduceFactory('gt', 'cumcomparison');
 
+    public static readonly meanSignature: BuiltInFunctionSignature = {
+        inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
+        outputs: { arity: 1 },
+    };
     /**
      *
      * @param M
@@ -861,6 +1592,34 @@ abstract class CoreFunctions {
         return MultiArray.divideElementByScalar(sumM as ElementType, sizeAlongDim);
     };
 
+    public static readonly varianceSignature: BuiltInFunctionSignature = {
+        inputs: [
+            { arity: 1, parameters: [{ name: 'value' }] },
+            {
+                arity: 2,
+                parameters: [
+                    { name: 'value' },
+                    {
+                        name: 'flagOrDimension',
+                        classes: ['double'],
+                        alternatives: [
+                            { name: 'flag', validators: ['numeric', 'scalar', 'real', 'finite', 'zeroOrOne'] },
+                            { name: 'dimension', validators: ['dimensionGreaterThanOne'] },
+                        ],
+                    },
+                ],
+            },
+            {
+                arity: 3,
+                parameters: [
+                    { name: 'value' },
+                    { name: 'flag', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'zeroOrOne'] },
+                    { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
+                ],
+            },
+        ],
+        outputs: { arity: 1 },
+    };
     /**
      * Variance compatible with Octave var(A [, FLAG [, DIM]])
      * @param M
@@ -954,6 +1713,34 @@ abstract class CoreFunctions {
         return varianceElem;
     };
 
+    public static readonly stdSignature: BuiltInFunctionSignature = {
+        inputs: [
+            { arity: 1, parameters: [{ name: 'value' }] },
+            {
+                arity: 2,
+                parameters: [
+                    { name: 'value' },
+                    {
+                        name: 'flagOrDimension',
+                        classes: ['double'],
+                        alternatives: [
+                            { name: 'flag', validators: ['numeric', 'scalar', 'real', 'finite', 'zeroOrOne'] },
+                            { name: 'dimension', validators: ['dimensionGreaterThanOne'] },
+                        ],
+                    },
+                ],
+            },
+            {
+                arity: 3,
+                parameters: [
+                    { name: 'value' },
+                    { name: 'flag', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'zeroOrOne'] },
+                    { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
+                ],
+            },
+        ],
+        outputs: { arity: 1 },
+    };
     /**
      *
      * @param M
@@ -972,6 +1759,35 @@ abstract class CoreFunctions {
         }
     };
 
+    public static readonly structSignature: BuiltInFunctionSignature = {
+        inputs: [
+            {
+                arity: 1,
+                parameters: [
+                    {
+                        name: 'structOrEmptyArray',
+                        alternatives: [
+                            { name: 'field', classes: ['char'] },
+                            { name: 'struct', classes: ['struct'] },
+                            { name: 'emptyArray', classes: ['double', 'cell', 'array'] },
+                        ],
+                    },
+                ],
+            },
+            {
+                arity: -1,
+                min: 0,
+                parameters: [
+                    {
+                        name: 'field',
+                        variadic: true,
+                        variadicGroup: [{ name: 'field', classes: ['char'] }, { name: 'value' }],
+                    },
+                ],
+            },
+        ],
+        outputs: { arity: 1 },
+    };
     /**
      *
      * @param args
@@ -1005,6 +1821,25 @@ abstract class CoreFunctions {
         }
     };
 
+    public static readonly normSignature: BuiltInFunctionSignature = {
+        inputs: [
+            { arity: 1, parameters: [{ name: 'value', classes: ['double'] }] },
+            {
+                arity: 2,
+                parameters: [
+                    { name: 'value', classes: ['double'] },
+                    {
+                        name: 'order',
+                        alternatives: [
+                            { name: 'numericOrder', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'positive'], allowInfinity: true },
+                            { name: 'frobeniusOrder', classes: ['char'], allowedStrings: ['fro'] },
+                        ],
+                    },
+                ],
+            },
+        ],
+        outputs: { arity: 1 },
+    };
     public static readonly norm = (...args: ElementType[]): ElementType => {
         AST.throwInvalidCallError('norm', args.length < 1 || args.length > 2);
         const absValues = (MultiArray.linearize(MultiArray.scalarToMultiArray(args[0])) as ComplexType[]).map((value) => Complex.abs(value));
@@ -1030,581 +1865,70 @@ abstract class CoreFunctions {
         }
     };
 
-    public static readonly signatures: Record<string, BuiltInFunctionSignature> = {
-        isempty: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
-        isscalar: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
-        ismatrix: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
-        isvector: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
-        iscell: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
-        isrow: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
-        iscolumn: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
-        isstruct: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
-        ndims: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
-        rows: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
-        columns: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
-        length: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
-        numel: { inputs: { arity: -2, min: 1, parameters: [{ name: 'value' }, { name: 'index', variadic: true }] }, outputs: { arity: 1 } },
-        find: {
-            inputs: [
-                { arity: 1, parameters: [{ name: 'value', classes: ['double'] }] },
-                {
-                    arity: 2,
-                    parameters: [
-                        { name: 'value', classes: ['double'] },
-                        { name: 'count', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
-                    ],
-                },
-                {
-                    arity: 3,
-                    parameters: [
-                        { name: 'value', classes: ['double'] },
-                        { name: 'count', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
-                        { name: 'direction', classes: ['char'], allowedStrings: ['first', 'last'] },
-                    ],
-                },
-            ],
-            outputs: { arity: -3 },
-        },
-        sort: {
-            inputs: [
-                { arity: 1, parameters: [{ name: 'value', classes: ['double'] }] },
-                {
-                    arity: 2,
-                    parameters: [
-                        { name: 'value', classes: ['double'] },
-                        {
-                            name: 'dimensionOrDirection',
-                            alternatives: [
-                                { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
-                                { name: 'direction', classes: ['char'], allowedStrings: ['ascend', 'descend'] },
-                            ],
-                        },
-                    ],
-                },
-                {
-                    arity: 3,
-                    parameters: [
-                        { name: 'value', classes: ['double'] },
-                        { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
-                        { name: 'direction', classes: ['char'], allowedStrings: ['ascend', 'descend'] },
-                    ],
-                },
-            ],
-            outputs: { arity: -2 },
-        },
-        ind2sub: {
-            inputs: {
-                arity: 2,
-                parameters: [
-                    {
-                        name: 'dimensions',
-                        classes: ['double'],
-                        alternatives: [
-                            { name: 'dimension', validators: ['dimension'] },
-                            { name: 'dimensions', validators: ['dimensionVector'] },
-                        ],
-                    },
-                    { name: 'index', classes: ['double'], validators: ['numeric', 'real', 'finite', 'integer', 'positive'] },
-                ],
-            },
-            outputs: { arity: -1 },
-        },
-        sub2ind: {
-            inputs: {
-                arity: -2,
-                min: 2,
-                parameters: [
-                    {
-                        name: 'dimensions',
-                        classes: ['double'],
-                        alternatives: [
-                            { name: 'dimension', validators: ['dimension'] },
-                            { name: 'dimensions', validators: ['dimensionVector'] },
-                        ],
-                    },
-                    { name: 'subscript', classes: ['double'], validators: ['numeric', 'real', 'finite', 'integer', 'positive'], variadic: true },
-                ],
-            },
-            outputs: { arity: 1 },
-        },
-        size: {
-            inputs: [
-                { arity: 1, parameters: [{ name: 'value' }] },
-                {
-                    arity: -2,
-                    min: 2,
-                    parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['numeric', 'positive', 'integer', 'real'], variadic: true }],
-                },
-            ],
-            outputs: { arity: -1 },
-        },
-        zeros: {
-            inputs: [
-                { arity: 0 },
-                {
-                    arity: 1,
-                    parameters: [
-                        {
-                            name: 'dimension',
-                            classes: ['double'],
-                            alternatives: [
-                                { name: 'dimension', validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
-                                { name: 'dimensions', validators: ['numeric', 'vector', 'real', 'finite', 'integer', 'nonnegative'] },
-                            ],
-                        },
-                    ],
-                },
-                {
-                    arity: -2,
-                    min: 2,
-                    parameters: [{ name: 'dimension', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'], variadic: true }],
-                },
-            ],
-            outputs: { arity: 1 },
-        },
-        ones: {
-            inputs: [
-                { arity: 0 },
-                {
-                    arity: 1,
-                    parameters: [
-                        {
-                            name: 'dimension',
-                            classes: ['double'],
-                            alternatives: [
-                                { name: 'dimension', validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
-                                { name: 'dimensions', validators: ['numeric', 'vector', 'real', 'finite', 'integer', 'nonnegative'] },
-                            ],
-                        },
-                    ],
-                },
-                {
-                    arity: -2,
-                    min: 2,
-                    parameters: [{ name: 'dimension', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'], variadic: true }],
-                },
-            ],
-            outputs: { arity: 1 },
-        },
-        rand: {
-            inputs: [
-                { arity: 0 },
-                {
-                    arity: 1,
-                    parameters: [
-                        {
-                            name: 'dimension',
-                            classes: ['double'],
-                            alternatives: [
-                                { name: 'dimension', validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
-                                { name: 'dimensions', validators: ['numeric', 'vector', 'real', 'finite', 'integer', 'nonnegative'] },
-                            ],
-                        },
-                    ],
-                },
-                {
-                    arity: -2,
-                    min: 2,
-                    parameters: [{ name: 'dimension', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'], variadic: true }],
-                },
-            ],
-            outputs: { arity: 1 },
-        },
-        randi: {
-            inputs: [
-                {
-                    arity: 1,
-                    parameters: [
-                        {
-                            name: 'range',
-                            alternatives: [
-                                { name: 'imax', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'positive'] },
-                                { name: 'bounds', classes: ['double'], validators: ['numeric', 'vector', 'twoElement', 'real', 'finite', 'integer'] },
-                            ],
-                        },
-                    ],
-                },
-                {
-                    arity: 2,
-                    parameters: [
-                        {
-                            name: 'range',
-                            alternatives: [
-                                { name: 'imax', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'positive'] },
-                                { name: 'bounds', classes: ['double'], validators: ['numeric', 'vector', 'twoElement', 'real', 'finite', 'integer'] },
-                            ],
-                        },
-                        {
-                            name: 'dimension',
-                            classes: ['double'],
-                            alternatives: [
-                                { name: 'dimension', validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
-                                { name: 'dimensions', validators: ['numeric', 'vector', 'real', 'finite', 'integer', 'nonnegative'] },
-                            ],
-                        },
-                    ],
-                },
-                {
-                    arity: -3,
-                    min: 3,
-                    parameters: [
-                        {
-                            name: 'range',
-                            alternatives: [
-                                { name: 'imax', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'positive'] },
-                                { name: 'bounds', classes: ['double'], validators: ['numeric', 'vector', 'twoElement', 'real', 'finite', 'integer'] },
-                            ],
-                        },
-                        { name: 'dimension', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'], variadic: true },
-                    ],
-                },
-            ],
-            outputs: { arity: 1 },
-        },
-        reshape: {
-            inputs: [
-                {
-                    arity: 2,
-                    parameters: [
-                        { name: 'value' },
-                        {
-                            name: 'dimensions',
-                            classes: ['double'],
-                            alternatives: [
-                                { name: 'dimension', validators: ['reshapeDimension'] },
-                                { name: 'dimensions', validators: ['reshapeDimensionVector'] },
-                            ],
-                        },
-                    ],
-                },
-                {
-                    arity: -3,
-                    min: 3,
-                    parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['reshapeDimension'], variadic: true }],
-                },
-            ],
-            outputs: { arity: 1 },
-        },
-        repmat: {
-            inputs: [
-                {
-                    arity: 2,
-                    parameters: [
-                        { name: 'value' },
-                        {
-                            name: 'dimensions',
-                            classes: ['double'],
-                            alternatives: [
-                                { name: 'dimension', validators: ['dimension'] },
-                                { name: 'dimensions', validators: ['dimensionVector'] },
-                            ],
-                        },
-                    ],
-                },
-                {
-                    arity: -3,
-                    min: 3,
-                    parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension'], variadic: true }],
-                },
-            ],
-            outputs: { arity: 1 },
-        },
-        squeeze: { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } },
-        colon: {
-            inputs: {
-                arity: -3,
-                min: 2,
-                max: 3,
-                parameters: [
-                    { name: 'start', classes: ['double'], validators: ['scalar'] },
-                    { name: 'incrementOrEnd', classes: ['double'], validators: ['scalar'] },
-                    { name: 'end', classes: ['double'], validators: ['scalar'], optional: true },
-                ],
-            },
-            outputs: { arity: 1 },
-        },
-        linspace: {
-            inputs: {
-                arity: -3,
-                min: 2,
-                max: 3,
-                parameters: [
-                    { name: 'start', classes: ['double'], validators: ['scalarOrVector'] },
-                    { name: 'end', classes: ['double'], validators: ['scalarOrVector'] },
-                    { name: 'count', classes: ['double'], validators: ['numeric', 'scalar', 'real'], optional: true },
-                ],
-            },
-            outputs: { arity: 1 },
-        },
-        logspace: {
-            inputs: {
-                arity: -3,
-                min: 2,
-                max: 3,
-                parameters: [
-                    { name: 'start', classes: ['double'], validators: ['scalarOrVector'] },
-                    { name: 'end', classes: ['double'], validators: ['scalarOrVector'] },
-                    { name: 'count', classes: ['double'], validators: ['numeric', 'scalar', 'real'], optional: true },
-                ],
-            },
-            outputs: { arity: 1 },
-        },
-        meshgrid: {
-            inputs: { arity: -3, min: 1, max: 3, parameters: [{ name: 'vector', classes: ['double'], validators: ['scalarOrVector'], variadic: true }] },
-            outputs: { arity: -3 },
-        },
-        ndgrid: {
-            inputs: { arity: -1, min: 1, parameters: [{ name: 'vector', classes: ['double'], validators: ['scalarOrVector'], variadic: true }] },
-            outputs: { arity: -1 },
-        },
-        cat: {
-            inputs: {
-                arity: -2,
-                min: 2,
-                parameters: [
-                    { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
-                    { name: 'array', variadic: true },
-                ],
-            },
-            outputs: { arity: 1 },
-        },
-        horzcat: { inputs: { arity: -1, min: 0, parameters: [{ name: 'array', variadic: true }] }, outputs: { arity: 1 } },
-        vertcat: { inputs: { arity: -1, min: 0, parameters: [{ name: 'array', variadic: true }] }, outputs: { arity: 1 } },
-        all: {
-            inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
-            outputs: { arity: 1 },
-        },
-        any: {
-            inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
-            outputs: { arity: 1 },
-        },
-        sum: {
-            inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
-            outputs: { arity: 1 },
-        },
-        prod: {
-            inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
-            outputs: { arity: 1 },
-        },
-        sumsq: {
-            inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
-            outputs: { arity: 1 },
-        },
-        cumsum: {
-            inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
-            outputs: { arity: 1 },
-        },
-        cumprod: {
-            inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
-            outputs: { arity: 1 },
-        },
-        min: {
-            inputs: [
-                { arity: 1, parameters: [{ name: 'value' }] },
-                {
-                    arity: 2,
-                    parameters: [{ name: 'value' }, { name: 'valueOrDimension', classes: ['double'] }],
-                },
-                {
-                    arity: 3,
-                    parameters: [
-                        { name: 'value' },
-                        { name: 'empty', classes: ['double'], validators: ['empty'] },
-                        { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
-                    ],
-                },
-            ],
-            outputs: { arity: -2 },
-        },
-        max: {
-            inputs: [
-                { arity: 1, parameters: [{ name: 'value' }] },
-                {
-                    arity: 2,
-                    parameters: [{ name: 'value' }, { name: 'valueOrDimension', classes: ['double'] }],
-                },
-                {
-                    arity: 3,
-                    parameters: [
-                        { name: 'value' },
-                        { name: 'empty', classes: ['double'], validators: ['empty'] },
-                        { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
-                    ],
-                },
-            ],
-            outputs: { arity: -2 },
-        },
-        cummin: {
-            inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
-            outputs: { arity: -2 },
-        },
-        cummax: {
-            inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
-            outputs: { arity: -2 },
-        },
-        mean: {
-            inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
-            outputs: { arity: 1 },
-        },
-        var: {
-            inputs: [
-                { arity: 1, parameters: [{ name: 'value' }] },
-                {
-                    arity: 2,
-                    parameters: [
-                        { name: 'value' },
-                        {
-                            name: 'flagOrDimension',
-                            classes: ['double'],
-                            alternatives: [
-                                { name: 'flag', validators: ['numeric', 'scalar', 'real', 'finite', 'zeroOrOne'] },
-                                { name: 'dimension', validators: ['dimensionGreaterThanOne'] },
-                            ],
-                        },
-                    ],
-                },
-                {
-                    arity: 3,
-                    parameters: [
-                        { name: 'value' },
-                        { name: 'flag', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'zeroOrOne'] },
-                        { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
-                    ],
-                },
-            ],
-            outputs: { arity: 1 },
-        },
-        std: {
-            inputs: [
-                { arity: 1, parameters: [{ name: 'value' }] },
-                {
-                    arity: 2,
-                    parameters: [
-                        { name: 'value' },
-                        {
-                            name: 'flagOrDimension',
-                            classes: ['double'],
-                            alternatives: [
-                                { name: 'flag', validators: ['numeric', 'scalar', 'real', 'finite', 'zeroOrOne'] },
-                                { name: 'dimension', validators: ['dimensionGreaterThanOne'] },
-                            ],
-                        },
-                    ],
-                },
-                {
-                    arity: 3,
-                    parameters: [
-                        { name: 'value' },
-                        { name: 'flag', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'zeroOrOne'] },
-                        { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
-                    ],
-                },
-            ],
-            outputs: { arity: 1 },
-        },
-        struct: {
-            inputs: [
-                {
-                    arity: 1,
-                    parameters: [
-                        {
-                            name: 'structOrEmptyArray',
-                            alternatives: [
-                                { name: 'field', classes: ['char'] },
-                                { name: 'struct', classes: ['struct'] },
-                                { name: 'emptyArray', classes: ['double', 'cell', 'array'] },
-                            ],
-                        },
-                    ],
-                },
-                {
-                    arity: -1,
-                    min: 0,
-                    parameters: [
-                        {
-                            name: 'field',
-                            variadic: true,
-                            variadicGroup: [{ name: 'field', classes: ['char'] }, { name: 'value' }],
-                        },
-                    ],
-                },
-            ],
-            outputs: { arity: 1 },
-        },
-        norm: {
-            inputs: [
-                { arity: 1, parameters: [{ name: 'value', classes: ['double'] }] },
-                {
-                    arity: 2,
-                    parameters: [
-                        { name: 'value', classes: ['double'] },
-                        {
-                            name: 'order',
-                            alternatives: [
-                                { name: 'numericOrder', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'positive'], allowInfinity: true },
-                                { name: 'frobeniusOrder', classes: ['char'], allowedStrings: ['fro'] },
-                            ],
-                        },
-                    ],
-                },
-            ],
-            outputs: { arity: 1 },
-        },
-    };
-
     /**
      * User functions.
      */
-    public static readonly functions: { [F in keyof typeof CoreFunctions | string]: Function } = {
-        isempty: CoreFunctions.isempty,
-        isscalar: CoreFunctions.isscalar,
-        ismatrix: CoreFunctions.ismatrix,
-        isvector: CoreFunctions.isvector,
-        iscell: CoreFunctions.iscell,
-        isrow: CoreFunctions.isrow,
-        iscolumn: CoreFunctions.iscolumn,
-        isstruct: CoreFunctions.isstruct,
-        ndims: CoreFunctions.ndims,
-        rows: CoreFunctions.rows,
-        columns: CoreFunctions.columns,
-        length: CoreFunctions.Length,
-        numel: CoreFunctions.numel,
-        find: CoreFunctions.find,
-        sort: CoreFunctions.sort,
-        ind2sub: CoreFunctions.ind2sub,
-        sub2ind: CoreFunctions.sub2ind,
-        size: CoreFunctions.size,
-        colon: CoreFunctions.colon,
-        linspace: CoreFunctions.linspace,
-        logspace: CoreFunctions.logspace,
-        meshgrid: CoreFunctions.meshgrid,
-        ndgrid: CoreFunctions.ndgrid,
-        repmat: CoreFunctions.repmat,
-        reshape: CoreFunctions.reshape,
-        squeeze: CoreFunctions.squeeze,
-        zeros: CoreFunctions.zeros,
-        ones: CoreFunctions.ones,
-        rand: CoreFunctions.rand,
-        randi: CoreFunctions.randi,
-        cat: CoreFunctions.cat,
-        horzcat: CoreFunctions.horzcat,
-        vertcat: CoreFunctions.vertcat,
-        all: CoreFunctions.all,
-        any: CoreFunctions.any,
-        sum: CoreFunctions.sum,
-        prod: CoreFunctions.prod,
-        sumsq: CoreFunctions.sumsq,
-        max: CoreFunctions.max,
-        min: CoreFunctions.min,
-        mean: CoreFunctions.mean,
-        cumsum: CoreFunctions.cumsum,
-        cumprod: CoreFunctions.cumprod,
-        cummin: CoreFunctions.cummin,
-        cummax: CoreFunctions.cummax,
-        var: CoreFunctions.variance,
-        std: CoreFunctions.std,
-        struct: CoreFunctions.struct,
-        norm: CoreFunctions.norm,
+    public static readonly functions: Record<keyof CoreFunctions | string, FunctionSignatureEntry> = {
+        isempty: { func: CoreFunctions.isempty, signature: CoreFunctions.isemptySignature },
+        isscalar: { func: CoreFunctions.isscalar, signature: CoreFunctions.isscalarSignature },
+        ismatrix: { func: CoreFunctions.ismatrix, signature: CoreFunctions.ismatrixSignature },
+        isvector: { func: CoreFunctions.isvector, signature: CoreFunctions.isvectorSignature },
+        iscell: { func: CoreFunctions.iscell, signature: CoreFunctions.iscellSignature },
+        isrow: { func: CoreFunctions.isrow, signature: CoreFunctions.isrowSignature },
+        iscolumn: { func: CoreFunctions.iscolumn, signature: CoreFunctions.iscolumnSignature },
+        isstruct: { func: CoreFunctions.isstruct, signature: CoreFunctions.isstructSignature },
+        isvalid: { func: CoreFunctions.isvalid, signature: CoreFunctions.isvalidSignature },
+        isobject: { func: CoreFunctions.isobject, signature: CoreFunctions.isobjectSignature },
+        properties: { func: CoreFunctions.properties, signature: CoreFunctions.propertiesSignature },
+        fieldnames: { func: CoreFunctions.fieldnames, signature: CoreFunctions.fieldnamesSignature },
+        methods: { func: CoreFunctions.methods, signature: CoreFunctions.methodsSignature },
+        events: { func: CoreFunctions.events, signature: CoreFunctions.eventsSignature },
+        enumeration: { func: CoreFunctions.enumeration, signature: CoreFunctions.enumerationSignature },
+        superclasses: { func: CoreFunctions.superclasses, signature: CoreFunctions.superclassesSignature },
+        isprop: { func: CoreFunctions.isprop, signature: CoreFunctions.ispropSignature },
+        ismethod: { func: CoreFunctions.ismethod, signature: CoreFunctions.ismethodSignature },
+        isequal: { func: CoreFunctions.isequal, signature: CoreFunctions.isequalSignature },
+        ndims: { func: CoreFunctions.ndims, signature: CoreFunctions.ndimsSignature },
+        rows: { func: CoreFunctions.rows, signature: CoreFunctions.rowsSignature },
+        columns: { func: CoreFunctions.columns, signature: CoreFunctions.columnsSignature },
+        length: { func: CoreFunctions.Length, signature: CoreFunctions.lengthSignature },
+        numel: { func: CoreFunctions.numel, signature: CoreFunctions.numelSignature },
+        find: { func: CoreFunctions.find, signature: CoreFunctions.findSignature },
+        sort: { func: CoreFunctions.sort, signature: CoreFunctions.sortSignature },
+        ind2sub: { func: CoreFunctions.ind2sub, signature: CoreFunctions.ind2subSignature },
+        sub2ind: { func: CoreFunctions.sub2ind, signature: CoreFunctions.sub2indSignature },
+        size: { func: CoreFunctions.size, signature: CoreFunctions.sizeSignature },
+        colon: { func: CoreFunctions.colon, signature: CoreFunctions.colonSignature },
+        linspace: { func: CoreFunctions.linspace, signature: CoreFunctions.linspaceSignature },
+        logspace: { func: CoreFunctions.logspace, signature: CoreFunctions.logspaceSignature },
+        meshgrid: { func: CoreFunctions.meshgrid, signature: CoreFunctions.meshgridSignature },
+        ndgrid: { func: CoreFunctions.ndgrid, signature: CoreFunctions.ndgridSignature },
+        repmat: { func: CoreFunctions.repmat, signature: CoreFunctions.repmatSignature },
+        reshape: { func: CoreFunctions.reshape, signature: CoreFunctions.reshapeSignature },
+        squeeze: { func: CoreFunctions.squeeze, signature: CoreFunctions.squeezeSignature },
+        zeros: { func: CoreFunctions.zeros, signature: CoreFunctions.zerosSignature },
+        ones: { func: CoreFunctions.ones, signature: CoreFunctions.onesSignature },
+        rand: { func: CoreFunctions.rand, signature: CoreFunctions.randSignature },
+        randi: { func: CoreFunctions.randi, signature: CoreFunctions.randiSignature },
+        cat: { func: CoreFunctions.cat, signature: CoreFunctions.catSignature },
+        horzcat: { func: CoreFunctions.horzcat, signature: CoreFunctions.horzcatSignature },
+        vertcat: { func: CoreFunctions.vertcat, signature: CoreFunctions.vertcatSignature },
+        all: { func: CoreFunctions.all, signature: CoreFunctions.allSignature },
+        any: { func: CoreFunctions.any, signature: CoreFunctions.anySignature },
+        sum: { func: CoreFunctions.sum, signature: CoreFunctions.sumSignature },
+        prod: { func: CoreFunctions.prod, signature: CoreFunctions.prodSignature },
+        sumsq: { func: CoreFunctions.sumsq, signature: CoreFunctions.sumsqSignature },
+        max: { func: CoreFunctions.max, signature: CoreFunctions.maxSignature },
+        min: { func: CoreFunctions.min, signature: CoreFunctions.minSignature },
+        mean: { func: CoreFunctions.mean, signature: CoreFunctions.meanSignature },
+        cumsum: { func: CoreFunctions.cumsum, signature: CoreFunctions.cumsumSignature },
+        cumprod: { func: CoreFunctions.cumprod, signature: CoreFunctions.cumprodSignature },
+        cummin: { func: CoreFunctions.cummin, signature: CoreFunctions.cumminSignature },
+        cummax: { func: CoreFunctions.cummax, signature: CoreFunctions.cummaxSignature },
+        var: { func: CoreFunctions.variance, signature: CoreFunctions.varianceSignature },
+        std: { func: CoreFunctions.std, signature: CoreFunctions.stdSignature },
+        struct: { func: CoreFunctions.struct, signature: CoreFunctions.structSignature },
+        norm: { func: CoreFunctions.norm, signature: CoreFunctions.normSignature },
     };
 }
 

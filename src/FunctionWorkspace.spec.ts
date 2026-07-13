@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import path from 'node:path';
 import type { FunctionTable, NameEntry, NameTable, NodeFunctionDefinition, NodeInput } from './AST';
 import { AST, CharString, Complex } from './AST';

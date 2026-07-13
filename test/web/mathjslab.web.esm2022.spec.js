@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 const path = require('node:path');
 const { Interpreter: InterpreterDefinition } = require('../../src/Interpreter');
 

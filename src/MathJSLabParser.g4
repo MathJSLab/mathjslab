@@ -8,6 +8,8 @@ import type {
     OperatorType,
     NodeInput,
     NodeExpr,
+    NodeIdentifier,
+    NodeFunctionDefinition,
     NodeList,
     NodeArgumentValidation,
     NodeArguments,
@@ -16,6 +18,18 @@ import type {
     NodeElse,
     NodeSwitch,
     NodeSwitchCase,
+    NodeWhile,
+    NodeDoUntil,
+    NodeFor,
+    NodeSpmd,
+    NodeTry,
+    NodeUnwindProtect,
+    NodeClassDef,
+    NodeClassSection,
+    NodeClassProperty,
+    NodeClassEvent,
+    NodeClassEnumeration,
+    NodeClassAttribute,
     StringQuoteCharacter,
 } from './AST';
 import { AST } from './AST';
@@ -138,14 +152,23 @@ statement returns [node: NodeInput]
 
 word_list_cmd returns [node: NodeInput]
     locals [i: number = 0]
-    : identifier (string {
+    : identifier (command_word {
         if (localctx.i === 0) {
-            localctx.node = AST.nodeListFirst(localctx.string_(localctx.i++).node);
+            localctx.node = AST.nodeListFirst(localctx.command_word(localctx.i++).node);
         } else {
-            AST.appendNodeList(localctx.node, localctx.string_(localctx.i++).node);
+            AST.appendNodeList(localctx.node, localctx.command_word(localctx.i++).node);
         }
     } )* {
         localctx.node = AST.nodeCmdWList(localctx.identifier().node, localctx.node);
+    }
+    ;
+
+command_word returns [node: NodeExpr]
+    : string {
+        localctx.node = localctx.string_().node;
+    }
+    | identifier {
+        localctx.node = AST.nodeString(localctx.identifier().node.id);
     }
     ;
 
@@ -157,6 +180,36 @@ identifier returns [node: NodeExpr]
     : IDENTIFIER {
         localctx.node = AST.nodeIdentifier(localctx.IDENTIFIER().getText());
     }
+    | PROPERTIES {
+        localctx.node = AST.nodeIdentifier('properties');
+    }
+    | METHODS {
+        localctx.node = AST.nodeIdentifier('methods');
+    }
+    | EVENTS {
+        localctx.node = AST.nodeIdentifier('events');
+    }
+    | ENUMERATION {
+        localctx.node = AST.nodeIdentifier('enumeration');
+    }
+    ;
+
+qualified_identifier_part returns [text: string]
+    : identifier {
+        localctx.text = localctx.identifier().node.id;
+    }
+    | END {
+        localctx.text = 'end';
+    }
+    ;
+
+qualified_identifier returns [node: NodeIdentifier]
+    locals [i: number = 1]
+    : qualified_identifier_part {
+        localctx.node = AST.nodeIdentifier(localctx.qualified_identifier_part(0).text);
+    } (DOT qualified_identifier_part {
+        localctx.node = AST.nodeIdentifier(localctx.node.id + '.' + localctx.qualified_identifier_part(localctx.i++).text);
+    })*
     ;
 
 string returns [node: NodeExpr]
@@ -226,8 +279,14 @@ matrix_row returns [node: NodeList | null]
     ;
 
 fcn_handle returns [node: NodeExpr]
-    : COMMAT identifier {
-        localctx.node = AST.nodeFunctionHandle(localctx.identifier().node);
+    : COMMAT qualified_identifier {
+        localctx.node = AST.nodeFunctionHandle(localctx.qualified_identifier().node);
+    }
+    ;
+
+meta_class returns [node: NodeExpr]
+    : QUESTION qualified_identifier {
+        localctx.node = AST.nodeMetaClass(localctx.qualified_identifier().node);
     }
     ;
 
@@ -246,6 +305,9 @@ primary_expr returns [node: NodeExpr]
     }
     | fcn_handle {
         localctx.node = localctx.fcn_handle().node;
+    }
+    | meta_class {
+        localctx.node = localctx.meta_class().node;
     }
     | matrix {
         localctx.node = localctx.matrix().node;
@@ -301,6 +363,9 @@ oper_expr returns [node: NodeExpr]
     | oper_expr LCURLYBR arg_list? RCURLYBR {
         localctx.node = AST.nodeIndexExpr(localctx.oper_expr(0).node, localctx.arg_list() ? localctx.arg_list().node : null, '{}');
     }
+    | oper_expr COMMAT qualified_identifier LPAREN arg_list? RPAREN {
+        localctx.node = AST.nodeSuperclassConstructor(localctx.oper_expr(0).node, localctx.qualified_identifier().node, localctx.arg_list() ? localctx.arg_list().node : null);
+    }
     | oper_expr op = (TRANSPOSE | HERMITIAN) {
         localctx.node = AST.nodeOperation(localctx._op.text as OperatorType, localctx.oper_expr(0).node);
     }
@@ -339,6 +404,9 @@ power_expr returns [node: NodeExpr]
     }
     | power_expr LCURLYBR arg_list? RCURLYBR {
         localctx.node = AST.nodeIndexExpr(localctx.power_expr().node, localctx.arg_list() ? localctx.arg_list().node : null, '{}');
+    }
+    | power_expr COMMAT qualified_identifier LPAREN arg_list? RPAREN {
+        localctx.node = AST.nodeSuperclassConstructor(localctx.power_expr().node, localctx.qualified_identifier().node, localctx.arg_list() ? localctx.arg_list().node : null);
     }
     | power_expr DOT IDENTIFIER {
         localctx.node = AST.nodeIndirectRef(localctx.power_expr().node, localctx.IDENTIFIER().getText());
@@ -400,6 +468,15 @@ expression returns [node: NodeExpr]
     }
     ;
 
+assign_lhs returns [node: NodeExpr]
+    : simple_expr {
+        localctx.node = localctx.simple_expr().node;
+    }
+    | LBRACKET arg_list RBRACKET {
+        localctx.node = AST.nodeFirstRow(localctx.arg_list().node);
+    }
+    ;
+
 /**
  * Commands, declarations, and function definitions.
  */
@@ -408,14 +485,23 @@ command returns [node: NodeInput]
     : declaration {
         localctx.node = localctx.declaration().node;
     }
-    | RETURN {
-        localctx.node = AST.nodeReturn();
-    }
     | select_command {
         localctx.node = localctx.select_command().node;
     }
+    | loop_command {
+        localctx.node = localctx.loop_command().node;
+    }
+    | jump_command {
+        localctx.node = localctx.jump_command().node;
+    }
+    | except_command {
+        localctx.node = localctx.except_command().node;
+    }
     | function {
         localctx.node = localctx.function_().node;
+    }
+    | classdef_command {
+        localctx.node = localctx.classdef_command().node;
     }
     ;
 
@@ -429,9 +515,11 @@ declaration returns [node: NodeInput]
         localctx.node = AST.nodeDeclarationFirst('GLOBAL');
     } | PERSISTENT {
         localctx.node = AST.nodeDeclarationFirst('PERSIST');
-    }) (declaration_element {
+    }) declaration_element {
         localctx.node = AST.nodeAppendDeclaration(localctx.node, localctx.declaration_element(localctx.i++).node);
-    })+
+    } (COMMA? declaration_element {
+        localctx.node = AST.nodeAppendDeclaration(localctx.node, localctx.declaration_element(localctx.i++).node);
+    })*
     ;
 
 declaration_element returns [node: NodeExpr]
@@ -521,6 +609,123 @@ otherwise_case returns [node: NodeList]
     ;
 
 /**
+ * Loop statements.
+ */
+
+loop_command returns [node: NodeInput]
+    : while_command {
+        localctx.node = localctx.while_command().node;
+    }
+    | do_until_command {
+        localctx.node = localctx.do_until_command().node;
+    }
+    | for_command {
+        localctx.node = localctx.for_command().node;
+    }
+    | spmd_command {
+        localctx.node = localctx.spmd_command().node;
+    }
+    ;
+
+while_command returns [node: NodeWhile]
+    : WHILE expression sep? list? (END | ENDWHILE) {
+        localctx.node = AST.nodeWhile(localctx.expression().node, localctx.list() ? localctx.list().node : AST.nodeListFirst());
+    }
+    ;
+
+do_until_command returns [node: NodeDoUntil]
+    : DO sep? list? UNTIL expression {
+        localctx.node = AST.nodeDoUntil(localctx.list() ? localctx.list().node : AST.nodeListFirst(), localctx.expression().node);
+    }
+    ;
+
+for_command returns [node: NodeFor]
+    : FOR assign_lhs EQ expression sep? list? (END | ENDFOR) {
+        localctx.node = AST.nodeFor(localctx.assign_lhs().node, localctx.expression(0).node, localctx.list() ? localctx.list().node : AST.nodeListFirst());
+    }
+    | FOR LPAREN assign_lhs EQ expression RPAREN sep? list? (END | ENDFOR) {
+        localctx.node = AST.nodeFor(localctx.assign_lhs().node, localctx.expression(0).node, localctx.list() ? localctx.list().node : AST.nodeListFirst());
+    }
+    | PARFOR assign_lhs EQ expression sep? list? (END | ENDPARFOR) {
+        localctx.node = AST.nodeFor(localctx.assign_lhs().node, localctx.expression(0).node, localctx.list() ? localctx.list().node : AST.nodeListFirst(), true);
+    }
+    | PARFOR LPAREN assign_lhs EQ expression (COMMA expression)? RPAREN sep? list? (END | ENDPARFOR) {
+        localctx.node = AST.nodeFor(localctx.assign_lhs().node, localctx.expression(0).node, localctx.list() ? localctx.list().node : AST.nodeListFirst(), true);
+    }
+    ;
+
+spmd_command returns [node: NodeSpmd]
+    : SPMD sep? list? (END | ENDSPMD) {
+        localctx.node = AST.nodeSpmd(localctx.list() ? localctx.list().node : AST.nodeListFirst());
+    }
+    ;
+
+/**
+ * Jump statements.
+ */
+
+jump_command returns [node: NodeInput]
+    : BREAK {
+        localctx.node = AST.nodeBreak();
+    }
+    | CONTINUE {
+        localctx.node = AST.nodeContinue();
+    }
+    | RETURN {
+        localctx.node = AST.nodeReturn();
+    }
+    ;
+
+/**
+ * Exception statements.
+ */
+
+except_command returns [node: NodeInput]
+    : try_command {
+        localctx.node = localctx.try_command().node;
+    }
+    | unwind_command {
+        localctx.node = localctx.unwind_command().node;
+    }
+    ;
+
+try_command returns [node: NodeTry]
+    : TRY sep? list? catch_clause (END | END_TRY_CATCH) {
+        localctx.node = AST.nodeTry(
+            localctx.list() ? localctx.list().node : AST.nodeListFirst(),
+            localctx.catch_clause().body,
+            localctx.catch_clause().identifierNode,
+        );
+    }
+    | TRY sep? list? (END | END_TRY_CATCH) {
+        localctx.node = AST.nodeTry(localctx.list() ? localctx.list().node : AST.nodeListFirst());
+    }
+    ;
+
+catch_clause returns [body: NodeList, identifierNode: NodeIdentifier | null]
+    : CATCH identifier sep? list? {
+        localctx.identifierNode = localctx.identifier().node;
+        localctx.body = localctx.list() ? localctx.list().node : AST.nodeListFirst();
+    }
+    | CATCH sep? list? {
+        localctx.identifierNode = null;
+        localctx.body = localctx.list() ? localctx.list().node : AST.nodeListFirst();
+    }
+    ;
+
+unwind_command returns [node: NodeUnwindProtect]
+    : UNWIND_PROTECT sep? list? unwind_cleanup_clause (END | END_UNWIND_PROTECT) {
+        localctx.node = AST.nodeUnwindProtect(localctx.list() ? localctx.list().node : AST.nodeListFirst(), localctx.unwind_cleanup_clause().node);
+    }
+    ;
+
+unwind_cleanup_clause returns [node: NodeList]
+    : UNWIND_PROTECT_CLEANUP sep? list? {
+        localctx.node = localctx.list() ? localctx.list().node : AST.nodeListFirst();
+    }
+    ;
+
+/**
  * List of function parameters.
  */
 
@@ -548,17 +753,26 @@ param_list_elt returns [node: NodeExpr]
  * List of function return value names.
  */
 
+return_list_elt returns [node: NodeExpr]
+    : identifier {
+        localctx.node = localctx.identifier().node;
+    }
+    | magic_tilde {
+        localctx.node = localctx.magic_tilde().node;
+    }
+    ;
+
 return_list returns [node: NodeExpr]
     locals [i: number = 0]
-    : identifier {
-        localctx.node = AST.nodeListFirst(localctx.identifier(0).node);
+    : return_list_elt {
+        localctx.node = AST.nodeListFirst(localctx.return_list_elt(0).node);
     }
     | LBRACKET {
         localctx.node = AST.nodeListFirst();
-    } (identifier {
-        localctx.node = AST.appendNodeList(localctx.node, localctx.identifier(localctx.i++).node);
-    } (COMMA identifier {
-        localctx.node = AST.appendNodeList(localctx.node, localctx.identifier(localctx.i++).node);
+    } (return_list_elt {
+        localctx.node = AST.appendNodeList(localctx.node, localctx.return_list_elt(localctx.i++).node);
+    } (COMMA return_list_elt {
+        localctx.node = AST.appendNodeList(localctx.node, localctx.return_list_elt(localctx.i++).node);
     })*)? RBRACKET
     ;
 
@@ -567,14 +781,217 @@ return_list returns [node: NodeExpr]
  */
 
 function returns [node: NodeInput]
-    : FUNCTION (return_list EQ)? identifier param_list? sep? arguments_block_list? list? (END | ENDFUNCTION | EOF) {
+    : FUNCTION (return_list EQ)? function_name param_list? sep? arguments_block_list? list? (END | ENDFUNCTION | EOF) {
         localctx.node = AST.nodeFunctionDefinition(
-            localctx.identifier().node,
+            localctx.function_name().node,
             localctx.return_list() ? localctx.return_list().node : AST.nodeListFirst(),
             localctx.param_list() ? localctx.param_list().node : AST.nodeListFirst(),
             localctx.arguments_block_list() ? localctx.arguments_block_list().node : AST.nodeListFirst(),
             localctx.list() ? localctx.list().node : AST.nodeListFirst(),
         );
+    }
+    ;
+
+function_name returns [node: NodeIdentifier]
+    : qualified_identifier {
+        localctx.node = localctx.qualified_identifier().node;
+    }
+    ;
+
+/**
+ * Class definitions.
+ */
+
+classdef_command returns [node: NodeClassDef]
+    : CLASSDEF class_attribute_list? qualified_identifier class_superclass_list? sep? class_section_list? (END | ENDCLASSDEF | EOF) {
+        localctx.node = AST.nodeClassDef(
+            localctx.qualified_identifier().node,
+            localctx.class_section_list() ? localctx.class_section_list().node : AST.nodeListFirst(),
+            localctx.class_attribute_list() ? localctx.class_attribute_list().node : AST.nodeListFirst(),
+            localctx.class_superclass_list() ? localctx.class_superclass_list().node : AST.nodeListFirst(),
+        );
+    }
+    ;
+
+class_attribute_list returns [node: NodeList]
+    locals [i: number = 0]
+    : LPAREN {
+        localctx.node = AST.nodeListFirst();
+    } (class_attribute {
+        localctx.node = AST.appendNodeList(localctx.node, localctx.class_attribute(localctx.i++).node);
+    } (COMMA class_attribute {
+        localctx.node = AST.appendNodeList(localctx.node, localctx.class_attribute(localctx.i++).node);
+    })*)? RPAREN
+    ;
+
+class_attribute returns [node: NodeClassAttribute]
+    : identifier (EQ expression)? {
+        localctx.node = AST.nodeClassAttribute(localctx.identifier().node, localctx.expression() ? localctx.expression().node : null);
+    }
+    | op = (TILDE | EXCLAMATION) identifier {
+        localctx.node = AST.nodeClassAttribute(localctx.identifier().node, AST.nodeOperation(localctx._op.text as OperatorType, localctx.identifier().node));
+    }
+    ;
+
+class_method_name returns [node: NodeIdentifier]
+    locals [i: number = 1]
+    : identifier {
+        localctx.node = AST.nodeIdentifier(localctx.identifier(0).node.id);
+    } (DOT identifier {
+        localctx.node = AST.nodeIdentifier(localctx.node.id + '.' + localctx.identifier(localctx.i++).node.id);
+    })*
+    ;
+
+class_superclass_list returns [node: NodeList]
+    locals [i: number = 0]
+    : EXPR_LT qualified_identifier {
+        localctx.node = AST.nodeListFirst(localctx.qualified_identifier(localctx.i++).node);
+    } (COMMA qualified_identifier {
+        localctx.node = AST.appendNodeList(localctx.node, localctx.qualified_identifier(localctx.i++).node);
+    })*
+    ;
+
+class_section_list returns [node: NodeList]
+    locals [i: number = 0]
+    : class_section {
+        localctx.node = AST.nodeListFirst(localctx.class_section(localctx.i++).node);
+    } (sep? class_section {
+        localctx.node = AST.appendNodeList(localctx.node, localctx.class_section(localctx.i++).node);
+    })* sep?
+    ;
+
+class_section returns [node: NodeClassSection]
+    : properties_section {
+        localctx.node = localctx.properties_section().node;
+    }
+    | methods_section {
+        localctx.node = localctx.methods_section().node;
+    }
+    | events_section {
+        localctx.node = localctx.events_section().node;
+    }
+    | enumeration_section {
+        localctx.node = localctx.enumeration_section().node;
+    }
+    ;
+
+properties_section returns [node: NodeClassSection]
+    : PROPERTIES class_attribute_list? sep? class_property_list? (END | ENDPROPERTIES) {
+        localctx.node = AST.nodeClassSection(
+            'PROPERTIES',
+            localctx.class_property_list() ? localctx.class_property_list().node : AST.nodeListFirst(),
+            localctx.class_attribute_list() ? localctx.class_attribute_list().node : AST.nodeListFirst(),
+        );
+    }
+    ;
+
+class_property_list returns [node: NodeList]
+    locals [i: number = 0]
+    : class_property {
+        localctx.node = AST.nodeListFirst(localctx.class_property(localctx.i++).node);
+    } (sep class_property {
+        localctx.node = AST.appendNodeList(localctx.node, localctx.class_property(localctx.i++).node);
+    })* sep?
+    ;
+
+class_property returns [node: NodeClassProperty]
+    : identifier (EQ expression)? {
+        localctx.node = AST.nodeClassProperty(localctx.identifier().node, localctx.expression() ? localctx.expression().node : null);
+    }
+    ;
+
+methods_section returns [node: NodeClassSection]
+    : METHODS class_attribute_list? sep? class_method_list? (END | ENDMETHODS) {
+        localctx.node = AST.nodeClassSection(
+            'METHODS',
+            localctx.class_method_list() ? localctx.class_method_list().node : AST.nodeListFirst(),
+            localctx.class_attribute_list() ? localctx.class_attribute_list().node : AST.nodeListFirst(),
+        );
+    }
+    ;
+
+class_method returns [node: NodeFunctionDefinition]
+    : function {
+        localctx.node = localctx.function_().node;
+    }
+    | class_method_name param_list? {
+        localctx.node = AST.nodeFunctionDefinition(
+            localctx.class_method_name().node,
+            AST.nodeListFirst(),
+            localctx.param_list() ? localctx.param_list().node : AST.nodeListFirst(),
+            AST.nodeListFirst(),
+            AST.nodeListFirst(),
+        );
+        localctx.node.attributes = { ...(localctx.node.attributes ?? {}), prototype: true };
+    }
+    | return_list EQ class_method_name param_list? {
+        localctx.node = AST.nodeFunctionDefinition(
+            localctx.class_method_name().node,
+            localctx.return_list().node,
+            localctx.param_list() ? localctx.param_list().node : AST.nodeListFirst(),
+            AST.nodeListFirst(),
+            AST.nodeListFirst(),
+        );
+        localctx.node.attributes = { ...(localctx.node.attributes ?? {}), prototype: true };
+    }
+    ;
+
+class_method_list returns [node: NodeList]
+    locals [i: number = 0]
+    : class_method {
+        localctx.node = AST.nodeListFirst(localctx.class_method(localctx.i++).node);
+    } (sep? class_method {
+        localctx.node = AST.appendNodeList(localctx.node, localctx.class_method(localctx.i++).node);
+    })* sep?
+    ;
+
+events_section returns [node: NodeClassSection]
+    : EVENTS class_attribute_list? sep? class_event_list? (END | ENDEVENTS) {
+        localctx.node = AST.nodeClassSection(
+            'EVENTS',
+            localctx.class_event_list() ? localctx.class_event_list().node : AST.nodeListFirst(),
+            localctx.class_attribute_list() ? localctx.class_attribute_list().node : AST.nodeListFirst(),
+        );
+    }
+    ;
+
+class_event_list returns [node: NodeList]
+    locals [i: number = 0]
+    : class_event {
+        localctx.node = AST.nodeListFirst(localctx.class_event(localctx.i++).node);
+    } (sep class_event {
+        localctx.node = AST.appendNodeList(localctx.node, localctx.class_event(localctx.i++).node);
+    })* sep?
+    ;
+
+class_event returns [node: NodeClassEvent]
+    : identifier {
+        localctx.node = AST.nodeClassEvent(localctx.identifier().node);
+    }
+    ;
+
+enumeration_section returns [node: NodeClassSection]
+    : ENUMERATION class_attribute_list? sep? class_enumeration_list? (END | ENDENUMERATION) {
+        localctx.node = AST.nodeClassSection(
+            'ENUMERATION',
+            localctx.class_enumeration_list() ? localctx.class_enumeration_list().node : AST.nodeListFirst(),
+            localctx.class_attribute_list() ? localctx.class_attribute_list().node : AST.nodeListFirst(),
+        );
+    }
+    ;
+
+class_enumeration_list returns [node: NodeList]
+    locals [i: number = 0]
+    : class_enumeration {
+        localctx.node = AST.nodeListFirst(localctx.class_enumeration(localctx.i++).node);
+    } (sep class_enumeration {
+        localctx.node = AST.appendNodeList(localctx.node, localctx.class_enumeration(localctx.i++).node);
+    })* sep?
+    ;
+
+class_enumeration returns [node: NodeClassEnumeration]
+    : identifier (LPAREN arg_list? RPAREN)? {
+        localctx.node = AST.nodeClassEnumeration(localctx.identifier().node, localctx.arg_list() ? localctx.arg_list().node : AST.nodeListFirst());
     }
     ;
 
@@ -588,8 +1005,11 @@ arguments_block_list returns [node: NodeList]
     ;
 
 arguments_block returns [node: NodeArguments]
-    : ARGUMENTS sep? (LPAREN identifier RPAREN sep?)? args_validation_list sep? END {
-        localctx.node = AST.nodeArguments(localctx.identifier() ? localctx.identifier().node : null, localctx.args_validation_list().node);
+    : ARGUMENTS sep? (LPAREN identifier RPAREN sep?)? args_validation_list? sep? END {
+        localctx.node = AST.nodeArguments(
+            localctx.identifier() ? localctx.identifier().node : null,
+            localctx.args_validation_list() ? localctx.args_validation_list().node : AST.nodeListFirst(),
+        );
     }
     ;
 
@@ -603,11 +1023,11 @@ args_validation_list returns [node: NodeList]
     ;
 
 arg_validation returns [node: NodeArgumentValidation]
-    : arg_validation_name (LPAREN arg_list RPAREN)? identifier? (LCURLYBR arg_list RCURLYBR)? (EQ expression)? {
+    : arg_validation_name (LPAREN arg_list RPAREN)? qualified_identifier? (LCURLYBR arg_list RCURLYBR)? (EQ expression)? {
         localctx.node = AST.nodeArgumentValidation(
             localctx.arg_validation_name().node,
             localctx.LPAREN() ? localctx.arg_list(0).node : AST.nodeListFirst(),
-            localctx.identifier() ? localctx.identifier().node : AST.nodeListFirst(),
+            localctx.qualified_identifier() ? localctx.qualified_identifier().node : AST.nodeListFirst(),
             localctx.LCURLYBR() ? (localctx.LPAREN() ? localctx.arg_list(1).node : localctx.arg_list(0).node) : AST.nodeListFirst(),
             localctx.expression() ? localctx.expression().node : null,
         );

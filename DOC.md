@@ -9,3 +9,6 @@ directory.
 4. [Testing Strategy](doc/testing-strategy.md)
 5. [API Documentation](doc/api-documentation.md)
 6. [API Reference](doc/api-reference.md)
+7. [Function Signatures](doc/function-signature.md)
+8. [Householder Reflectors](doc/householder-reflectors.md)
+9. [Parser and AST Compatibility](doc/parser-ast-compatibility.md)

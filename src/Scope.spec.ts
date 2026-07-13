@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import { AST, Complex } from './AST';
 import { Scope } from './Scope';
 

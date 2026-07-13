@@ -1,10 +1,13 @@
-import type { NodeExpr, NodeFunctionDefinition, NodeIdentifier, NodeInput, ReturnHandlerResult, NameTable } from './AST';
+import type { NodeExpr, NodeFunctionDefinition, NodeIdentifier, NodeIgnoredTarget, NodeInput, ReturnHandlerResult, NameTable } from './AST';
 import { AST, MultiArray } from './AST';
 
 /**
  * Interpreter error callback used by pure call helpers.
  */
 type ThrowEvalError = (message: string) => never;
+
+type ReturnName = NodeIdentifier | NodeIgnoredTarget;
+type FunctionParameter = NodeIdentifier | NodeIgnoredTarget;
 
 /**
  * Workspace binding callback used while wiring evaluated inputs and outputs.
@@ -31,7 +34,7 @@ type FunctionInputLayout = {
     /**
      * All declared parameters, including name-value-only parameters and `varargin`.
      */
-    params: NodeIdentifier[];
+    params: FunctionParameter[];
     /**
      * Whether the final declared parameter is `varargin`.
      */
@@ -43,7 +46,7 @@ type FunctionInputLayout = {
     /**
      * Parameters that accept positional arguments after name-value filtering.
      */
-    positionalParams: NodeIdentifier[];
+    positionalParams: FunctionParameter[];
     /**
      * Number of positional parameters after name-value filtering.
      */
@@ -57,7 +60,7 @@ type FunctionReturnLayout = {
     /**
      * All declared return identifiers, including `varargout`.
      */
-    returnNames: NodeIdentifier[];
+    returnNames: ReturnName[];
     /**
      * Whether the final declared return identifier is `varargout`.
      */
@@ -143,6 +146,14 @@ type FunctionCallPreparationCallbacks = {
  * and lazy return-list construction.
  */
 class FunctionCall {
+    private static isIdentifier(node: FunctionParameter): node is NodeIdentifier {
+        return node.type === 'IDENT';
+    }
+
+    private static isNamed(node: FunctionParameter, name: string): boolean {
+        return this.isIdentifier(node) && node.id === name;
+    }
+
     /**
      * Compute the input layout of a user-defined function.
      *
@@ -151,10 +162,10 @@ class FunctionCall {
      * catch-all parameter.
      */
     public static inputLayout(func: NodeFunctionDefinition, nameValueParameters: Set<string>): FunctionInputLayout {
-        const params = func.parameter.list as NodeIdentifier[];
-        const hasVarargin = params.length > 0 && params[params.length - 1].id === 'varargin';
+        const params = func.parameter.list as FunctionParameter[];
+        const hasVarargin = params.length > 0 && this.isNamed(params[params.length - 1], 'varargin');
         const fixedParamCount = hasVarargin ? params.length - 1 : params.length;
-        const positionalParams = params.slice(0, fixedParamCount).filter((param) => !nameValueParameters.has(param.id));
+        const positionalParams = params.slice(0, fixedParamCount).filter((param) => param.type === '<~>' || !nameValueParameters.has(param.id));
         return {
             params,
             hasVarargin,
@@ -167,8 +178,8 @@ class FunctionCall {
     /**
      * Compute the fixed/variadic input layout of an anonymous function handle.
      */
-    public static lambdaInputLayout(params: NodeIdentifier[]): Pick<FunctionInputLayout, 'hasVarargin' | 'fixedParamCount'> {
-        const hasVarargin = params.length > 0 && params[params.length - 1].id === 'varargin';
+    public static lambdaInputLayout(params: FunctionParameter[]): Pick<FunctionInputLayout, 'hasVarargin' | 'fixedParamCount'> {
+        const hasVarargin = params.length > 0 && this.isNamed(params[params.length - 1], 'varargin');
         return { hasVarargin, fixedParamCount: hasVarargin ? params.length - 1 : params.length };
     }
 
@@ -176,22 +187,27 @@ class FunctionCall {
      * Compute the return layout, including `varargout`.
      */
     public static returnLayout(func: NodeFunctionDefinition): FunctionReturnLayout {
-        const returnNames = func.return.list as NodeIdentifier[];
-        const hasVarargout = returnNames.length > 0 && returnNames[returnNames.length - 1].id === 'varargout';
+        const returnNames = func.return.list as ReturnName[];
+        const names = returnNames.map((r) => (r.type === '<~>' ? '~' : r.id));
+        const hasVarargout = names.length > 0 && names[names.length - 1] === 'varargout';
         return {
             returnNames,
             hasVarargout,
             fixedReturnCount: hasVarargout ? returnNames.length - 1 : returnNames.length,
-            names: returnNames.map((r) => r.id),
+            names,
         };
     }
 
     /**
      * Determine the minimum required positional count after trailing defaults.
      */
-    public static minimumPositionalCount(positionalParams: NodeIdentifier[], inputDefaults: Map<string, NodeExpr>): number {
+    public static minimumPositionalCount(positionalParams: FunctionParameter[], inputDefaults: Map<string, NodeExpr>): number {
         let minFixedParamCount = positionalParams.length;
-        while (minFixedParamCount > 0 && inputDefaults.has(positionalParams[minFixedParamCount - 1].id)) {
+        while (minFixedParamCount > 0) {
+            const param = positionalParams[minFixedParamCount - 1];
+            if (!this.isIdentifier(param) || !inputDefaults.has(param.id)) {
+                break;
+            }
             minFixedParamCount--;
         }
         return minFixedParamCount;
@@ -225,7 +241,7 @@ class FunctionCall {
     /**
      * Check requested output count before entering the function body.
      */
-    public static validateFunctionOutputArity(returnNames: NodeIdentifier[], hasVarargout: boolean, requestedOutputCount: number, throwEvalError: ThrowEvalError): void {
+    public static validateFunctionOutputArity(returnNames: ReturnName[], hasVarargout: boolean, requestedOutputCount: number, throwEvalError: ThrowEvalError): void {
         if (!hasVarargout && returnNames.length > 0 && requestedOutputCount > returnNames.length) {
             AST.throwErrorIfGreaterThanReturnList(returnNames.length, requestedOutputCount, throwEvalError);
         }
@@ -269,9 +285,9 @@ class FunctionCall {
      * assigned" from "not a return variable" and produce MATLAB-like undefined
      * return errors.
      */
-    public static initializeFixedReturnSlots(returnNames: NodeIdentifier[], nameTable: NameTable): void {
+    public static initializeFixedReturnSlots(returnNames: ReturnName[], nameTable: NameTable): void {
         for (const returnName of returnNames) {
-            if (returnName.id !== 'varargout' && returnName.id !== '~' && !Object.prototype.hasOwnProperty.call(nameTable, returnName.id)) {
+            if (returnName.type !== '<~>' && returnName.id !== 'varargout' && !Object.prototype.hasOwnProperty.call(nameTable, returnName.id)) {
                 nameTable[returnName.id] = {};
             }
         }
@@ -304,7 +320,7 @@ class FunctionCall {
      * Bind anonymous-function inputs, including `varargin`.
      */
     public static bindLambdaInputs(
-        params: NodeIdentifier[],
+        params: FunctionParameter[],
         args: NodeExpr[],
         parent: NodeInput,
         hasVarargin: boolean,
@@ -313,7 +329,11 @@ class FunctionCall {
         evaluate: EvaluateExpression,
     ): void {
         for (let i = 0; i < fixedParamCount; i++) {
-            defineName(params[i].id, this.evaluateCallArguments([args[i]], parent, evaluate, i)[0]);
+            const param = params[i];
+            const value = this.evaluateCallArguments([args[i]], parent, evaluate, i)[0];
+            if (this.isIdentifier(param)) {
+                defineName(param.id, value);
+            }
         }
         if (hasVarargin) {
             defineName('varargin', this.vararginCell(this.evaluateCallArguments(args.slice(fixedParamCount), parent, evaluate, fixedParamCount)));
@@ -333,10 +353,16 @@ class FunctionCall {
         throwEvalError: ThrowEvalError,
     ): void {
         for (let i = 0; i < inputLayout.positionalParamCount; i++) {
-            const paramName = inputLayout.positionalParams[i].id;
+            const param = inputLayout.positionalParams[i];
             if (i < evaluatedArgs.length) {
-                defineName(paramName, evaluatedArgs[i]);
+                if (this.isIdentifier(param)) {
+                    defineName(param.id, evaluatedArgs[i]);
+                }
             } else {
+                if (!this.isIdentifier(param)) {
+                    throwEvalError(`invalid number of arguments in function ${func.id}`);
+                }
+                const paramName = param.id;
                 const defaultValue = inputDefaults.get(paramName);
                 if (!defaultValue) {
                     throwEvalError(`invalid number of arguments in function ${func.id}`);
@@ -381,6 +407,9 @@ class FunctionCall {
             (evaluated, index) => {
                 if (hasVarargout) {
                     if (index < fixedReturnCount) {
+                        if (names[index] === '~') {
+                            throwEvalError(`Undefined return value '~'`);
+                        }
                         const value = evaluated[names[index]];
                         if (value === undefined) {
                             throwEvalError(`Undefined return value '${names[index]}'`);
@@ -395,6 +424,9 @@ class FunctionCall {
                     return value;
                 }
                 const key = names[index];
+                if (key === '~') {
+                    throwEvalError(`Undefined return value '~'`);
+                }
                 const value = evaluated[key];
                 if (value === undefined) {
                     throwEvalError(`Undefined return value '${key}'`);
@@ -409,6 +441,9 @@ class FunctionCall {
                 if (hasVarargout) {
                     for (let i = 0; i < Math.min(length, fixedReturnCount); i++) {
                         const name = names[i];
+                        if (name === '~') {
+                            continue;
+                        }
                         const entry = nameTable[name];
                         if (!entry || !entry.node) {
                             throwEvalError(`Undefined return variable '${name}'`);
@@ -431,6 +466,9 @@ class FunctionCall {
                 }
                 for (let i = 0; i < length; i++) {
                     const name = names[i];
+                    if (name === '~') {
+                        continue;
+                    }
                     const entry = nameTable[name];
                     if (!entry || !entry.node) {
                         throwEvalError(`Undefined return variable '${name}'`);
@@ -443,6 +481,6 @@ class FunctionCall {
     }
 }
 
-export type { FunctionInputLayout, FunctionReturnLayout, FunctionCallArguments, PreparedFunctionCall };
+export type { FunctionInputLayout, FunctionReturnLayout, FunctionCallArguments, PreparedFunctionCall, FunctionParameter };
 export { FunctionCall };
 export default { FunctionCall };

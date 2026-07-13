@@ -6,15 +6,19 @@ import { type ElementType, MultiArray } from './MultiArray';
  */
 type BLASConfig = {
     /**
-     * Minimal value for block multiplication version. Tune as needed.
+     * Minimum operation-size estimate before blocked matrix multiplication is
+     * preferred over the simple kernel.
      */
     blockThreshold: number;
     /**
-     * Block size.
+     * Tile size used by blocked matrix multiplication.
      */
     blockSize: number;
 };
+/** Public list of accepted `BLAS.set` configuration keys. */
 export const BLASConfigKeyTable: (keyof BLASConfig)[] = ['blockThreshold', 'blockSize'];
+const BLASConfigKeySet = new Set<keyof BLASConfig>(BLASConfigKeyTable);
+/** Default configuration values used to initialize `BLAS.settings`. */
 const defaultSettings: Partial<BLASConfig> = {
     blockThreshold: 1e5 /* (≈ 300×300) */,
     blockSize: 64,
@@ -137,23 +141,28 @@ type TransType = 'N' | 'T' | 'C';
  */
 abstract class BLAS {
     /**
-     * BLAS default settings.
+     * Immutable snapshot of default BLAS settings.
      */
     public static readonly defaultSettings: BLASConfig = Object.assign({}, defaultSettings as BLASConfig);
 
     /**
-     * BLAS current settings.
+     * Mutable current BLAS settings.
      */
     public static readonly settings: BLASConfig = BLAS.defaultSettings;
 
     /**
-     * Set configuration options for BLAS.
-     * @param config Configuration options.
+     * Update BLAS runtime configuration.
+     *
+     * Unknown keys are rejected so misspelled tuning options do not silently
+     * change numerical behavior or performance expectations.
+     *
+     * @param config Partial configuration object.
+     * @throws Error when a configuration key is unknown.
      */
     public static readonly set = (config: Partial<BLASConfig>): void => {
         const entries = Object.entries(config);
         entries.forEach((entry) => {
-            if (BLASConfigKeyTable.includes(entry[0] as keyof BLASConfig)) {
+            if (BLASConfigKeySet.has(entry[0] as keyof BLASConfig)) {
                 BLAS.settings[entry[0] as keyof BLASConfig] = entry[1];
             } else {
                 throw new Error(`BLAS.set: invalid configuration parameter: ${entry[0]}`);
@@ -168,11 +177,15 @@ abstract class BLAS {
      */
 
     /**
-     * BLAS AXPY: Y ← alpha * X + Y
-     * @param alpha Complex scalar
-     * @param X ComplexType[][]
-     * @param Y ComplexType[][] (modified in place)
-     * @returns Y
+     * BLAS AXPY generalized to row-major matrix storage: `Y <- alpha * X + Y`.
+     *
+     * `Y` is modified in place and returned for convenience. Both matrices must
+     * have the same row-major shape.
+     *
+     * @param alpha Complex scalar multiplier.
+     * @param X Source matrix.
+     * @param Y Target matrix, modified in place.
+     * @returns The mutated `Y` matrix.
      */
     public static readonly axpy = (alpha: ComplexType, X: ComplexType[][], Y: ComplexType[][]): ComplexType[][] => {
         const m = X.length;

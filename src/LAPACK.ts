@@ -12,6 +12,7 @@ type LAPACKConfig = {
     maxIterationFactor: number;
 };
 export const LAPACKConfigKeyTable: (keyof LAPACKConfig)[] = ['maxIterationFactor'];
+const LAPACKConfigKeySet = new Set<keyof LAPACKConfig>(LAPACKConfigKeyTable);
 const defaultSettings: Partial<LAPACKConfig> = {
     maxIterationFactor: 1e3,
 };
@@ -47,7 +48,7 @@ abstract class LAPACK {
     public static readonly set = (config: Partial<LAPACKConfig>): void => {
         const entries = Object.entries(config);
         entries.forEach((entry) => {
-            if (LAPACKConfigKeyTable.includes(entry[0] as keyof LAPACKConfig)) {
+            if (LAPACKConfigKeySet.has(entry[0] as keyof LAPACKConfig)) {
                 LAPACK.settings[entry[0] as keyof LAPACKConfig] = entry[1];
             } else {
                 throw new Error(`LAPACK.set: invalid configuration parameter: ${entry[0]}`);

@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import path from 'node:path';
 import { CharString } from './CharString';
 import { Complex } from './Complex';
@@ -18,8 +19,10 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(Configuration).toBeDefined();
             expect(Configuration.functions.configure).toBeDefined();
             expect(Configuration.functions.getconfig).toBeDefined();
-            expect(Configuration.signatures.configure).toBeDefined();
-            expect(Configuration.signatures.getconfig).toBeDefined();
+            expect(Configuration.functions.configure.func).toBe(Configuration.configure);
+            expect(Configuration.functions.configure.signature).toBe(Configuration.configureSignature);
+            expect(Configuration.functions.getconfig.func).toBe(Configuration.getconfig);
+            expect(Configuration.functions.getconfig.signature).toBe(Configuration.getconfigSignature);
         });
     });
 

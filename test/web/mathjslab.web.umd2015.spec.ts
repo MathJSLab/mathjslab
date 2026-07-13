@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import path from 'node:path';
 import { Interpreter as InterpreterDefinition } from '../../src/Interpreter';
 // @ts-expect-error ignore

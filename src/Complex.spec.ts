@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import path from 'node:path';
 import { ComplexInterfaceStatic, numberClass } from './ComplexInterface';
 import { ComplexNumber } from './ComplexNumber';

@@ -6,6 +6,9 @@ npm-debug.log*
 # Commit configuration
 git-commit.config.json
 
+# Build chronometer utility status file.
+mark.crono.json
+
 # ANTLR token an rule name files
 src/.antlr/
 src/MathJSLabLexer.tokens

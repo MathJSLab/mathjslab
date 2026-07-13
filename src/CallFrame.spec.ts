@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import { AST } from './AST';
 import { CallFrame } from './CallFrame';
 import { Scope } from './Scope';

@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import path from 'node:path';
 import { Complex } from './Complex';
 import { MultiArray } from './MultiArray';

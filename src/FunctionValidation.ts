@@ -1,5 +1,18 @@
 import type { BuiltInFunctionParameter, BuiltInFunctionParameterValidator, NodeInput } from './AST';
-import { CharString, Complex, ComplexType, FunctionHandle, MultiArray, Structure } from './AST';
+import {
+    CharString,
+    Complex,
+    ComplexType,
+    FunctionHandle,
+    MultiArray,
+    Structure,
+    ClassInstance,
+    ClassEnumerationValue,
+    ClassEventListener,
+    ClassEventData,
+    ClassPropertyEvent,
+    ClassMetaObject,
+} from './AST';
 
 interface FunctionParameterValidationSpec {
     name?: string;
@@ -24,13 +37,31 @@ class FunctionValidation {
      */
     public static className(value: NodeInput): string {
         if (Complex.isInstanceOf(value)) {
-            return 'double';
+            return value.type === Complex.LOGICAL ? 'logical' : 'double';
         }
         if (CharString.isInstanceOf(value)) {
             return 'char';
         }
         if (FunctionHandle.isInstanceOf(value)) {
             return 'function_handle';
+        }
+        if (ClassEventListener.isInstanceOf(value)) {
+            return 'event.listener';
+        }
+        if (ClassPropertyEvent.isInstanceOf(value)) {
+            return 'event.PropertyEvent';
+        }
+        if (ClassEventData.isInstanceOf(value)) {
+            return 'event.EventData';
+        }
+        if (ClassMetaObject.isInstanceOf(value)) {
+            return value.kind;
+        }
+        if (ClassInstance.isInstanceOf(value)) {
+            return value.classDefinition.name;
+        }
+        if (ClassEnumerationValue.isInstanceOf(value)) {
+            return value.classDefinition.name;
         }
         if (Structure.isStructure(value)) {
             return 'struct';
@@ -86,45 +117,43 @@ class FunctionValidation {
      * Remove validators implied by more specific validators.
      */
     public static normalizeValidators(validators: BuiltInFunctionParameterValidator[] = []): BuiltInFunctionParameterValidator[] {
-        const normalized = [...new Set(validators)];
+        const normalized = new Set(validators);
         const remove = (...impliedValidators: BuiltInFunctionParameterValidator[]) => {
             for (const impliedValidator of impliedValidators) {
-                if (normalized.includes(impliedValidator)) {
-                    normalized.splice(normalized.indexOf(impliedValidator), 1);
-                }
+                normalized.delete(impliedValidator);
             }
         };
-        if (normalized.includes('dimensionGreaterThanOne')) {
+        if (normalized.has('dimensionGreaterThanOne')) {
             remove('numeric', 'scalar', 'real', 'finite', 'integer', 'positive', 'nonnegative', 'dimension');
         }
-        if (normalized.includes('dimension')) {
+        if (normalized.has('dimension')) {
             remove('numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative');
         }
-        if (normalized.includes('dimensionVector')) {
+        if (normalized.has('dimensionVector')) {
             remove('numeric', 'vector', 'real', 'finite', 'integer', 'nonnegative');
         }
-        if (normalized.includes('reshapeDimension')) {
+        if (normalized.has('reshapeDimension')) {
             remove('numeric', 'scalar', 'scalarOrEmpty', 'real', 'finite', 'integer', 'nonnegative');
         }
-        if (normalized.includes('reshapeDimensionVector')) {
+        if (normalized.has('reshapeDimensionVector')) {
             remove('numeric', 'vector', 'real', 'finite', 'integer', 'nonnegative');
         }
-        if (normalized.includes('positive')) {
+        if (normalized.has('positive')) {
             remove('nonnegative');
         }
-        if (normalized.includes('zeroOrOne')) {
+        if (normalized.has('zeroOrOne')) {
             remove('nonnegative');
         }
-        if (normalized.includes('textScalar')) {
+        if (normalized.has('textScalar')) {
             remove('text', 'scalar', 'scalarOrEmpty', 'scalarOrVector');
         }
-        if (normalized.includes('squareMatrix')) {
+        if (normalized.has('squareMatrix')) {
             remove('matrix2d');
         }
-        if (normalized.includes('scalar')) {
+        if (normalized.has('scalar')) {
             remove('scalarOrEmpty', 'scalarOrVector');
         }
-        return normalized;
+        return [...normalized];
     }
 
     /**
@@ -173,8 +202,8 @@ class FunctionValidation {
      */
     public static matchesBuiltInParameterBase(value: NodeInput, parameter: BuiltInFunctionParameter): boolean {
         const validators = this.normalizeValidators(parameter.validators);
-        const specialValidators: BuiltInFunctionParameterValidator[] = ['dimension', 'dimensionGreaterThanOne', 'dimensionVector', 'reshapeDimension', 'reshapeDimensionVector'];
-        const commonSpec: FunctionParameterValidationSpec = { ...parameter, validators: validators.filter((validator) => !specialValidators.includes(validator)) };
+        const specialValidators = new Set<BuiltInFunctionParameterValidator>(['dimension', 'dimensionGreaterThanOne', 'dimensionVector', 'reshapeDimension', 'reshapeDimensionVector']);
+        const commonSpec: FunctionParameterValidationSpec = { ...parameter, validators: validators.filter((validator) => !specialValidators.has(validator)) };
         if (!this.matchesParameter(value, commonSpec)) {
             return false;
         }
