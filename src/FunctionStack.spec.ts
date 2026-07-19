@@ -1,7 +1,8 @@
 /// <reference types="jest" />
 import path from 'node:path';
 import type { FunctionTable, NameEntry, NameTable, NodeFunctionDefinition, NodeInput } from './AST';
-import { AST, Complex } from './AST';
+import { AST } from './AST';
+import { Complex } from './Complex';
 import type { FunctionFrame } from './FunctionStack';
 import { FunctionStack } from './FunctionStack';
 import type { WorkspaceScope } from './FunctionWorkspace';

@@ -1,9 +1,10 @@
 import type { NodeInput } from './AST';
 import type { ClassDefinition } from './ClassDefinition';
 import type { FunctionHandle } from './FunctionHandle';
-import type { Interpreter } from './Interpreter';
+import type { RuntimeDisplay } from './RuntimeDisplay';
 import { ClassEventListener } from './ClassEventListener';
 import { MultiArray } from './MultiArray';
+import { RuntimeValue } from './RuntimeValue';
 
 /** Instance property storage keyed by property name. */
 type ClassInstancePropertyTable = Record<string, NodeInput>;
@@ -22,7 +23,7 @@ class ClassInstance {
     /** Runtime type tag stored on the instance. */
     public readonly type = ClassInstance.CLASS_INSTANCE;
     /** Optional AST-style parent pointer used by generic value handling. */
-    public parent: any;
+    public parent?: unknown;
     /** Class metadata that defines this instance. */
     public readonly classDefinition: ClassDefinition;
     /** Concrete non-dependent property values. */
@@ -179,7 +180,7 @@ class ClassInstance {
         }
         const properties: ClassInstancePropertyTable = {};
         for (const [name, value] of Object.entries(instance.properties)) {
-            properties[name] = typeof (value as { copy?: () => NodeInput }).copy === 'function' ? (value as { copy: () => NodeInput }).copy() : value;
+            properties[name] = RuntimeValue.copy(value);
         }
         return new ClassInstance(instance.classDefinition, properties);
     };
@@ -202,7 +203,7 @@ class ClassInstance {
      * @param interpreter Interpreter requesting unparse.
      * @returns Human-readable object summary.
      */
-    public static readonly unparse = (instance: ClassInstance, interpreter: Interpreter): string => {
+    public static readonly unparse = (instance: ClassInstance, interpreter: RuntimeDisplay): string => {
         const propertyNames = Object.keys(instance.properties);
         return `${instance.classDefinition.name} object${propertyNames.length > 0 ? ` with properties: ${propertyNames.join(',')}` : ''}`;
     };

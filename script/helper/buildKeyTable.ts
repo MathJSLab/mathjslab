@@ -40,7 +40,7 @@ export const buildKeyTable = (inputFile: string, outputFile: string, declName: s
     }
     visit(source);
     /* Generate output */
-    const fileContent = `import { ${declName}Key } from './${path.parse(inputFile).name}';\nexport const ${declName}KeyTable: ${declName}Key[] = ${JSON.stringify(keys, null, 4).replace(/\"/gm, "'")};\n`;
+    const fileContent = `export const ${declName}KeyTable = ${JSON.stringify(keys, null, 4).replace(/\"/gm, "'")} as const;\n`;
     fs.writeFileSync(outputFile, fileContent, 'utf-8');
     console.log(`Source file generated: ${outputFile}`);
 };

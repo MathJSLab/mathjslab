@@ -1,6 +1,7 @@
 /// <reference types="jest" />
 import path from 'node:path';
 import { Complex, ComplexType } from './Complex';
+import { CharString } from './CharString';
 import { MultiArray } from './MultiArray';
 import { LinearAlgebra } from './LinearAlgebra';
 import { MathOperation } from './MathOperation';
@@ -12,6 +13,26 @@ const unitName = __filenameMatch[1];
 const testExtension = __filenameMatch[2];
 
 let interpreter: Interpreter;
+
+const createRealMatrix = (values: number[][]): MultiArray => {
+    const result = new MultiArray([values.length, values[0].length]);
+    for (let i = 0; i < values.length; i++) {
+        for (let j = 0; j < values[i].length; j++) {
+            result.array[i][j] = Complex.create(values[i][j]);
+        }
+    }
+    return result;
+};
+
+const expectRealMatrix = (actual: MultiArray, expected: number[][]): void => {
+    expect(actual.dimension).toEqual([expected.length, expected[0].length]);
+    for (let i = 0; i < expected.length; i++) {
+        for (let j = 0; j < expected[i].length; j++) {
+            expect(Complex.realToNumber(actual.array[i][j] as ComplexType)).toBeCloseTo(expected[i][j], 10);
+            expect(Complex.imagToNumber(actual.array[i][j] as ComplexType)).toBeCloseTo(0, 10);
+        }
+    }
+};
 
 describe(`${unitName} unit test (.${testExtension} test file).`, () => {
     beforeAll(() => {
@@ -41,6 +62,102 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(Complex.realToNumber(value.list[0])).toBe(7);
             expect(unparsed === '1+2*3\n').toBe(true);
         }, 1000);
+
+        it('LinearAlgebra.power should compute positive, zero, and negative integer matrix powers', () => {
+            const matrix = createRealMatrix([
+                [1, 1],
+                [0, 1],
+            ]);
+
+            expectRealMatrix(LinearAlgebra.power(matrix, Complex.create(3)), [
+                [1, 3],
+                [0, 1],
+            ]);
+            expectRealMatrix(LinearAlgebra.power(matrix, Complex.create(0)), [
+                [1, 0],
+                [0, 1],
+            ]);
+            expectRealMatrix(LinearAlgebra.power(matrix, Complex.create(-2)), [
+                [1, -2],
+                [0, 1],
+            ]);
+        });
+
+        it('LinearAlgebra.power should reject nonsquare matrix bases', () => {
+            const matrix = createRealMatrix([
+                [1, 2, 3],
+                [4, 5, 6],
+            ]);
+
+            expect(() => LinearAlgebra.power(matrix, Complex.create(2))).toThrow('operator ^: only square matrices can be raised to scalar powers.');
+        });
+
+        it('LinearAlgebra.power should compute Hermitian matrix noninteger scalar powers', () => {
+            const matrix = createRealMatrix([
+                [2, 1],
+                [1, 2],
+            ]);
+            const sqrt3 = Math.sqrt(3);
+
+            expectRealMatrix(LinearAlgebra.power(matrix, Complex.create(0.5)), [
+                [(1 + sqrt3) / 2, (sqrt3 - 1) / 2],
+                [(sqrt3 - 1) / 2, (1 + sqrt3) / 2],
+            ]);
+        });
+
+        it('LinearAlgebra.power should reject non-Hermitian noninteger scalar powers until general matrix powers are supported', () => {
+            const matrix = createRealMatrix([
+                [1, 2],
+                [3, 4],
+            ]);
+
+            expect(() => LinearAlgebra.power(matrix, Complex.create(0.5))).toThrow("invalid exponent in '^'.");
+        });
+
+        it('LinearAlgebra.cond should compute supported matrix condition numbers', () => {
+            const matrix = createRealMatrix([
+                [1, 2],
+                [3, 4],
+            ]);
+            const singular = createRealMatrix([
+                [1, 2],
+                [2, 4],
+            ]);
+            const rowVector = createRealMatrix([[1, 0]]);
+
+            expect(Complex.realToNumber(LinearAlgebra.cond(matrix))).toBeCloseTo(14.933034373659265, 10);
+            expect(Complex.realToNumber(LinearAlgebra.cond(matrix, Complex.create(2)))).toBeCloseTo(14.933034373659265, 10);
+            expect(Complex.realToNumber(LinearAlgebra.cond(matrix, Complex.create(1)))).toBeCloseTo(21, 10);
+            expect(Complex.realToNumber(LinearAlgebra.cond(matrix, Complex.inf_0()))).toBeCloseTo(21, 10);
+            expect(Complex.realToNumber(LinearAlgebra.cond(matrix, new CharString('fro')))).toBeCloseTo(15, 10);
+            expect(Complex.realToNumber(LinearAlgebra.cond(singular))).toBe(Infinity);
+            expect(Complex.realToNumber(LinearAlgebra.cond(rowVector))).toBeCloseTo(1, 10);
+            expect(() => LinearAlgebra.cond(rowVector, Complex.create(1))).toThrow('Invalid call to cond.');
+            expect(() => LinearAlgebra.cond(matrix, Complex.create(-Infinity))).toThrow('Invalid call to cond.');
+        });
+
+        it('LinearAlgebra.rank should compute SVD-based numerical rank', () => {
+            const rankDeficient = createRealMatrix([
+                [3, 2, 4],
+                [-1, 1, 2],
+                [9, 5, 10],
+            ]);
+            const diagonal = createRealMatrix([
+                [10, 0, 0, 0],
+                [0, 25, 0, 0],
+                [0, 0, 34, 0],
+                [0, 0, 0, 1e-15],
+            ]);
+            const rowVector = createRealMatrix([[1, 0, 0]]);
+            const zero = createRealMatrix([[0]]);
+
+            expect(Complex.realToNumber(LinearAlgebra.rank(rankDeficient))).toBe(2);
+            expect(Complex.realToNumber(LinearAlgebra.rank(diagonal))).toBe(3);
+            expect(Complex.realToNumber(LinearAlgebra.rank(diagonal, Complex.create(1e-16)))).toBe(4);
+            expect(Complex.realToNumber(LinearAlgebra.rank(rowVector))).toBe(1);
+            expect(Complex.realToNumber(LinearAlgebra.rank(zero))).toBe(0);
+            expect(() => LinearAlgebra.rank(rankDeficient, Complex.create(-1))).toThrow('Invalid call to rank.');
+        });
 
         it('LinearAlgebra.dot of simple real vectors', () => {
             const A = new MultiArray([1, 3]);

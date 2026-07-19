@@ -1,5 +1,5 @@
 import type { ClassDefinition } from './ClassDefinition';
-import type { Interpreter } from './Interpreter';
+import type { RuntimeDisplay } from './RuntimeDisplay';
 
 /**
  * Runtime value for the built-in `ClassName.empty` static method.
@@ -10,7 +10,7 @@ class ClassEmptyMethod {
     /** Runtime type tag stored on the empty-method wrapper. */
     public readonly type = ClassEmptyMethod.CLASS_EMPTY_METHOD;
     /** Optional AST-style parent pointer used by generic value handling. */
-    public parent: any;
+    public parent?: unknown;
     /** Class that owns the `empty` method. */
     public readonly classDefinition: ClassDefinition;
 
@@ -54,7 +54,7 @@ class ClassEmptyMethod {
      * @param _interpreter Interpreter requesting unparse.
      * @returns Human-readable method summary.
      */
-    public static readonly unparse = (emptyMethod: ClassEmptyMethod, _interpreter: Interpreter): string => `${emptyMethod.classDefinition.name}.empty static method`;
+    public static readonly unparse = (emptyMethod: ClassEmptyMethod, _interpreter: RuntimeDisplay): string => `${emptyMethod.classDefinition.name}.empty static method`;
 
     /**
      * Copy this empty-method wrapper.

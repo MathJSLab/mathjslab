@@ -1,7 +1,10 @@
 /// <reference types="jest" />
 import path from 'node:path';
 import type { FunctionTable, NameEntry, NameTable, NodeFunctionDefinition, NodeInput } from './AST';
-import { AST, CharString, Complex, Structure } from './AST';
+import { AST } from './AST';
+import { CharString } from './CharString';
+import { Complex } from './Complex';
+import { Structure } from './Structure';
 import type { ComplexType } from './Complex';
 import { FunctionHandle } from './FunctionHandle';
 import { FunctionIntrospection, type IntrospectionFrame, type IntrospectionScope } from './FunctionIntrospection';
@@ -28,6 +31,8 @@ const functionDefinition = (id: string): NodeFunctionDefinition =>
 class TestScope implements IntrospectionScope {
     public nameTable: NameTable = Object.create(null);
     public functionTable: FunctionTable = Object.create(null);
+
+    public constructor(public parent?: IntrospectionScope) {}
 
     public defineName(name: string, node: NodeInput): NameEntry {
         return (this.nameTable[name] = { node });
@@ -80,6 +85,23 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(FunctionHandle.isInstanceOf(result.array[0][0])).toBe(true);
             expect((result.array[0][0] as FunctionHandle).id).toBe('a');
             expect((result.array[1][0] as FunctionHandle).id).toBe('b');
+        });
+
+        it('Should list function-file local handles from a parent definition scope.', () => {
+            const fileScope = new TestScope();
+            const callScope = new TestScope(fileScope);
+            const globalFrame = frame(undefined, new TestScope());
+            const functionFrame = frame('FCNDEF', callScope, 'primary', globalFrame);
+            fileScope.functionTable.primary = functionDefinition('primary');
+            fileScope.functionTable.helper = functionDefinition('helper');
+            fileScope.functionTable.other = functionDefinition('other');
+
+            const result = FunctionIntrospection.localFunctionHandles(functionFrame, new TestScope());
+
+            expect(result.dimension).toEqual([2, 1]);
+            expect((result.array[0][0] as FunctionHandle).id).toBe('helper');
+            expect((result.array[1][0] as FunctionHandle).id).toBe('other');
+            expect((result.array[0][0] as FunctionHandle).closure).toBe(fileScope);
         });
 
         it('Should build dbstack structure results for callable frames.', () => {

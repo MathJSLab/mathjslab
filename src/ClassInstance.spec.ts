@@ -1,6 +1,7 @@
 /// <reference types="jest" />
 import type { NodeClassDef } from './AST';
-import { Complex, FunctionHandle } from './AST';
+import { Complex } from './Complex';
+import { FunctionHandle } from './FunctionHandle';
 import { ClassDefinition } from './ClassDefinition';
 import { ClassInstance } from './ClassInstance';
 import { Interpreter } from './Interpreter';

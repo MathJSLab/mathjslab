@@ -2,13 +2,16 @@ import { CharString } from './CharString';
 import { Complex, ComplexType } from './Complex';
 import { type ElementType, MultiArray } from './MultiArray';
 import { Structure } from './Structure';
-import { FunctionHandle } from './FunctionHandle';
 import { ClassDefinition } from './ClassDefinition';
 import { ClassInstance } from './ClassInstance';
 import { ClassEnumerationValue } from './ClassEnumerationValue';
 import { ClassEventListener } from './ClassEventListener';
 import { ClassMetaClass, ClassMetaObject } from './ClassMeta';
 import { type BuiltInFunctionSignature, type NodeReturnList, AST, type FunctionSignatureEntry, ReturnHandlerResult } from './AST';
+import { FunctionValidation } from './FunctionValidation';
+import { RuntimeEquality } from './RuntimeEquality';
+import { RuntimeValue } from './RuntimeValue';
+import { LAPACK } from './LAPACK';
 
 /**
  * Core MATLAB/Octave built-ins that are independent of heavy numerical
@@ -75,7 +78,7 @@ abstract class CoreFunctions {
      */
     public static readonly isempty = (X?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('isempty', !(typeof X !== 'undefined' && rest.length === 0));
-        return MultiArray.isEmpty(X) ? Complex.true() : Complex.false();
+        return RuntimeValue.isEmpty(X) ? Complex.true() : Complex.false();
     };
 
     /** Signature metadata for `isscalar`. */
@@ -90,7 +93,7 @@ abstract class CoreFunctions {
      */
     public static readonly isscalar = (X?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('isscalar', !(typeof X !== 'undefined' && rest.length === 0));
-        return MultiArray.isScalar(X) ? Complex.true() : Complex.false();
+        return RuntimeValue.isScalar(X) ? Complex.true() : Complex.false();
     };
 
     /** Signature metadata for `ismatrix`. */
@@ -104,7 +107,7 @@ abstract class CoreFunctions {
      */
     public static readonly ismatrix = (X?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('ismatrix', !(typeof X !== 'undefined' && rest.length === 0));
-        return MultiArray.isMatrix(X) ? Complex.true() : Complex.false();
+        return RuntimeValue.isMatrix(X) ? Complex.true() : Complex.false();
     };
 
     /** Signature metadata for `isvector`. */
@@ -118,7 +121,7 @@ abstract class CoreFunctions {
      */
     public static readonly isvector = (X?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('isvector', !(typeof X !== 'undefined' && rest.length === 0));
-        return MultiArray.isVector(X) ? Complex.true() : Complex.false();
+        return RuntimeValue.isVector(X) ? Complex.true() : Complex.false();
     };
 
     /** Signature metadata for `iscell`. */
@@ -146,7 +149,7 @@ abstract class CoreFunctions {
      */
     public static readonly isrow = (X?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('isrow', !(typeof X !== 'undefined' && rest.length === 0));
-        return MultiArray.isRowVector(X) ? Complex.true() : Complex.false();
+        return RuntimeValue.isRowVector(X) ? Complex.true() : Complex.false();
     };
 
     /** Signature metadata for `iscolumn`. */
@@ -160,7 +163,7 @@ abstract class CoreFunctions {
      */
     public static readonly iscolumn = (X?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('iscolumn', !(typeof X !== 'undefined' && rest.length === 0));
-        return MultiArray.isColumnVector(X) ? Complex.true() : Complex.false();
+        return RuntimeValue.isColumnVector(X) ? Complex.true() : Complex.false();
     };
 
     /** Signature metadata for `isstruct`. */
@@ -175,6 +178,35 @@ abstract class CoreFunctions {
     public static readonly isstruct = (X?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('isstruct', !(typeof X !== 'undefined' && rest.length === 0));
         return Structure.isStructure(X) ? Complex.true() : Complex.false();
+    };
+
+    /** Signature metadata for `ischar`. */
+    public static readonly ischarSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
+    public static readonly ischar = (X?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('ischar', !(typeof X !== 'undefined' && rest.length === 0));
+        return CharString.isInstanceOf(X) ? Complex.true() : Complex.false();
+    };
+
+    /** Signature metadata for `isnumeric`. */
+    public static readonly isnumericSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
+    public static readonly isnumeric = (X?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('isnumeric', !(typeof X !== 'undefined' && rest.length === 0));
+        return FunctionValidation.numericElements(X) ? Complex.true() : Complex.false();
+    };
+
+    /** Signature metadata for `islogical`. */
+    public static readonly islogicalSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
+    public static readonly islogical = (X?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('islogical', !(typeof X !== 'undefined' && rest.length === 0));
+        return FunctionValidation.isLogicalValue(X) ? Complex.true() : Complex.false();
+    };
+
+    /** Signature metadata for `isreal`. */
+    public static readonly isrealSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
+    public static readonly isreal = (X?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('isreal', !(typeof X !== 'undefined' && rest.length === 0));
+        const elements = FunctionValidation.numericElements(X, { includeLogical: true });
+        return elements && elements.every((item) => Complex.imagIsZero(item)) ? Complex.true() : Complex.false();
     };
 
     /** Signature metadata for `isvalid`. */
@@ -212,7 +244,11 @@ abstract class CoreFunctions {
     public static readonly isobject = (X?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('isobject', !(typeof X !== 'undefined' && rest.length === 0));
         const isObjectValue = (value: ElementType): boolean => ClassInstance.isInstanceOf(value) || ClassEnumerationValue.isInstanceOf(value) || ClassMetaObject.isInstanceOf(value);
-        return (MultiArray.isInstanceOf(X) ? MultiArray.linearize(X).some(isObjectValue) : isObjectValue(X)) ? Complex.true() : Complex.false();
+        if (MultiArray.isInstanceOf(X)) {
+            const elements = MultiArray.linearize(X);
+            return !X.isCell && elements.length > 0 && elements.every(isObjectValue) ? Complex.true() : Complex.false();
+        }
+        return isObjectValue(X) ? Complex.true() : Complex.false();
     };
 
     /**
@@ -234,7 +270,7 @@ abstract class CoreFunctions {
         if (ClassInstance.isInstanceOf(value) || ClassEnumerationValue.isInstanceOf(value)) {
             return value.classDefinition;
         }
-        if (MultiArray.isInstanceOf(value)) {
+        if (MultiArray.isInstanceOf(value) && !value.isCell) {
             const object = MultiArray.linearize(value).find((item) => ClassInstance.isInstanceOf(item) || ClassEnumerationValue.isInstanceOf(item) || ClassMetaClass.isInstanceOf(item));
             if (ClassMetaClass.isInstanceOf(object)) {
                 return object.definition;
@@ -259,18 +295,20 @@ abstract class CoreFunctions {
     };
 
     /**
-     * Return sorted visible member names.
+     * Return sorted member names accepted by a user-facing introspection
+     * predicate.
      *
-     * Hidden class members are omitted to match user-facing introspection
-     * behavior.
+     * MATLAB listing functions expose public, non-hidden class members instead
+     * of raw metadata lists.
      *
      * @param members Member metadata list.
+     * @param predicate Compatibility predicate for the listing function.
      * @returns Sorted visible names.
      */
-    private static readonly visibleNames = <T extends { name: string; isHidden?: boolean }>(members: T[]): string[] => {
+    private static readonly listedNames = <T extends { name: string }>(members: T[], predicate: (member: T) => boolean): string[] => {
         const names = new Set<string>();
         for (const member of members) {
-            if (!member.isHidden) {
+            if (predicate(member)) {
                 names.add(member.name);
             }
         }
@@ -281,38 +319,71 @@ abstract class CoreFunctions {
     public static readonly properties = (X?: ElementType, ...rest: unknown[]): MultiArray => {
         AST.throwInvalidCallError('properties', !(typeof X !== 'undefined' && rest.length === 0));
         const definition = CoreFunctions.classDefinitionFromValue(X, 'properties');
-        return CoreFunctions.stringCellColumn(CoreFunctions.visibleNames(definition.allProperties()));
+        return CoreFunctions.stringCellColumn(CoreFunctions.listedNames(definition.allProperties(), (property) => !property.isHidden && property.getAccess === 'public'));
     };
 
     public static readonly fieldnamesSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
     public static readonly fieldnames = (X?: ElementType, ...rest: unknown[]): MultiArray => {
         AST.throwInvalidCallError('fieldnames', !(typeof X !== 'undefined' && rest.length === 0));
-        if (Structure.isInstanceOf(X)) {
-            return CoreFunctions.stringCellColumn(Object.keys(X.field).sort());
+        if (Structure.isStructure(X)) {
+            return CoreFunctions.stringCellColumn(Structure.fieldNames(X));
         }
         const definition = CoreFunctions.classDefinitionFromValue(X, 'fieldnames');
-        return CoreFunctions.stringCellColumn(CoreFunctions.visibleNames(definition.allProperties()));
+        return CoreFunctions.stringCellColumn(CoreFunctions.listedNames(definition.allProperties(), (property) => !property.isHidden && property.getAccess === 'public'));
+    };
+
+    public static readonly isfieldSignature: BuiltInFunctionSignature = {
+        inputs: {
+            arity: 2,
+            parameters: [{ name: 'structure' }, { name: 'fieldName' }],
+        },
+        outputs: { arity: 1 },
+    };
+    public static readonly isfield = (X?: ElementType, fieldName?: ElementType, ...rest: unknown[]): ElementType => {
+        AST.throwInvalidCallError('isfield', !(typeof X !== 'undefined' && typeof fieldName !== 'undefined' && rest.length === 0));
+        const isStructure = Structure.isStructure(X);
+        const hasField = (name: ElementType): ComplexType => {
+            if (!CharString.isInstanceOf(name)) {
+                if (!isStructure) {
+                    return Complex.false();
+                }
+                throw new EvalError('isfield: FIELD must be a string or cell array of strings.');
+            }
+            return Structure.hasField(X, name.str) ? Complex.true() : Complex.false();
+        };
+        if (MultiArray.isInstanceOf(fieldName)) {
+            if (!fieldName.isCell) {
+                if (!isStructure) {
+                    return Complex.false();
+                }
+                throw new EvalError('isfield: FIELD must be a string or cell array of strings.');
+            }
+            const result = MultiArray.rawMap(fieldName, hasField);
+            MultiArray.setType(result);
+            return MultiArray.MultiArrayToScalar(result);
+        }
+        return hasField(fieldName);
     };
 
     public static readonly methodsSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'object' }] }, outputs: { arity: 1 } };
     public static readonly methods = (X?: ElementType, ...rest: unknown[]): MultiArray => {
         AST.throwInvalidCallError('methods', !(typeof X !== 'undefined' && rest.length === 0));
         const definition = CoreFunctions.classDefinitionFromValue(X, 'methods');
-        return CoreFunctions.stringCellColumn(CoreFunctions.visibleNames(definition.allMethods()));
+        return CoreFunctions.stringCellColumn(CoreFunctions.listedNames(definition.allMethods(), (method) => !method.isHidden && method.access === 'public'));
     };
 
     public static readonly eventsSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'object' }] }, outputs: { arity: 1 } };
     public static readonly events = (X?: ElementType, ...rest: unknown[]): MultiArray => {
         AST.throwInvalidCallError('events', !(typeof X !== 'undefined' && rest.length === 0));
         const definition = CoreFunctions.classDefinitionFromValue(X, 'events');
-        return CoreFunctions.stringCellColumn(CoreFunctions.visibleNames(definition.allEvents()));
+        return CoreFunctions.stringCellColumn(CoreFunctions.listedNames(definition.allEvents(), (event) => !event.isHidden && event.listenAccess === 'public'));
     };
 
     public static readonly enumerationSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'object' }] }, outputs: { arity: 1 } };
     public static readonly enumeration = (X?: ElementType, ...rest: unknown[]): MultiArray => {
         AST.throwInvalidCallError('enumeration', !(typeof X !== 'undefined' && rest.length === 0));
         const definition = CoreFunctions.classDefinitionFromValue(X, 'enumeration');
-        return CoreFunctions.stringCellColumn(CoreFunctions.visibleNames(definition.allEnumerations()));
+        return CoreFunctions.stringCellColumn(CoreFunctions.listedNames(definition.allEnumerations(), (enumeration) => !enumeration.isHidden));
     };
 
     public static readonly superclassesSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'object' }] }, outputs: { arity: 1 } };
@@ -330,13 +401,27 @@ abstract class CoreFunctions {
     };
 
     public static readonly ispropSignature: BuiltInFunctionSignature = {
-        inputs: { arity: 2, parameters: [{ name: 'object' }, { name: 'propertyName', classes: ['char'] }] },
+        inputs: { arity: 2, parameters: [{ name: 'object' }, { name: 'propertyName' }] },
         outputs: { arity: 1 },
     };
-    public static readonly isprop = (X?: ElementType, propertyName?: ElementType, ...rest: unknown[]): ComplexType => {
+    public static readonly isprop = (X?: ElementType, propertyName?: ElementType, ...rest: unknown[]): ElementType => {
         AST.throwInvalidCallError('isprop', !(typeof X !== 'undefined' && typeof propertyName !== 'undefined' && rest.length === 0));
+        if (!CharString.isInstanceOf(propertyName)) {
+            return Complex.false();
+        }
+        const name = propertyName.str;
+        if (MultiArray.isInstanceOf(X)) {
+            if (X.isCell) {
+                return Complex.false();
+            }
+            const result = MultiArray.rawMap(X, (value: ElementType) => {
+                const definition = CoreFunctions.classDefinitionFromValue(value, 'isprop');
+                return definition.findProperty(name) ? Complex.true() : Complex.false();
+            });
+            MultiArray.setType(result);
+            return MultiArray.MultiArrayToScalar(result);
+        }
         const definition = CoreFunctions.classDefinitionFromValue(X, 'isprop');
-        const name = CoreFunctions.stringArgument(propertyName, 'isprop', 2);
         return definition.findProperty(name) ? Complex.true() : Complex.false();
     };
 
@@ -348,71 +433,35 @@ abstract class CoreFunctions {
         AST.throwInvalidCallError('ismethod', !(typeof X !== 'undefined' && typeof methodName !== 'undefined' && rest.length === 0));
         const definition = CoreFunctions.classDefinitionFromValue(X, 'ismethod');
         const name = CoreFunctions.stringArgument(methodName, 'ismethod', 2);
-        return definition.findMethod(name) ? Complex.true() : Complex.false();
+        return definition.findMethod(name, (method) => !method.isHidden && method.access === 'public') ? Complex.true() : Complex.false();
     };
 
     public static readonly isequalSignature: BuiltInFunctionSignature = { inputs: { arity: -1, min: 2, parameters: [{ name: 'value', variadic: true }] }, outputs: { arity: 1 } };
     /**
-     * Return true if all input values are equal.
-     * @param first
-     * @param rest
-     * @returns
+     * Return true if all input values are equal under MATLAB-like `isequal`
+     * semantics.
+     *
+     * @param first First value to compare.
+     * @param rest Additional values that must equal `first`.
+     * @returns Logical scalar result.
      */
     public static readonly isequal = (first?: ElementType, ...rest: ElementType[]): ComplexType => {
         AST.throwInvalidCallError('isequal', !(typeof first !== 'undefined' && rest.length >= 1));
         return rest.every((value) => CoreFunctions.valuesEqual(first, value)) ? Complex.true() : Complex.false();
     };
 
-    private static readonly valuesEqual = (left: ElementType, right: ElementType): boolean => {
-        if (left === right) {
-            return true;
-        }
-        if (left === null || right === null || typeof left === 'undefined' || typeof right === 'undefined') {
-            return left === right;
-        }
-        if (Complex.isInstanceOf(left) && Complex.isInstanceOf(right)) {
-            return Boolean(Complex.toBoolean(Complex.eq(left, right)));
-        }
-        if (CharString.isInstanceOf(left) && CharString.isInstanceOf(right)) {
-            return left.str === right.str;
-        }
-        if (MultiArray.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
-            return CoreFunctions.multiArraysEqual(left, right);
-        }
-        if (Structure.isInstanceOf(left) && Structure.isInstanceOf(right)) {
-            return CoreFunctions.structuresEqual(left, right);
-        }
-        if (FunctionHandle.isInstanceOf(left) && FunctionHandle.isInstanceOf(right)) {
-            return left.id === right.id && FunctionHandle.toString(left) === FunctionHandle.toString(right);
-        }
-        if (ClassInstance.isInstanceOf(left) && ClassInstance.isInstanceOf(right)) {
-            if (left.classDefinition !== right.classDefinition) {
-                return false;
-            }
-            if (left.classDefinition.isHandleClass() || right.classDefinition.isHandleClass()) {
-                return left === right;
-            }
-            return CoreFunctions.propertyTablesEqual(left.properties, right.properties);
-        }
-        if (ClassEnumerationValue.isInstanceOf(left) && ClassEnumerationValue.isInstanceOf(right)) {
-            return left.classDefinition === right.classDefinition && left.enumeration.name === right.enumeration.name && CoreFunctions.elementListsEqual(left.args, right.args);
-        }
-        return false;
-    };
-
-    private static readonly multiArraysEqual = (left: MultiArray, right: MultiArray): boolean =>
-        left.isCell === right.isCell && MultiArray.arrayEquals(left.dimension, right.dimension) && CoreFunctions.elementListsEqual(MultiArray.linearize(left), MultiArray.linearize(right));
-
-    private static readonly structuresEqual = (left: Structure, right: Structure): boolean => CoreFunctions.propertyTablesEqual(left.field, right.field);
-
-    private static readonly propertyTablesEqual = (left: Record<string, ElementType>, right: Record<string, ElementType>): boolean => {
-        const leftKeys = Object.keys(left).sort();
-        const rightKeys = Object.keys(right).sort();
-        return MultiArray.arrayEquals(leftKeys, rightKeys) && leftKeys.every((key) => CoreFunctions.valuesEqual(left[key], right[key]));
-    };
-
-    private static readonly elementListsEqual = (left: ElementType[], right: ElementType[]): boolean =>
-        left.length === right.length && left.every((value, index) => CoreFunctions.valuesEqual(value, right[index]));
+    /**
+     * Compare two runtime values using the same semantics exposed by
+     * `isequal`.
+     *
+     * This helper remains as a compatibility facade for callers that still
+     * access equality through the built-in module.
+     *
+     * @param left Left value.
+     * @param right Right value.
+     * @returns `true` when the values are equal.
+     */
+    public static readonly valuesEqual = (left: ElementType, right: ElementType): boolean => RuntimeEquality.valuesEqual(left, right);
 
     public static readonly ndimsSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
     /**
@@ -422,7 +471,7 @@ abstract class CoreFunctions {
      */
     public static readonly ndims = (M?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('ndims', !(typeof M !== 'undefined' && rest.length === 0));
-        return Complex.create(MultiArray.scalarToMultiArray(M).dimension.length);
+        return Complex.create(RuntimeValue.dimensions(M).length);
     };
 
     public static readonly rowsSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
@@ -433,7 +482,7 @@ abstract class CoreFunctions {
      */
     public static readonly rows = (M?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('rows', !(typeof M !== 'undefined' && rest.length === 0));
-        return Complex.create(MultiArray.scalarToMultiArray(M).dimension[0]);
+        return Complex.create(RuntimeValue.dimensions(M)[0]);
     };
 
     public static readonly columnsSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
@@ -444,7 +493,7 @@ abstract class CoreFunctions {
      */
     public static readonly columns = (M?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('columns', !(typeof M !== 'undefined' && rest.length === 0));
-        return Complex.create(MultiArray.scalarToMultiArray(M).dimension[1]);
+        return Complex.create(RuntimeValue.dimensions(M)[1]);
     };
 
     public static readonly lengthSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
@@ -457,7 +506,7 @@ abstract class CoreFunctions {
     public static readonly Length = (M?: ElementType, ...rest: unknown[]): ComplexType => {
         /* Capitalized name so as not to conflict with the built-in 'Function.length' property. */
         AST.throwInvalidCallError('length', !(typeof M !== 'undefined' && rest.length === 0));
-        return Complex.create(Math.max(...MultiArray.scalarToMultiArray(M).dimension));
+        return Complex.create(Math.max(...RuntimeValue.dimensions(M)));
     };
 
     public static readonly numelSignature: BuiltInFunctionSignature = {
@@ -471,15 +520,15 @@ abstract class CoreFunctions {
      * @returns
      */
     public static readonly numel = (M: ElementType, ...IDX: ElementType[]): ComplexType => {
+        const dimensions = RuntimeValue.dimensions(M);
         if (IDX.length === 0) {
-            return MultiArray.isInstanceOf(M) ? Complex.create(MultiArray.linearLength(M as MultiArray)) : Complex.one();
+            return Complex.create(RuntimeValue.elementCount(M));
         } else {
-            const m = MultiArray.scalarToMultiArray(M);
             const index = IDX.map((idx, i) => {
                 if (MultiArray.isInstanceOf(idx)) {
                     return MultiArray.linearLength(idx as MultiArray);
                 } else if (CharString.isInstanceOf(idx) && (idx as CharString).str === ':') {
-                    return i < m.dimension.length ? m.dimension[i] : 1;
+                    return i < dimensions.length ? dimensions[i] : 1;
                 } else {
                     return 1;
                 }
@@ -764,7 +813,14 @@ abstract class CoreFunctions {
             }
             return dim;
         };
-        const sizeDim = MultiArray.isInstanceOf(M) ? (M as MultiArray).dimension.slice() : [1, 1];
+        const parseDimensionArgument = (dimension: ElementType): number => {
+            const value = MultiArray.firstElement(dimension);
+            if (!Complex.isInstanceOf(value)) {
+                AST.throwInvalidCallError('size');
+            }
+            return parseDimension(value as ComplexType);
+        };
+        const sizeDim = RuntimeValue.dimensions(M);
         if (DIM.length === 0) {
             const result = new MultiArray([1, sizeDim.length]);
             result.array[0] = sizeDim.map((d) => Complex.create(d));
@@ -773,8 +829,13 @@ abstract class CoreFunctions {
         } else {
             const dims =
                 DIM.length === 1 && MultiArray.isInstanceOf(DIM[0])
-                    ? (MultiArray.linearize(DIM[0]) as ComplexType[]).map((dim) => parseDimension(dim))
-                    : DIM.map((dim: any) => parseDimension(MultiArray.firstElement(dim) as ComplexType));
+                    ? MultiArray.linearize(DIM[0]).map((dim) => {
+                          if (!Complex.isInstanceOf(dim)) {
+                              AST.throwInvalidCallError('size');
+                          }
+                          return parseDimension(dim as ComplexType);
+                      })
+                    : DIM.map((dim) => parseDimensionArgument(dim));
             MultiArray.appendSingletonTail(sizeDim, Math.max(...dims));
             const result = new MultiArray([1, dims.length]);
             result.array[0] = dims.map((dim: number) => Complex.create(sizeDim[dim - 1]));
@@ -1831,7 +1892,7 @@ abstract class CoreFunctions {
                     {
                         name: 'order',
                         alternatives: [
-                            { name: 'numericOrder', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'positive'], allowInfinity: true },
+                            { name: 'numericOrder', classes: ['double'], validators: ['numeric', 'scalar', 'real'] },
                             { name: 'frobeniusOrder', classes: ['char'], allowedStrings: ['fro'] },
                         ],
                     },
@@ -1840,9 +1901,56 @@ abstract class CoreFunctions {
         ],
         outputs: { arity: 1 },
     };
+
+    private static readonly isNonVectorMatrix2d = (value: ElementType): value is MultiArray =>
+        MultiArray.isInstanceOf(value) && value.dimension.length === 2 && value.dimension[0] > 1 && value.dimension[1] > 1;
+
+    private static readonly matrixNorm1 = (matrix: MultiArray): ComplexType => {
+        let max = 0;
+        for (let column = 0; column < matrix.dimension[1]; column++) {
+            let sum = 0;
+            for (let row = 0; row < matrix.dimension[0]; row++) {
+                sum += Complex.realToNumber(Complex.abs(matrix.array[row][column] as ComplexType));
+            }
+            max = Math.max(max, sum);
+        }
+        return Complex.create(max);
+    };
+
+    private static readonly matrixNormInf = (matrix: MultiArray): ComplexType => {
+        let max = 0;
+        for (let row = 0; row < matrix.dimension[0]; row++) {
+            let sum = 0;
+            for (let column = 0; column < matrix.dimension[1]; column++) {
+                sum += Complex.realToNumber(Complex.abs(matrix.array[row][column] as ComplexType));
+            }
+            max = Math.max(max, sum);
+        }
+        return Complex.create(max);
+    };
+
+    private static readonly matrixNorm2 = (matrix: MultiArray): ComplexType => {
+        const columns = matrix.dimension[1];
+        const gram: ComplexType[][] = Array.from({ length: columns }, () => Array.from({ length: columns }, () => Complex.zero()));
+        for (let column = 0; column < columns; column++) {
+            for (let otherColumn = column; otherColumn < columns; otherColumn++) {
+                let sum = Complex.zero();
+                for (let row = 0; row < matrix.dimension[0]; row++) {
+                    sum = Complex.add(sum, Complex.mul(Complex.conj(matrix.array[row][column] as ComplexType), matrix.array[row][otherColumn] as ComplexType));
+                }
+                gram[column][otherColumn] = sum;
+                gram[otherColumn][column] = column === otherColumn ? sum : Complex.conj(sum);
+            }
+        }
+        const { D } = LAPACK.jacobi_symmetric_hermitian(gram, 1000, 1e-14);
+        const largest = D.reduce((max, value) => Math.max(max, Complex.realToNumber(value)), 0);
+        return Complex.sqrt(Complex.create(Math.max(0, largest)));
+    };
+
     public static readonly norm = (...args: ElementType[]): ElementType => {
         AST.throwInvalidCallError('norm', args.length < 1 || args.length > 2);
-        const absValues = (MultiArray.linearize(MultiArray.scalarToMultiArray(args[0])) as ComplexType[]).map((value) => Complex.abs(value));
+        const value = args[0];
+        const absValues = (MultiArray.linearize(MultiArray.scalarToMultiArray(value)) as ComplexType[]).map((item) => Complex.abs(item));
         const normOrder = args.length === 2 ? args[1] : Complex.create(2);
         if (CharString.isInstanceOf(normOrder)) {
             if (normOrder.str !== 'fro') {
@@ -1852,12 +1960,32 @@ abstract class CoreFunctions {
         }
         const p = Complex.realToNumber(MultiArray.firstElement(normOrder) as ComplexType);
         if (p === Infinity) {
+            if (CoreFunctions.isNonVectorMatrix2d(value)) {
+                return CoreFunctions.matrixNormInf(value);
+            }
             return absValues.reduce((max, value) => (Complex.realToNumber(value) > Complex.realToNumber(max) ? value : max), Complex.zero());
+        } else if (p === -Infinity) {
+            if (CoreFunctions.isNonVectorMatrix2d(value)) {
+                AST.throwInvalidCallError('norm');
+            }
+            if (absValues.length === 0) {
+                return Complex.zero();
+            }
+            return absValues.reduce((min, value) => (Complex.realToNumber(value) < Complex.realToNumber(min) ? value : min), Complex.inf_0());
         } else if (p === 1) {
+            if (CoreFunctions.isNonVectorMatrix2d(value)) {
+                return CoreFunctions.matrixNorm1(value);
+            }
             return absValues.reduce((sum, value) => Complex.add(sum, value), Complex.zero());
         } else if (p === 2) {
+            if (CoreFunctions.isNonVectorMatrix2d(value)) {
+                return CoreFunctions.matrixNorm2(value);
+            }
             return Complex.sqrt(absValues.reduce((sum, value) => Complex.add(sum, Complex.mul(value, value)), Complex.zero()));
         } else if (p > 0 && Number.isFinite(p)) {
+            if (CoreFunctions.isNonVectorMatrix2d(value)) {
+                AST.throwInvalidCallError('norm');
+            }
             const sum = absValues.reduce((acc, value) => Complex.add(acc, Complex.power(value, Complex.create(p))), Complex.zero());
             return Complex.power(sum, Complex.create(1 / p));
         } else {
@@ -1877,10 +2005,15 @@ abstract class CoreFunctions {
         isrow: { func: CoreFunctions.isrow, signature: CoreFunctions.isrowSignature },
         iscolumn: { func: CoreFunctions.iscolumn, signature: CoreFunctions.iscolumnSignature },
         isstruct: { func: CoreFunctions.isstruct, signature: CoreFunctions.isstructSignature },
+        ischar: { func: CoreFunctions.ischar, signature: CoreFunctions.ischarSignature },
+        isnumeric: { func: CoreFunctions.isnumeric, signature: CoreFunctions.isnumericSignature },
+        islogical: { func: CoreFunctions.islogical, signature: CoreFunctions.islogicalSignature },
+        isreal: { func: CoreFunctions.isreal, signature: CoreFunctions.isrealSignature },
         isvalid: { func: CoreFunctions.isvalid, signature: CoreFunctions.isvalidSignature },
         isobject: { func: CoreFunctions.isobject, signature: CoreFunctions.isobjectSignature },
         properties: { func: CoreFunctions.properties, signature: CoreFunctions.propertiesSignature },
         fieldnames: { func: CoreFunctions.fieldnames, signature: CoreFunctions.fieldnamesSignature },
+        isfield: { func: CoreFunctions.isfield, signature: CoreFunctions.isfieldSignature },
         methods: { func: CoreFunctions.methods, signature: CoreFunctions.methodsSignature },
         events: { func: CoreFunctions.events, signature: CoreFunctions.eventsSignature },
         enumeration: { func: CoreFunctions.enumeration, signature: CoreFunctions.enumerationSignature },

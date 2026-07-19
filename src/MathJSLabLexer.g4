@@ -1,8 +1,8 @@
 lexer grammar MathJSLabLexer;
 
-tokens { GLOBAL, PERSISTENT, IF, ENDIF, END, ENDRANGE, ELSEIF, ELSE, SWITCH, ENDSWITCH, CASE, OTHERWISE, WHILE, ENDWHILE, DO, UNTIL, FOR, ENDFOR, PARFOR, ENDPARFOR, SPMD, ENDSPMD,
+tokens { GLOBAL, PERSISTENT, IMPORT, IF, ENDIF, END, ENDRANGE, ELSEIF, ELSE, SWITCH, ENDSWITCH, CASE, OTHERWISE, WHILE, ENDWHILE, DO, UNTIL, FOR, ENDFOR, PARFOR, ENDPARFOR, SPMD, ENDSPMD,
 BREAK, CONTINUE, RETURN, FUNCTION, ENDFUNCTION, TRY, CATCH, END_TRY_CATCH, UNWIND_PROTECT, UNWIND_PROTECT_CLEANUP, END_UNWIND_PROTECT, CLASSDEF, ENDCLASSDEF,
-ENUMERATION, ENDENUMERATION, PROPERTIES, ENDPROPERTIES, EVENTS, ENDEVENTS, METHODS, ENDMETHODS, WSPACE, STRING, ARGUMENTS }
+ENUMERATION, ENDENUMERATION, PROPERTIES, ENDPROPERTIES, EVENTS, ENDEVENTS, METHODS, ENDMETHODS, WSPACE, STRING, ARGUMENTS, ENDARGUMENTS }
 
 @members {
     /**
@@ -12,6 +12,7 @@ ENUMERATION, ENDENUMERATION, PROPERTIES, ENDPROPERTIES, EVENTS, ENDEVENTS, METHO
         null,
 	    'global',
 	    'persistent',
+        'import',
 	    'if',
 	    'endif',
 	    'end',
@@ -50,9 +51,10 @@ ENUMERATION, ENDENUMERATION, PROPERTIES, ENDPROPERTIES, EVENTS, ENDEVENTS, METHO
 	    'endproperties',
 	    'events',
 	    'endevents',
-	    'methods',
+        'methods',
 	    'endmethods',
         'arguments',
+        'endarguments',
     ];
     /**
      * Reserved keywords token types.
@@ -61,6 +63,7 @@ ENUMERATION, ENDENUMERATION, PROPERTIES, ENDPROPERTIES, EVENTS, ENDEVENTS, METHO
         NaN,
         MathJSLabLexer.GLOBAL,
         MathJSLabLexer.PERSISTENT,
+        MathJSLabLexer.IMPORT,
         MathJSLabLexer.IF,
         MathJSLabLexer.ENDIF,
         MathJSLabLexer.END,
@@ -102,6 +105,7 @@ ENUMERATION, ENDENUMERATION, PROPERTIES, ENDPROPERTIES, EVENTS, ENDEVENTS, METHO
         MathJSLabLexer.METHODS,
         MathJSLabLexer.ENDMETHODS,
         MathJSLabLexer.ARGUMENTS,
+        MathJSLabLexer.ENDARGUMENTS,
     ];
     public static readonly keywordTypeByName: Map<string, number> = new Map(
         MathJSLabLexer.keywordNames
@@ -175,6 +179,32 @@ ENUMERATION, ENDENUMERATION, PROPERTIES, ENDPROPERTIES, EVENTS, ENDEVENTS, METHO
     public matrixContext: number[] = [];
     /* String accumulator. */
     public quotedString: string = '';
+
+    /**
+     * Test whether a command-form quoted argument is closed on this logical line.
+     *
+     * Word-list commands accept raw words, but quoted arguments are useful for
+     * preserving spaces. A lone or unclosed quote should remain a raw command
+     * argument instead of becoming a syntax error.
+     */
+    private commandQuoteIsClosed(quoteCode: number): boolean {
+        let offset = 1;
+        let current = this._input.LA(offset);
+        while (current !== Token.EOF && current !== 10 && current !== 13) {
+            if (current === quoteCode) {
+                const next = this._input.LA(offset + 1);
+                if (next === quoteCode) {
+                    offset += 2;
+                    current = this._input.LA(offset);
+                    continue;
+                }
+                return true;
+            }
+            offset++;
+            current = this._input.LA(offset);
+        }
+        return false;
+    }
 }
 
 /**
@@ -297,13 +327,14 @@ IDENTIFIER
                 const isCommandPosition =
                     this.previousTokenType === Token.EOF ||
                     this.previousTokenType === MathJSLabLexer.NEWLINE ||
-                    this.previousTokenType === MathJSLabLexer.SEMICOLON;
+                    this.previousTokenType === MathJSLabLexer.SEMICOLON ||
+                    (this.previousTokenType === MathJSLabLexer.COMMA && this.parenthesisCount === 0 && this.matrixContext.length === 0);
                 let offset = 1;
                 let next = this._input.LA(offset);
                 while (next === 9 || next === 32) {
                     next = this._input.LA(++offset);
                 }
-                if (isCommandName && isCommandPosition && next !== 40) {
+                if (isCommandName && isCommandPosition && (next !== 40 || offset > 1)) {
                     this.pushMode(MathJSLabLexer.ANY_AS_STRING_UNTIL_END_OF_LINE);
                 }
                 this.previousTokenType = MathJSLabLexer.IDENTIFIER;
@@ -550,8 +581,42 @@ SKIP_SPACE
     : SPACE -> skip
     ;
 
+COMMAND_LONE_DQUOTE
+    : '"' { [Token.EOF, 9, 10, 13, 32].includes(this._input.LA(1)) }? {
+        this.commandContinued = false;
+        this.text = '"';
+        this.previousTokenType = MathJSLabLexer.UNQUOTED_STRING;
+        this._type = MathJSLabLexer.UNQUOTED_STRING;
+    }
+    ;
+
+COMMAND_LONE_SQUOTE
+    : '\'' { [Token.EOF, 9, 10, 13, 32].includes(this._input.LA(1)) }? {
+        this.commandContinued = false;
+        this.text = '\'';
+        this.previousTokenType = MathJSLabLexer.UNQUOTED_STRING;
+        this._type = MathJSLabLexer.UNQUOTED_STRING;
+    }
+    ;
+
+COMMAND_UNCLOSED_DQUOTE
+    : '"' { !this.commandQuoteIsClosed(34) }? ~[ \t\r\n]* {
+        this.commandContinued = false;
+        this.previousTokenType = MathJSLabLexer.UNQUOTED_STRING;
+        this._type = MathJSLabLexer.UNQUOTED_STRING;
+    }
+    ;
+
+COMMAND_UNCLOSED_SQUOTE
+    : '\'' { !this.commandQuoteIsClosed(39) }? ~[ \t\r\n]* {
+        this.commandContinued = false;
+        this.previousTokenType = MathJSLabLexer.UNQUOTED_STRING;
+        this._type = MathJSLabLexer.UNQUOTED_STRING;
+    }
+    ;
+
 COMMAND_DQSTRING
-    : '"' {
+    : '"' { this.commandQuoteIsClosed(34) }? {
         this.commandContinued = false;
         this.pushMode(MathJSLabLexer.DQ_STRING);
         this.quotedString = '';
@@ -560,7 +625,7 @@ COMMAND_DQSTRING
     ;
 
 COMMAND_SQSTRING
-    : '\'' {
+    : '\'' { this.commandQuoteIsClosed(39) }? {
         this.commandContinued = false;
         this.pushMode(MathJSLabLexer.SQ_STRING);
         this.quotedString = '';
@@ -570,6 +635,14 @@ COMMAND_SQSTRING
 
 SKIP_COMMENT_LINE
     : CCHAR ~[\r\n]* -> skip
+    ;
+
+COMMAND_SEPARATOR
+    : [;,] {
+        this.commandContinued = false;
+        this.popMode();
+        this._type = this.previousTokenType = this.text === ',' ? MathJSLabLexer.COMMA : MathJSLabLexer.SEMICOLON;
+    }
     ;
 
 EXIT_AT_NEWLINE
@@ -589,7 +662,7 @@ EXIT_AT_EOF
     ;
 
 UNQUOTED_STRING
-    : ~[ \t\r\n"']+ {
+    : ~[ \t\r\n"',;] ~[ \t\r\n,;]* {
         this.commandContinued = false;
         this.previousTokenType = MathJSLabLexer.UNQUOTED_STRING;
     }

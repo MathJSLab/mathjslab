@@ -1,7 +1,31 @@
 import { Complex, ComplexType } from './Complex';
-import { NodeExpr } from './AST';
-import { Interpreter } from './Interpreter';
-import { Scope } from './Scope';
+import type { RuntimeDisplay } from './RuntimeDisplay';
+
+/**
+ * AST-like node stored inside anonymous function handles.
+ *
+ * Function handles only need opaque parser nodes that can be unparsed, copied,
+ * and linked through `parent`; keeping this contract local prevents a module
+ * cycle between the AST factory and runtime function-handle values.
+ */
+type FunctionHandleNode = {
+    type?: string | number;
+    id?: string;
+    parent?: unknown;
+    copy?: () => FunctionHandleNode;
+};
+type FunctionHandleExpression = FunctionHandleNode | null;
+
+/**
+ * Captured lexical environment for named local/nested handles and lambdas.
+ *
+ * The interpreter owns the concrete scope implementation. Function handles keep
+ * the closure opaquely and hand it back to dispatch/introspection code.
+ */
+type FunctionHandleClosure = {
+    nameTable: Record<string, { global?: boolean; node?: unknown } | undefined>;
+    resolveFunction(name: string): unknown;
+};
 
 /**
  * # FunctionHandle
@@ -85,7 +109,7 @@ class FunctionHandle {
     /**
      * Parent AST node (if attached to a tree).
      */
-    public parent: any;
+    public parent?: unknown;
 
     /**
      * Name of the referenced function.
@@ -100,7 +124,7 @@ class FunctionHandle {
      *
      * Only meaningful for anonymous functions.
      */
-    public parameter: NodeExpr[] = [];
+    public parameter: FunctionHandleNode[] = [];
 
     /**
      * Function body as an AST node.
@@ -109,7 +133,7 @@ class FunctionHandle {
      *
      * May be `null` when representing a named function handle.
      */
-    public expression!: NodeExpr;
+    public expression!: FunctionHandleExpression;
 
     /**
      * Captured lexical scope (closure).
@@ -117,7 +141,7 @@ class FunctionHandle {
      * Defined for anonymous functions that capture variables and for named
      * handles that must resolve through a lexical function scope.
      */
-    public closure?: Scope;
+    public closure?: FunctionHandleClosure;
 
     /**
      * Type guard for FunctionHandle.
@@ -137,7 +161,7 @@ class FunctionHandle {
      * @param expression - Function body AST (lambda only)
      * @param closure - Captured scope (optional)
      */
-    private constructor(id?: string, parameter: NodeExpr[] = [], expression: NodeExpr = null, closure?: Scope) {
+    private constructor(id?: string, parameter: FunctionHandleNode[] = [], expression: FunctionHandleExpression = null, closure?: FunctionHandleClosure) {
         this.id = id;
         this.parameter = parameter ?? [];
         this.expression = expression;
@@ -156,7 +180,8 @@ class FunctionHandle {
      * @param closure - Captured scope
      * @returns A new FunctionHandle instance
      */
-    public static create = (id?: string, parameter: NodeExpr[] = [], expression: NodeExpr = null, closure?: Scope) => new FunctionHandle(id, parameter, expression, closure);
+    public static create = (id?: string, parameter: FunctionHandleNode[] = [], expression: FunctionHandleExpression = null, closure?: FunctionHandleClosure) =>
+        new FunctionHandle(id, parameter, expression, closure);
 
     /**
      * Converts a FunctionHandle back to source code representation.
@@ -166,11 +191,11 @@ class FunctionHandle {
      * @param parentPrecedence - Operator precedence (currently unused)
      * @returns String representation (MATLAB-like syntax)
      */
-    public static unparse = (fhandle: FunctionHandle, interpreter: Interpreter, parentPrecedence = 0): string => {
+    public static unparse = (fhandle: FunctionHandle, interpreter: RuntimeDisplay, parentPrecedence = 0): string => {
         if (fhandle.id) {
             return '@' + fhandle.id;
         } else {
-            return '@(' + fhandle.parameter.map((param: NodeExpr) => interpreter.Unparse(param)).join(',') + ') ' + interpreter.Unparse(fhandle.expression);
+            return '@(' + fhandle.parameter.map((param: FunctionHandleNode) => interpreter.Unparse(param)).join(',') + ') ' + interpreter.Unparse(fhandle.expression);
         }
     };
 
@@ -205,13 +230,13 @@ class FunctionHandle {
      * @param parentPrecedence - Operator precedence (unused)
      * @returns MathML string
      */
-    public static unparseMathML = (fhandle: FunctionHandle, interpreter: Interpreter, parentPrecedence = 0): string => {
+    public static unparseMathML = (fhandle: FunctionHandle, interpreter: RuntimeDisplay, parentPrecedence = 0): string => {
         if (fhandle.id) {
             return `<mo>@</mo><mi>${fhandle.id}</mi>`;
         } else {
             return (
                 '<mo>@</mo><mo fence="true" stretchy="true">(</mo>' +
-                fhandle.parameter.map((param: NodeExpr) => interpreter.UnparserMathML(param)).join('<mo>,</mo>') +
+                fhandle.parameter.map((param: FunctionHandleNode) => interpreter.UnparserMathML(param)).join('<mo>,</mo>') +
                 '<mo fence="true" stretchy="true">)</mo><mspace width="0.8em"/>' +
                 interpreter.UnparserMathML(fhandle.expression)
             );
@@ -222,14 +247,26 @@ class FunctionHandle {
      * Creates a shallow copy of a FunctionHandle.
      *
      * Notes:
-     * - AST nodes (`parameter`, `expression`) are **not cloned**
-     * - `closure` is preserved by reference
+     * - AST nodes (`parameter`, `expression`) are cloned so copied handles keep
+     *   independent parent links.
+     * - `closure` is preserved by reference.
      *
      * @param fhandle - Source handle
      * @returns New FunctionHandle instance
      */
     public static copy = (fhandle: FunctionHandle): FunctionHandle => {
-        const result = new FunctionHandle(fhandle.id, fhandle.parameter, fhandle.expression, fhandle.closure);
+        const result = new FunctionHandle(
+            fhandle.id,
+            fhandle.parameter.map((node) => FunctionHandle.copyNode(node)),
+            FunctionHandle.copyNode(fhandle.expression),
+            fhandle.closure,
+        );
+        result.parameter.forEach((node) => {
+            node.parent = result;
+        });
+        if (result.expression) {
+            result.expression.parent = result;
+        }
         result.parent = fhandle.parent;
         return result;
     };
@@ -240,9 +277,43 @@ class FunctionHandle {
      * @returns Shallow copy
      */
     public copy(): FunctionHandle {
-        const result = new FunctionHandle(this.id, this.parameter, this.expression, this.closure);
+        const result = FunctionHandle.copy(this);
         result.parent = this.parent;
         return result;
+    }
+
+    private static copyNode<T extends FunctionHandleExpression | undefined>(node: T): T {
+        if (!node || typeof node !== 'object') {
+            return node;
+        }
+        const copyMethod = (node as unknown as { copy?: () => T }).copy;
+        if (typeof copyMethod === 'function') {
+            return copyMethod.call(node);
+        }
+        if (Array.isArray(node)) {
+            return node.map((item) => FunctionHandle.copyNode(item as FunctionHandleExpression)) as unknown as T;
+        }
+        const clone: Record<string, unknown> = {};
+        for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+            if (key === 'parent') {
+                continue;
+            }
+            clone[key] = value && typeof value === 'object' ? FunctionHandle.copyNode(value as FunctionHandleExpression) : value;
+        }
+        for (const value of Object.values(clone)) {
+            FunctionHandle.attachParent(value, clone as unknown as FunctionHandleNode);
+        }
+        return clone as T;
+    }
+
+    private static attachParent(value: unknown, parent: FunctionHandleNode | FunctionHandle): void {
+        if (Array.isArray(value)) {
+            value.forEach((item) => FunctionHandle.attachParent(item, parent));
+            return;
+        }
+        if (value && typeof value === 'object' && 'type' in value) {
+            (value as FunctionHandleNode).parent = parent;
+        }
     }
 
     /**

@@ -6,7 +6,7 @@
 import * as TypeOfComplex from './ComplexInterface';
 import { ComplexNumber } from './ComplexNumber';
 import { ComplexDecimal, Decimal } from './ComplexDecimal';
-import { Interpreter } from './Interpreter';
+import type { RuntimeDisplay } from './RuntimeDisplay';
 
 /**
  * External type complex facade definitions.
@@ -43,13 +43,15 @@ type OneArgReturnBooleanHandler = TypeOfComplex.OneArgReturnBooleanComplexHandle
 type OneArgReturnNumberHandler = TypeOfComplex.OneArgReturnNumberComplexHandler<RealType, ComplexType>;
 type TestNumLikeHandler = TypeOfComplex.TestNumLikeComplexHandler<RealType, ComplexType>;
 type ParseHandler = TypeOfComplex.ParseComplexHandler<RealType, ComplexType>;
-type PrecedenceHandler = TypeOfComplex.PrecedenceComplexHandler<RealType, ComplexType, Interpreter, number>;
+type PrecedenceHandler = TypeOfComplex.PrecedenceComplexHandler<RealType, ComplexType, RuntimeDisplay, number>;
 type UnparseValueHandler = TypeOfComplex.UnparseValueComplexHandler<RealType>;
-type UnparseHandler = TypeOfComplex.UnparseComplexHandler<RealType, ComplexType, Interpreter, number>;
+type UnparseHandler = TypeOfComplex.UnparseComplexHandler<RealType, ComplexType, RuntimeDisplay, number>;
 type ToStringHandler = TypeOfComplex.ToStringComplexHandler<RealType, ComplexType>;
 type CompareHandler = TypeOfComplex.CompareComplexHandler<RealType, ComplexType>;
 type MinMaxArrayHandler = TypeOfComplex.MinMaxArrayComplexHandler<RealType, ComplexType>;
 type MinMaxArrayWithIndexHandler = TypeOfComplex.MinMaxArrayWithIndexComplexHandler<RealType, ComplexType>;
+type ComplexStaticKey = keyof InterfaceStaticHandler;
+type ComplexBackendStatic = typeof ComplexNumber | typeof ComplexDecimal;
 
 /**
  * # Complex
@@ -65,7 +67,7 @@ abstract class Complex implements ComplexInterfaceBase {
     /**
      * Private complex backend engine.
      */
-    private static _engineBackend: TypeOfComplex.ComplexInterfaceStatic<any, any>;
+    private static _engineBackend: ComplexBackendStatic;
     /**
      * Private complex backend engine descriptor.
      */
@@ -74,7 +76,7 @@ abstract class Complex implements ComplexInterfaceBase {
      * Complex backend engine getter.
      */
     public static get engineBackend(): InterfaceStaticHandler {
-        return this._engineBackend;
+        return this._engineBackend as unknown as InterfaceStaticHandler;
     }
     /**
      * Complex backend engine descriptor getter.
@@ -97,8 +99,10 @@ abstract class Complex implements ComplexInterfaceBase {
             default:
                 throw new Error(`invalid complex backend engine: '${engine}'.`);
         }
-        (TypeOfComplex.ComplexInterfaceStaticKeyTable as (keyof Complex)[]).forEach((prop) => {
-            this[prop] = this._engineBackend[prop];
+        TypeOfComplex.ComplexInterfaceStaticKeyTable.forEach((prop: ComplexStaticKey) => {
+            const facade = this as unknown as Record<ComplexStaticKey, unknown>;
+            const backend = this._engineBackend as unknown as Record<ComplexStaticKey, unknown>;
+            facade[prop] = backend[prop];
         });
         this.set(this.defaultSettings);
     }

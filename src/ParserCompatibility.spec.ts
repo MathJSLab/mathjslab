@@ -1,13 +1,35 @@
 /// <reference types="jest" />
-import { CharString } from './AST';
-import { Interpreter } from './Interpreter';
+import { CharString } from './CharString';
+import { Interpreter, SyntaxError } from './Interpreter';
 
 describe('Parser compatibility fixtures.', () => {
+    it('Should report parser syntax errors with source context.', () => {
+        const interpreter = Interpreter.Create();
+
+        expect(() => interpreter.Parse('if 1\n  x = 2')).toThrow(SyntaxError);
+        expect(() => interpreter.Parse('if 1\n  x = 2')).toThrow("syntax error at 2:8: mismatched input '<EOF>' expecting {ENDIF, END, ELSEIF, ELSE}\n  x = 2\n       ^");
+    });
+
+    it('Should report lexer syntax errors with source context.', () => {
+        const interpreter = Interpreter.Create();
+
+        expect(() => interpreter.Parse('@')).toThrow(SyntaxError);
+        expect(() => interpreter.Parse('@')).toThrow("syntax error at 1:2: no viable alternative at input '@'\n@\n ^");
+    });
+
     it('Should execute script-like separators, continuations, and comments together.', () => {
         const interpreter = Interpreter.Create();
         const source = ['x = 1+...', '% comment', '2;', 'y = (x', '%{', 'block', '%}', '+ 3);', 'z = y'].join('\n');
 
         expect(interpreter.Unparse(interpreter.Execute(source))).toBe('x=3\ny=6\nz=6\n');
+    });
+
+    it('Should parse MATLAB package imports as no-op declarations.', () => {
+        const interpreter = Interpreter.Create();
+        const source = ['import matlab.unittest.TestCase', 'import matlab.graphics.*, pkg.sub.ClassName', 'x = 3'].join('\n');
+
+        expect(interpreter.Unparse(interpreter.Parse(source))).toBe('import matlab.unittest.TestCase\nimport matlab.graphics.* pkg.sub.ClassName\nx=3\n');
+        expect(interpreter.Unparse(interpreter.Execute(source))).toBe('x=3\n');
     });
 
     it('Should parse and execute Octave-like indexing and field names in one script.', () => {
@@ -17,11 +39,79 @@ describe('Parser compatibility fixtures.', () => {
         expect(interpreter.Unparse(interpreter.Execute(source))).toBe('A=[10,20,30,40]\nlast=40\ntail=[20,30,40]\nfield=struct {\nend: 40\n}\ndyn=end\nagain=40\n');
     });
 
+    it('Should parse dot fields whose names overlap with class-section keywords.', () => {
+        const interpreter = Interpreter.Create();
+        const source = [
+            's.properties = 1;',
+            's.methods = 2;',
+            's.events = 3;',
+            's.enumeration = 4;',
+            's.end = 5;',
+            'picked = s.properties + s.methods + s.events + s.enumeration + s.end;',
+        ].join('\n');
+        const finalStruct = 's=struct {\nproperties: 1\nmethods: 2\nevents: 3\nenumeration: 4\nend: 5\n}\n';
+
+        expect(interpreter.Unparse(interpreter.Execute(source))).toBe(`${finalStruct}${finalStruct}${finalStruct}${finalStruct}${finalStruct}picked=15\n`);
+    });
+
+    it('Should parse MATLAB/Octave assignment target lists.', () => {
+        const interpreter = Interpreter.Create();
+        const source = '[A(1) A(3)] = pair(10); [S.a S.(dyn)] = pair(20); [~, keep] = pair(30);';
+
+        expect(interpreter.Unparse(interpreter.Parse(source))).toBe('[A(1),A(3)]=pair(10)\n[S.a,S.(dyn)]=pair(20)\n[~,keep]=pair(30)\n');
+    });
+
+    it('Should parse Octave-style structure field for-loop targets.', () => {
+        const interpreter = Interpreter.Create();
+        const source = ['for [value, name] = S', '  keep = name;', 'end'].join('\n');
+
+        expect(interpreter.Unparse(interpreter.Parse(source))).toBe('FOR [value,name]=S\nkeep=name\n\nENDFOR\n');
+    });
+
+    it('Should preserve parenthesized parfor worker expressions.', () => {
+        const interpreter = Interpreter.Create();
+        const source = ['parfor (i = 1:4, 2)', '  total = i;', 'end'].join('\n');
+
+        expect(interpreter.Unparse(interpreter.Parse(source))).toBe('PARFOR (i=1:4,2)\ntotal=i\n\nENDPARFOR\n');
+    });
+
+    it('Should execute chained indexing and field access with end.', () => {
+        const interpreter = Interpreter.Create();
+        const source = [
+            'S.values = {[10, 20, 30, 40], [5; 6; 7]};',
+            'lastCellVector = S.values{1}(end);',
+            'tailFromField = S.values{1}(2:end);',
+            'lastColumnValue = S.values{2}(end);',
+            'nested.inner.data = [1, 2, 3, 4];',
+            'nestedPick = nested.inner.data(end-1);',
+            'dyn = "data";',
+            'dynamicPick = nested.inner.(dyn)([2,end]);',
+        ].join('\n');
+
+        expect(interpreter.Unparse(interpreter.Execute(source))).toBe(
+            'S=struct {\nvalues: {[10,20,30,40],[5;\n6;\n7]}\n}\nlastCellVector=40\ntailFromField=[20,30,40]\nlastColumnValue=7\nnested=struct {\ninner: struct {\ndata: [1,2,3,4]\n}\n}\nnestedPick=3\ndyn=data\ndynamicPick=[2,4]\n',
+        );
+    });
+
     it('Should preserve cell elements as values before chained indexing.', () => {
         const interpreter = Interpreter.Create();
         const source = ['C = {[1, 2, 3], [4; 5; 6]};', 'first = C{1};', 'second = C{2};', 'picked = C{1}(2);'].join('\n');
 
         expect(interpreter.Unparse(interpreter.Execute(source))).toBe('C={[1,2,3],[4;\n5;\n6]}\nfirst=[1,2,3]\nsecond=[4;\n5;\n6]\npicked=2\n');
+    });
+
+    it('Should accept trailing row separators in matrix and cell literals.', () => {
+        const interpreter = Interpreter.Create();
+        const source = ['A = [1, 2;];', 'B = [3, 4;', '];', 'C = {A, B;};', 'D = {A, B;', '};'].join('\n');
+
+        expect(interpreter.Unparse(interpreter.Execute(source))).toBe('A=[1,2]\nB=[3,4]\nC={[1,2],[3,4]}\nD={[1,2],[3,4]}\n');
+    });
+
+    it('Should accept Octave-style empty rows in matrix and cell literals.', () => {
+        const interpreter = Interpreter.Create();
+        const source = ['A = [; 1];', 'B = [1;; 2];', 'C = {; 3};', 'D = {4;;; 5};', 'E = [;];'].join('\n');
+
+        expect(interpreter.Unparse(interpreter.Execute(source))).toBe('A=[1]\nB=[1;\n2]\nC={3}\nD={4;\n5}\nE=[ ](0x0)\n');
     });
 
     it('Should keep MATLAB command syntax intact across continuation comments.', () => {
@@ -35,6 +125,86 @@ describe('Parser compatibility fixtures.', () => {
         const source = ['cmdprobe alpha ...', '% comment', 'beta', 'cmdprobe gamma ... % trailing comment', 'delta', 'cmdprobe epsilon ...', '%{', 'block', '%}', 'zeta'].join('\n');
 
         expect(interpreter.Unparse(interpreter.Execute(source))).toBe('alpha|beta\ngamma|delta\nepsilon|zeta\n');
+    });
+
+    it('Should parse command syntax after top-level separators and spaced parentheses.', () => {
+        const interpreter = Interpreter.Create({
+            externalCmdWListTable: {
+                cmdprobe: {
+                    func: (...args: string[]): CharString => new CharString(args.join('|')),
+                },
+            },
+        });
+
+        expect(interpreter.Unparse(interpreter.Parse('cmdprobe (1 + 2)'))).toBe('cmdprobe (1 + 2)\n');
+        expect(interpreter.Unparse(interpreter.Parse('x = 1, cmdprobe after comma'))).toBe('x=1\ncmdprobe after comma\n');
+        expect(interpreter.Unparse(interpreter.Execute('cmdprobe (1 + 2)'))).toBe('(1|+|2)\n');
+        expect(interpreter.Unparse(interpreter.Execute('x = 1, cmdprobe after comma'))).toBe('x=1\nafter|comma\n');
+    });
+
+    it('Should keep command syntax restricted to registered word-list commands.', () => {
+        const interpreter = Interpreter.Create({
+            externalCmdWListTable: {
+                cmdprobe: {
+                    func: (...args: string[]): CharString => new CharString(args.join('|')),
+                },
+            },
+        });
+
+        expect(interpreter.Unparse(interpreter.Parse('cmdprobe'))).toBe('cmdprobe\n');
+        expect(interpreter.Unparse(interpreter.Execute('cmdprobe'))).toBe('\n');
+        expect(interpreter.Unparse(interpreter.Execute('cmdprobe "alpha beta" gamma'))).toBe('alpha beta|gamma\n');
+        expect(interpreter.Unparse(interpreter.Execute("cmdprobe 'single word' tail"))).toBe('single word|tail\n');
+        expect(() => interpreter.Parse('unknowncmd arg')).toThrow(SyntaxError);
+        expect(() => interpreter.Parse('foo bar')).toThrow(SyntaxError);
+    });
+
+    it('Should parse command-form operator and lone quote arguments as raw words.', () => {
+        const interpreter = Interpreter.Create({
+            externalCmdWListTable: {
+                help: {
+                    func: (...args: string[]): CharString => new CharString(args.join('|')),
+                },
+            },
+        });
+
+        expect(interpreter.Unparse(interpreter.Parse("help .'"))).toBe("help .'\n");
+        expect(interpreter.Unparse(interpreter.Parse("help '"))).toBe("help '\n");
+        expect(interpreter.Unparse(interpreter.Parse('help "'))).toBe('help "\n');
+        expect(interpreter.Unparse(interpreter.Execute("help .'"))).toBe(".'\n");
+        expect(interpreter.Unparse(interpreter.Execute("help '"))).toBe("'\n");
+        expect(interpreter.Unparse(interpreter.Execute('help "'))).toBe('"\n');
+        expect(interpreter.Unparse(interpreter.Execute("help 'unterminated"))).toBe("'unterminated\n");
+        expect(interpreter.Unparse(interpreter.Execute('help "unterminated'))).toBe('"unterminated\n');
+        expect(interpreter.Unparse(interpreter.Execute("help 'single word' tail"))).toBe('single word|tail\n');
+    });
+
+    it('Should parse command-form operator punctuation as raw words.', () => {
+        const interpreter = Interpreter.Create({
+            externalCmdWListTable: {
+                cmdprobe: {
+                    func: (...args: string[]): CharString => new CharString(args.join('|')),
+                },
+            },
+        });
+        const operatorArgs = ['+', '-', '*', '/', '\\', '.\\', '.*', './', '.^', '^', '~', '!', '@', '?', ':', '=', '==', '<=', '>=', '&&', '||', '&', '|', '(', ')', '[', ']', '{', '}'];
+
+        expect(interpreter.Unparse(interpreter.Execute(`cmdprobe ${operatorArgs.join(' ')}`))).toBe(`${operatorArgs.join('|')}\n`);
+    });
+
+    it('Should terminate command-form word lists at top-level separators.', () => {
+        const interpreter = Interpreter.Create({
+            externalCmdWListTable: {
+                cmdprobe: {
+                    func: (...args: string[]): CharString => new CharString(args.join('|')),
+                },
+            },
+        });
+
+        expect(interpreter.Unparse(interpreter.Parse('cmdprobe alpha; x = 1'))).toBe('cmdprobe alpha\nx=1\n');
+        expect(interpreter.Unparse(interpreter.Parse('cmdprobe alpha, cmdprobe beta'))).toBe('cmdprobe alpha\ncmdprobe beta\n');
+        expect(interpreter.Unparse(interpreter.Execute('cmdprobe alpha; x = 1'))).toBe('alpha\nx=1\n');
+        expect(interpreter.Unparse(interpreter.Execute('cmdprobe alpha, cmdprobe beta'))).toBe('alpha\nbeta\n');
     });
 
     it('Should parse classdef method prototypes and negated attributes.', () => {
@@ -56,11 +226,57 @@ describe('Parser compatibility fixtures.', () => {
         );
     });
 
+    it('Should parse MATLAB/Octave ampersand superclass lists.', () => {
+        const interpreter = Interpreter.Create();
+        const source = ['classdef pkg.Child < pkg.Base & handle', 'end'].join('\n');
+
+        expect(interpreter.Unparse(interpreter.Parse(source))).toBe('CLASSDEF pkg.Child < pkg.Base&handle\nENDCLASSDEF\n');
+    });
+
+    it('Should parse classdef property validation declarations.', () => {
+        const interpreter = Interpreter.Create();
+        const source = ['classdef ValidatedProperties', '  properties', '    x (1,1) double {mustBePositive} = 1', '    label string', '  end', 'end'].join('\n');
+
+        expect(interpreter.Unparse(interpreter.Parse(source))).toBe('CLASSDEF ValidatedProperties\nPROPERTIES\nx(1,1) double {mustBePositive}=1\nlabel string\nENDPROPERTIES\nENDCLASSDEF\n');
+    });
+
+    it('Should parse Octave-style adjacent class events and enumerations.', () => {
+        const interpreter = Interpreter.Create();
+        const source = ['classdef AdjacentClassMembers', '  events Started Finished', '  end', '  enumeration Red(1) Blue(2)', '  end', 'end'].join('\n');
+
+        expect(interpreter.Unparse(interpreter.Parse(source))).toBe(
+            'CLASSDEF AdjacentClassMembers\nEVENTS\nStarted\nFinished\nENDEVENTS\nENUMERATION\nRed(1)\nBlue(2)\nENDENUMERATION\nENDCLASSDEF\n',
+        );
+    });
+
     it('Should parse empty input and output arguments blocks.', () => {
         const interpreter = Interpreter.Create();
         const source = ['function y = emptyarguments(x)', '  arguments', '  end', '  arguments (Output)', '  end', '  y = x;', 'end'].join('\n');
 
         expect(interpreter.Unparse(interpreter.Parse(source))).toBe('FUNCTION y=emptyarguments(x)\nARGUMENTS\nENDARGUMENTS\nARGUMENTS (Output)\nENDARGUMENTS\ny=x\nENDFUNCTION\n');
         expect(interpreter.Unparse(interpreter.Execute([source, 'emptyarguments(7)'].join('\n')))).toBe('7\n');
+    });
+
+    it('Should parse Octave-style endarguments terminators.', () => {
+        const interpreter = Interpreter.Create();
+        const source = ['function y = explicitendarguments(x)', '  arguments', '    x double', '  endarguments', '  y = x;', 'end'].join('\n');
+
+        expect(interpreter.Unparse(interpreter.Parse(source))).toBe('FUNCTION y=explicitendarguments(x)\nARGUMENTS\nx double\nENDARGUMENTS\ny=x\nENDFUNCTION\n');
+        expect(interpreter.Unparse(interpreter.Execute([source, 'explicitendarguments(9)'].join('\n')))).toBe('9\n');
+    });
+
+    it('Should parse Octave-style default values in function parameter lists.', () => {
+        const interpreter = Interpreter.Create();
+        const source = ['function y = defaultparams(x = 4, z = x + 1)', '  y = z;', 'end'].join('\n');
+
+        expect(interpreter.Unparse(interpreter.Parse(source))).toBe('FUNCTION y=defaultparams(x=4,z=x+1)\ny=z\nENDFUNCTION\n');
+    });
+
+    it('Should parse MATLAB-style space-separated function return lists.', () => {
+        const interpreter = Interpreter.Create();
+        const source = ['function [a b] = spacereturns(x)', '  a = x;', '  b = x + 1;', 'end'].join('\n');
+
+        expect(interpreter.Unparse(interpreter.Parse(source))).toBe('FUNCTION [a,b]=spacereturns(x)\na=x\nb=x+1\nENDFUNCTION\n');
+        expect(interpreter.Unparse(interpreter.Execute([source, '[first second] = spacereturns(4)'].join('\n')))).toBe('first=4\nsecond=5\n');
     });
 });

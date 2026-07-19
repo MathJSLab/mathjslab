@@ -3,6 +3,76 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 2.1.3
+
+- Advanced MATLAB/Octave parser and AST compatibility across several grammar
+  areas, including imports, `parfor` worker clauses, command-form handling,
+  quoted and qualified names, classdef sections, class property validation
+  declarations, superclass lists, metaclass literals, and additional chained
+  indexing forms. The generated ANTLR lexer/parser were refreshed from the
+  updated `.g4` grammars.
+- Expanded runtime class infrastructure for MATLAB/Octave-style `classdef`
+  semantics. Class loading now uses browser-safe host-provided source APIs,
+  resolves superclass relationships, supports richer property/method/event/
+  enumeration metadata, enforces more attribute combinations, and improves
+  static, instance, superclass, constructor, `subsref`, `subsasgn`, and
+  `numArgumentsFromSubscript` dispatch behavior.
+- Added broader support for class objects and meta-objects, including
+  `metaclass`, `?ClassName` literals, `properties`, `methods`, `events`,
+  `enumeration`, `superclasses`, `isprop`, `ismethod`, enumeration values,
+  constant properties, dependent properties with accessors, handle deletion,
+  listeners, and event data objects compatible with `event.EventData` and
+  `event.PropertyEvent`.
+- Completed another round of `classdef` compatibility work with method
+  prototypes, `AbortSet`, abstract properties, `HandleCompatible` and
+  `NonCopyable` metadata, and evaluated runtime property defaults exposed
+  through `meta.property.DefaultValue` and validation metadata.
+- Improved MATLAB/Octave name lookup and workspace behavior. The interpreter
+  now handles imported names, qualified function/class references,
+  host-provided function and script sources, script-local functions, private
+  function-file subfunctions, and clearer separation between ordinary dot
+  indexing and package/class-qualified symbolic access.
+- Refined indexing and comma-separated-list semantics for cells, structs, class
+  objects, assignments, `for` targets, function-call arguments, and property
+  access. This includes better multi-output expansion behavior and additional
+  compatibility coverage for indexing and dispatch edge cases.
+- Extended diagnostics and introspection. Syntax diagnostics now use normalized
+  source-aware caret messages, `catch ME` preserves the thrown stack, `dbstack`
+  and `functions` metadata were improved, and the interpreter now exposes
+  MATLAB/Octave-like `lasterror`, `lastwarn`, and `warning` state.
+- Strengthened built-in signatures and validation metadata for the expanded
+  runtime surface, keeping invalid-call diagnostics, `nargin`/`nargout`, and
+  signature checks aligned with newly registered interpreter functions.
+- Extended linear algebra compatibility with `norm(v,-Inf)`, matrix-aware
+  `norm` orders, `cond(A,p)`, and `rank(A,tol)` support, including direct and
+  interpreter-level tests for accepted and rejected MATLAB/Octave-compatible
+  call forms.
+- Added and reorganized unit coverage for parser/AST compatibility, indexing,
+  dispatch, stability scenarios, syntax diagnostics, class metadata, function
+  lookup, function introspection, and the broader interpreter semantics touched
+  by this development cycle.
+- Continued source documentation work with JSDoc comments for the interpreter
+  contracts, host-provided source APIs, diagnostic helpers, class runtime
+  infrastructure, scope/name resolution, AST helpers, and parser/lexer error
+  listeners.
+- Tightened AST list typing by introducing an explicit `NodeListElement`
+  contract for parser assembly lists that contain clauses, function
+  definitions, `arguments` nodes, and class section members. Added AST type
+  guards for function definitions, class definitions, and `arguments`
+  declarations, then used them in function-file discovery and argument
+  validation paths. Function header parameter and return-list shapes are now
+  represented by explicit AST contracts and consumed through AST guards by the
+  interpreter signature checks and argument-validation layer. The AST builders
+  for `arguments`, `switch`, and `classdef` now filter parser assembly lists
+  through explicit node guards instead of broad structural casts. Name
+  resolution, call dispatch, and assignment-target cloning also use the central
+  AST guards for identifiers, index expressions, dot references, and ignored
+  targets. Function-call layout and comma-separated return-list expansion now
+  share the same explicit AST contracts for function parameters, return
+  targets, and lazy return lists. Qualified-name detection and
+  assignment-target validation now also rely on AST guards for identifiers,
+  indexed expressions, dotted references, and ignored assignment targets.
+
 ## 2.1.2
 
 - Continued the interpreter modularization started in the function

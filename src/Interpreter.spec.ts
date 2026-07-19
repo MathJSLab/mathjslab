@@ -1,7 +1,12 @@
 /// <reference types="jest" />
 import path from 'node:path';
 import { CircularReferenceError, EvalError, Interpreter, InterpreterError, ReferenceError, SyntaxError, UndefinedReferenceError } from './Interpreter';
-import { CharString, ClassDefinition } from './AST';
+import { CharString } from './CharString';
+import { ClassDefinition } from './ClassDefinition';
+import { Complex } from './Complex';
+import { MultiArray } from './MultiArray';
+import { Structure } from './Structure';
+import type { ComplexType } from './Complex';
 
 const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.sep}]+)\\.spec\\.([cm]?[jt]s)\$`))!;
 const unitName = __filenameMatch[1];
@@ -39,6 +44,17 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(unparsed === '1+2*3\n').toBe(true);
         });
 
+        it('Should short-circuit scalar logical operators.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('0 && missingName'))).toBe('false\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('1 || missingName'))).toBe('true\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('x = 0; y = 0 && (x = 1); x; y'))).toBe('x=0\ny=false\n0\nfalse\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('x = 0; y = 1 || (x = 1); x; y'))).toBe('x=0\ny=true\n0\ntrue\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('x = 0; y = 1 && (x = 5); x; y'))).toBe('x=0\ny=true\n5\ntrue\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('x = 0; y = 0 || (x = 6); x; y'))).toBe('x=0\ny=true\n6\ntrue\n');
+        });
+
         it('Should continue logical lines with ellipsis without requiring leading whitespace.', () => {
             const localInterpreter = Interpreter.Create();
 
@@ -63,6 +79,49 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('x = (1\n%{\nblock\n%}\n+ 2); x'))).toBe('x=3\n3\n');
             localInterpreter.Execute(['function y = addtwolines(a, b)', '  y = a + b;', 'end'].join('\n'));
             expect(localInterpreter.Unparse(localInterpreter.Execute('x = addtwolines(1,\n2); x'))).toBe('x=3\n3\n');
+        });
+
+        it('Should expand cell and structure comma-separated lists for multiple assignment.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('C = {10, 20}; [a, b] = C{:};'))).toBe('C={10,20}\na=10\nb=20\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('S(1).x = 1; S(2).x = 2; [a, b] = S.x;'))).toBe(
+                'S=[struct {\nx: 1\n},struct {\nx: 2\n}]\nS=[struct {\nx: 1\n},struct {\nx: 2\n}]\na=1\nb=2\n',
+            );
+            expect(() => localInterpreter.Execute('[u, v, w] = C{:};')).toThrow('element number 3 undefined in return list');
+            expect(() => localInterpreter.Execute('[u, v, w] = S.x;')).toThrow('element number 3 undefined in return list');
+        });
+
+        it('Should expand cell content targets inside multiple assignment lists.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(['function [x, y] = pair()', '  x = 1;', '  y = 2;', 'end'].join('\n'));
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('C = {10, 20, 30}; [C{1:2}] = pair(); C'))).toBe('C={1,2,30}\nC={1,2,30}\nC={1,2,30}\n{1,2,30}\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('C = {10, 20, 30}; [C{[1, 3]}] = pair(); C'))).toBe('C={1,20,2}\nC={1,20,2}\nC={1,20,2}\n{1,20,2}\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('C = {10, 20, 30}; [C{end-1:end}] = pair(); C'))).toBe('C={10,1,2}\nC={10,1,2}\nC={10,1,2}\n{10,1,2}\n');
+            expect(() => localInterpreter.Execute('C = {10, 20, 30}; [C{1:3}] = pair();')).toThrow('element number 3 undefined in return list');
+        });
+
+        it('Should expand comma-separated lists in calls and concatenation contexts.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(['function y = sum3(a, b, c)', '  y = a + b + c;', 'end'].join('\n'));
+            localInterpreter.Execute(['function y = countargs(varargin)', '  y = nargin;', 'end'].join('\n'));
+            localInterpreter.Execute(['function [a, b] = pair()', '  a = 1;', '  b = 2;', 'end'].join('\n'));
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('C = {1, 2, 3}; sum3(C{:})'))).toBe('C={1,2,3}\n6\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('S(1).x = 1; S(2).x = 2; S(3).x = 3; sum3(S.x)'))).toBe(
+                'S=[struct {\nx: 1\n},struct {\nx: 2\n},struct {\nx: 3\n}]\nS=[struct {\nx: 1\n},struct {\nx: 2\n},struct {\nx: 3\n}]\nS=[struct {\nx: 1\n},struct {\nx: 2\n},struct {\nx: 3\n}]\n6\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('countargs(C{:})'))).toBe('3\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('plus(C{1:2})'))).toBe('3\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('f = @(varargin) nargin; f(C{:})'))).toBe('f=@(varargin) nargin\n3\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('feval(@sum3, C{:})'))).toBe('6\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('A = [C{:}, 4]'))).toBe('A=[1,2,3,4]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('B = [S.x, 4]'))).toBe('B=[1,2,3,4]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('D = {C{:}, 4}'))).toBe('D={1,2,3,4}\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('E = [pair(), 3]'))).toBe('E=[1,3]\n');
         });
 
         it('Should evaluate a switch case that matches the selector.', () => {
@@ -93,11 +152,37 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(value)).toBe('x=5\n30\n30\n');
         });
 
+        it('Should continue switch cell-array matching after nonconformant alternatives.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(
+                localInterpreter.Unparse(localInterpreter.Execute(['x = "beta";', 'switch x', 'case {"alpha", "beta"}', '  y = 10;', 'otherwise', '  y = 20;', 'end', 'y'].join('\n'))),
+            ).toBe('x=beta\n10\n10\n');
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(['alts = {"alpha", "beta"};', 'x = "beta";', 'switch x', 'case alts', '  y = 30;', 'otherwise', '  y = 40;', 'end', 'y'].join('\n')),
+                ),
+            ).toBe('alts={alpha,beta}\nx=beta\n30\n30\n');
+            expect(
+                localInterpreter.Unparse(localInterpreter.Execute(['x = [1, 2];', 'switch x', 'case {[1, 2, 3], [1, 2]}', '  y = 50;', 'otherwise', '  y = 60;', 'end', 'y'].join('\n'))),
+            ).toBe('x=[1,2]\n50\n50\n');
+        });
+
         it('Should allow a switch without a matching case or otherwise.', () => {
             const localInterpreter = Interpreter.Create();
             const value = localInterpreter.Execute(['x = 3;', 'switch x', 'case 1', '  y = 10;', 'end', 'x'].join('\n'));
 
             expect(localInterpreter.Unparse(value)).toBe('x=3\n3\n');
+        });
+
+        it('Should evaluate array-valued conditions as true only when all elements are true.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute(['if [true true]', '  y = 1;', 'else', '  y = 2;', 'end', 'y'].join('\n')))).toBe('1\n1\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute(['if [true false]', '  y = 3;', 'else', '  y = 4;', 'end', 'y'].join('\n')))).toBe('4\n4\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute(['if []', '  y = 5;', 'else', '  y = 6;', 'end', 'y'].join('\n')))).toBe('6\n6\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('x = 0; while []; x = x + 1; end; x'))).toBe('x=0\n0\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('[] && missingName; [] || 7'))).toBe('false\ntrue\n');
         });
 
         it('Should evaluate a while loop.', () => {
@@ -172,6 +257,43 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('s'))).toBe('60\n');
         });
 
+        it('Should iterate character strings by character.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                ['count = 0;', 'last = "";', 'second = "";', 'for ch = "abc"', '  count = count + 1;', '  if count == 2', '    second = ch;', '  end', '  last = ch;', 'end'].join('\n'),
+            );
+            localInterpreter.Execute(['emptyCount = 0;', 'for ch = ""', '  emptyCount = emptyCount + 1;', 'end'].join('\n'));
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('count; second; last; emptyCount'))).toBe('3\nb\nc\n0\n');
+        });
+
+        it('Should concatenate character strings in matrix row expressions.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(['joined = "";', 'for ch = "abc"', '  joined = [joined, ch];', 'end'].join('\n'));
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('["a", "b"]; [\'c\', \'d\']; joined'))).toBe('ab\ncd\nabc\n');
+        });
+
+        it('Should index character strings as character vectors.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute('s = "abcd";');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('s(2); s([1, 3]); s(2:3); s(end); s(end-1:end); s(:)'))).toBe('b\nac\nbc\nd\ncd\nabcd\n');
+        });
+
+        it('Should report character string dimensions as row character vectors.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('size("abc"); length("abc"); numel("abc"); rows("abc"); columns("abc"); ndims("abc")'))).toBe('[1,3]\n3\n3\n1\n3\n2\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('[r, c] = size("abc"); r; c'))).toBe('r=1\nc=3\n1\n3\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('isempty(""); isscalar("abc"); isvector("abc"); isrow("abc"); iscolumn("abc"); ismatrix("abc")'))).toBe(
+                'true\nfalse\ntrue\ntrue\nfalse\ntrue\n',
+            );
+        });
+
         it('Should evaluate for loops over matrix columns.', () => {
             const localInterpreter = Interpreter.Create();
 
@@ -188,6 +310,46 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             localInterpreter.Execute(['last = 0;', 'for [~, b] = [1, 3; 2, 4]', '  last = b;', 'end'].join('\n'));
 
             expect(localInterpreter.Unparse(localInterpreter.Execute('total; last'))).toBe('14\n4\n');
+        });
+
+        it('Should iterate cell arrays by columns without unwrapping contents.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(['total = 0;', 'lastClass = "";', 'for item = {10, 20}', '  lastClass = class(item);', '  total = total + item{1};', 'end'].join('\n'));
+            localInterpreter.Execute(
+                ['columnCount = 0;', 'columnTotal = 0;', 'for item = {1; 2}', '  columnCount = columnCount + 1;', '  columnTotal = item{1} + item{2};', 'end'].join('\n'),
+            );
+            localInterpreter.Execute(
+                ['matrixCount = 0;', 'matrixTotal = 0;', 'for item = {1, 3; 2, 4}', '  matrixCount = matrixCount + 1;', '  matrixTotal = matrixTotal + item{1} * item{2};', 'end'].join('\n'),
+            );
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('total; lastClass; columnCount; columnTotal; matrixCount; matrixTotal'))).toBe('30\ncell\n1\n3\n2\n14\n');
+        });
+
+        it('Should evaluate Octave-style for loops over structure fields.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                [
+                    'S.a = 10;',
+                    'S.b = 20;',
+                    'lastValue = 0;',
+                    'for value = S',
+                    '  lastValue = value;',
+                    'end',
+                    'total = 0;',
+                    'lastName = "";',
+                    'for [value, name] = S',
+                    '  total = total + value;',
+                    '  lastName = name;',
+                    'end',
+                    'for [~, ignoredName] = S',
+                    '  onlyName = ignoredName;',
+                    'end',
+                ].join('\n'),
+            );
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('lastValue; total; lastName; onlyName'))).toBe('20\n30\nb\nb\n');
         });
 
         it('Should continue a for loop.', () => {
@@ -246,6 +408,18 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('s'))).toBe('6\n');
         });
 
+        it('Should preserve parfor worker expressions in the AST while executing sequentially.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(localInterpreter.Unparse(localInterpreter.Parse(['parfor (i = 1:3, workers + 1)', '  last = i;', 'end'].join('\n')))).toBe(
+                'PARFOR (i=1:3,workers+1)\nlast=i\n\nENDPARFOR\n',
+            );
+            localInterpreter.Execute('workers = 2; s = 0;');
+            localInterpreter.Execute(['parfor (i = 1:3, workers + 1)', '  s = s + i;', 'endparfor'].join('\n'));
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('s'))).toBe('6\n');
+        });
+
         it('Should parse and evaluate an spmd block sequentially.', () => {
             const localInterpreter = Interpreter.Create();
 
@@ -253,6 +427,78 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             localInterpreter.Execute(['x = 0;', 'spmd', '  x = x + 1;', '  y = x + 2;', 'end'].join('\n'));
 
             expect(localInterpreter.Unparse(localInterpreter.Execute('x; y'))).toBe('1\n3\n');
+        });
+
+        it('Should preserve MATLAB-style spmd worker specifications while executing sequentially.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(localInterpreter.Unparse(localInterpreter.Parse(['spmd (workers)', '  x = 1;', 'endspmd'].join('\n')))).toBe('SPMD (workers)\nx=1\n\nENDSPMD\n');
+            expect(localInterpreter.Unparse(localInterpreter.Parse(['spmd (minWorkers, maxWorkers)', '  x = 2;', 'end'].join('\n')))).toBe('SPMD (minWorkers,maxWorkers)\nx=2\n\nENDSPMD\n');
+            localInterpreter.Execute(['x = 0;', 'spmd (2, 4)', '  x = x + 1;', 'end'].join('\n'));
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('x'))).toBe('1\n');
+        });
+
+        it('Should render loop and exception control nodes as MathML.', () => {
+            const localInterpreter = Interpreter.Create();
+            const samples = [
+                ['if x == 1', '  y = 1;', 'elseif x == 2', '  y = 2;', 'else', '  y = 3;', 'end'].join('\n'),
+                ['switch x', 'case 1', '  y = 1;', 'case 2', '  y = 2;', 'otherwise', '  y = 3;', 'end'].join('\n'),
+                ['while x < 2', '  x = x + 1;', 'end'].join('\n'),
+                ['do', '  x = x + 1;', 'until x > 2'].join('\n'),
+                ['for i = 1:3', '  x = i;', 'end'].join('\n'),
+                ['for i = 1:3', '  if i == 2', '    break', '  end', 'end'].join('\n'),
+                ['for i = 1:3', '  if i == 2', '    continue', '  end', 'end'].join('\n'),
+                ['parfor (i = 1:3, workers + 1)', '  x = i;', 'end'].join('\n'),
+                ['spmd (minWorkers, maxWorkers)', '  x = 1;', 'endspmd'].join('\n'),
+                ['try', '  missing;', 'catch ME', '  msg = ME.message;', 'end'].join('\n'),
+                ['unwind_protect', '  x = 1;', 'unwind_protect_cleanup', '  x = 2;', 'end_unwind_protect'].join('\n'),
+            ];
+
+            for (const source of samples) {
+                const mathml = localInterpreter.ToMathML(source);
+                expect(mathml).not.toContain('invalid');
+                expect(mathml).not.toContain('Unparse error');
+            }
+            expect(localInterpreter.ToMathML(['spmd (minWorkers, maxWorkers)', '  x = 1;', 'endspmd'].join('\n'))).toContain('minWorkers');
+            expect(localInterpreter.ToMathML(['parfor (i = 1:3, workers + 1)', '  x = i;', 'end'].join('\n'))).toContain('workers');
+            expect(localInterpreter.ToMathML(['if x == 1', '  y = 1;', 'elseif x == 2', '  y = 2;', 'end'].join('\n'))).toContain('2');
+            expect(localInterpreter.ToMathML(['switch x', 'case 1', '  y = 1;', 'otherwise', '  y = 2;', 'end'].join('\n'))).toContain('otherwise');
+        });
+
+        it('Should render function, arguments, and classdef AST nodes as MathML.', () => {
+            const localInterpreter = Interpreter.Create();
+            const functionMathML = localInterpreter.ToMathML(['function y = checked(x)', '  arguments', '    x (1,1) double {mustBePositive} = 1', '  end', '  y = x;', 'end'].join('\n'));
+            const classMathML = localInterpreter.ToMathML(
+                [
+                    'classdef (Sealed) RenderedClass < handle',
+                    '  properties (Access = private)',
+                    '    x (1,1) double = 1',
+                    '  end',
+                    '  methods (Abstract)',
+                    '    y = value(obj)',
+                    '  end',
+                    '  events',
+                    '    Changed',
+                    '  end',
+                    '  enumeration',
+                    '    One(1)',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+
+            for (const mathml of [functionMathML, classMathML]) {
+                expect(mathml).not.toContain('invalid');
+                expect(mathml).not.toContain('Unparse error');
+            }
+            expect(functionMathML).toContain('function');
+            expect(functionMathML).toContain('arguments');
+            expect(functionMathML).toContain('mustBePositive');
+            expect(classMathML).toContain('classdef');
+            expect(classMathML).toContain('RenderedClass');
+            expect(classMathML).toContain('enumeration');
+            expect(classMathML).toContain('Changed');
         });
 
         it('Should not treat spmd as a loop for break and continue.', () => {
@@ -294,6 +540,174 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             localInterpreter.Execute(['try', '  missing;', 'catch ME', '  msg = ME.message;', '  id = ME.identifier;', 'end'].join('\n'));
 
             expect(localInterpreter.Unparse(localInterpreter.Execute('msg; id'))).toBe("'missing' undefined.\nmissing\n");
+        });
+
+        it('Should preserve thrown stack frames in catch identifiers.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                [
+                    'function y = stackinner()',
+                    '  missingStackValue;',
+                    'end',
+                    'function y = stackouter()',
+                    '  y = stackinner();',
+                    'end',
+                    'try',
+                    '  stackouter();',
+                    'catch ME',
+                    '  stackName1 = ME.stack(1).name;',
+                    '  stackLine1 = ME.stack(1).line;',
+                    '  stackName2 = ME.stack(2).name;',
+                    'end',
+                ].join('\n'),
+            );
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('stackName1; stackLine1; stackName2'))).toBe('stackinner\n5\nstackouter\n');
+        });
+
+        it('Should throw and catch user errors with optional identifiers.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(() => localInterpreter.Execute('error("plain failure")')).toThrow('plain failure');
+            expect(() => localInterpreter.Execute('error("mathjslab:test", "identified failure")')).toThrow('identified failure');
+            expect(() => localInterpreter.Execute('error(1)')).toThrow("Invalid call to error. Type 'help error' to see correct usage.");
+
+            localInterpreter.Execute(['try', '  error("mathjslab:catch", "caught failure");', 'catch ME', '  msg = ME.message;', '  id = ME.identifier;', 'end'].join('\n'));
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('msg; id'))).toBe('caught failure\nmathjslab:catch\n');
+        });
+
+        it('Should expose uncaught user errors through lasterror.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(() =>
+                localInterpreter.Execute(
+                    [
+                        'function y = usererrorinner()',
+                        '  error("mathjslab:user", "user failure");',
+                        'end',
+                        'function y = usererrorouter()',
+                        '  y = usererrorinner();',
+                        'end',
+                        'usererrorouter();',
+                    ].join('\n'),
+                ),
+            ).toThrow('user failure');
+
+            localInterpreter.Execute('err = lasterror();');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('err.message; err.identifier; err.stack(1).name; err.stack(2).name'))).toBe(
+                'user failure\nmathjslab:user\nusererrorinner\nusererrorouter\n',
+            );
+        });
+
+        it('Should rethrow MATLAB-like caught error structures.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                [
+                    'try',
+                    '  try',
+                    '    error("mathjslab:inner", "inner failure");',
+                    '  catch ME',
+                    '    rethrow(ME);',
+                    '  end',
+                    'catch OUTER',
+                    '  msg = OUTER.message;',
+                    '  id = OUTER.identifier;',
+                    'end',
+                ].join('\n'),
+            );
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('msg; id'))).toBe('inner failure\nmathjslab:inner\n');
+            expect(() => localInterpreter.Execute('rethrow("not an error")')).toThrow("Invalid call to rethrow. Type 'help rethrow' to see correct usage.");
+            expect(() => localInterpreter.Execute('rethrow(struct())')).toThrow('rethrow: input must be an error structure.');
+        });
+
+        it('Should expose uncaught rethrown errors through lasterror.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(() =>
+                localInterpreter.Execute(
+                    [
+                        'function y = rethrowinner()',
+                        '  try',
+                        '    error("mathjslab:rethrow", "rethrown failure");',
+                        '  catch ME',
+                        '    rethrow(ME);',
+                        '  end',
+                        'end',
+                        'function y = rethrowouter()',
+                        '  y = rethrowinner();',
+                        'end',
+                        'rethrowouter();',
+                    ].join('\n'),
+                ),
+            ).toThrow('rethrown failure');
+
+            localInterpreter.Execute('err = lasterror();');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('err.message; err.identifier; err.stack(1).name; err.stack(2).name'))).toBe(
+                'rethrown failure\nmathjslab:rethrow\nrethrowinner\nrethrowouter\n',
+            );
+        });
+
+        it('Should expose the last uncaught error through lasterror.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute('initial = lasterror();');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('initial.message; initial.identifier; length(initial.stack)'))).toBe('\n\n0\n');
+
+            expect(() =>
+                localInterpreter.Execute(
+                    ['function y = lastErrorInner()', '  missingLastErrorValue;', 'end', 'function y = lastErrorOuter()', '  y = lastErrorInner();', 'end', 'lastErrorOuter();'].join('\n'),
+                ),
+            ).toThrow("'missingLastErrorValue' undefined.");
+
+            localInterpreter.Execute('err = lasterror();');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('err.message; err.identifier; err.stack(1).name; err.stack(2).name'))).toBe(
+                "'missingLastErrorValue' undefined.\nmissingLastErrorValue\nlastErrorInner\nlastErrorOuter\n",
+            );
+        });
+
+        it('Should expose the initial last warning state through lastwarn.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute('[warnMessage, warnIdentifier] = lastwarn();');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('warnMessage; warnIdentifier'))).toBe('\n\n');
+        });
+
+        it('Should update lastwarn from warning and lastwarn setters.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute('warning("sample warning");');
+            expect(localInterpreter.exitStatus).toBe(Interpreter.response.WARNING);
+            localInterpreter.Execute('[warnMessage1, warnIdentifier1] = lastwarn();');
+
+            localInterpreter.Execute('warning("mathjslab:test", "identified warning");');
+            localInterpreter.Execute('[warnMessage2, warnIdentifier2] = lastwarn();');
+
+            localInterpreter.Execute('lastwarn("manual warning", "mathjslab:manual");');
+            localInterpreter.Execute('[warnMessage3, warnIdentifier3] = lastwarn();');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('warnMessage1; warnIdentifier1; warnMessage2; warnIdentifier2; warnMessage3; warnIdentifier3'))).toBe(
+                'sample warning\n\nidentified warning\nmathjslab:test\nmanual warning\nmathjslab:manual\n',
+            );
+        });
+
+        it('Should clear last diagnostic state on restart.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(() => localInterpreter.Execute('missingBeforeRestart;')).toThrow("'missingBeforeRestart' undefined.");
+            localInterpreter.Execute('warning("warning before restart");');
+
+            localInterpreter.Restart();
+            localInterpreter.Execute('err = lasterror(); [warnMessage, warnIdentifier] = lastwarn();');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('err.message; err.identifier; length(err.stack); warnMessage; warnIdentifier'))).toBe('\n\n0\n\n\n');
         });
 
         it('Should let errors thrown by a catch body propagate.', () => {
@@ -365,10 +779,10 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
         it('Should parse qualified class names and superclass lists.', () => {
             const localInterpreter = Interpreter.Create();
-            const tree = localInterpreter.Parse(['classdef pkg.Child < pkg.Base, handle', 'end'].join('\n')) as any;
+            const tree = localInterpreter.Parse(['classdef pkg.Child < pkg.Base & handle', 'end'].join('\n')) as any;
             const classNode = tree.list[0];
 
-            expect(localInterpreter.Unparse(tree)).toBe('CLASSDEF pkg.Child < pkg.Base,handle\nENDCLASSDEF\n');
+            expect(localInterpreter.Unparse(tree)).toBe('CLASSDEF pkg.Child < pkg.Base&handle\nENDCLASSDEF\n');
             expect(classNode.id).toBe('pkg.Child');
             expect(classNode.superclasses.map((node: any) => node.id)).toEqual(['pkg.Base', 'handle']);
         });
@@ -424,6 +838,14 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(
                 localInterpreter.Unparse(localInterpreter.Parse(['classdef Counter', '  methods', '    function y = value(obj)', '      y = 1;', '    end', '  end', 'end'].join('\n'))),
             ).toBe('CLASSDEF Counter\nMETHODS\nFUNCTION y=value(obj)\ny=1\nENDFUNCTION\nENDMETHODS\nENDCLASSDEF\n');
+        });
+
+        it('Should parse classdef method prototypes.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(
+                localInterpreter.Unparse(localInterpreter.Parse(['classdef AbstractCounter', '  methods (Abstract)', '    y = value(obj)', '    reset(obj)', '  end', 'end'].join('\n'))),
+            ).toBe('CLASSDEF AbstractCounter\nMETHODS (Abstract)\ny=value(obj)\nreset(obj)\nENDMETHODS\nENDCLASSDEF\n');
         });
 
         it('Should parse classdef events sections.', () => {
@@ -501,6 +923,16 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => localInterpreter.Execute('NeedsDefault()')).toThrow("'missingDefault' undefined.");
         });
 
+        it('Should validate class property defaults when instantiating.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(['classdef ValidDefault', '  properties', '    x (1,2) double {mustBePositive} = [1, 2];', '  end', 'end'].join('\n'));
+            localInterpreter.Execute(['classdef InvalidDefault', '  properties', '    x (1,2) double {mustBePositive} = [1, -2];', '  end', 'end'].join('\n'));
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('p = ValidDefault(); p.x'))).toBe('p=ValidDefault object with properties: x\n[1,2]\n');
+            expect(() => localInterpreter.Execute('InvalidDefault()')).toThrow("property validation failed for 'x': mustBePositive.");
+        });
+
         it('Should assign class instance properties.', () => {
             const localInterpreter = Interpreter.Create();
 
@@ -509,6 +941,29 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             localInterpreter.Execute('p.x = 10');
 
             expect(localInterpreter.Unparse(localInterpreter.Execute('p.x'))).toBe('10\n');
+        });
+
+        it('Should validate class property assignments.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(['classdef ValidatedPoint', '  properties', '    x (1,2) double {mustBePositive} = [1, 2];', '  end', 'end'].join('\n'));
+            localInterpreter.Execute('p = ValidatedPoint(); p.x = [3, 4];');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('p.x'))).toBe('[3,4]\n');
+            expect(() => localInterpreter.Execute('p.x = [3; 4]')).toThrow("property validation failed for 'x': expected size 1x2, got 2x1.");
+            expect(() => localInterpreter.Execute('p.x = [-1, 2]')).toThrow("property validation failed for 'x': mustBePositive.");
+        });
+
+        it('Should validate class property assignments against user-defined classes.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                ['classdef BaseValue', 'end', 'classdef ChildValue < BaseValue', 'end', 'classdef HolderValue', '  properties', '    item BaseValue', '  end', 'end'].join('\n'),
+            );
+            localInterpreter.Execute('h = HolderValue(); h.item = ChildValue();');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('class(h.item)'))).toBe('ChildValue\n');
+            expect(() => localInterpreter.Execute('h.item = 1')).toThrow("property validation failed for 'item': expected class BaseValue, got double.");
         });
 
         it('Should reject assignment to undeclared class instance properties.', () => {
@@ -547,7 +1002,39 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
             localInterpreter.Execute(['classdef PlainClass', '  properties', '    x = 0;', '  end', 'end'].join('\n'));
 
-            expect(() => localInterpreter.Execute('PlainClass(5)')).toThrow('constructor arguments are not supported yet for class PlainClass.');
+            expect(() => localInterpreter.Execute('PlainClass(5)')).toThrow('constructor for class PlainClass accepts no input arguments.');
+        });
+
+        it('Should bind constructor arguments blocks and name-value options.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                [
+                    'classdef ValidatedConstructedPoint',
+                    '  properties',
+                    '    x = 0;',
+                    '    label = "origin";',
+                    '  end',
+                    '  methods',
+                    '    function obj = ValidatedConstructedPoint(x, opts)',
+                    '      arguments',
+                    '        x (1,1) double {mustBePositive}',
+                    '        opts.label char = "point"',
+                    '      end',
+                    '      obj.x = x;',
+                    '      obj.label = opts.label;',
+                    '    end',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute('p = ValidatedConstructedPoint(5)');
+            localInterpreter.Execute('q = ValidatedConstructedPoint(6, label = "custom")');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('p.x'))).toBe('5\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('p.label'))).toBe('point\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('q.label'))).toBe('custom\n');
+            expect(() => localInterpreter.Execute('ValidatedConstructedPoint(-1)')).toThrow("arguments block validation failed for 'x': mustBePositive.");
         });
 
         it('Should call class instance methods.', () => {
@@ -675,7 +1162,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('handles == p'))).toBe('[true,false]\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('p == handles'))).toBe('[true,false]\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('handles ~= q'))).toBe('[true,false]\n');
-            expect(() => localInterpreter.Execute('handles == 1')).toThrow("binary operator 'eq' not implemented for class instance operands.");
+            expect(() => localInterpreter.Execute('handles == 1')).toThrow("binary operator 'eq' is not defined for class instance operands.");
         });
 
         it('Should report objects and compare handles with isequal.', () => {
@@ -759,6 +1246,49 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('[a, c] + 1'))).toBe('[4,5]\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('1 + [a, c]'))).toBe('[4,5]\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('[a, c] + [b, c]'))).toBe('[6,8]\n');
+        });
+
+        it('Should honor InferiorClasses when choosing binary operator methods.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                [
+                    'classdef LowPriorityOperand',
+                    '  properties',
+                    '    x = 1;',
+                    '  end',
+                    '  methods',
+                    '    function y = plus(obj, other)',
+                    '      y = 100 + obj.x;',
+                    '    end',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute(
+                [
+                    'classdef (InferiorClasses = {?LowPriorityOperand}) HighPriorityOperand',
+                    '  properties',
+                    '    x = 2;',
+                    '  end',
+                    '  methods',
+                    '    function y = plus(obj, other)',
+                    "      if isa(other, 'LowPriorityOperand')",
+                    '        y = 200 + obj.x + other.x;',
+                    '      else',
+                    '        y = 200 + obj.x;',
+                    '      end',
+                    '    end',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute('lo = LowPriorityOperand(); hi = HighPriorityOperand(); lo.x = 5; hi.x = 7;');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('lo + hi'))).toBe('212\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('hi + lo'))).toBe('212\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('[lo, lo] + hi'))).toBe('[212,212]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('hi + [lo, lo]'))).toBe('[212,212]\n');
         });
 
         it('Should dispatch class unary operator methods.', () => {
@@ -1424,6 +1954,331 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => localInterpreter.Execute('ChildProtected.hiddenStatic()')).toThrow("method 'hiddenStatic' has protected access for class ChildProtected.");
         });
 
+        it('Should allow class-qualified member access from friend classes.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                [
+                    'classdef FriendTarget',
+                    '  properties (Access = {?FriendAccessor, ?FriendAuditor})',
+                    '    x = 17;',
+                    '  end',
+                    '  methods (Access = {?FriendAccessor, ?FriendAuditor})',
+                    '    function y = hidden(obj)',
+                    '      y = obj.x + 1;',
+                    '    end',
+                    '  end',
+                    '  methods (Static, Access = {?FriendAccessor, ?FriendAuditor})',
+                    '    function y = hiddenStatic()',
+                    '      y = 19;',
+                    '    end',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute(
+                [
+                    'classdef FriendAccessor',
+                    '  methods',
+                    '    function y = read(obj, target)',
+                    '      y = target.x;',
+                    '    end',
+                    '    function y = reveal(obj, target)',
+                    '      y = target.hidden();',
+                    '    end',
+                    '  end',
+                    '  methods (Static)',
+                    '    function y = revealStatic()',
+                    '      y = FriendTarget.hiddenStatic();',
+                    '    end',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute(
+                ['classdef FriendAuditor', '  methods', '    function y = audit(obj, target)', '      y = target.x + target.hidden();', '    end', '  end', 'end'].join('\n'),
+            );
+            localInterpreter.Execute(['classdef FriendAuditorChild < FriendAuditor', 'end'].join('\n'));
+            localInterpreter.Execute('target = FriendTarget()');
+            localInterpreter.Execute('friend = FriendAccessor()');
+            localInterpreter.Execute('auditor = FriendAuditorChild()');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('friend.read(target)'))).toBe('17\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('friend.reveal(target)'))).toBe('18\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('auditor.audit(target)'))).toBe('35\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('FriendAccessor.revealStatic()'))).toBe('19\n');
+            expect(() => localInterpreter.Execute('target.x')).toThrow("property 'x' has {?FriendAccessor,?FriendAuditor} get access for class FriendTarget.");
+            expect(() => localInterpreter.Execute('target.hidden()')).toThrow("method 'hidden' has {?FriendAccessor,?FriendAuditor} access for class FriendTarget.");
+            expect(() => localInterpreter.Execute('FriendTarget.hiddenStatic()')).toThrow("method 'hiddenStatic' has {?FriendAccessor,?FriendAuditor} access for class FriendTarget.");
+        });
+
+        it('Should honor negated and false class attributes.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                ['classdef (Abstract = false, Sealed = false) RuntimeFalseAttributes', '  properties (~Dependent, Constant = false, Hidden = false)', '    Value = 1;', '  end', 'end'].join(
+                    '\n',
+                ),
+            );
+            localInterpreter.Execute('obj = RuntimeFalseAttributes()');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('obj.Value'))).toBe('1\n');
+            localInterpreter.Execute('obj.Value = 2');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('obj.Value'))).toBe('2\n');
+        });
+
+        it('Should reject unsupported class and section attributes.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(() => localInterpreter.Execute(['classdef (Imaginary) InvalidRuntimeClassAttribute', 'end'].join('\n'))).toThrow(
+                'unsupported Imaginary attribute for class InvalidRuntimeClassAttribute.',
+            );
+            expect(() => localInterpreter.Execute(['classdef InvalidRuntimePropertyAttribute', '  properties (Static)', '    Value = 1;', '  end', 'end'].join('\n'))).toThrow(
+                'unsupported Static attribute for properties section of class InvalidRuntimePropertyAttribute.',
+            );
+            expect(() =>
+                localInterpreter.Execute(
+                    ['classdef InvalidRuntimeMethodAttribute', '  methods (Dependent)', '    function y = value(obj)', '      y = 1;', '    end', '  end', 'end'].join('\n'),
+                ),
+            ).toThrow('unsupported Dependent attribute for methods section of class InvalidRuntimeMethodAttribute.');
+            expect(() => localInterpreter.Execute(['classdef InvalidRuntimeEventAttribute', '  events (SetAccess = private)', '    Changed', '  end', 'end'].join('\n'))).toThrow(
+                'unsupported SetAccess attribute for events section of class InvalidRuntimeEventAttribute.',
+            );
+            expect(() => localInterpreter.Execute(['classdef InvalidRuntimeEnumerationAttribute', '  enumeration (Access = private)', '    One', '  end', 'end'].join('\n'))).toThrow(
+                'unsupported Access attribute for enumeration section of class InvalidRuntimeEnumerationAttribute.',
+            );
+        });
+
+        it('Should reject duplicate class and section attributes.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(() => localInterpreter.Execute(['classdef (Hidden, Hidden) DuplicateRuntimeClassAttribute', 'end'].join('\n'))).toThrow(
+                'duplicate Hidden attribute for class DuplicateRuntimeClassAttribute.',
+            );
+            expect(() =>
+                localInterpreter.Execute(['classdef DuplicateRuntimePropertyAttribute', '  properties (Access = public, Access = private)', '    Value = 1;', '  end', 'end'].join('\n')),
+            ).toThrow('duplicate Access attribute for properties section of class DuplicateRuntimePropertyAttribute.');
+            expect(() =>
+                localInterpreter.Execute(
+                    ['classdef DuplicateRuntimeMethodAttribute', '  methods (Static, Static)', '    function y = value()', '      y = 1;', '    end', '  end', 'end'].join('\n'),
+                ),
+            ).toThrow('duplicate Static attribute for methods section of class DuplicateRuntimeMethodAttribute.');
+            expect(() =>
+                localInterpreter.Execute(['classdef DuplicateRuntimeEventAttribute', '  events (ListenAccess = public, ListenAccess = private)', '    Changed', '  end', 'end'].join('\n')),
+            ).toThrow('duplicate ListenAccess attribute for events section of class DuplicateRuntimeEventAttribute.');
+        });
+
+        it('Should reject non-boolean values for boolean class and section attributes.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(() => localInterpreter.Execute(['classdef (Abstract = 1) InvalidRuntimeClassBoolean', 'end'].join('\n'))).toThrow(
+                'invalid boolean Abstract attribute for class InvalidRuntimeClassBoolean.',
+            );
+            expect(() => localInterpreter.Execute(['classdef InvalidRuntimePropertyBoolean', '  properties (Constant = 1)', '    Value = 1;', '  end', 'end'].join('\n'))).toThrow(
+                'invalid boolean Constant attribute for properties section of class InvalidRuntimePropertyBoolean.',
+            );
+            expect(() =>
+                localInterpreter.Execute(
+                    ['classdef InvalidRuntimeMethodBoolean', '  methods (Static = 1)', '    function y = value()', '      y = 1;', '    end', '  end', 'end'].join('\n'),
+                ),
+            ).toThrow('invalid boolean Static attribute for methods section of class InvalidRuntimeMethodBoolean.');
+            expect(() => localInterpreter.Execute(['classdef InvalidRuntimeEventBoolean', '  events (Hidden = 1)', '    Changed', '  end', 'end'].join('\n'))).toThrow(
+                'invalid boolean Hidden attribute for events section of class InvalidRuntimeEventBoolean.',
+            );
+        });
+
+        it('Should reject invalid class-name-list attribute values.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(() => localInterpreter.Execute(['classdef (InferiorClasses = 1) InvalidRuntimeInferiorClasses', 'end'].join('\n'))).toThrow(
+                'invalid class-name list InferiorClasses attribute for class InvalidRuntimeInferiorClasses.',
+            );
+            expect(() => localInterpreter.Execute(['classdef (AllowedSubclasses) MissingRuntimeAllowedSubclasses', 'end'].join('\n'))).toThrow(
+                'invalid class-name list AllowedSubclasses attribute for class MissingRuntimeAllowedSubclasses.',
+            );
+            expect(() =>
+                localInterpreter.Execute(['classdef InvalidRuntimePartialMatchPriority', '  properties (PartialMatchPriority = 0)', '    Value', '  end', 'end'].join('\n')),
+            ).toThrow('invalid positive integer PartialMatchPriority attribute for properties section of class InvalidRuntimePartialMatchPriority.');
+        });
+
+        it('Should reject invalid class member access attributes.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(() =>
+                localInterpreter.Execute(['classdef InvalidRuntimeAccess', '  methods (Access = 1)', '    function y = value(obj)', '      y = 1;', '    end', '  end', 'end'].join('\n')),
+            ).toThrow('invalid Access attribute for methods section of class InvalidRuntimeAccess.');
+            expect(() =>
+                localInterpreter.Execute(['classdef InvalidRuntimeNotifyAccess < handle', '  events (NotifyAccess = {public, ?FriendRuntime})', '    Changed', '  end', 'end'].join('\n')),
+            ).toThrow('invalid NotifyAccess attribute for events section of class InvalidRuntimeNotifyAccess.');
+            expect(() =>
+                localInterpreter.Execute(['classdef MissingRuntimeAccessValue', '  methods (Access)', '    function y = value(obj)', '      y = 1;', '    end', '  end', 'end'].join('\n')),
+            ).toThrow('invalid Access attribute for methods section of class MissingRuntimeAccessValue.');
+            expect(() => localInterpreter.Execute(['classdef MissingRuntimeSetAccessValue', '  properties (SetAccess)', '    Value = 1;', '  end', 'end'].join('\n'))).toThrow(
+                'invalid SetAccess attribute for properties section of class MissingRuntimeSetAccessValue.',
+            );
+            expect(() => localInterpreter.Execute(['classdef MissingRuntimeNotifyAccessValue', '  events (NotifyAccess)', '    Changed', '  end', 'end'].join('\n'))).toThrow(
+                'invalid NotifyAccess attribute for events section of class MissingRuntimeNotifyAccessValue.',
+            );
+        });
+
+        it('Should reject incompatible class attribute combinations.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(() => localInterpreter.Execute(['classdef (Abstract, Sealed) InvalidRuntimeAbstractSealed', 'end'].join('\n'))).toThrow(
+                'class InvalidRuntimeAbstractSealed cannot be both abstract and sealed.',
+            );
+            expect(() =>
+                localInterpreter.Execute(
+                    ['classdef InvalidRuntimeAbstractSealedMethod', '  methods (Abstract, Sealed)', '    function y = value(obj)', '    end', '  end', 'end'].join('\n'),
+                ),
+            ).toThrow('methods section of class InvalidRuntimeAbstractSealedMethod cannot be both abstract and sealed.');
+        });
+
+        it('Should reject incompatible property attribute combinations.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(() => localInterpreter.Execute(['classdef InvalidRuntimeDependentDefault', '  properties (Dependent)', '    Value = 1;', '  end', 'end'].join('\n'))).toThrow(
+                "dependent property 'Value' in class InvalidRuntimeDependentDefault cannot define a default value.",
+            );
+            expect(() => localInterpreter.Execute(['classdef InvalidRuntimeDependentConstant', '  properties (Dependent, Constant)', '    Value', '  end', 'end'].join('\n'))).toThrow(
+                "property 'Value' in class InvalidRuntimeDependentConstant cannot be both dependent and constant.",
+            );
+            expect(() => localInterpreter.Execute(['classdef InvalidRuntimeConstantWithoutDefault', '  properties (Constant)', '    Value', '  end', 'end'].join('\n'))).toThrow(
+                "constant property 'Value' in class InvalidRuntimeConstantWithoutDefault must define a default value.",
+            );
+        });
+
+        it('Should reject abstract methods with method bodies.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(() =>
+                localInterpreter.Execute(
+                    ['classdef InvalidRuntimeAbstractBody', '  methods (Abstract)', '    function y = value(obj)', '      y = 1;', '    end', '  end', 'end'].join('\n'),
+                ),
+            ).toThrow("abstract method 'value' in class InvalidRuntimeAbstractBody cannot define a method body.");
+        });
+
+        it('Should support abstract method prototypes and reject concrete prototype calls.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(['classdef AbstractPrototypeShape', '  methods (Abstract)', '    y = area(obj)', '  end', 'end'].join('\n'));
+            localInterpreter.Execute(
+                ['classdef ImplementedPrototypeShape < AbstractPrototypeShape', '  methods', '    function y = area(obj)', '      y = 21;', '    end', '  end', 'end'].join('\n'),
+            );
+            localInterpreter.Execute(['classdef ConcretePrototypeMethod', '  methods', '    y = value(obj)', '  end', 'end'].join('\n'));
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('ImplementedPrototypeShape().area()'))).toBe('21\n');
+            expect(() => localInterpreter.Execute('AbstractPrototypeShape()')).toThrow('cannot instantiate abstract class AbstractPrototypeShape: missing implementations for area.');
+            expect(() => localInterpreter.Execute('ConcretePrototypeMethod().value()')).toThrow("method 'value' for class ConcretePrototypeMethod is declared without a body.");
+        });
+
+        it('Should reject static and abstract constructors.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(() =>
+                localInterpreter.Execute(
+                    ['classdef InvalidRuntimeStaticConstructor', '  methods (Static)', '    function obj = InvalidRuntimeStaticConstructor()', '    end', '  end', 'end'].join('\n'),
+                ),
+            ).toThrow('constructor for class InvalidRuntimeStaticConstructor cannot be static.');
+            expect(() =>
+                localInterpreter.Execute(
+                    ['classdef InvalidRuntimeAbstractConstructor', '  methods (Abstract)', '    function obj = InvalidRuntimeAbstractConstructor()', '    end', '  end', 'end'].join('\n'),
+                ),
+            ).toThrow('constructor for class InvalidRuntimeAbstractConstructor cannot be abstract.');
+        });
+
+        it('Should reject constructors without exactly one output.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(() =>
+                localInterpreter.Execute(
+                    ['classdef InvalidRuntimeNoOutputConstructor', '  methods', '    function InvalidRuntimeNoOutputConstructor()', '    end', '  end', 'end'].join('\n'),
+                ),
+            ).toThrow('constructor for class InvalidRuntimeNoOutputConstructor must declare exactly one output.');
+            expect(() =>
+                localInterpreter.Execute(
+                    ['classdef InvalidRuntimeMultiOutputConstructor', '  methods', '    function [obj, extra] = InvalidRuntimeMultiOutputConstructor()', '    end', '  end', 'end'].join(
+                        '\n',
+                    ),
+                ),
+            ).toThrow('constructor for class InvalidRuntimeMultiOutputConstructor must declare exactly one output.');
+        });
+
+        it('Should reject invalid property accessor methods.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(() =>
+                localInterpreter.Execute(['classdef InvalidRuntimeAccessorProperty', '  methods', '    function y = get.Missing(obj)', '      y = 1;', '    end', '  end', 'end'].join('\n')),
+            ).toThrow("get accessor 'get.Missing' in class InvalidRuntimeAccessorProperty does not match a class property.");
+            expect(() =>
+                localInterpreter.Execute(
+                    ['classdef InvalidRuntimeSetterSignature', '  properties', '    Value', '  end', '  methods', '    function obj = set.Value(obj)', '    end', '  end', 'end'].join('\n'),
+                ),
+            ).toThrow("set accessor 'set.Value' in class InvalidRuntimeSetterSignature must declare two inputs and one output.");
+        });
+
+        it('Should reject duplicate direct class members.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(() => localInterpreter.Execute(['classdef DuplicateRuntimeProperty', '  properties', '    Value = 1;', '    Value = 2;', '  end', 'end'].join('\n'))).toThrow(
+                "duplicate property 'Value' in class DuplicateRuntimeProperty.",
+            );
+            expect(() =>
+                localInterpreter.Execute(
+                    [
+                        'classdef DuplicateRuntimeMethod',
+                        '  methods',
+                        '    function y = value(obj)',
+                        '      y = 1;',
+                        '    end',
+                        '    function y = value(obj)',
+                        '      y = 2;',
+                        '    end',
+                        '  end',
+                        'end',
+                    ].join('\n'),
+                ),
+            ).toThrow("duplicate method 'value' in class DuplicateRuntimeMethod.");
+            expect(() => localInterpreter.Execute(['classdef DuplicateRuntimeEvent', '  events', '    Changed', '    Changed', '  end', 'end'].join('\n'))).toThrow(
+                "duplicate event 'Changed' in class DuplicateRuntimeEvent.",
+            );
+        });
+
+        it('Should reject cross-kind direct class member name conflicts.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(() =>
+                localInterpreter.Execute(
+                    [
+                        'classdef RuntimePropertyMethodConflict',
+                        '  properties',
+                        '    Value = 1;',
+                        '  end',
+                        '  methods',
+                        '    function y = Value(obj)',
+                        '      y = 2;',
+                        '    end',
+                        '  end',
+                        'end',
+                    ].join('\n'),
+                ),
+            ).toThrow("class RuntimePropertyMethodConflict has conflicting property and method named 'Value'.");
+            expect(() =>
+                localInterpreter.Execute(['classdef RuntimePropertyEventConflict', '  properties', '    Changed', '  end', '  events', '    Changed', '  end', 'end'].join('\n')),
+            ).toThrow("class RuntimePropertyEventConflict has conflicting property and event named 'Changed'.");
+            expect(() =>
+                localInterpreter.Execute(['classdef RuntimePropertyEnumerationConflict', '  properties', '    One = 1;', '  end', '  enumeration', '    One', '  end', 'end'].join('\n')),
+            ).toThrow("class RuntimePropertyEnumerationConflict has conflicting property and enumeration member named 'One'.");
+        });
+
+        it('Should reject direct class self-inheritance.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(() => localInterpreter.Execute(['classdef InvalidRuntimeSelfInheritance < InvalidRuntimeSelfInheritance', 'end'].join('\n'))).toThrow(
+                'class InvalidRuntimeSelfInheritance cannot inherit from itself.',
+            );
+        });
+
         it('Should call superclass constructors from subclass constructors.', () => {
             const localInterpreter = Interpreter.Create();
 
@@ -1479,6 +2334,42 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => localInterpreter.Execute('value@BaseOverride(c)')).toThrow("superclass method 'value' is only accessible from class methods.");
         });
 
+        it('Should parse and resolve MATLAB-like ampersand superclass lists.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                [
+                    'classdef LeftAmpersandBase',
+                    '  properties',
+                    '    leftValue = 2;',
+                    '  end',
+                    '  methods',
+                    '    function y = left(obj)',
+                    '      y = obj.leftValue;',
+                    '    end',
+                    '  end',
+                    'end',
+                    'classdef RightAmpersandBase',
+                    '  properties',
+                    '    rightValue = 3;',
+                    '  end',
+                    '  methods',
+                    '    function y = right(obj)',
+                    '      y = obj.rightValue;',
+                    '    end',
+                    '  end',
+                    'end',
+                    'classdef AmpersandChild < LeftAmpersandBase & RightAmpersandBase',
+                    'end',
+                ].join('\n'),
+            );
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('c = AmpersandChild(); c.left() + c.right()'))).toBe(
+                'c=AmpersandChild object with properties: leftValue,rightValue\n5\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('superclasses("AmpersandChild")'))).toBe('{LeftAmpersandBase;\nRightAmpersandBase}\n');
+        });
+
         it('Should enforce abstract and sealed class attributes.', () => {
             const localInterpreter = Interpreter.Create();
 
@@ -1487,12 +2378,70 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             localInterpreter.Execute(['classdef PendingShape < AbstractShape', 'end'].join('\n'));
             localInterpreter.Execute(['classdef StaticAreaShape < AbstractShape', '  methods (Static)', '    function y = area()', '      y = 99;', '    end', '  end', 'end'].join('\n'));
             localInterpreter.Execute(['classdef (Sealed) FinalShape', 'end'].join('\n'));
+            localInterpreter.Execute(['classdef (AllowedSubclasses = {?AllowedRuntimeShape}) RestrictedShape', 'end'].join('\n'));
+            localInterpreter.Execute(['classdef AllowedRuntimeShape < RestrictedShape', 'end'].join('\n'));
 
             expect(() => localInterpreter.Execute('AbstractShape()')).toThrow('cannot instantiate abstract class AbstractShape: missing implementations for area.');
             expect(() => localInterpreter.Execute('PendingShape()')).toThrow('cannot instantiate abstract class PendingShape: missing implementations for area.');
             expect(() => localInterpreter.Execute('StaticAreaShape()')).toThrow('cannot instantiate abstract class StaticAreaShape: missing implementations for area.');
             expect(localInterpreter.Unparse(localInterpreter.Execute('CircleShape().area()'))).toBe('12\n');
             expect(() => localInterpreter.Execute(['classdef IllegalShape < FinalShape', 'end'].join('\n'))).toThrow('class IllegalShape cannot inherit from sealed class FinalShape.');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('AllowedRuntimeShape()'))).toBe('AllowedRuntimeShape object\n');
+            expect(() => localInterpreter.Execute(['classdef IllegalRuntimeShape < RestrictedShape', 'end'].join('\n'))).toThrow(
+                'class IllegalRuntimeShape cannot inherit from class RestrictedShape: subclass is not listed in AllowedSubclasses.',
+            );
+        });
+
+        it('Should enforce abstract class properties.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(['classdef AbstractPropertyShape', '  properties (Abstract)', '    Sides', '  end', 'end'].join('\n'));
+            localInterpreter.Execute(['classdef PendingPropertyShape < AbstractPropertyShape', 'end'].join('\n'));
+            localInterpreter.Execute(['classdef ConcretePropertyShape < AbstractPropertyShape', '  properties', '    Sides = 4;', '  end', 'end'].join('\n'));
+
+            expect(() => localInterpreter.Execute('AbstractPropertyShape()')).toThrow('cannot instantiate abstract class AbstractPropertyShape: missing implementations for Sides.');
+            expect(() => localInterpreter.Execute('PendingPropertyShape()')).toThrow('cannot instantiate abstract class PendingPropertyShape: missing implementations for Sides.');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('ConcretePropertyShape().Sides'))).toBe('4\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('metaclass(AbstractPropertyShape).PropertyList(1).Abstract'))).toBe('true\n');
+            expect(() => localInterpreter.Execute(['classdef InvalidRuntimeAbstractPropertyDefault', '  properties (Abstract)', '    Value = 1;', '  end', 'end'].join('\n'))).toThrow(
+                "abstract property 'Value' in class InvalidRuntimeAbstractPropertyDefault cannot define a default value.",
+            );
+        });
+
+        it('Should reject overrides of sealed class methods.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                [
+                    'classdef SealedMethodBase',
+                    '  methods (Sealed)',
+                    '    function y = value(obj)',
+                    '      y = 1;',
+                    '    end',
+                    '  end',
+                    '  methods (Static, Sealed)',
+                    '    function y = make()',
+                    '      y = 2;',
+                    '    end',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+
+            expect(() =>
+                localInterpreter.Execute(
+                    ['classdef IllegalInstanceOverride < SealedMethodBase', '  methods', '    function y = value(obj)', '      y = 3;', '    end', '  end', 'end'].join('\n'),
+                ),
+            ).toThrow("method 'value' in class IllegalInstanceOverride cannot override sealed method from class SealedMethodBase.");
+            expect(() =>
+                localInterpreter.Execute(
+                    ['classdef IllegalStaticOverride < SealedMethodBase', '  methods (Static)', '    function y = make()', '      y = 4;', '    end', '  end', 'end'].join('\n'),
+                ),
+            ).toThrow("method 'make' in class IllegalStaticOverride cannot override sealed method from class SealedMethodBase.");
+            localInterpreter.Execute(['classdef SealedMethodChild < SealedMethodBase', 'end'].join('\n'));
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('SealedMethodChild().value()'))).toBe('1\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('SealedMethodChild.make()'))).toBe('2\n');
         });
 
         it('Should support constant class properties.', () => {
@@ -1564,6 +2513,38 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('a.LockedValue'))).toBe('30\n');
         });
 
+        it('Should allow class-qualified GetAccess and SetAccess from friend classes.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                ['classdef FriendPropertyTarget < handle', '  properties (GetAccess = ?FriendPropertyAccessor, SetAccess = ?FriendPropertyAccessor)', '    Value = 8;', '  end', 'end'].join(
+                    '\n',
+                ),
+            );
+            localInterpreter.Execute(
+                [
+                    'classdef FriendPropertyAccessor',
+                    '  methods',
+                    '    function y = read(obj, target)',
+                    '      y = target.Value;',
+                    '    end',
+                    '    function y = write(obj, target, value)',
+                    '      target.Value = value;',
+                    '      y = target.Value;',
+                    '    end',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute('target = FriendPropertyTarget()');
+            localInterpreter.Execute('friend = FriendPropertyAccessor()');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('friend.read(target)'))).toBe('8\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('friend.write(target, 21)'))).toBe('21\n');
+            expect(() => localInterpreter.Execute('target.Value')).toThrow("property 'Value' has ?FriendPropertyAccessor get access for class FriendPropertyTarget.");
+            expect(() => localInterpreter.Execute('target.Value = 34')).toThrow("property 'Value' has ?FriendPropertyAccessor set access for class FriendPropertyTarget.");
+        });
+
         it('Should notify class event and observable property listeners.', () => {
             const localInterpreter = Interpreter.Create();
 
@@ -1626,6 +2607,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             localInterpreter.Execute('listener.Enabled = true');
             localInterpreter.Execute('notify(s, "Changed")');
             expect(localInterpreter.Unparse(localInterpreter.Execute('eventCount'))).toBe('2\n');
+            expect(() => localInterpreter.Execute('listener.Enabled.Value = true')).toThrow("cannot assign nested property 'Enabled.Value' for event.listener.");
             localInterpreter.Execute('delete(listener)');
             expect(localInterpreter.Unparse(localInterpreter.Execute('isvalid(listener)'))).toBe('false\n');
             localInterpreter.Execute('notify(s, "Changed")');
@@ -1644,6 +2626,62 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('eventCount'))).toBe('4\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('lastEvent'))).toBe('Value\n');
             expect(() => localInterpreter.Execute('addlistener(s, "Missing", @recordEvent)')).toThrow("unknown event 'Missing' for class EventSource.");
+        });
+
+        it('Should abort identical property assignments with AbortSet.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute('global abortSetCount');
+            localInterpreter.Execute('abortSetCount = 0');
+            localInterpreter.Execute(['function recordAbortSetEvent(src, eventData)', '  global abortSetCount', '  abortSetCount = abortSetCount + 1;', 'end'].join('\n'));
+            localInterpreter.Execute(['classdef AbortSetSource < handle', '  properties (AbortSet, SetObservable)', '    Value = 1;', '  end', 'end'].join('\n'));
+            localInterpreter.Execute('s = AbortSetSource(); addlistener(s, "Value", @recordAbortSetEvent)');
+
+            localInterpreter.Execute('s.Value = 1');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('abortSetCount'))).toBe('0\n');
+            localInterpreter.Execute('s.Value = 2');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('abortSetCount'))).toBe('1\n');
+            localInterpreter.Execute('s.Value = 2');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('abortSetCount'))).toBe('1\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('s.Value'))).toBe('2\n');
+        });
+
+        it('Should allow class-qualified ListenAccess and NotifyAccess from friend classes.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute('global friendEventCount');
+            localInterpreter.Execute('friendEventCount = 0');
+            localInterpreter.Execute(['function recordFriendEvent(src, eventData)', '  global friendEventCount', '  friendEventCount = friendEventCount + 1;', 'end'].join('\n'));
+            localInterpreter.Execute(
+                ['classdef FriendEventSource < handle', '  events (ListenAccess = ?FriendEventAccessor, NotifyAccess = ?FriendEventAccessor)', '    HiddenChanged', '  end', 'end'].join(
+                    '\n',
+                ),
+            );
+            localInterpreter.Execute(
+                [
+                    'classdef FriendEventAccessor',
+                    '  methods',
+                    '    function listener = attach(obj, source)',
+                    '      listener = addlistener(source, "HiddenChanged", @recordFriendEvent);',
+                    '    end',
+                    '    function fire(obj, source)',
+                    '      notify(source, "HiddenChanged");',
+                    '    end',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute('source = FriendEventSource()');
+            localInterpreter.Execute('friend = FriendEventAccessor()');
+            localInterpreter.Execute('listener = friend.attach(source)');
+            localInterpreter.Execute('friend.fire(source)');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('friendEventCount'))).toBe('1\n');
+            expect(() => localInterpreter.Execute('addlistener(source, "HiddenChanged", @recordFriendEvent)')).toThrow(
+                "event 'HiddenChanged' has ?FriendEventAccessor listen access for class FriendEventSource.",
+            );
+            expect(() => localInterpreter.Execute('notify(source, "HiddenChanged")')).toThrow("event 'HiddenChanged' has ?FriendEventAccessor notify access for class FriendEventSource.");
+            localInterpreter.Execute('delete(listener)');
         });
 
         it('Should read dependent properties through get accessors.', () => {
@@ -1691,6 +2729,39 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('c.Radius'))).toBe('5\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('c.Area'))).toBe('25\n');
             expect(() => localInterpreter.Execute('r.Area = 10')).toThrow("cannot assign to dependent property 'Area' for class ReadOnlyDependentCircle without a set accessor.");
+        });
+
+        it('Should read and write properties through explicit GetMethod and SetMethod attributes.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                [
+                    'classdef ExplicitAccessorValue',
+                    '  properties',
+                    '    Storage = 3;',
+                    '  end',
+                    '  properties (GetMethod = readValue, SetMethod = writeValue, SetObservable)',
+                    '    Value',
+                    '  end',
+                    '  methods',
+                    '    function y = readValue(obj)',
+                    '      y = obj.Storage * 2;',
+                    '    end',
+                    '    function obj = writeValue(obj, value)',
+                    '      obj.Storage = value + 1;',
+                    '    end',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute('obj = ExplicitAccessorValue()');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('obj.Value'))).toBe('6\n');
+            localInterpreter.Execute('obj.Value = 9');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('obj.Storage'))).toBe('10\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('obj.Value'))).toBe('20\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('meta.class.fromName("ExplicitAccessorValue").PropertyList(2).GetMethod'))).toBe('readValue\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('meta.class.fromName("ExplicitAccessorValue").PropertyList(2).SetMethod'))).toBe('writeValue\n');
         });
 
         it('Should resolve class enumeration values.', () => {
@@ -1755,7 +2826,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                 ].join('\n'),
             );
             localInterpreter.Execute(['classdef IntrospectionHandle < handle', 'end'].join('\n'));
-            localInterpreter.Execute(['classdef IntrospectionEnum', '  enumeration', '    Red', '    Blue', '  end', 'end'].join('\n'));
+            localInterpreter.Execute(['classdef IntrospectionEnum', '  enumeration', '    Red', '    Blue', '  end', '  enumeration (Hidden)', '    HiddenRed', '  end', 'end'].join('\n'));
             localInterpreter.Execute('obj = IntrospectionChild()');
 
             localInterpreter.Execute('p = properties(obj)');
@@ -1764,10 +2835,14 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             localInterpreter.Execute('e = events(obj)');
             localInterpreter.Execute('n = enumeration(IntrospectionEnum.Red)');
             localInterpreter.Execute('s.z = 1; s.a = 2; fs = fieldnames(s)');
+            localInterpreter.Execute('sa = [s, s]');
 
             expect(localInterpreter.Unparse(localInterpreter.Execute('p{1}; p{2}'))).toBe('baseValue\nchildValue\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('fp{1}; fp{2}'))).toBe('baseValue\nchildValue\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('fs{1}; fs{2}'))).toBe('a\nz\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('fieldnames(sa); isfield(sa, "a"); isfield(sa, "missing"); isfield(sa, {"z", "missing", "a"})'))).toBe(
+                '{a;\nz}\ntrue\nfalse\n[true,false,true]\n',
+            );
             expect(localInterpreter.Unparse(localInterpreter.Execute('m{1}; m{2}'))).toBe('baseMethod\nchildMethod\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('e{1}; e{2}'))).toBe('BaseChanged\nChildChanged\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('n{1}; n{2}'))).toBe('Blue\nRed\n');
@@ -1776,22 +2851,35 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('methods("IntrospectionChild")'))).toBe('{baseMethod;\nchildMethod}\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute("events('IntrospectionChild')"))).toBe('{BaseChanged;\nChildChanged}\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('enumeration("IntrospectionEnum")'))).toBe('{Blue;\nRed}\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('meta.class.fromName("IntrospectionEnum").EnumerationMemberList(3).Hidden'))).toBe('true\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('superclasses("IntrospectionChild")'))).toBe('{IntrospectionBase}\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('superclasses(IntrospectionHandle())'))).toBe('{handle}\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('isprop(obj, "baseValue")'))).toBe('true\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('isprop("IntrospectionChild", "childValue")'))).toBe('true\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('isprop("IntrospectionChild", "missingValue")'))).toBe('false\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('isprop([IntrospectionChild(), IntrospectionChild()], "baseValue")'))).toBe('[true,true]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('isprop([IntrospectionChild(); IntrospectionChild()], "missingValue")'))).toBe('[false;\nfalse]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('isprop(obj, 1); isprop([IntrospectionChild(), IntrospectionChild()], {"baseValue"})'))).toBe('false\nfalse\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('ismethod(obj, "baseMethod")'))).toBe('true\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('ismethod("IntrospectionChild", "childMethod")'))).toBe('true\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('ismethod("IntrospectionChild", "missingMethod")'))).toBe('false\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('isfield(s, "a"); isfield(s, "missing"); isfield(s, {"z", "missing", "a"})'))).toBe('true\nfalse\n[true,false,true]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('isfield(obj, "baseValue"); isfield(obj, {"baseValue", "missingValue"})'))).toBe('false\n[false,false]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('isfield(1, 1); isfield(obj, 1); isfield(obj, [1, 2])'))).toBe('false\nfalse\nfalse\n');
+            expect(() => localInterpreter.Execute('isfield(s, 1)')).toThrow('isfield: FIELD must be a string or cell array of strings.');
             expect(localInterpreter.Unparse(localInterpreter.Execute('mc = metaclass(obj); properties(mc)'))).toBe('mc=meta.class IntrospectionChild\n{baseValue;\nchildValue}\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('methods(mc)'))).toBe('{baseMethod;\nchildMethod}\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('events(mc)'))).toBe('{BaseChanged;\nChildChanged}\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('isprop(mc, "baseValue")'))).toBe('true\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('ismethod(mc, "childMethod")'))).toBe('true\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('isobject(mc)'))).toBe('true\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('isobject({obj}); isprop({obj}, "baseValue")'))).toBe('false\nfalse\n');
+            expect(() => localInterpreter.Execute('properties({obj})')).toThrow('properties: input must be a class object.');
             expect(localInterpreter.Unparse(localInterpreter.Execute('class(1 == 1)'))).toBe('logical\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('class([true, false])'))).toBe('logical\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute("isa(1 == 1, 'logical')"))).toBe('true\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute("isa([true, false], 'logical')"))).toBe('true\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute("isa(true, 'double')"))).toBe('false\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute("isa(mc, 'meta.class')"))).toBe('true\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('isclass("IntrospectionChild")'))).toBe('true\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('isclass("double")'))).toBe('true\n');
@@ -1801,6 +2889,72 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => localInterpreter.Execute('properties(1)')).toThrow('properties: input must be a class object.');
             expect(() => localInterpreter.Execute('properties("MissingIntrospectionClass")')).toThrow("properties: class 'MissingIntrospectionClass' is not defined.");
             expect(() => localInterpreter.Execute('isprop("MissingIntrospectionClass", "x")')).toThrow("isprop: class 'MissingIntrospectionClass' is not defined.");
+        });
+
+        it('Should list only public non-hidden class members in introspection helpers.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                [
+                    'classdef PublicIntrospectionFilter',
+                    '  properties',
+                    '    PublicValue = 1;',
+                    '  end',
+                    '  properties (GetAccess = private)',
+                    '    PrivateValue = 2;',
+                    '  end',
+                    '  properties (GetAccess = protected)',
+                    '    ProtectedValue = 3;',
+                    '  end',
+                    '  properties (Hidden)',
+                    '    HiddenValue = 4;',
+                    '  end',
+                    '  methods',
+                    '    function y = publicMethod(obj)',
+                    '      y = obj.PublicValue;',
+                    '    end',
+                    '  end',
+                    '  methods (Access = private)',
+                    '    function y = privateMethod(obj)',
+                    '      y = 2;',
+                    '    end',
+                    '  end',
+                    '  methods (Access = protected)',
+                    '    function y = protectedMethod(obj)',
+                    '      y = 3;',
+                    '    end',
+                    '  end',
+                    '  methods (Hidden)',
+                    '    function y = hiddenMethod(obj)',
+                    '      y = 4;',
+                    '    end',
+                    '  end',
+                    '  events',
+                    '    PublicChanged',
+                    '  end',
+                    '  events (ListenAccess = private)',
+                    '    PrivateChanged',
+                    '  end',
+                    '  events (ListenAccess = protected)',
+                    '    ProtectedChanged',
+                    '  end',
+                    '  events (Hidden)',
+                    '    HiddenChanged',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute('obj = PublicIntrospectionFilter()');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('properties(obj)'))).toBe('{PublicValue}\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('fieldnames(obj)'))).toBe('{PublicValue}\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('methods(obj)'))).toBe('{publicMethod}\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('events(obj)'))).toBe('{PublicChanged}\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('isprop(obj, "PrivateValue"); isprop(obj, "HiddenValue")'))).toBe('true\ntrue\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('ismethod(obj, "publicMethod"); ismethod(obj, "privateMethod"); ismethod(obj, "hiddenMethod")'))).toBe(
+                'true\nfalse\nfalse\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('meta.class.fromName("PublicIntrospectionFilter").PropertyList(4).Hidden'))).toBe('true\n');
         });
 
         it('Should lazily load class definitions from configured class sources.', () => {
@@ -1877,8 +3031,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
             localInterpreter.Execute(
                 [
-                    'classdef MetaPoint',
-                    '  properties (SetObservable)',
+                    'classdef (Hidden, ConstructOnLoad, HandleCompatible, InferiorClasses = {?LowPriorityMetaPoint, ?pkg.OtherLowMetaPoint}, AllowedSubclasses = {?MetaPointChild}) MetaPoint',
+                    '  properties (SetObservable, NonCopyable)',
                     '    x = 1;',
                     '  end',
                     '  methods (Static, Sealed)',
@@ -1906,8 +3060,15 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute("isa(mc, 'meta.class')"))).toBe('true\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('mc.Name'))).toBe('MetaPoint\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('mc.Sealed'))).toBe('false\n');
-            expect(localInterpreter.Unparse(localInterpreter.Execute('mc.HandleCompatible'))).toBe('false\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('mc.Hidden'))).toBe('true\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('mc.ConstructOnLoad'))).toBe('true\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('mc.RestrictsSubclassing'))).toBe('true\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('mc.InferiorClasses{1}; mc.InferiorClasses{2}'))).toBe('LowPriorityMetaPoint\npkg.OtherLowMetaPoint\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('mc.AllowedSubclasses{1}'))).toBe('MetaPointChild\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('mc.HandleCompatible'))).toBe('true\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('mc.PropertyList(1).Name'))).toBe('x\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('mc.PropertyList(1).NonCopyable'))).toBe('true\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('mc.PropertyList(1).PartialMatchPriority'))).toBe('1\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('mc.PropertyList(1).SetObservable'))).toBe('true\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('mc.PropertyList(1).HasDefault'))).toBe('true\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('mc.MethodList(1).Name'))).toBe('make\n');
@@ -1938,7 +3099,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         it('Should resolve qualified class names from the class source provider.', () => {
             const localInterpreter = Interpreter.Create({
                 classSourceProvider: (name) =>
-                    name === 'pkg.ProvidedPoint'
+                    name === 'pkg.sub.ProvidedPoint'
                         ? {
                               name,
                               source: [
@@ -1957,10 +3118,66 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                         : undefined,
             });
 
-            expect(localInterpreter.Unparse(localInterpreter.Execute('pkg.ProvidedPoint().x'))).toBe('9\n');
-            expect(localInterpreter.Unparse(localInterpreter.Execute('pkg.ProvidedPoint.make()'))).toBe('11\n');
-            expect(localInterpreter.Unparse(localInterpreter.Execute('?pkg.ProvidedPoint.Name'))).toBe('pkg.ProvidedPoint\n');
-            expect(localInterpreter.Unparse(localInterpreter.Execute('meta.class.fromName("pkg.ProvidedPoint").PropertyList(1).Name'))).toBe('x\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('pkg.sub.ProvidedPoint().x'))).toBe('9\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('pkg.sub.ProvidedPoint.make()'))).toBe('11\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('?pkg.sub.ProvidedPoint.Name'))).toBe('pkg.sub.ProvidedPoint\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('?pkg.sub.ProvidedPoint.ContainingPackage'))).toBe('pkg.sub\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('meta.class.fromName("pkg.sub.ProvidedPoint").PropertyList(1).Name'))).toBe('x\n');
+        });
+
+        it('Should resolve explicitly imported class names from host class sources.', () => {
+            const localInterpreter = Interpreter.Create({
+                classSourceTable: {
+                    'pkg.alias.ImportedPoint': [
+                        'classdef ImportedPoint',
+                        '  properties',
+                        '    x = 12;',
+                        '  end',
+                        '  methods (Static)',
+                        '    function y = make()',
+                        '      y = 13;',
+                        '    end',
+                        '  end',
+                        'end',
+                    ].join('\n'),
+                },
+            });
+
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(['import pkg.alias.ImportedPoint', 'p = ImportedPoint();', 'p.x', 'ImportedPoint.make()', '?ImportedPoint.Name'].join('\n')),
+                ),
+            ).toBe('p=pkg.alias.ImportedPoint object with properties: x\n12\n13\npkg.alias.ImportedPoint\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('exist("ImportedPoint", "class")'))).toBe('8\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('which("ImportedPoint")'))).toBe('ImportedPoint is a class\n');
+        });
+
+        it('Should resolve wildcard imported class names from host class sources.', () => {
+            const localInterpreter = Interpreter.Create({
+                classSourceProvider: (name) =>
+                    name === 'pkg.wild.WildPoint'
+                        ? {
+                              name,
+                              source: ['classdef WildPoint', '  properties', '    x = 21;', '  end', 'end'].join('\n'),
+                          }
+                        : undefined,
+            });
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute(['import pkg.wild.*', 'p = WildPoint();', 'p.x', '?WildPoint.ContainingPackage'].join('\n')))).toBe(
+                'p=pkg.wild.WildPoint object with properties: x\n21\npkg.wild\n',
+            );
+        });
+
+        it('Should prefer directly defined classes over wildcard imports.', () => {
+            const localInterpreter = Interpreter.Create({
+                classSourceTable: {
+                    'pkg.shadow.ShadowPoint': ['classdef ShadowPoint', '  properties', '    x = 99;', '  end', 'end'].join('\n'),
+                },
+            });
+
+            localInterpreter.Execute(['classdef ShadowPoint', '  properties', '    x = 7;', '  end', 'end'].join('\n'));
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute(['import pkg.shadow.*', 'p = ShadowPoint();', 'p.x'].join('\n')))).toBe('p=ShadowPoint object with properties: x\n7\n');
         });
 
         it('Should resolve meta.class.fromName through the runtime class registry.', () => {
@@ -1979,6 +3196,17 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('meta.class.fromName("FromNamePoint").Name'))).toBe('FromNamePoint\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('meta.class.fromName("ProvidedMetaPoint").PropertyList(1).Name'))).toBe('x\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('isempty(meta.class.fromName("MissingMetaPoint"))'))).toBe('true\n');
+        });
+
+        it('Should evaluate class property default values in runtime metadata.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(['classdef RuntimeDefaultMetaPoint', '  properties', '    x = 1 + 2;', '  end', 'end'].join('\n'));
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('metaclass(RuntimeDefaultMetaPoint()).PropertyList(1).DefaultValue'))).toBe('3\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('?RuntimeDefaultMetaPoint.PropertyList(1).DefaultValue'))).toBe('3\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('meta.class.fromName("RuntimeDefaultMetaPoint").PropertyList(1).Validation{1}.DefaultValue'))).toBe('3\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('metaclass(RuntimeDefaultMetaPoint()).PropertyList(1).DefiningClass.PropertyList(1).DefaultValue'))).toBe('3\n');
         });
 
         /**
@@ -2104,6 +3332,26 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const value = localInterpreter.Execute('a = 10; f = @(x) x + a; g = f; a = 20; g(1)');
 
             expect(localInterpreter.Unparse(value)).toBe('a=10\nf=@(x) x+a\ng=@(x) x+a\na=20\n11\n');
+        });
+
+        it('Should copy anonymous function handle AST nodes independently.', () => {
+            const localInterpreter = Interpreter.Create();
+            const value = localInterpreter.Execute('f = @(x) x + 1; g = f; g(2)') as any;
+            const f = value.list[0].right;
+            const g = value.list[1].right;
+
+            expect(localInterpreter.Unparse(value)).toBe('f=@(x) x+1\ng=@(x) x+1\n3\n');
+            expect(f).not.toBe(g);
+            expect(f.parameter[0]).not.toBe(g.parameter[0]);
+            expect(f.expression).not.toBe(g.expression);
+            expect(f.parameter[0].parent).toBe(f);
+            expect(g.parameter[0].parent).toBe(g);
+            expect(f.expression.parent).toBe(f);
+            expect(g.expression.parent).toBe(g);
+            expect(f.expression.left.parent).toBe(f.expression);
+            expect(g.expression.left.parent).toBe(g.expression);
+            expect(f.expression.right.parent).toBe(f.expression);
+            expect(g.expression.right.parent).toBe(g.expression);
         });
 
         it('Should let returned anonymous functions keep their defining function scope.', () => {
@@ -2242,16 +3490,27 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         it('Should report basic function handle metadata.', () => {
             const localInterpreter = Interpreter.Create();
             localInterpreter.Execute(['function f = makenestedmeta(a)', '  function z = inner(x)', '    z = x + a;', '  end', '  f = @inner;', 'end'].join('\n'));
+            const firstResult = (source: string) => (localInterpreter.Execute(source) as any).list[0];
 
-            expect(localInterpreter.Unparse(localInterpreter.Execute('info = functions(@sin); info.function'))).toBe(
-                'info=struct {\nfunction: sin\ntype: simple\nworkspace: false\n}\nsin\n',
-            );
-            expect(localInterpreter.Unparse(localInterpreter.Execute('info = functions(@(x) x + 1); info.type'))).toBe(
-                'info=struct {\nfunction: @(x) x+1\ntype: anonymous\nworkspace: true\n}\nanonymous\n',
-            );
-            expect(localInterpreter.Unparse(localInterpreter.Execute('h = makenestedmeta(10); info = functions(h); info.type'))).toBe(
-                'h=@inner\ninfo=struct {\nfunction: inner\ntype: nested\nworkspace: true\n}\nnested\n',
-            );
+            const simpleInfo = firstResult('functions(@sin)') as Structure;
+            expect((simpleInfo.field.function as CharString).str).toBe('sin');
+            expect((simpleInfo.field.type as CharString).str).toBe('simple');
+            expect((simpleInfo.field.file as CharString).str).toBe('');
+            expect((simpleInfo.field.workspace as MultiArray).isCell).toBe(true);
+            expect(MultiArray.isEmpty(simpleInfo.field.workspace)).toBe(true);
+
+            localInterpreter.Execute('a = 10;');
+            const anonymousInfo = firstResult('functions(@(x) x + a)') as Structure;
+            const anonymousWorkspace = (anonymousInfo.field.workspace as MultiArray).array[0][0] as Structure;
+            expect((anonymousInfo.field.type as CharString).str).toBe('anonymous');
+            expect((anonymousInfo.field.file as CharString).str).toBe('');
+            expect(Complex.realToNumber(anonymousWorkspace.field.a as ComplexType)).toBe(10);
+
+            localInterpreter.Execute('h = makenestedmeta(10);');
+            const nestedInfo = firstResult('functions(h)') as Structure;
+            const nestedWorkspace = (nestedInfo.field.workspace as MultiArray).array[0][0] as Structure;
+            expect((nestedInfo.field.type as CharString).str).toBe('nested');
+            expect(Complex.realToNumber(nestedWorkspace.field.a as ComplexType)).toBe(10);
         });
 
         it('Should return handles for functions defined in the current scope with localfunctions.', () => {
@@ -2262,18 +3521,232 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('c = localfunctions(); func2str(c{1}); feval(c{2}, 5)'))).toBe('c={@localfirst;\n@localsecond}\nlocalfirst\n7\n');
         });
 
+        it('Should pre-register script local functions before their textual definitions.', () => {
+            const localInterpreter = Interpreter.Create();
+            const source = [
+                'first = localadd(2);',
+                'second = localother(2);',
+                'visible = localfunctions();',
+                'scriptValue = 5;',
+                'workspaceVisible = localscriptworkspace();',
+                'function y = localadd(x)',
+                '  y = x + 1;',
+                'end',
+                'function y = localother(x)',
+                '  y = localadd(x) + 1;',
+                'end',
+                'function y = localscriptworkspace()',
+                '  y = exist("scriptValue", "var");',
+                'end',
+            ].join('\n');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute(source))).toBe(
+                'first=3\nsecond=4\nvisible={@localadd;\n@localother;\n@localscriptworkspace}\nscriptValue=5\nworkspaceVisible=1\n',
+            );
+        });
+
+        it('Should load function-file sources with private subfunctions.', () => {
+            const localInterpreter = Interpreter.Create();
+            localInterpreter.Execute('baseValue = 10');
+            localInterpreter.LoadFunctionFile(
+                'fileprimary',
+                [
+                    'function y = fileprimary(x)',
+                    '  y = filehelper(x) + fileother(x) + exist("baseValue", "var");',
+                    'end',
+                    'function z = filehelper(x)',
+                    '  z = x + 1;',
+                    'end',
+                    'function z = fileother(x)',
+                    '  z = filehelper(x) + 1;',
+                    'end',
+                ].join('\n'),
+            );
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('fileprimary(3)'))).toBe('9\n');
+            expect(() => localInterpreter.Execute('filehelper(3)')).toThrow("'filehelper' undefined.");
+        });
+
+        it('Should expose function-file private subfunctions through localfunctions.', () => {
+            const localInterpreter = Interpreter.Create();
+            localInterpreter.LoadFunctionFile(
+                'filelocals',
+                [
+                    'function [names, value] = filelocals(x)',
+                    '  c = localfunctions();',
+                    '  names = {func2str(c{1}), func2str(c{2})};',
+                    '  value = feval(c{1}, x) + feval(c{2}, x);',
+                    'end',
+                    'function y = filehelpera(x)',
+                    '  y = x + 1;',
+                    'end',
+                    'function y = filehelperb(x)',
+                    '  y = x + 2;',
+                    'end',
+                ].join('\n'),
+            );
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('[names, value] = filelocals(5)'))).toBe('names={filehelpera,filehelperb}\nvalue=13\n');
+            expect(() => localInterpreter.Execute('filehelpera(5)')).toThrow("'filehelpera' undefined.");
+        });
+
+        it('Should lazily load function-file sources from host providers.', () => {
+            const localInterpreter = Interpreter.Create({
+                functionSourceProvider: (name) =>
+                    name === 'lazyprimary'
+                        ? {
+                              source: [
+                                  'function y = lazyprimary(x)',
+                                  '  y = lazysub(x) + lazyrecursive(2);',
+                                  'end',
+                                  'function z = lazysub(x)',
+                                  '  z = x * 2;',
+                                  'end',
+                                  'function z = lazyrecursive(n)',
+                                  '  if n <= 0',
+                                  '    z = 0;',
+                                  '    return',
+                                  '  end',
+                                  '  z = 1 + lazyrecursive(n - 1);',
+                                  'end',
+                              ].join('\n'),
+                          }
+                        : undefined,
+            });
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('lazyprimary(4)'))).toBe('10\n');
+            expect(() => localInterpreter.Execute('lazysub(4)')).toThrow("'lazysub' undefined.");
+        });
+
+        it('Should apply MATLAB-like precedence across variables, lazy functions, handles, and subfunctions.', () => {
+            const localInterpreter = Interpreter.Create({
+                functionSourceProvider: (name) =>
+                    name === 'lazyresolve'
+                        ? {
+                              source: ['function y = lazyresolve(x)', '  y = lazysubresolve(x) + 1;', 'end', 'function z = lazysubresolve(x)', '  z = x * 2;', 'end'].join('\n'),
+                          }
+                        : undefined,
+            });
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('exist("lazyresolve", "file"); which("lazyresolve"); which("lazysubresolve")'))).toBe(
+                '2\nlazyresolve is a user-defined function\nlazysubresolve not found\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('f = str2func("lazyresolve"); f(3); feval("lazyresolve", 4)'))).toBe('f=@lazyresolve\n7\n9\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('lazyresolve = 99; which("lazyresolve"); which(f); f(5)'))).toBe(
+                'lazyresolve=99\nlazyresolve is a variable\nlazyresolve is a user-defined function\n11\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('exist("lazyresolve", "var"); exist("lazyresolve", "file")'))).toBe('1\n2\n');
+        });
+
+        it('Should resolve qualified package function sources.', () => {
+            const localInterpreter = Interpreter.Create({
+                functionSourceTable: {
+                    'pkg.math.addtwice': ['function y = addtwice(x)', '  y = addhelper(x) + addhelper(x);', 'end', 'function z = addhelper(x)', '  z = x + 1;', 'end'].join('\n'),
+                },
+            });
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('pkg.math.addtwice(4)'))).toBe('10\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('which("pkg.math.addtwice")'))).toBe('pkg.math.addtwice is a user-defined function\n');
+            expect(() => localInterpreter.Execute('addhelper(4)')).toThrow("'addhelper' undefined.");
+        });
+
+        it('Should resolve imported package function sources.', () => {
+            const localInterpreter = Interpreter.Create({
+                functionSourceProvider: (name) =>
+                    name === 'pkg.ops.scale'
+                        ? {
+                              name,
+                              source: ['function y = scale(x)', '  y = x * 3;', 'end'].join('\n'),
+                          }
+                        : undefined,
+            });
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute(['import pkg.ops.scale', 'scale(5)', 'f = @scale;', 'f(6)', 'feval("scale", 7)'].join('\n')))).toBe(
+                '15\nf=@scale\n18\n21\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('exist("scale", "file"); which("scale")'))).toBe('2\nscale is a user-defined function\n');
+        });
+
+        it('Should resolve wildcard imported package function sources.', () => {
+            const localInterpreter = Interpreter.Create({
+                functionSourceProvider: (name) =>
+                    name === 'pkg.tools.shift'
+                        ? {
+                              name,
+                              source: ['function y = shift(x)', '  y = x + 8;', 'end'].join('\n'),
+                          }
+                        : undefined,
+            });
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute(['import pkg.tools.*', 'shift(2)', 'h = str2func("shift");', 'h(3)'].join('\n')))).toBe('10\nh=@shift\n11\n');
+        });
+
+        it('Should prefer local functions over wildcard imported package functions.', () => {
+            const localInterpreter = Interpreter.Create({
+                functionSourceTable: {
+                    'pkg.shadow.choose': ['function y = choose()', '  y = 99;', 'end'].join('\n'),
+                },
+            });
+
+            localInterpreter.Execute(['function y = choose()', '  y = 5;', 'end'].join('\n'));
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute(['import pkg.shadow.*', 'choose()'].join('\n')))).toBe('5\n');
+        });
+
+        it('Should run script-file sources with private local functions.', () => {
+            const localInterpreter = Interpreter.Create({
+                scriptSourceTable: {
+                    localscript: [
+                        'seenBefore = exist("localscripthelper", "file");',
+                        'scriptValue = localscripthelper(2);',
+                        'scriptHandle = @localscripthelper;',
+                        'function y = localscripthelper(x)',
+                        '  y = x + 1;',
+                        'end',
+                    ].join('\n'),
+                },
+            });
+
+            localInterpreter.RunScriptFile('localscript');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('seenBefore; scriptValue; scriptHandle(4); which("localscripthelper")'))).toBe('2\n3\n5\nlocalscripthelper not found\n');
+            expect(() => localInterpreter.Execute('localscripthelper(4)')).toThrow("'localscripthelper' undefined.");
+        });
+
+        it('Should expose run and source for host-provided script sources.', () => {
+            const localInterpreter = Interpreter.Create({
+                scriptSourceProvider: (name) => {
+                    switch (name) {
+                        case 'callerScript':
+                            return {
+                                source: ['x = 10;', 'y = callerhelper(x);', 'function z = callerhelper(v)', '  z = v + 2;', 'end'].join('\n'),
+                            };
+                        case 'baseScript':
+                            return { source: 'baseOnly = 44;' };
+                        default:
+                            return undefined;
+                    }
+                },
+            });
+            localInterpreter.Execute(['function y = runscriptcaller()', '  run("callerScript");', '  y = x + y;', 'end'].join('\n'));
+            localInterpreter.Execute(['function y = sourcebasecaller()', '  source("baseScript", "base");', '  y = exist("baseOnly", "var");', 'end'].join('\n'));
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('runscriptcaller(); sourcebasecaller(); baseOnly'))).toBe('22\n1\n44\n');
+            expect(() => localInterpreter.Execute('callerhelper(1)')).toThrow("'callerhelper' undefined.");
+        });
+
         it('Should return lexical nested function handles with localfunctions.', () => {
             const localInterpreter = Interpreter.Create();
             localInterpreter.Execute(
                 [
-                    'function [name, y, kind, workspace] = outermakehandles(a)',
+                    'function [name, y, kind, captured] = outermakehandles(a)',
                     '  c = localfunctions();',
                     '  h = c{1};',
                     '  info = functions(h);',
                     '  name = func2str(h);',
                     '  y = h(5);',
                     '  kind = info.type;',
-                    '  workspace = info.workspace;',
+                    '  captured = info.workspace{1}.a;',
                     '  function z = inner(x)',
                     '    z = x + a;',
                     '  end',
@@ -2281,7 +3754,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                 ].join('\n'),
             );
 
-            expect(localInterpreter.Unparse(localInterpreter.Execute('[name, y, kind, workspace] = outermakehandles(10)'))).toBe('name=inner\ny=15\nkind=nested\nworkspace=true\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('[name, y, kind, captured] = outermakehandles(10)'))).toBe('name=inner\ny=15\nkind=nested\ncaptured=10\n');
         });
 
         it('Should call function handles and function names through feval.', () => {
@@ -2405,6 +3878,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('cmdprobe alpha % comment\ncmdprobe beta'))).toBe('alpha\nbeta\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('cmdprobe "alpha beta" \'gamma delta\' -flag key=value'))).toBe('alpha beta|gamma delta|-flag|key=value\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('cmdprobe if end properties'))).toBe('if|end|properties\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('cmdprobe (1 + 2)'))).toBe('(1|+|2)\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('x = 1, cmdprobe after comma'))).toBe('x=1\nafter|comma\n');
             expect(() => localInterpreter.Execute('cmdprobe(1)')).toThrow("'cmdprobe' undefined.");
         });
 
@@ -2428,6 +3903,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
             expect(localInterpreter.Unparse(localInterpreter.Execute('class(1)'))).toBe('double\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('class([1,2])'))).toBe('double\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('class([true,false])'))).toBe('logical\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute("class('abc')"))).toBe('char\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('class({1,2})'))).toBe('cell\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('class(struct())'))).toBe('struct\n');
@@ -2439,6 +3915,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
             expect(localInterpreter.Unparse(localInterpreter.Execute('isa(1, "double")'))).toBe('true\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('isa([1,2], "double")'))).toBe('true\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('isa(true, "double")'))).toBe('false\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('isa([true,false], "logical")'))).toBe('true\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute("isa('abc', 'char')"))).toBe('true\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('isa({1,2}, "cell")'))).toBe('true\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('isa(struct(), "struct")'))).toBe('true\n');
@@ -2783,6 +4261,15 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('[a, b] = commapersistent(); [a, b] = commapersistent()'))).toBe('a=2\nb=12\na=3\nb=14\n');
         });
 
+        it('Should evaluate persistent declaration defaults only once.', () => {
+            const localInterpreter = Interpreter.Create();
+            localInterpreter.Execute(
+                ['function y = persistentdefaultonce()', '  persistent seed = 1;', '  persistent value = seed;', '  seed = seed + 1;', '  y = value;', 'end'].join('\n'),
+            );
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('persistentdefaultonce(); persistentdefaultonce(); persistentdefaultonce()'))).toBe('1\n1\n1\n');
+        });
+
         it('Should unparse global and persistent declarations.', () => {
             const localInterpreter = Interpreter.Create();
 
@@ -2829,6 +4316,19 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const result = localInterpreter.Execute('[u, v] = pair(10)');
 
             expect(localInterpreter.Unparse(result)).toBe('u=10\nv=11\n');
+        });
+
+        it('Should assign multiple outputs into indexed and field target lists.', () => {
+            const localInterpreter = Interpreter.Create();
+            localInterpreter.Execute(['function [a, b] = pair(x)', '  a = x;', '  b = x + 1;', 'end'].join('\n'));
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('A = [1, 2, 3]; [A(1) A(3)] = pair(10)'))).toBe('A=[10,2,11]\nA=[10,2,11]\nA=[10,2,11]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('S.a = 0; S.b = 0; [S.a S.b] = pair(20)'))).toBe(
+                'S=struct {\na: 20\nb: 21\n}\nS=struct {\na: 20\nb: 21\n}\nS=struct {\na: 20\nb: 21\n}\nS=struct {\na: 20\nb: 21\n}\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('dyn = "b"; S.a = 0; S.b = 0; [S.a S.(dyn)] = pair(30)'))).toBe(
+                'dyn=b\nS=struct {\na: 30\nb: 31\n}\nS=struct {\na: 30\nb: 31\n}\nS=struct {\na: 30\nb: 31\n}\nS=struct {\na: 30\nb: 31\n}\n',
+            );
         });
 
         it('Should allow ignored outputs in user-defined function return lists.', () => {
@@ -3223,6 +4723,10 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => localInterpreter.Execute('norm([1, 2], 0)')).toThrow('Invalid call to norm.');
             expect(() => localInterpreter.Execute('norm([1, 2], -1)')).toThrow('Invalid call to norm.');
             expect(() => localInterpreter.Execute('norm([1, 2], [1, 2])')).toThrow('Invalid call to norm.');
+            expect(() => localInterpreter.Execute('norm([1, 2; 3, 4], -inf)')).toThrow('Invalid call to norm.');
+            expect(() => localInterpreter.Execute('cond([1, 2], 1)')).toThrow('Invalid call to cond.');
+            expect(() => localInterpreter.Execute('cond([1, 2; 3, 4], -inf)')).toThrow('Invalid call to cond.');
+            expect(() => localInterpreter.Execute('rank([1, 2; 3, 4], -1)')).toThrow('Invalid call to rank.');
             expect(() => localInterpreter.Execute('configure(1, 2)')).toThrow('Invalid call to configure.');
             expect(() => localInterpreter.Execute('getconfig(123)')).toThrow('Invalid call to getconfig.');
             expect(() => localInterpreter.Execute('feval(123, 1)')).toThrow('Invalid call to feval.');
@@ -3286,6 +4790,13 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                 '[1,2;\n3,4]\n[1,3;\n2,4]\n[1,2;\n3,4]\n',
             );
             expect(localInterpreter.Unparse(localInterpreter.Execute('cat(3, [1, 2], [3, 4]); horzcat(); vertcat()'))).toBe('[1,2] (:,:,1)\n[3,4] (:,:,2)\n\n[ ](0x0)\n[ ](0x0)\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('s1 = struct("a", 1, "b", 2); s2 = struct("b", 4, "a", 3); ss = [s1, s2]; ss.a'))).toBe(
+                's1=struct {\na: 1\nb: 2\n}\ns2=struct {\nb: 4\na: 3\n}\nss=[struct {\na: 1\nb: 2\n},struct {\nb: 4\na: 3\n}]\n1\n3\n',
+            );
+            expect(() => localInterpreter.Execute('[struct("a", 1), struct("b", 2)]')).toThrow('structure arrays must contain structures with the same fields.');
+            expect(() => localInterpreter.Execute('horzcat(struct("a", 1), struct("b", 2))')).toThrow('horzcat: structure arrays must contain structures with the same fields.');
+            expect(() => localInterpreter.Execute('vertcat(struct("a", 1), struct("b", 2))')).toThrow('vertcat: structure arrays must contain structures with the same fields.');
+            expect(() => localInterpreter.Execute('cat(3, struct("a", 1), struct("b", 2))')).toThrow('cat: structure arrays must contain structures with the same fields.');
         });
 
         it('Should use core function signatures for reduction and accumulation helpers.', () => {
@@ -3316,7 +4827,19 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             );
             expect(localInterpreter.Unparse(localInterpreter.Execute('u = struct(t); u.a; u.b'))).toBe('u=struct {\na: 1\nb: [2,3]\n}\n1\n[2,3]\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('nargin("struct"); nargout("struct")'))).toBe('-1\n1\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('nargin("isfield"); nargout("isfield")'))).toBe('2\n1\n');
             expect(() => localInterpreter.Execute('struct(@sin)')).toThrow('Invalid call to struct.');
+        });
+
+        it('Should expose core type predicate functions.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute('ischar("abc"); isnumeric([1, 2]); isnumeric(true); islogical([true, false]); isreal(true); isreal(1 + 2i); isreal([1, 2])'),
+                ),
+            ).toBe('true\ntrue\nfalse\ntrue\ntrue\nfalse\ntrue\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('nargin("ischar"); nargin("isnumeric"); nargin("islogical"); nargin("isreal")'))).toBe('1\n1\n1\n1\n');
         });
 
         it('Should use linear algebra function signatures.', () => {
@@ -3335,9 +4858,13 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('dot([1, 2, 3], [4, 5, 6]); cross([1, 0, 0], [0, 1, 0]); kron([1, 2], [3; 4]); kron(2, [3, 4])'))).toBe(
                 '32\n[0,0,1]\n[3,6;\n4,8]\n[6,8]\n',
             );
-            expect(localInterpreter.Unparse(localInterpreter.Execute('norm([3, 4]); norm([1, -2, 3], 1); norm([1, -2, 3], inf); norm([1, 2; 3, 4], "fro")'))).toBe(
-                '5\n6\n3\n5.477225575051661134\n',
-            );
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'norm([3, 4]); norm([1, -2, 3], 1); norm([1, -2, 3], inf); norm([1, -2, 3], -inf); norm([1, 2; 3, 4], 1); norm([1, 2; 3, 4], inf); norm([3, 0; 0, 4]); norm([3, 0; 0, 4], 2); norm([1, 2; 3, 4], "fro"); cond([1, 2; 3, 4], 1); cond([1, 2; 3, 4], inf); cond([1, 2; 3, 4], "fro"); cond([1, 0]); rank([3, 2, 4; -1, 1, 2; 9, 5, 10]); rank([10, 0, 0, 0; 0, 25, 0, 0; 0, 0, 34, 0; 0, 0, 0, 1e-15]); rank([10, 0, 0, 0; 0, 25, 0, 0; 0, 0, 34, 0; 0, 0, 0, 1e-15], 1e-16)',
+                    ),
+                ),
+            ).toBe('5\n6\n3\n1\n6\n7\n4\n4\n5.477225575051661134\n21\n21\n15\n1\n2\n3\n4\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('A = [1, 2; 3, 4]; [Q, R] = qr(A); size(Q); size(R); [V, D] = eig([2, 1; 1, 2]); size(V); D'))).toBe(
                 'A=[1,2;\n3,4]\nQ=[-0.31622776601683793,-0.94868329805051379;\n-0.94868329805051379,0.316227766016837933]\nR=[-3.16227766016837933,-4.42718872423573106;\n0,-0.63245553203367586]\n[2,2]\n[2,2]\nV=[0.707106781186547524,0.707106781186547524;\n-0.70710678118654752,0.707106781186547524]\nD=[1,0;\n0,3]\n[2,2]\n[1,0;\n0,3]\n',
             );
@@ -3459,6 +4986,24 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             );
         });
 
+        it('Should optionally report caller expressions with inputname.', () => {
+            const localInterpreter = Interpreter.Create();
+            localInterpreter.Execute(
+                [
+                    'function [first, second, third, fourth] = inputexpressions(x, y, z)',
+                    '  first = inputname(1, false);',
+                    '  second = inputname(2, false);',
+                    '  third = inputname(3, true);',
+                    '  fourth = inputname(3, false);',
+                    'end',
+                ].join('\n'),
+            );
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('a = 10; b = 20; [first, second, third, fourth] = inputexpressions(a, b + 1, {a, b})'))).toBe(
+                'a=10\nb=20\nfirst=a\nsecond=b+1\nthird=\nfourth={a,b}\n',
+            );
+        });
+
         it('Should report immediate caller argument names through inputname in nested function calls.', () => {
             const localInterpreter = Interpreter.Create();
             localInterpreter.Execute(['function name = outerinputname(x)', '  name = inner(x);', '  function y = inner(value)', '    y = inputname(1);', '  end', 'end'].join('\n'));
@@ -3470,6 +5015,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const localInterpreter = Interpreter.Create();
             expect(localInterpreter.Unparse(localInterpreter.Execute('f = @(x) inputname(1); source = 10; f(source)'))).toBe('f=@(x) inputname(1)\nsource=10\nsource\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('f = @(x) inputname(1); f(10)'))).toBe('f=@(x) inputname(1)\n\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('f = @(x) inputname(1, false); source = 10; f(source + 1)'))).toBe('f=@(x) inputname(1,false)\nsource=10\nsource+1\n');
         });
 
         it('Should report caller argument names inside returned anonymous closures.', () => {
@@ -3990,6 +5536,13 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => localInterpreter.Execute('charonly(3)')).toThrow("arguments block validation failed for 'x': expected class char, got double.");
         });
 
+        it('Should validate char argument sizes as row character vectors.', () => {
+            const localInterpreter = Interpreter.Create();
+            localInterpreter.Execute(['function y = charrow(x)', '  arguments', '    x (1,4) char', '  end', '  y = length(x);', 'end'].join('\n'));
+            expect(localInterpreter.Unparse(localInterpreter.Execute('charrow("abcd")'))).toBe('4\n');
+            expect(() => localInterpreter.Execute('charrow("abc")')).toThrow("arguments block validation failed for 'x': expected size 1x4, got 1x3.");
+        });
+
         it('Should validate cell arguments declared in arguments blocks.', () => {
             const localInterpreter = Interpreter.Create();
             localInterpreter.Execute(['function y = cellonly(x)', '  arguments', '    x cell', '  end', '  y = x;', 'end'].join('\n'));
@@ -4009,6 +5562,19 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             localInterpreter.Execute(['function y = handleonly(f)', '  arguments', '    f function_handle', '  end', '  y = f(3);', 'end'].join('\n'));
             expect(localInterpreter.Unparse(localInterpreter.Execute('handleonly(@(x) x + 1)'))).toBe('4\n');
             expect(() => localInterpreter.Execute('handleonly(3)')).toThrow("arguments block validation failed for 'f': expected class function_handle, got double.");
+        });
+
+        it('Should validate user-defined classes in arguments blocks.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                ['classdef ArgBase', 'end', 'classdef ArgChild < ArgBase', 'end', 'function name = classarg(x)', '  arguments', '    x ArgBase', '  end', '  name = class(x);', 'end'].join(
+                    '\n',
+                ),
+            );
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('classarg(ArgChild())'))).toBe('ArgChild\n');
+            expect(() => localInterpreter.Execute('classarg(1)')).toThrow("arguments block validation failed for 'x': expected class ArgBase, got double.");
         });
 
         it('Should parse qualified class names in arguments blocks.', () => {
@@ -4065,6 +5631,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('scalarvalidated(3)'))).toBe('3\n');
             expect(() => localInterpreter.Execute('scalarvalidated([1,2])')).toThrow("arguments block validation failed for 'x': mustBeScalar.");
             expect(localInterpreter.Unparse(localInterpreter.Execute('vectorvalidated([1,2])'))).toBe('[1,2]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('vectorvalidated("abc")'))).toBe('abc\n');
             expect(() => localInterpreter.Execute('vectorvalidated([1,2;3,4])')).toThrow("arguments block validation failed for 'x': mustBeVector.");
             expect(localInterpreter.Unparse(localInterpreter.Execute('scalarorempty([])'))).toBe('[ ](0x0)\n');
             expect(() => localInterpreter.Execute('nonemptyvalidated([])')).toThrow("arguments block validation failed for 'x': mustBeNonempty.");
@@ -4242,10 +5809,15 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => localInterpreter.Execute('reversemember(1)')).toThrow("arguments block validation failed for 'x': mustBeMember.");
         });
 
-        it('Should reject unsupported text mustBeMember values.', () => {
+        it('Should validate text mustBeMember argument functions.', () => {
             const localInterpreter = Interpreter.Create();
             localInterpreter.Execute(['function y = textmember(x)', '  arguments', "    x char {mustBeMember(x, {'a','b'})}", '  end', '  y = x;', 'end'].join('\n'));
-            expect(() => localInterpreter.Execute("textmember('a')")).toThrow("arguments block validation failed for 'x': mustBeMember.");
+            localInterpreter.Execute(['function y = celltextmember(x)', '  arguments', "    x cell {mustBeMember(x, {'red','blue'})}", '  end', '  y = x;', 'end'].join('\n'));
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute("textmember('a')"))).toBe('a\n');
+            expect(() => localInterpreter.Execute("textmember('c')")).toThrow("arguments block validation failed for 'x': mustBeMember.");
+            expect(localInterpreter.Unparse(localInterpreter.Execute("celltextmember({'red','blue'})"))).toBe('{red,blue}\n');
+            expect(() => localInterpreter.Execute("celltextmember({'red','green'})")).toThrow("arguments block validation failed for 'x': mustBeMember.");
         });
 
         it('Should validate output arguments blocks.', () => {
@@ -4323,6 +5895,25 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('defaultfromprevious(10)'))).toBe('11\n');
         });
 
+        it('Should evaluate Octave-style default values in function parameter lists.', () => {
+            const localInterpreter = Interpreter.Create();
+            localInterpreter.Execute(['function y = signaturedefault(x = 4)', '  y = x + 1;', 'end'].join('\n'));
+            localInterpreter.Execute(['function y = signaturedefaultprevious(x, z = x + 1)', '  y = z;', 'end'].join('\n'));
+            localInterpreter.Execute(['function y = signaturedefaultwitharguments(x = 2, z)', '  arguments', '    z = x + 3', '  end', '  y = z;', 'end'].join('\n'));
+
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        ['signaturedefault();', 'signaturedefault(10);', 'signaturedefaultprevious(5);', 'signaturedefaultprevious(5, 20);', 'signaturedefaultwitharguments();'].join('\n'),
+                    ),
+                ),
+            ).toBe('5\n11\n6\n20\n5\n');
+            expect(() => localInterpreter.Execute(['function y = invaliddefaultvarargin(varargin = 1)', '  y = nargin;', 'end'].join('\n'))).toThrow(
+                'varargin default value is not supported in function invaliddefaultvarargin.',
+            );
+            expect(() => localInterpreter.Execute('@(x = 1) x')).toThrow('invalid parameter list in anonymous function.');
+        });
+
         it('Should keep required parameters before defaulted trailing parameters mandatory.', () => {
             const localInterpreter = Interpreter.Create();
             localInterpreter.Execute(['function y = needsfirst(x, z)', '  arguments', '    x', '    z = 10', '  end', '  y = x + z;', 'end'].join('\n'));
@@ -4395,6 +5986,32 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('scaledwithoption(5, Scale=3)'))).toBe('15\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('scaledwithoption(5, "sca", 4)'))).toBe('20\n');
             expect(() => localInterpreter.Execute('scaledwithoption(5, Scale=-1)')).toThrow("arguments block validation failed for 'opts.Scale': mustBePositive.");
+        });
+
+        it('Should expand comma-separated lists into name-value argument pairs.', () => {
+            const localInterpreter = Interpreter.Create();
+            localInterpreter.Execute(
+                [
+                    'function y = scaledwithoptionlist(x, opts)',
+                    '  arguments',
+                    '    x double',
+                    '    opts.Scale (1,1) double {mustBePositive} = 2',
+                    '  end',
+                    '  y = x * opts.Scale;',
+                    'end',
+                ].join('\n'),
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('xargs = {5}; nvpairs = {"Scale", 3}; scaledwithoptionlist(xargs{:}, nvpairs{:})'))).toBe(
+                'xargs={5}\nnvpairs={Scale,3}\n15\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('nvpairs = {"sca", 4}; scaledwithoptionlist(5, nvpairs{:})'))).toBe('nvpairs={sca,4}\n20\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('scaledwithoptionlist(5, nvpairs{:}, Scale=5)'))).toBe('25\n');
+        });
+
+        it('Should keep expanded name-value-like lists positional for ordinary varargin functions.', () => {
+            const localInterpreter = Interpreter.Create();
+            localInterpreter.Execute(['function y = countordinary(varargin)', '  y = nargin;', 'end'].join('\n'));
+            expect(localInterpreter.Unparse(localInterpreter.Execute('nvpairs = {"Scale", 3}; countordinary(nvpairs{:})'))).toBe('nvpairs={Scale,3}\n2\n');
         });
 
         it('Should reset persistent state for all user functions after clear functions.', () => {

@@ -1,6 +1,16 @@
 import type { FunctionTable, NameEntry, NameTable, NodeBuiltInFunction, NodeExpr, NodeFunctionDefinition, NodeInput, UndefinedReferenceTable } from './AST';
 
 /**
+ * Package/class import table for one lexical scope.
+ */
+type ImportTable = {
+    /** Explicit simple-name aliases, e.g. `Point -> pkg.Point`. */
+    explicit: Record<string, string>;
+    /** Wildcard package prefixes, e.g. `pkg` for `import pkg.*`. */
+    wildcard: string[];
+};
+
+/**
  * Represents a lexical workspace/scope.
  *
  * A scope stores variable bindings, function bindings, and forward-reference
@@ -26,6 +36,7 @@ class Scope {
         public nameTable: NameTable = Object.create(null),
         public functionTable: FunctionTable = Object.create(null),
         public undefinedReferenceTable: UndefinedReferenceTable = Object.create(null),
+        public importTable: ImportTable = { explicit: Object.create(null), wildcard: [] },
         public resolveParentNames: boolean = true,
         public assignExistingParentNames: boolean = false,
     ) {}
@@ -38,7 +49,7 @@ class Scope {
      * @returns New scope with prototype-less tables.
      */
     public static readonly create = (parent?: Scope, resolveParentNames: boolean = true) =>
-        new Scope(parent, Object.create(null), Object.create(null), Object.create(null), resolveParentNames);
+        new Scope(parent, Object.create(null), Object.create(null), Object.create(null), { explicit: Object.create(null), wildcard: [] }, resolveParentNames);
 
     /**
      * Define or replace a variable in the current scope only.
@@ -297,6 +308,51 @@ class Scope {
     }
 
     /**
+     * Register one MATLAB-style package/class import in the current scope.
+     *
+     * @param qualifiedName Fully qualified class name or wildcard package import.
+     */
+    public defineImport(qualifiedName: string): void {
+        if (qualifiedName.endsWith('.*')) {
+            const prefix = qualifiedName.slice(0, -2);
+            if (prefix && !this.importTable.wildcard.includes(prefix)) {
+                this.importTable.wildcard.push(prefix);
+            }
+            return;
+        }
+        const simpleName = qualifiedName.split('.').pop() ?? qualifiedName;
+        if (simpleName) {
+            this.importTable.explicit[simpleName] = qualifiedName;
+        }
+    }
+
+    /**
+     * Return possible fully qualified names imported for a simple name.
+     *
+     * Local imports take precedence over parent imports. Wildcard imports are
+     * returned from innermost to outermost scope and preserve source order.
+     *
+     * @param name Simple class or function name.
+     * @returns Candidate fully qualified imported names.
+     */
+    public importedNameCandidates(name: string): string[] {
+        const result: string[] = [];
+        let scope: Scope | undefined = this;
+        while (scope) {
+            const explicit = scope.importTable.explicit[name];
+            if (explicit) {
+                result.push(explicit);
+                break;
+            }
+            for (const prefix of scope.importTable.wildcard) {
+                result.push(`${prefix}.${name}`);
+            }
+            scope = scope.parent;
+        }
+        return result;
+    }
+
+    /**
      * Deep-copy the visible variable/function environment into a detached chain.
      *
      * Anonymous functions use snapshots so captured variables keep the value
@@ -322,6 +378,8 @@ class Scope {
         for (const name in this.undefinedReferenceTable) {
             scope.undefinedReferenceTable[name] = new Set(this.undefinedReferenceTable[name]);
         }
+        scope.importTable.explicit = { ...this.importTable.explicit };
+        scope.importTable.wildcard = [...this.importTable.wildcard];
         return scope;
     }
 
@@ -351,9 +409,12 @@ class Scope {
         for (const name in this.undefinedReferenceTable) {
             scope.undefinedReferenceTable[name] = new Set(this.undefinedReferenceTable[name]);
         }
+        scope.importTable.explicit = { ...this.importTable.explicit };
+        scope.importTable.wildcard = [...this.importTable.wildcard];
         return scope;
     }
 }
 
 export { Scope };
+export type { ImportTable };
 export default Scope;

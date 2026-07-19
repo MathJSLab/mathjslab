@@ -1,2 +1,1 @@
-import { ComplexInterfaceKey } from './ComplexInterface';
-export const ComplexInterfaceKeyTable: ComplexInterfaceKey[] = ['re', 'im', 'type', 'parent', 'copy', 'toString', 'toLogical'];
+export const ComplexInterfaceKeyTable = ['re', 'im', 'type', 'parent', 'copy', 'toString', 'toLogical'] as const;

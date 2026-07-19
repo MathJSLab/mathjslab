@@ -21,11 +21,15 @@ import type {
     NodeReturnList,
     NodeType,
     NodeFunctionDefinition,
+    NodeFunctionParameter,
+    NodeFunctionReturn,
+    NodeList,
     NodeBuiltInFunction,
     NodeClassDef,
     NodeArgumentValidation,
     NodeClassAttribute,
     NodeClassSection,
+    NodeSwitchCase,
     BuiltInFunctionInputSignature,
     BuiltInFunctionSignature,
     NameEntry,
@@ -35,26 +39,22 @@ import type {
     FunctionSignatureEntry,
     IndexingDelimiterType,
 } from './AST';
-import {
-    AST,
-    CharString,
-    Complex,
-    ComplexType,
-    MultiArray,
-    Structure,
-    FunctionHandle,
-    ClassDefinition,
-    ClassInstance,
-    ClassBoundMethod,
-    ClassStaticMethod,
-    ClassEmptyMethod,
-    ClassEnumerationValue,
-    ClassEventListener,
-    ClassEventData,
-    ClassPropertyEvent,
-    ClassMetaObject,
-    ClassMetaClass,
-} from './AST';
+import { AST } from './AST';
+import { CharString } from './CharString';
+import { Complex, type ComplexType } from './Complex';
+import { type ElementType, MultiArray } from './MultiArray';
+import { Structure } from './Structure';
+import { FunctionHandle } from './FunctionHandle';
+import { ClassDefinition } from './ClassDefinition';
+import { ClassInstance } from './ClassInstance';
+import { ClassBoundMethod } from './ClassBoundMethod';
+import { ClassStaticMethod } from './ClassStaticMethod';
+import { ClassEmptyMethod } from './ClassEmptyMethod';
+import { ClassEnumerationValue } from './ClassEnumerationValue';
+import { ClassEventListener } from './ClassEventListener';
+import { ClassEventData } from './ClassEventData';
+import { ClassPropertyEvent } from './ClassPropertyEvent';
+import { ClassMetaObject, ClassMetaClass } from './ClassMeta';
 import type { MathObject, MathOperationType, UnaryMathOperation, BinaryMathOperation, KeyOfTypeOfMathOperation } from './MathOperation';
 import { MathOperation } from './MathOperation';
 import { substSymbol } from './substSymbol';
@@ -69,11 +69,15 @@ import { FunctionCall } from './FunctionCall';
 import { FunctionWorkspace } from './FunctionWorkspace';
 import { FunctionIntrospection } from './FunctionIntrospection';
 import { FunctionLookup } from './FunctionLookup';
+import { RuntimeEquality } from './RuntimeEquality';
 import { Scope } from './Scope';
 import { CallFrame } from './CallFrame';
 import { Callables, type Callable, type FunctionDefinitionCallable } from './Callable';
 import type { ClassEventDefinition, ClassMethodDefinition, ClassPropertyDefinition } from './ClassMember';
+import type { SourceEntry, SourceProvider, SourceResolver, SourceTable } from './SourceResolver';
+import { TableSourceResolver } from './SourceResolver';
 import { BreakSignal, Context, ContinueSignal, ReturnSignal } from './Context';
+import type { SymbolResolution, SymbolResolutionOptions } from './Context';
 import { CircularReferenceError, EvalError, InterpreterError, ReferenceError, SyntaxError, UndefinedReferenceError } from './InterpreterError';
 
 /**
@@ -83,25 +87,27 @@ type ExitStatus = number;
 /** Named exit status table. */
 type ExitStatusValues = Record<string, ExitStatus>;
 
-/**
- * Host-provided class source entry.
- *
- * Browser-first execution cannot assume filesystem access, so external classes
- * are supplied by explicit source strings or providers.
- */
-type ClassSource = {
-    /** Optional canonical class name. */
-    name?: string;
-    /** Source text containing the classdef. */
-    source: string;
-};
+/** Host-provided class source entry. */
+type ClassSource = SourceEntry;
 
-/**
- * Callback used to provide classdef source for a class name.
- */
-type ClassSourceProvider = (name: string) => string | ClassSource | undefined;
+/** Host-provided function-file source entry. */
+type FunctionSource = SourceEntry;
+
+/** Host-provided script-file source entry. */
+type ScriptSource = SourceEntry;
+
+/** Callback used to provide classdef source for a class name. */
+type ClassSourceProvider = SourceProvider;
 /** Table of host-provided class sources keyed by class name. */
-type ClassSourceTable = Record<string, string | ClassSource>;
+type ClassSourceTable = SourceTable;
+/** Callback used to provide function-file source for a function name. */
+type FunctionSourceProvider = SourceProvider;
+/** Table of host-provided function-file sources keyed by primary function name. */
+type FunctionSourceTable = SourceTable;
+/** Callback used to provide script-file source for a script name. */
+type ScriptSourceProvider = SourceProvider;
+/** Table of host-provided script-file sources keyed by script name. */
+type ScriptSourceTable = SourceTable;
 
 /**
  * Interpreter construction options.
@@ -117,6 +123,16 @@ type InterpreterConfig = {
     externalFunctionTable?: BuiltInFunctionTable;
     /** Additional command-form functions registered at startup. */
     externalCmdWListTable?: CommandWordListTable;
+    /** Unified virtual `.m` source resolver. */
+    sourceResolver?: SourceResolver;
+    /** Host-provided function-file source strings. */
+    functionSourceTable?: FunctionSourceTable;
+    /** Lazy host-provided function-file source callback. */
+    functionSourceProvider?: FunctionSourceProvider;
+    /** Host-provided script-file source strings. */
+    scriptSourceTable?: ScriptSourceTable;
+    /** Lazy host-provided script-file source callback. */
+    scriptSourceProvider?: ScriptSourceProvider;
     /** Host-provided class source strings. */
     classSourceTable?: ClassSourceTable;
     /** Lazy host-provided class source callback. */
@@ -126,6 +142,16 @@ type InterpreterConfig = {
      * `classSourceTable` for browser/host-provided class sources.
      */
     externalClassSourceTable?: Record<string, string>;
+    /**
+     * Compatibility alias for early function-loader experiments. Prefer
+     * `functionSourceTable` for browser/host-provided function sources.
+     */
+    externalFunctionSourceTable?: Record<string, string>;
+    /**
+     * Compatibility alias for early script-loader experiments. Prefer
+     * `scriptSourceTable` for browser/host-provided script sources.
+     */
+    externalScriptSourceTable?: Record<string, string>;
 };
 
 /**
@@ -156,26 +182,80 @@ type InterpretsResult = {
 /**
  * Normalized assignment target produced while evaluating assignment syntax.
  */
-type AssignmentTarget = { id: string; index?: NodeExpr[]; delimiter?: IndexingDelimiterType; field: string[]; descriptors?: Structure[] };
+type AssignmentTarget = {
+    /** Base variable or pseudo-target identifier. */
+    id: string;
+    /** Ordinary evaluated index expressions for direct array/cell assignment. */
+    index?: NodeExpr[];
+    /** Indexing delimiter associated with {@link index}. */
+    delimiter?: IndexingDelimiterType;
+    /** Dot-reference field chain applied after the base/index target. */
+    field: string[];
+    /** MATLAB-like `subsasgn` descriptors used by class assignment dispatch. */
+    descriptors?: Structure[];
+};
+
+/**
+ * MATLAB-like subscript descriptor used by class `subsref`/`subsasgn` methods.
+ */
+type NativeSubscriptDescriptor = {
+    /** Descriptor type: `()`, `{}`, or `.`. */
+    type: IndexingDelimiterType | '.';
+    /** Descriptor subscripts; dot descriptors store their field name here. */
+    subs: NodeInput[];
+};
+
+/**
+ * Qualified symbolic access selected before ordinary dot indexing.
+ */
+type QualifiedAccessResolution = {
+    /** Selected qualified access category. */
+    kind: 'class-member-chain' | 'function';
+    /** Original dotted name parts. */
+    parts: string[];
+    /** Number of parts consumed by the class/function prefix. */
+    prefixLength: number;
+    /** Canonical class or function name resolved by the lookup layer. */
+    resolvedName: string;
+    /** Class definition for class-member chains. */
+    classDefinition?: ClassDefinition;
+    /** Function handle used for qualified function calls. */
+    functionHandle?: FunctionHandle;
+};
 
 /**
  * Interpreter instance interface.
  */
 interface InterpreterInterface {
+    /** Whether debug diagnostics and fallback tracing are enabled. */
     debug: boolean;
+    /** Runtime context owned by this interpreter. */
     context: Context;
+    /** Last public execution status. */
     exitStatus: ExitStatus;
+    /** Operator precedence table used by unparsers. */
     precedenceTable: { [key: string]: number };
+    /** Parse source text into an AST/runtime node. */
     Parse(input: string): NodeInput;
+    /** Reset runtime state while preserving constructor-level configuration defaults. */
     Restart(): void;
+    /** Clear variables/functions, or reset the interpreter when no names are supplied. */
     Clear(...names: string[]): void;
+    /** Evaluate one AST/runtime node in a scope. */
     Evaluator(tree: NodeInput, scope?: Scope): NodeInput;
+    /** Evaluate one parsed AST from the public top-level entry point. */
     Evaluate(tree: NodeInput): NodeInput;
+    /** Parse and evaluate source text in one call. */
     Execute(input: string): NodeInput;
+    /** Convert a runtime/AST node back to normalized source-like text. */
     Unparse(tree: NodeInput, parentPrecedence?: number): string;
+    /** Convert a runtime/AST node to a MathML fragment. */
     UnparserMathML(tree: NodeInput, parentPrecedence: number): string;
+    /** Convert a runtime/AST node to a complete MathML string. */
     UnparseMathML(tree: NodeInput, display: 'inline' | 'block' | 'none'): string;
+    /** Parse source text and render its AST as MathML. */
     ToMathML(input: string, display: 'inline' | 'block' | 'none'): string;
+    /** Return parsed/evaluated/unparsed forms for host diagnostics and demos. */
     Interprets(input: string, display: 'inline' | 'block' | 'none'): InterpretsResult;
 }
 
@@ -291,19 +371,14 @@ class Interpreter implements InterpreterInterface {
     private commandWordListNameSet = new Set(Object.keys(this.commandWordListTable));
 
     /**
-     * Host-provided class sources keyed by class name.
-     *
-     * MathJSLab is browser-first, so the engine does not read files directly.
-     * Hosts may inject sources here from memory, bundles, virtual filesystems,
-     * network caches, or a future file-access layer.
+     * Unified virtual source resolver for browser/host-provided `.m` files.
      */
-    private classSourceTable: ClassSourceTable = Object.create(null);
+    private sourceResolver: SourceResolver = TableSourceResolver.create();
 
     /**
-     * Optional host resolver for class sources not present in
-     * {@link classSourceTable}.
+     * Function names currently being loaded, used to avoid recursive loader loops.
      */
-    private classSourceProvider?: ClassSourceProvider;
+    private loadingFunctionNames = new Set<string>();
 
     /**
      * Class names currently being loaded, used to avoid recursive loader loops.
@@ -314,6 +389,19 @@ class Interpreter implements InterpreterInterface {
      * Interpreter exit status.
      */
     private _exitStatus: ExitStatus;
+
+    /**
+     * Last uncaught public evaluation error, exposed through `lasterror`.
+     */
+    private lastError?: unknown;
+
+    /**
+     * Last warning state exposed through `lastwarn`.
+     *
+     * Warning emission is still intentionally conservative, but keeping the
+     * state here gives the public API a stable MATLAB/Octave-like contract.
+     */
+    private lastWarning: { message: string; identifier: string } = { message: '', identifier: '' };
 
     /**
      * Interpreter exit status getter.
@@ -465,9 +553,9 @@ class Interpreter implements InterpreterInterface {
             } else {
                 return this.precedenceTable.max;
             }
-        } else if (tree.type === 'IDX') {
-            const aliasTreeName = this.context.aliasNameFunction(tree.expr.id);
-            return tree.expr.type === 'IDENT' &&
+        } else if (AST.isNodeIndexExpr(tree)) {
+            const aliasTreeName = AST.isNodeIdentifier(tree.expr) ? this.context.aliasNameFunction(tree.expr.id) : '';
+            return AST.isNodeIdentifier(tree.expr) &&
                 aliasTreeName in this.context.builtInFunctionTable &&
                 (!!this.context.builtInFunctionTable[aliasTreeName].UnparserMathML || aliasTreeName in MathML.format)
                 ? this.precedenceTable.max
@@ -488,7 +576,7 @@ class Interpreter implements InterpreterInterface {
             target = arg;
         } else if (CharString.isInstanceOf(arg)) {
             const source = arg.str.trim();
-            target = source.startsWith('@') ? (this.functions.str2func.func as (source: CharString) => FunctionHandle)(arg) : FunctionHandle.create(source);
+            target = source.startsWith('@') ? (this.functions.str2func.func as (source: CharString) => FunctionHandle)(arg) : this.createResolvedFunctionHandle(source);
         } else {
             this.context.throwSyntaxError(`${name}: argument must be a function handle or function name.`);
         }
@@ -507,31 +595,255 @@ class Interpreter implements InterpreterInterface {
         return FunctionArity.outputArity(callable);
     }
 
+    /**
+     * Resolve a runtime symbol through the interpreter-owned lookup facade.
+     *
+     * Keeping this indirection inside `Interpreter` prevents parser/evaluator
+     * code from depending directly on the exact `Context.resolveSymbol` option
+     * shape and gives lookup-sensitive features one place to evolve.
+     *
+     * @param name Name requested by source text.
+     * @param scope Lookup scope.
+     * @param options Resolution switches.
+     * @returns Structured symbol resolution, if any.
+     */
+    private resolveRuntimeSymbol(name: string, scope: Scope = this.context.currentScope, options: SymbolResolutionOptions = {}): SymbolResolution | undefined {
+        return this.context.resolveSymbol(name, scope, options);
+    }
+
+    /** Resolve a function-like runtime symbol without considering variables or classes. */
+    private resolveRuntimeFunction(name: string, scope: Scope = this.context.currentScope, options: SymbolResolutionOptions = {}): SymbolResolution | undefined {
+        return this.resolveRuntimeSymbol(name, scope, { ...options, variables: false, classes: false });
+    }
+
+    /** Resolve a class runtime symbol without considering variables or functions. */
+    private resolveRuntimeClass(name: string, scope: Scope = this.context.currentScope, options: SymbolResolutionOptions = {}): SymbolResolution | undefined {
+        return this.resolveRuntimeSymbol(name, scope, { ...options, variables: false, functions: false });
+    }
+
+    /**
+     * Create a named function handle using the current structured lookup layer.
+     *
+     * Qualified names and aliases are normalized to their runtime spelling.
+     * Simple imported names keep their source spelling and rely on the captured
+     * import table, matching MATLAB/Octave display behavior for `@name`.
+     * When requested, user-function handles keep a lexical overlay so returned
+     * handles remain bound to local/nested functions and in-scope imports.
+     *
+     * @param name Function name supplied by source text or a character string.
+     * @param scope Lookup scope used to resolve imports and local functions.
+     * @param parent Optional AST parent for the new handle.
+     * @param captureLexical Whether to capture a lexical overlay for user functions.
+     * @returns Named function handle.
+     */
+    private createResolvedFunctionHandle(name: string, scope: Scope = this.context.currentScope, parent?: NodeInput, captureLexical = false): FunctionHandle {
+        const resolved = this.resolveRuntimeFunction(name, scope);
+        const canonical = this.context.aliasNameFunction(name);
+        const handleName = name.includes('.') && resolved?.functionDefinition ? resolved.resolvedName : canonical;
+        const handle = FunctionHandle.create(handleName);
+        handle.parent = parent;
+        if (captureLexical && resolved?.functionDefinition?.type === 'FCNDEF') {
+            handle.closure = scope.capture((node) => MathOperation.copy(node), this.context.allowForwardReference);
+        }
+        return handle;
+    }
+
     private localFunctionHandles(): MultiArray {
         return FunctionIntrospection.localFunctionHandles(this.context.currentFrame, this.context.currentScope);
+    }
+
+    private functionHandleWorkspaceInfo(handle: FunctionHandle): MultiArray {
+        if (!handle.closure) {
+            return MultiArray.emptyArray(true);
+        }
+
+        const fields: Record<string, NodeInput> = {};
+        for (const name in handle.closure.nameTable) {
+            const entry = handle.closure.nameTable[name];
+            if (!entry || entry.global || typeof entry.node === 'undefined' || ClassDefinition.isInstanceOf(entry.node)) {
+                continue;
+            }
+            fields[name] = MathOperation.copy(entry.node as MathObject) as NodeInput;
+        }
+
+        const result = MultiArray.scalarToMultiArray(new Structure(fields));
+        result.isCell = true;
+        return result;
     }
 
     private dbstackResult(args: NodeInput[]): MultiArray {
         return FunctionIntrospection.dbstackResult(args, this.context.callStack, (message) => this.context.throwSyntaxError(message));
     }
 
+    /**
+     * Convert a native or interpreter error into the struct shape used by
+     * MATLAB/Octave-style `catch ME` and `lasterror`.
+     *
+     * `InterpreterError.stackFrames` stores the most recent frame first, while
+     * `dbstackResult` expects the live call-stack order and reverses it during
+     * formatting. The local reversal preserves the captured thrown stack instead
+     * of rebuilding it from the current catch/evaluation context.
+     *
+     * @param error Error object or thrown value.
+     * @returns Structure with `message`, `identifier`, and `stack` fields.
+     */
     private exceptionToStruct(error: unknown): Structure {
         const err = error as Error & { identifier?: string };
         return new Structure({
             message: new CharString(err?.message ?? String(error)),
             identifier: new CharString(err?.identifier ?? ''),
-            stack: FunctionIntrospection.dbstackResult([], this.context.callStack, (message) => this.context.throwSyntaxError(message)),
+            stack: FunctionIntrospection.dbstackResult([], error instanceof InterpreterError && error.stackFrames ? error.stackFrames.slice().reverse() : this.context.callStack, (message) =>
+                this.context.throwSyntaxError(message),
+            ),
         });
     }
 
-    private forLoopValues(value: NodeInput): NodeExpr[] {
+    /**
+     * Return the current `lasterror` value.
+     *
+     * MATLAB/Octave keep the last uncaught error until it is replaced or the
+     * interpreter state is reset. When no error has escaped yet, the empty
+     * structure uses the same fields so callers can index it without special
+     * casing the initial state.
+     *
+     * @returns MATLAB-like last-error structure.
+     */
+    private lastErrorStruct(): Structure {
+        return this.lastError ? this.exceptionToStruct(this.lastError) : new Structure({ message: new CharString(''), identifier: new CharString(''), stack: MultiArray.emptyArray() });
+    }
+
+    /**
+     * Store the warning state returned by `lastwarn`.
+     *
+     * @param message Warning message.
+     * @param identifier Optional warning identifier.
+     */
+    private setLastWarning(message: string, identifier = ''): void {
+        this.lastWarning = { message, identifier };
+    }
+
+    /**
+     * Implement the public `warning` built-in subset.
+     *
+     * The current browser-first runtime records warning state instead of
+     * writing to a console or warning manager. This supports the common
+     * MATLAB/Octave forms `warning(msg)` and `warning(id, msg)` and leaves more
+     * advanced warning controls for a future warning subsystem.
+     *
+     * @param args Evaluated built-in arguments.
+     * @returns Void node because warnings do not produce expression output.
+     */
+    private warningResult(args: NodeInput[]): NodeInput {
+        if (args.length === 1) {
+            this.setLastWarning((args[0] as CharString).str);
+        } else {
+            this.setLastWarning((args[1] as CharString).str, (args[0] as CharString).str);
+        }
+        this._exitStatus = Interpreter.response.WARNING;
+        return AST.nodeVoid();
+    }
+
+    /**
+     * Implement the public `error` built-in subset.
+     *
+     * Supported MATLAB/Octave forms are `error(message)` and
+     * `error(identifier, message)`. The thrown error keeps the current call
+     * stack through `Context.throwEvalError`, and the optional identifier is
+     * attached for `catch ME` and `lasterror`.
+     *
+     * @param args Evaluated error arguments.
+     */
+    private errorResult(args: NodeInput[]): never {
+        const message = (args.length === 1 ? args[0] : args[1]) as CharString;
+        const identifier = args.length === 2 ? (args[0] as CharString).str : '';
+        try {
+            this.context.throwEvalError(message.str);
+        } catch (error) {
+            if (identifier) {
+                (error as Error & { identifier?: string }).identifier = identifier;
+            }
+            throw error;
+        }
+    }
+
+    /**
+     * Implement `rethrow(ME)` for MATLAB/Octave-style caught error structs.
+     *
+     * The current runtime represents `catch ME` as a structure with `message`,
+     * `identifier`, and `stack` fields. `rethrow` validates that shape and
+     * raises a new evaluation error while preserving the public message and
+     * identifier fields used by subsequent `catch` blocks and `lasterror`.
+     *
+     * @param errorStruct Error structure captured by a `catch` identifier.
+     */
+    private rethrowResult(errorStruct: NodeInput): never {
+        if (!Structure.isInstanceOf(errorStruct)) {
+            this.context.throwEvalError('rethrow: input must be an error structure.');
+        }
+        const message = errorStruct.field.message;
+        const identifier = errorStruct.field.identifier;
+        if (!CharString.isInstanceOf(message) || !CharString.isInstanceOf(identifier) || typeof errorStruct.field.stack === 'undefined') {
+            this.context.throwEvalError('rethrow: input must be an error structure.');
+        }
+        try {
+            this.context.throwEvalError(message.str);
+        } catch (error) {
+            if (identifier.str) {
+                (error as Error & { identifier?: string }).identifier = identifier.str;
+            }
+            throw error;
+        }
+    }
+
+    /**
+     * Implement `lastwarn` getter/setter behavior.
+     *
+     * With no arguments it returns the current message and identifier. With one
+     * or two string arguments it updates the stored warning state before
+     * returning it, matching the MATLAB/Octave convention used by tests and
+     * user code.
+     *
+     * @param args Optional message and identifier setter arguments.
+     * @returns Comma-separated return list `[message, identifier]`.
+     */
+    private lastWarningResult(args: NodeInput[] = []): NodeReturnList {
+        if (args.length === 1) {
+            this.setLastWarning((args[0] as CharString).str);
+        } else if (args.length === 2) {
+            this.setLastWarning((args[0] as CharString).str, (args[1] as CharString).str);
+        }
+        return this.valueReturnList([new CharString(this.lastWarning.message), new CharString(this.lastWarning.identifier)]);
+    }
+
+    /**
+     * Expand a `for` loop expression into the sequence assigned to the target.
+     *
+     * MATLAB/Octave `for` assignment iterates over columns. Numeric row vectors
+     * and scalars produce scalar loop values, while matrices and cell arrays
+     * produce one column value per iteration. Cell columns remain cell arrays;
+     * their contents are not unwrapped by the loop assignment.
+     *
+     * @param value Evaluated loop expression.
+     * @param target Loop assignment target.
+     * @returns Values assigned on each loop iteration.
+     */
+    private forLoopValues(value: NodeInput, target: NodeExpr): NodeExpr[] {
+        if (Structure.isInstanceOf(value)) {
+            const targetWidth = MultiArray.isRowVector(target) ? MultiArray.linearize(target as MathObject).length : 1;
+            return Object.entries(value.field).map(([field, fieldValue]) =>
+                targetWidth > 1 ? (new MultiArray([1, 2], [[fieldValue, CharString.create(field)]]) as NodeExpr) : (fieldValue as NodeExpr),
+            );
+        }
+        if (CharString.isInstanceOf(value)) {
+            return value.toCharacterScalars();
+        }
         if (!MultiArray.isInstanceOf(value)) {
             return [value as NodeExpr];
         }
         if (value.dimension[0] === 0 || value.dimension[1] === 0) {
             return [];
         }
-        if (value.dimension[0] === 1) {
+        if (value.dimension[0] === 1 && !value.isCell) {
             return value.array[0] as NodeExpr[];
         }
         const result: NodeExpr[] = [];
@@ -566,6 +878,77 @@ class Interpreter implements InterpreterInterface {
         );
     }
 
+    private cloneAssignmentTarget(target: NodeExpr): NodeExpr {
+        if (
+            Complex.isInstanceOf(target) ||
+            CharString.isInstanceOf(target) ||
+            Structure.isInstanceOf(target) ||
+            FunctionHandle.isInstanceOf(target) ||
+            ClassDefinition.isInstanceOf(target) ||
+            ClassInstance.isInstanceOf(target) ||
+            ClassBoundMethod.isInstanceOf(target) ||
+            ClassStaticMethod.isInstanceOf(target) ||
+            ClassEmptyMethod.isInstanceOf(target) ||
+            ClassEnumerationValue.isInstanceOf(target) ||
+            ClassMetaObject.isInstanceOf(target)
+        ) {
+            return MathOperation.copy(target as MathObject) as NodeExpr;
+        }
+        if (AST.isNodeIdentifier(target)) {
+            return AST.nodeIdentifier(target.id);
+        }
+        if (AST.isNodeIgnoredTarget(target)) {
+            return AST.nodeIgnoredTarget();
+        }
+        if (AST.isNodeIndexExpr(target)) {
+            return AST.nodeIndexExpr(this.cloneAssignmentTarget(target.expr), AST.nodeList(target.args.map((arg) => this.cloneAssignmentTarget(arg))), target.delim);
+        }
+        if (AST.isNodeIndirectRef(target)) {
+            const firstField = target.field[0];
+            let result = AST.nodeIndirectRef(this.cloneAssignmentTarget(target.obj), typeof firstField === 'string' ? firstField : this.cloneAssignmentTarget(firstField));
+            for (let i = 1; i < target.field.length; i++) {
+                const field = target.field[i];
+                result = AST.nodeIndirectRef(result, typeof field === 'string' ? field : this.cloneAssignmentTarget(field));
+            }
+            return result;
+        }
+        if (MultiArray.isInstanceOf(target)) {
+            const source = target as MultiArray;
+            const result = new MultiArray(source.dimension, undefined, source.isCell);
+            for (let row = 0; row < source.dimension[0]; row++) {
+                for (let column = 0; column < source.dimension[1]; column++) {
+                    result.array[row][column] = this.cloneAssignmentTarget(source.array[row][column] as NodeExpr) as ElementType;
+                }
+            }
+            MultiArray.setType(result);
+            return result as NodeExpr;
+        }
+        return AST.nodeCopy(target) as NodeExpr;
+    }
+
+    private valueReturnList(values: NodeInput[]): NodeReturnList {
+        const result = AST.nodeReturnList(
+            (evaluated: ReturnHandlerResult, index: number): NodeExpr => {
+                const value = evaluated[`out${index}`];
+                if (typeof value === 'undefined') {
+                    AST.throwErrorIfGreaterThanReturnList(index, index + 1, (message) => this.context.throwEvalError(message));
+                }
+                return value;
+            },
+            (length: number): ReturnHandlerResult => {
+                AST.throwErrorIfGreaterThanReturnList(values.length, length, (message) => this.context.throwEvalError(message));
+                const out: ReturnHandlerResult = { length };
+                for (let index = 0; index < length; index++) {
+                    out[`out${index}`] = values[index] as NodeExpr;
+                }
+                return out;
+            },
+        );
+        result.commaSeparated = true;
+        result.returnListLength = values.length;
+        return result;
+    }
+
     private evalStringInScope(source: string, scope: Scope): NodeInput {
         const tree = this.Parse(source);
         tree.parent = null;
@@ -582,16 +965,245 @@ class Interpreter implements InterpreterInterface {
         }
     }
 
+    /**
+     * Extract top-level class definitions from a parsed source tree.
+     *
+     * Host-provided class sources are parsed as ordinary snippets; this helper
+     * isolates classdef nodes without executing unrelated statements.
+     *
+     * @param tree Parsed source tree.
+     * @returns Top-level class definitions in source order.
+     */
     private topLevelClassDefinitions(tree: NodeInput): NodeClassDef[] {
         if (tree.type === 'CLASSDEF') {
-            return [tree as NodeClassDef];
+            return [tree];
         }
         if (tree.type !== 'LIST') {
             return [];
         }
-        return tree.list.filter((item: NodeInput): item is NodeClassDef => item.type === 'CLASSDEF');
+        return tree.list.filter(AST.isNodeClassDef);
     }
 
+    /**
+     * Extract top-level function definitions from a parsed source tree.
+     *
+     * This is used by function-file loading and script-local function
+     * pre-registration, keeping MATLAB/Octave function discovery separate from
+     * statement execution.
+     *
+     * @param tree Parsed source tree.
+     * @returns Top-level function definitions in source order.
+     */
+    private topLevelFunctionDefinitions(tree: NodeInput): NodeFunctionDefinition[] {
+        if (tree.type === 'FCNDEF') {
+            return [tree];
+        }
+        if (tree.type !== 'LIST') {
+            return [];
+        }
+        return tree.list.filter(AST.isNodeFunctionDefinition);
+    }
+
+    /**
+     * Parse a host-provided function-file source.
+     *
+     * The selected primary function is renamed to the requested canonical name
+     * so package/import aliases can load source supplied under a fully
+     * qualified runtime name while preserving MATLAB/Octave function-file
+     * lookup behavior.
+     *
+     * @param name Canonical function name requested by lookup.
+     * @param source Source text containing one primary function and optional subfunctions.
+     * @returns Primary function plus private subfunctions.
+     */
+    private parseFunctionSource(name: string, source: string): { primary: NodeFunctionDefinition; subfunctions: NodeFunctionDefinition[] } {
+        const simpleName = name.split('.').pop() ?? name;
+        const definitions = this.topLevelFunctionDefinitions(this.Parse(source));
+        const primary = definitions.find((item) => item.id === simpleName || item.id === name);
+        if (!primary) {
+            this.context.throwEvalError(`function '${name}' could not be loaded: source does not contain primary function ${simpleName}.`);
+        }
+        primary.id = name;
+        return {
+            primary,
+            subfunctions: definitions.filter((item) => item !== primary),
+        };
+    }
+
+    /**
+     * Resolve function-file source through the configured host tables/providers.
+     *
+     * @param name Canonical function name requested by lookup.
+     * @returns Normalized source entry, if the host can supply one.
+     */
+    private resolveFunctionSource(name: string): FunctionSource | undefined {
+        return this.sourceResolver.resolve('function', name);
+    }
+
+    /**
+     * Register a parsed function-file definition in a target scope.
+     *
+     * The primary function is visible from the caller scope. Subfunctions are
+     * stored in the primary function's file scope so they remain private to the
+     * loaded function file, which matches MATLAB/Octave file scoping.
+     *
+     * @param primary Primary function definition.
+     * @param subfunctions Private top-level subfunctions from the same source.
+     * @param scope Scope receiving the primary function.
+     * @returns Registered primary function definition.
+     */
+    private registerFunctionFileDefinition(primary: NodeFunctionDefinition, subfunctions: NodeFunctionDefinition[], scope: Scope): NodeFunctionDefinition {
+        this.validateFunctionSignature(primary);
+        this.validateFunctionArgumentsBlocks(primary);
+        const fileScope = Scope.create(scope, false);
+        fileScope.defineFunction(primary.id, primary);
+        primary.definingScope = fileScope;
+        if (primary.attributes?.nested || primary.attributes?.subfunction) {
+            primary.attributes = { ...primary.attributes };
+            delete primary.attributes.nested;
+            delete primary.attributes.subfunction;
+        }
+        for (const subfunction of subfunctions) {
+            if (subfunction.id === primary.id || subfunction.id in fileScope.functionTable) {
+                this.context.throwSyntaxError(`duplicate function '${subfunction.id}' in function file ${primary.id}.`);
+            }
+            this.validateFunctionSignature(subfunction);
+            this.validateFunctionArgumentsBlocks(subfunction);
+            subfunction.definingScope = fileScope;
+            subfunction.attributes = { ...(subfunction.attributes ?? {}), subfunction: true };
+            delete subfunction.attributes.nested;
+            fileScope.defineFunction(subfunction.id, subfunction);
+        }
+        scope.defineFunction(primary.id, primary);
+        return primary;
+    }
+
+    /**
+     * Load a MATLAB/Octave-like function file from host-provided source text.
+     *
+     * The primary function is exported to the target scope. Additional
+     * top-level function definitions become private subfunctions visible only
+     * through the primary function's file scope.
+     *
+     * @param name Canonical primary function name.
+     * @param source Source text containing the function file.
+     * @param scope Scope that receives the primary function.
+     * @returns Registered primary function definition.
+     */
+    public LoadFunctionFile(name: string, source: string, scope: Scope = this.context.globalScope ?? this.context.currentScope): NodeFunctionDefinition {
+        const parsed = this.parseFunctionSource(name, source);
+        return this.registerFunctionFileDefinition(parsed.primary, parsed.subfunctions, scope);
+    }
+
+    /**
+     * Resolve and register a function definition through host-provided sources.
+     *
+     * @param name Function name requested by lookup.
+     * @param scope Scope that should receive the loaded primary function.
+     * @returns Registered function definition, or `undefined` when unavailable.
+     */
+    public loadFunctionDefinition(name: string, scope: Scope): NodeFunctionDefinition | undefined {
+        const source = this.resolveFunctionSource(name);
+        if (!source || this.loadingFunctionNames.has(name)) {
+            return undefined;
+        }
+        this.loadingFunctionNames.add(name);
+        try {
+            return this.LoadFunctionFile(source.name ?? name, source.source, this.context.globalScope ?? scope);
+        } finally {
+            this.loadingFunctionNames.delete(name);
+        }
+    }
+
+    /**
+     * Normalize script lookup names for browser-provided source tables.
+     *
+     * @param name Script name or path-like string.
+     * @returns Basename without a trailing `.m` suffix.
+     */
+    private normalizeScriptSourceName(name: string): string {
+        return name.replace(/\\/g, '/').split('/').pop()?.replace(/\.m$/i, '') ?? name;
+    }
+
+    /**
+     * Resolve script source through the configured host tables/providers.
+     *
+     * @param name Script name requested by lookup.
+     * @returns Normalized source entry, if the host can supply one.
+     */
+    private resolveScriptSource(name: string): ScriptSource | undefined {
+        return this.sourceResolver.resolve('script', name);
+    }
+
+    /**
+     * Execute a parsed script while temporarily exposing script-local functions.
+     *
+     * @param tree Parsed script source tree.
+     * @param scope Workspace where script statements execute.
+     * @returns Evaluated script result.
+     */
+    private executeScriptTree(tree: NodeInput, scope: Scope): NodeInput {
+        const localFunctions = this.topLevelFunctionDefinitions(tree);
+        const previousFunctions = new Map<string, NodeFunctionDefinition | undefined>();
+        for (const func of localFunctions) {
+            if (!previousFunctions.has(func.id)) {
+                previousFunctions.set(func.id, scope.functionTable[func.id]);
+            }
+        }
+        try {
+            return this.Evaluator(tree, scope);
+        } finally {
+            for (const [name, previous] of previousFunctions) {
+                if (previous) {
+                    scope.defineFunction(name, previous);
+                } else {
+                    scope.removeFunction(name);
+                }
+            }
+        }
+    }
+
+    /**
+     * Execute MATLAB/Octave-like script source in a workspace.
+     *
+     * Script-local functions are visible while the script executes and hidden
+     * afterward. Function handles created by the script keep captured closures,
+     * so they remain callable even after the temporary function table is
+     * restored.
+     *
+     * @param name Script name used for diagnostics.
+     * @param source Source text containing the script.
+     * @param scope Workspace where script statements execute.
+     * @returns Evaluated script result.
+     */
+    public LoadScriptFile(name: string, source: string, scope: Scope = this.context.currentScope): NodeInput {
+        const tree = this.Parse(source);
+        tree.parent = null;
+        return this.executeScriptTree(tree, scope);
+    }
+
+    /**
+     * Resolve and execute a host-provided script file by name.
+     *
+     * @param name Script name or `.m` filename.
+     * @param scope Workspace where script statements execute.
+     * @returns Evaluated script result.
+     */
+    public RunScriptFile(name: string, scope: Scope = this.context.currentScope): NodeInput {
+        const source = this.resolveScriptSource(name);
+        if (!source) {
+            this.context.throwEvalError(`script '${name}' could not be loaded.`);
+        }
+        return this.LoadScriptFile(source.name ?? name, source.source, scope);
+    }
+
+    /**
+     * Parse a host-provided class source and select the requested classdef.
+     *
+     * @param name Canonical class name requested by lookup.
+     * @param source Source text containing the classdef.
+     * @returns Classdef AST node with canonical runtime name.
+     */
     private parseClassSource(name: string, source: string): NodeClassDef {
         const simpleName = name.split('.').pop() ?? name;
         const definitions = this.topLevelClassDefinitions(this.Parse(source));
@@ -603,14 +1215,37 @@ class Interpreter implements InterpreterInterface {
         return definition;
     }
 
+    /**
+     * Resolve class source through the configured host tables/providers.
+     *
+     * @param name Canonical class name requested by lookup.
+     * @returns Normalized source entry, if the host can supply one.
+     */
     private resolveClassSource(name: string): ClassSource | undefined {
-        const entry = this.classSourceTable[name] ?? this.classSourceProvider?.(name);
-        if (typeof entry === 'undefined') {
-            return undefined;
-        }
-        return typeof entry === 'string' ? { name, source: entry } : { name: entry.name ?? name, source: entry.source };
+        return this.sourceResolver.resolve('class', name);
     }
 
+    /**
+     * Test whether a host class source is available without parsing/registering it.
+     *
+     * Lookup helpers such as `exist` and `which` should report browser-provided
+     * class sources without mutating the runtime class registry, otherwise a
+     * metadata query can change later function/class precedence.
+     *
+     * @param name Canonical class name requested by lookup.
+     * @returns `true` when the configured resolver can provide class source.
+     */
+    private hasClassSource(name: string): boolean {
+        return typeof this.resolveClassSource(name) !== 'undefined';
+    }
+
+    /**
+     * Resolve and register a class definition through host-provided sources.
+     *
+     * @param name Class name requested by lookup.
+     * @param scope Scope used to resolve superclass dependencies.
+     * @returns Loaded class definition, or `undefined` when unavailable.
+     */
     public loadClassDefinition(name: string, scope: Scope): ClassDefinition | undefined {
         const source = this.resolveClassSource(name);
         if (!source || this.loadingClassNames.has(name)) {
@@ -629,6 +1264,12 @@ class Interpreter implements InterpreterInterface {
         }
     }
 
+    /**
+     * Convert a dotted identifier chain into name parts when it is purely symbolic.
+     *
+     * @param tree Dotted reference node.
+     * @returns Qualified name parts, or `undefined` for dynamic field access.
+     */
     private qualifiedReferenceParts(tree: NodeIndirectRef): string[] | undefined {
         if (tree.obj.type !== 'IDENT' || tree.field.some((field) => typeof field !== 'string')) {
             return undefined;
@@ -636,6 +1277,14 @@ class Interpreter implements InterpreterInterface {
         return [tree.obj.id, ...(tree.field as string[])];
     }
 
+    /**
+     * Resolve static class members, constants, and enumeration members.
+     *
+     * @param definition Class definition that matched the qualified prefix.
+     * @param fields Remaining field chain after the class name.
+     * @param scope Evaluation scope for constant defaults and enumeration arguments.
+     * @returns Runtime value selected by the member chain.
+     */
     private resolveClassDefinitionMemberChain(definition: ClassDefinition, fields: string[], scope: Scope): NodeInput {
         let current: NodeInput = definition;
         for (const field of fields) {
@@ -672,41 +1321,105 @@ class Interpreter implements InterpreterInterface {
         return current;
     }
 
-    private resolveQualifiedNameAccess(tree: NodeIndirectRef, scope: Scope): NodeInput | undefined {
+    /**
+     * Resolve a symbolic dotted chain as a package/class-qualified access.
+     *
+     * The resolver classifies the qualified prefix without evaluating ordinary
+     * dot indexing. Local variables intentionally block package/class
+     * interpretation of the same first component, preserving MATLAB/Octave
+     * precedence for expressions such as `pkg.field` when `pkg` is a variable.
+     *
+     * @param tree Dotted reference node.
+     * @param scope Lookup scope.
+     * @returns Structured qualified access result, if the chain is symbolic.
+     */
+    private resolveQualifiedAccess(tree: NodeIndirectRef, scope: Scope): QualifiedAccessResolution | undefined {
         const parts = this.qualifiedReferenceParts(tree);
         if (!parts || parts.length < 2 || scope.resolveName(parts[0])) {
             return undefined;
         }
         for (let prefixLength = parts.length; prefixLength >= 2; prefixLength--) {
             const name = parts.slice(0, prefixLength).join('.');
-            const definition = this.context.resolveClassDefinition(name, scope);
-            if (definition) {
-                definition.parent = tree;
-                return this.resolveClassDefinitionMemberChain(definition, parts.slice(prefixLength), scope);
+            const resolved = this.resolveRuntimeClass(name, scope, { imports: false });
+            if (resolved?.kind === 'class') {
+                return {
+                    kind: 'class-member-chain',
+                    parts,
+                    prefixLength,
+                    resolvedName: resolved.resolvedName,
+                    classDefinition: resolved.classDefinition,
+                };
             }
         }
         const name = parts.join('.');
-        if (this.context.resolveFunction(name)) {
-            const handle = FunctionHandle.create(name);
+        const resolved = this.resolveRuntimeFunction(name, scope, { imports: false });
+        if (resolved?.functionDefinition) {
+            const handle = FunctionHandle.create(resolved.resolvedName);
             handle.parent = tree;
-            return handle;
+            return {
+                kind: 'function',
+                parts,
+                prefixLength: parts.length,
+                resolvedName: resolved.resolvedName,
+                functionHandle: handle,
+            };
         }
         return undefined;
     }
 
+    /**
+     * Resolve package/class-qualified names before ordinary dot indexing.
+     *
+     * MATLAB/Octave allow expressions such as `pkg.Class.staticMethod`,
+     * `Class.Constant`, and fully qualified function handles. This helper
+     * recognizes those symbolic chains while leaving normal struct/object field
+     * indexing to the evaluator.
+     *
+     * @param tree Dotted reference node.
+     * @param scope Lookup scope.
+     * @returns Resolved runtime value, or `undefined` when the reference is ordinary dot indexing.
+     */
+    private resolveQualifiedNameAccess(tree: NodeIndirectRef, scope: Scope): NodeInput | undefined {
+        const resolved = this.resolveQualifiedAccess(tree, scope);
+        if (!resolved) {
+            return undefined;
+        }
+        switch (resolved.kind) {
+            case 'class-member-chain':
+                resolved.classDefinition!.parent = tree;
+                return this.resolveClassDefinitionMemberChain(resolved.classDefinition!, resolved.parts.slice(resolved.prefixLength), scope);
+            case 'function':
+                return resolved.functionHandle;
+        }
+    }
+
+    /**
+     * Detect whether an indexing expression contains a resolvable qualified name.
+     *
+     * @param tree Expression subtree to inspect.
+     * @param scope Lookup scope.
+     * @returns `true` when a dotted operand resolves as a package/class-qualified symbol.
+     */
     private hasQualifiedNameAccessOperand(tree: NodeInput, scope: Scope): boolean {
-        if (tree.type === '.') {
-            if (typeof this.resolveQualifiedNameAccess(tree as NodeIndirectRef, scope) !== 'undefined') {
+        if (AST.isNodeIndirectRef(tree)) {
+            if (typeof this.resolveQualifiedAccess(tree, scope) !== 'undefined') {
                 return true;
             }
-            return this.hasQualifiedNameAccessOperand((tree as NodeIndirectRef).obj, scope);
+            return this.hasQualifiedNameAccessOperand(tree.obj, scope);
         }
-        if (tree.type === 'IDX') {
-            return this.hasQualifiedNameAccessOperand((tree as NodeIndexExpr).expr, scope);
+        if (AST.isNodeIndexExpr(tree)) {
+            return this.hasQualifiedNameAccessOperand(tree.expr, scope);
         }
         return false;
     }
 
+    /**
+     * Resolve a `?ClassName` metaclass literal, including meta-object fields.
+     *
+     * @param className Class or meta-object field chain from the literal.
+     * @param scope Lookup scope.
+     * @returns Meta-class object or selected meta-object field.
+     */
     private resolveMetaclassLiteral(className: string, scope: Scope): NodeInput {
         const parts = className.split('.');
         for (let prefixLength = parts.length; prefixLength >= 1; prefixLength--) {
@@ -715,7 +1428,7 @@ class Interpreter implements InterpreterInterface {
             if (!definition) {
                 continue;
             }
-            let current: NodeInput = ClassMetaClass.create(definition);
+            let current: NodeInput = this.createClassMetaClass(definition, scope);
             for (const field of parts.slice(prefixLength)) {
                 if (ClassMetaObject.isInstanceOf(current)) {
                     const value = current.getProperty(field);
@@ -732,6 +1445,23 @@ class Interpreter implements InterpreterInterface {
         this.context.throwEvalError(`metaclass: class '${className}' is not defined.`);
     }
 
+    /**
+     * Create a runtime `meta.class` object with lazy property default
+     * evaluation.
+     *
+     * Parsed class metadata keeps default expressions as AST. Runtime meta
+     * access should expose evaluated default values, so the provider evaluates
+     * the default only when `meta.property.DefaultValue` or validation metadata
+     * asks for it.
+     *
+     * @param definition Class metadata to wrap.
+     * @param scope Scope used to evaluate property default expressions.
+     * @returns Runtime meta-class object.
+     */
+    private createClassMetaClass(definition: ClassDefinition, scope: Scope = this.context.currentScope): ClassMetaClass {
+        return ClassMetaClass.create(definition, (property) => (property.defaultValue ? AST.reduceToFirstIfReturnList(this.Evaluator(property.defaultValue, scope)) : undefined));
+    }
+
     private checkFunctionCount(name: 'narginchk' | 'nargoutchk', min: NodeInput, max: NodeInput): NodeInput {
         const count = name === 'narginchk' ? Complex.realToNumber(this.context.currentFunctionArgumentCountOrZero()) : Complex.realToNumber(this.context.currentFunctionOutputCountOrZero());
         FunctionArity.checkFunctionCount(
@@ -745,26 +1475,50 @@ class Interpreter implements InterpreterInterface {
         return AST.nodeVoid();
     }
 
-    private existCode(name: string, kind?: string): number {
-        const variable = this.context.resolveName(name);
-        const func = this.context.resolveFunction(name);
+    private lookupClassSourceResolution(name: string, scope: Scope): SymbolResolution | undefined {
+        const canonical = this.context.aliasNameFunction(name);
+        if (this.hasClassSource(canonical)) {
+            return { kind: 'class', name, resolvedName: canonical, source: 'local' };
+        }
+        if (!canonical.includes('.')) {
+            for (const importedName of scope.importedNameCandidates(canonical)) {
+                const importedCanonical = this.context.aliasNameFunction(importedName);
+                if (this.hasClassSource(importedCanonical)) {
+                    return { kind: 'class', name, resolvedName: importedCanonical, source: 'import' };
+                }
+            }
+        }
+        return undefined;
+    }
+
+    private resolveLookupSymbol(name: string, kind?: string): SymbolResolution | undefined {
         const normalizedKind = kind?.toLowerCase();
-        const shouldResolveClass = normalizedKind === 'class' || (typeof normalizedKind === 'undefined' && !variable && !func);
-        return FunctionLookup.existCode(name, kind, variable, func, shouldResolveClass ? !!this.context.resolveClassDefinition(name) : false);
+        const scope = this.context.currentScope;
+        const classes = normalizedKind === 'class' || typeof normalizedKind === 'undefined';
+        const resolved = this.resolveRuntimeSymbol(name, scope, {
+            variables: normalizedKind !== 'class' && normalizedKind !== 'builtin' && normalizedKind !== 'file' && normalizedKind !== 'function',
+            classes,
+            loadClasses: false,
+            functions: normalizedKind !== 'class' && normalizedKind !== 'var' && normalizedKind !== 'variable',
+        });
+        if (resolved || !classes) {
+            return resolved;
+        }
+        return this.lookupClassSourceResolution(name, scope);
+    }
+
+    private existCode(name: string, kind?: string): number {
+        const resolved = this.resolveLookupSymbol(name, kind);
+        return FunctionLookup.existCodeFromResolution(name, kind, resolved);
     }
 
     private whichResult(name: string, handle?: FunctionHandle): CharString {
-        const func = handle
-            ? FunctionLookup.resolveHandleFunction(
-                  handle,
-                  name,
-                  (item) => this.context.aliasNameFunction(item),
-                  (item) => this.context.resolveFunction(item),
-              )
-            : this.context.resolveFunction(name);
-        const variable = this.context.resolveName(name);
-        const classDefined = !handle && !variable && !func ? !!this.context.resolveClassDefinition(name) : false;
-        return FunctionLookup.whichResult(name, variable, func, handle, (item) => FunctionHandle.unparse(item, this), classDefined);
+        const resolved = handle
+            ? handle.id
+                ? this.resolveRuntimeFunction(handle.id, (handle.closure as Scope | undefined) ?? this.context.currentScope)
+                : undefined
+            : this.resolveLookupSymbol(name);
+        return FunctionLookup.whichResultFromResolution(name, resolved, handle, (item) => FunctionHandle.unparse(item, this));
     }
 
     private isClassName(name: string): boolean {
@@ -801,6 +1555,23 @@ class Interpreter implements InterpreterInterface {
         }
     }
 
+    private valueMatchesValidationClass(value: NodeInput, className: string, scope: Scope): boolean {
+        if (FunctionValidation.matchesClass(value, className) || this.valueIsRuntimeClass(value, className)) {
+            return true;
+        }
+        const definition = this.context.resolveClassDefinition(className, scope);
+        if (!definition) {
+            return false;
+        }
+        const matchesDefinition = (item: NodeInput): boolean => {
+            if (ClassInstance.isInstanceOf(item) || ClassEnumerationValue.isInstanceOf(item)) {
+                return item.classDefinition === definition || item.classDefinition.isSubclassOf(definition);
+            }
+            return false;
+        };
+        return MultiArray.isInstanceOf(value) ? MultiArray.linearize(value).every(matchesDefinition) : matchesDefinition(value);
+    }
+
     private classIntrospectionArgument(name: 'properties' | 'fieldnames' | 'methods' | 'events' | 'enumeration' | 'superclasses' | 'isprop' | 'ismethod', value: NodeInput): NodeInput {
         if (!CharString.isInstanceOf(value)) {
             return value;
@@ -818,15 +1589,15 @@ class Interpreter implements InterpreterInterface {
             return value;
         }
         if (ClassDefinition.isInstanceOf(value)) {
-            return ClassMetaClass.create(value);
+            return this.createClassMetaClass(value);
         }
         if (ClassInstance.isInstanceOf(value) || ClassEnumerationValue.isInstanceOf(value)) {
-            return ClassMetaClass.create(value.classDefinition);
+            return this.createClassMetaClass(value.classDefinition);
         }
         if (CharString.isInstanceOf(value)) {
             const definition = this.context.resolveClassDefinition(value.str);
             if (definition) {
-                return ClassMetaClass.create(definition);
+                return this.createClassMetaClass(definition);
             }
             this.context.throwEvalError(`metaclass: class '${value.str}' is not defined.`);
         }
@@ -957,7 +1728,7 @@ class Interpreter implements InterpreterInterface {
         __meta_class_fromName: {
             func: (...args: NodeInput[]): ClassMetaClass | MultiArray => {
                 const definition = this.context.resolveClassDefinition((args[0] as CharString).str);
-                return definition ? ClassMetaClass.create(definition) : MultiArray.emptyArray();
+                return definition ? this.createClassMetaClass(definition) : MultiArray.emptyArray();
             },
             signature: { inputs: { arity: 1, parameters: [{ name: 'className', classes: ['char'] }] }, outputs: { arity: 1 } },
         },
@@ -986,7 +1757,7 @@ class Interpreter implements InterpreterInterface {
             signature: CoreFunctions.superclassesSignature,
         },
         isprop: {
-            func: (...args: NodeInput[]): ComplexType => CoreFunctions.isprop(this.classIntrospectionArgument('isprop', args[0]), args[1]),
+            func: (...args: NodeInput[]): NodeInput => CoreFunctions.isprop(this.classIntrospectionArgument('isprop', args[0]), args[1]),
             signature: CoreFunctions.ispropSignature,
         },
         ismethod: {
@@ -1037,6 +1808,62 @@ class Interpreter implements InterpreterInterface {
                 outputs: { arity: 1 },
             },
         },
+        lasterror: {
+            func: (): Structure => this.lastErrorStruct(),
+            signature: { inputs: { arity: 0 }, outputs: { arity: 1 } },
+        },
+        lastwarn: {
+            func: (...args: NodeInput[]): NodeReturnList => this.lastWarningResult(args),
+            signature: {
+                inputs: {
+                    arity: -2,
+                    min: 0,
+                    max: 2,
+                    parameters: [
+                        { name: 'message', classes: ['char'], optional: true },
+                        { name: 'identifier', classes: ['char'], optional: true },
+                    ],
+                },
+                outputs: { arity: -2 },
+            },
+        },
+        warning: {
+            func: (...args: NodeInput[]): NodeInput => this.warningResult(args),
+            signature: {
+                inputs: {
+                    arity: -2,
+                    min: 1,
+                    max: 2,
+                    parameters: [
+                        { name: 'identifierOrMessage', classes: ['char'] },
+                        { name: 'message', classes: ['char'], optional: true },
+                    ],
+                },
+                outputs: { arity: 0 },
+            },
+        },
+        error: {
+            func: (...args: NodeInput[]): never => this.errorResult(args),
+            signature: {
+                inputs: {
+                    arity: -2,
+                    min: 1,
+                    max: 2,
+                    parameters: [
+                        { name: 'identifierOrMessage', classes: ['char'] },
+                        { name: 'message', classes: ['char'], optional: true },
+                    ],
+                },
+                outputs: { arity: 0 },
+            },
+        },
+        rethrow: {
+            func: (...args: NodeInput[]): never => this.rethrowResult(args[0]),
+            signature: {
+                inputs: { arity: 1, parameters: [{ name: 'errorStruct', classes: ['struct'] }] },
+                outputs: { arity: 0 },
+            },
+        },
         exist: {
             func: (...args: NodeInput[]): ComplexType => {
                 return Complex.create(this.existCode((args[0] as CharString).str, args.length === 2 ? (args[1] as CharString).str : undefined));
@@ -1072,7 +1899,7 @@ class Interpreter implements InterpreterInterface {
         },
         str2func: {
             func: (...args: NodeInput[]): FunctionHandle => {
-                return FunctionLookup.str2func(
+                const handle = FunctionLookup.str2func(
                     (args[0] as CharString).str,
                     (source) => {
                         const evaluated = AST.reduceToFirstIfReturnList(this.Evaluator(this.Parse(source), this.context.currentScope));
@@ -1080,6 +1907,7 @@ class Interpreter implements InterpreterInterface {
                     },
                     (message) => this.context.throwEvalError(message),
                 );
+                return handle.id && !handle.closure ? this.createResolvedFunctionHandle(handle.id, this.context.currentScope, handle, true) : handle;
             },
             signature: { inputs: { arity: 1, parameters: [{ name: 'source', classes: ['char'] }] }, outputs: { arity: 1 } },
         },
@@ -1110,7 +1938,7 @@ class Interpreter implements InterpreterInterface {
                 let target = args[0] as NodeExpr;
                 if (CharString.isInstanceOf(target)) {
                     const source = target.str.trim();
-                    target = source.startsWith('@') ? (this.functions.str2func.func as (source: CharString) => FunctionHandle)(target) : FunctionHandle.create(source);
+                    target = source.startsWith('@') ? (this.functions.str2func.func as (source: CharString) => FunctionHandle)(target) : this.createResolvedFunctionHandle(source);
                 }
                 const callable = this.context.resolveCallable(target);
                 if (!callable) {
@@ -1137,6 +1965,7 @@ class Interpreter implements InterpreterInterface {
                     (name) => this.context.aliasNameFunction(name),
                     (name) => this.context.resolveFunction(name),
                     (handle) => FunctionHandle.unparse(handle, this),
+                    (handle) => this.functionHandleWorkspaceInfo(handle),
                 );
             },
             signature: { inputs: { arity: 1, parameters: [{ name: 'functionHandle', classes: ['function_handle'] }] }, outputs: { arity: 1 } },
@@ -1191,10 +2020,20 @@ class Interpreter implements InterpreterInterface {
         },
         inputname: {
             func: (...args: NodeInput[]): CharString => {
-                return this.context.currentFunctionInputName(args[0]);
+                const onlyVariableNames = args.length === 2 ? this.toBoolean(args[1] as NodeExpr) : true;
+                return this.context.currentFunctionInputName(args[0], onlyVariableNames, (arg) => this.Unparse(arg));
             },
             signature: {
-                inputs: { arity: 1, parameters: [{ name: 'argumentNumber', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'positive'] }] },
+                inputs: [
+                    { arity: 1, parameters: [{ name: 'argumentNumber', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'positive'] }] },
+                    {
+                        arity: 2,
+                        parameters: [
+                            { name: 'argumentNumber', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'positive'] },
+                            { name: 'onlyVariableNames', classes: ['logical'], validators: ['scalar'] },
+                        ],
+                    },
+                ],
                 outputs: { arity: 1 },
             },
         },
@@ -1236,6 +2075,30 @@ class Interpreter implements InterpreterInterface {
                         { name: 'workspace', classes: ['char'], allowedStrings: ['base', 'caller'] },
                         { name: 'code', classes: ['char'] },
                         { name: 'catchCode', classes: ['char'], optional: true },
+                    ],
+                },
+                outputs: { arity: 1 },
+            },
+        },
+        run: {
+            func: (...args: NodeInput[]): NodeInput => {
+                return this.RunScriptFile((args[0] as CharString).str, this.context.currentScope);
+            },
+            signature: { inputs: { arity: 1, parameters: [{ name: 'script', classes: ['char'] }] }, outputs: { arity: 1 } },
+        },
+        source: {
+            func: (...args: NodeInput[]): NodeInput => {
+                const scope = args.length === 2 ? this.context.resolveWorkspace((args[1] as CharString).str) : this.context.currentScope;
+                return this.RunScriptFile((args[0] as CharString).str, scope);
+            },
+            signature: {
+                inputs: {
+                    arity: -2,
+                    min: 1,
+                    max: 2,
+                    parameters: [
+                        { name: 'script', classes: ['char'] },
+                        { name: 'workspace', classes: ['char'], allowedStrings: ['base', 'caller'], optional: true },
                     ],
                 },
                 outputs: { arity: 1 },
@@ -1290,11 +2153,18 @@ class Interpreter implements InterpreterInterface {
     };
 
     /**
-     * Load the `Interpreter`.
-     * @param config
+     * Load or reload the interpreter runtime state.
+     *
+     * When `config` is supplied, host-provided aliases, functions, command-word
+     * entries, and source providers are installed. A reload without `config`
+     * resets those extension tables to the default browser-safe state.
+     *
+     * @param config Optional host integration/configuration.
      */
     private loadInterpreter(config?: InterpreterConfig) {
         this._exitStatus = Interpreter.response.OK;
+        this.lastError = undefined;
+        this.setLastWarning('');
         AST.reload();
         this.context.loadContext();
         this.context.nativeNameTable = Interpreter.nativeNameTableFactory();
@@ -1367,16 +2237,23 @@ class Interpreter implements InterpreterInterface {
         if (config) {
             this.context.setAliasNameTable(config.aliasNameTable);
             this.context.assignBuiltInFunctionTable(config.externalFunctionTable);
-            this.classSourceTable = config.classSourceTable ?? config.externalClassSourceTable ?? Object.create(null);
-            this.classSourceProvider = config.classSourceProvider;
+            this.sourceResolver =
+                config.sourceResolver ??
+                TableSourceResolver.create({
+                    functionSourceTable: config.functionSourceTable ?? config.externalFunctionSourceTable ?? Object.create(null),
+                    functionSourceProvider: config.functionSourceProvider,
+                    scriptSourceTable: config.scriptSourceTable ?? config.externalScriptSourceTable ?? Object.create(null),
+                    scriptSourceProvider: config.scriptSourceProvider,
+                    classSourceTable: config.classSourceTable ?? config.externalClassSourceTable ?? Object.create(null),
+                    classSourceProvider: config.classSourceProvider,
+                });
             if (config.externalCmdWListTable) {
                 Object.assign(this.commandWordListTable, config.externalCmdWListTable);
                 this.commandWordListNameSet = new Set(Object.keys(this.commandWordListTable));
             }
         } else {
             this.context.aliasNameFunction = (name: string): string => name;
-            this.classSourceTable = Object.create(null);
-            this.classSourceProvider = undefined;
+            this.sourceResolver = TableSourceResolver.create();
         }
     }
 
@@ -1451,9 +2328,9 @@ class Interpreter implements InterpreterInterface {
 
         /* Remove error listeners and add LexerErrorListener and ParserErrorListener. */
         lexer.removeErrorListeners();
-        lexer.addErrorListener(new LexerErrorListener());
+        lexer.addErrorListener(new LexerErrorListener(input));
         parser.removeErrorListeners();
-        parser.addErrorListener(new ParserErrorListener());
+        parser.addErrorListener(new ParserErrorListener(input));
         if (this._debug) {
             // Add DiagnosticErrorListener to parser to notify when the parser
             // detects an ambiguity. Set prediction mode to report all ambiguities.
@@ -1485,8 +2362,10 @@ class Interpreter implements InterpreterInterface {
     });
 
     /**
-     * Reset the interpreter to a fresh runtime context while preserving the
-     * construction-time configuration.
+     * Reset the interpreter to a fresh default runtime context.
+     *
+     * This clears workspaces, loaded functions/classes, host extension tables,
+     * and diagnostic state such as `lasterror` and `lastwarn`.
      */
     public Restart(): void {
         this.loadInterpreter();
@@ -1521,13 +2400,17 @@ class Interpreter implements InterpreterInterface {
                     this.context.clearGlobalVariables();
                     return;
                 }
-                this.context.currentScope.removeName(name);
-                const func = this.context.currentScope.functionTable[name];
-                if (func?.type === 'FCNDEF') {
-                    this.context.currentScope.removeFunction(name);
-                }
-                if (this.context.nativeNameSet.has(name)) {
-                    this.context.globalScope!.defineName(name, this.context.nativeNameTable[name]);
+                const resolved = this.resolveRuntimeSymbol(name, this.context.currentScope, { loadClasses: false });
+                const resolvedName = resolved?.resolvedName ?? this.context.aliasNameFunction(name);
+                for (const candidate of new Set([name, resolvedName])) {
+                    this.context.currentScope.removeName(candidate);
+                    const func = this.context.currentScope.functionTable[candidate];
+                    if (func?.type === 'FCNDEF') {
+                        this.context.currentScope.removeFunction(candidate);
+                    }
+                    if (this.context.nativeNameSet.has(candidate)) {
+                        this.context.globalScope!.defineName(candidate, this.context.nativeNameTable[candidate]);
+                    }
                 }
             });
         }
@@ -1541,14 +2424,26 @@ class Interpreter implements InterpreterInterface {
      */
     private validateAssignment(tree: NodeExpr, shallow: boolean, scope: Scope = this.context.currentScope): AssignmentTarget[] {
         const invalidLeftAssignmentMessage = 'invalid left hand side of assignment';
-        if (tree.type === 'IDENT') {
+        if (AST.isNodeIdentifier(tree)) {
             return [
                 {
                     id: tree.id,
                     field: [],
                 },
             ];
-        } else if (tree.type === 'IDX' && tree.expr.type === 'IDENT') {
+        } else if (AST.isNodeIndexExpr(tree) && AST.isNodeIdentifier(tree.expr)) {
+            if (!shallow && tree.delim === '{}') {
+                const entry = scope.resolveName(tree.expr.id);
+                if (entry && MultiArray.isInstanceOf(entry.node) && entry.node.isCell) {
+                    const evaluatedIndex = tree.args.map((arg: NodeExpr) => AST.reduceToFirstIfReturnList(this.Evaluator(arg, scope)));
+                    return MultiArray.resolveLinearIndices(entry.node, tree.expr.id, evaluatedIndex).map((linearIndex) => ({
+                        id: tree.expr.id,
+                        index: [Complex.create(linearIndex + 1) as NodeExpr],
+                        delimiter: tree.delim,
+                        field: [],
+                    }));
+                }
+            }
             return [
                 {
                     id: tree.expr.id,
@@ -1557,7 +2452,7 @@ class Interpreter implements InterpreterInterface {
                     field: [],
                 },
             ];
-        } else if (tree.type === '.') {
+        } else if (AST.isNodeIndirectRef(tree)) {
             const field = tree.field.map((field: NodeExpr) => {
                 if (typeof field === 'string') {
                     return field;
@@ -1570,14 +2465,14 @@ class Interpreter implements InterpreterInterface {
                     }
                 }
             });
-            if (tree.obj.type === 'IDENT') {
+            if (AST.isNodeIdentifier(tree.obj)) {
                 return [
                     {
                         id: tree.obj.id,
                         field,
                     },
                 ];
-            } else if (tree.obj.type === 'IDX' && tree.obj.expr.type === 'IDENT') {
+            } else if (AST.isNodeIndexExpr(tree.obj) && AST.isNodeIdentifier(tree.obj.expr)) {
                 return [
                     {
                         id: tree.obj.expr.id,
@@ -1597,7 +2492,7 @@ class Interpreter implements InterpreterInterface {
                 }
                 this.context.throwEvalError(`${invalidLeftAssignmentMessage}.`);
             }
-        } else if (tree.type === '<~>') {
+        } else if (AST.isNodeIgnoredTarget(tree)) {
             return [
                 {
                     id: '~',
@@ -1605,7 +2500,7 @@ class Interpreter implements InterpreterInterface {
                 },
             ];
         } else if (shallow && MultiArray.isRowVector(tree)) {
-            return tree.array[0].map((left: NodeExpr) => this.validateAssignment(left, false, scope)[0]);
+            return tree.array[0].flatMap((left: NodeExpr) => this.validateAssignment(left, false, scope));
         } else {
             const target = this.collectSubsasgnAssignmentTarget(tree, scope);
             if (target) {
@@ -1622,7 +2517,7 @@ class Interpreter implements InterpreterInterface {
      */
     private toBoolean(tree: NodeExpr): boolean {
         const value = MultiArray.isInstanceOf(tree) ? MultiArray.toLogical(tree) : tree;
-        if (Complex.isInstanceOf(tree)) {
+        if (Complex.isInstanceOf(value)) {
             return Boolean(Complex.realToNumber(value) || Complex.imagToNumber(value));
         } else {
             return !!value.str;
@@ -1632,14 +2527,47 @@ class Interpreter implements InterpreterInterface {
     private switchCaseMatches(switchValue: NodeExpr, caseValue: NodeExpr, scope: Scope): boolean {
         const candidates = MultiArray.isInstanceOf(caseValue) && caseValue.isCell ? MultiArray.linearize(caseValue) : [caseValue];
         for (const candidate of candidates) {
-            const matches = AST.reduceToFirstIfReturnList(
-                this.Evaluator(AST.nodeOperation('==', MathOperation.copy(switchValue as MathObject) as NodeExpr, MathOperation.copy(candidate as MathObject) as NodeExpr), scope),
-            );
-            if (this.toBoolean(matches)) {
+            if (this.switchCandidateMatches(switchValue, candidate as NodeExpr, scope)) {
                 return true;
             }
         }
         return false;
+    }
+
+    private switchCandidateMatches(switchValue: NodeExpr, candidate: NodeExpr, scope: Scope): boolean {
+        try {
+            const matches = AST.reduceToFirstIfReturnList(
+                this.Evaluator(AST.nodeOperation('==', MathOperation.copy(switchValue as MathObject) as NodeExpr, MathOperation.copy(candidate as MathObject) as NodeExpr), scope),
+            );
+            return this.toBoolean(matches);
+        } catch (error: unknown) {
+            if (error instanceof Error && error.message.includes('nonconformant arguments')) {
+                return false;
+            }
+            throw error;
+        }
+    }
+
+    private classDefinitionForOperatorValue(value: NodeInput): ClassDefinition | undefined {
+        return ClassInstance.isInstanceOf(value) ? value.classDefinition : undefined;
+    }
+
+    private classNameForOperatorValue(value: NodeInput): string {
+        return ClassInstance.isInstanceOf(value) ? value.classDefinition.name : this.getValueClassName(value);
+    }
+
+    private classDeclaresInferior(definition: ClassDefinition | undefined, value: NodeInput): boolean {
+        if (!definition) {
+            return false;
+        }
+        const valueDefinition = this.classDefinitionForOperatorValue(value);
+        const valueClassName = this.classNameForOperatorValue(value);
+        return definition.inferiorClasses.some((className) => {
+            if (className === valueClassName) {
+                return true;
+            }
+            return valueDefinition ? valueDefinition.name === className || valueDefinition.isSubclassOfName(className) : false;
+        });
     }
 
     private classBinaryOperatorMethod(left: NodeInput, right: NodeInput, methodName: string): { receiver: ClassInstance; method: ClassMethodDefinition; args: NodeExpr[] } | undefined {
@@ -1656,6 +2584,11 @@ class Interpreter implements InterpreterInterface {
             }
             return { receiver: value, method, args: value === left ? [right as NodeExpr] : [left as NodeExpr] };
         };
+        const leftDefinition = this.classDefinitionForOperatorValue(left);
+        const rightDefinition = this.classDefinitionForOperatorValue(right);
+        if (this.classDeclaresInferior(rightDefinition, left) && !this.classDeclaresInferior(leftDefinition, right)) {
+            return findMethod(right) ?? findMethod(left);
+        }
         return findMethod(left) ?? findMethod(right);
     }
 
@@ -1725,8 +2658,6 @@ class Interpreter implements InterpreterInterface {
     }
 
     private evaluateBinaryOperation(tree: NodeInput, scope: Scope): NodeInput {
-        tree.left.parent = tree;
-        tree.right.parent = tree;
         const left = AST.reduceToFirstIfReturnList(this.Evaluator(tree.left, scope));
         const right = AST.reduceToFirstIfReturnList(this.Evaluator(tree.right, scope));
         const methodName = Interpreter.binaryOperatorMethodTable[tree.type];
@@ -1741,6 +2672,32 @@ class Interpreter implements InterpreterInterface {
             }
         }
         return (this.opTable[tree.type] as BinaryMathOperation)(left, right);
+    }
+
+    /**
+     * Evaluate MATLAB/Octave scalar short-circuit logical operators.
+     *
+     * Unlike `&` and `|`, `&&` and `||` decide whether the right-hand operand is
+     * evaluated from the truth value of the left-hand operand. The resulting
+     * value is always a logical scalar.
+     *
+     * @param tree Operation node for `&&` or `||`.
+     * @param scope Scope used while evaluating operands.
+     * @returns Logical scalar result.
+     */
+    private evaluateShortCircuitOperation(tree: NodeInput, scope: Scope): NodeInput {
+        const left = AST.reduceToFirstIfReturnList(this.Evaluator(tree.left, scope));
+        const leftValue = this.toBoolean(left);
+        if (tree.type === '&&') {
+            if (!leftValue) {
+                return Complex.false();
+            }
+            return this.toBoolean(AST.reduceToFirstIfReturnList(this.Evaluator(tree.right, scope))) ? Complex.true() : Complex.false();
+        }
+        if (leftValue) {
+            return Complex.true();
+        }
+        return this.toBoolean(AST.reduceToFirstIfReturnList(this.Evaluator(tree.right, scope))) ? Complex.true() : Complex.false();
     }
 
     private classUnaryOperatorMethod(value: NodeInput, methodName: string): { receiver: ClassInstance; method: ClassMethodDefinition } | undefined {
@@ -1780,7 +2737,6 @@ class Interpreter implements InterpreterInterface {
 
     private evaluateUnaryOperation(tree: NodeInput, scope: Scope, operandSide: 'left' | 'right'): NodeInput {
         const operand = operandSide === 'left' ? tree.left : tree.right;
-        operand.parent = tree;
         const value = AST.reduceToFirstIfReturnList(this.Evaluator(operand, scope));
         const methodName = Interpreter.unaryOperatorMethodTable[tree.type];
         if (methodName) {
@@ -1809,6 +2765,18 @@ class Interpreter implements InterpreterInterface {
             }
         }
         const property = instance.classDefinition.findProperty(field);
+        if (property?.getMethodName) {
+            this.assertCanReadClassProperty(property, field, instance.classDefinition.name);
+            const getter = instance.classDefinition.findMethod(property.getMethodName, (item) => !item.isStatic);
+            if (!getter) {
+                this.context.throwEvalError(`GetMethod '${property.getMethodName}' for property '${field}' in class ${instance.classDefinition.name} is not defined.`);
+            }
+            const result = AST.reduceToFirstIfReturnList(this.context.callClassInstanceMethod(instance, getter, [], parent));
+            if (property.isGetObservable) {
+                this.dispatchClassEvent(instance, field, this.propertyEventData(instance, field));
+            }
+            return result;
+        }
         if (property?.isDependent) {
             this.assertCanReadClassProperty(property, field, instance.classDefinition.name);
             const getter = instance.classDefinition.findMethod(`get.${field}`, (item) => !item.isStatic);
@@ -1853,6 +2821,27 @@ class Interpreter implements InterpreterInterface {
         }
     }
 
+    /**
+     * Test whether an `AbortSet` property assignment can be skipped.
+     *
+     * MATLAB skips observable set work when a stored non-dependent property is
+     * assigned an equal value. The comparison delegates to shared `isequal`
+     * semantics.
+     *
+     * @param instance Target object.
+     * @param property Property being assigned.
+     * @param value New value.
+     * @returns `true` when assignment side effects should be suppressed.
+     */
+    private shouldAbortClassPropertySet(instance: ClassInstance, property: ClassPropertyDefinition, value: NodeInput): boolean {
+        return (
+            property.isAbortSet &&
+            !property.isDependent &&
+            ClassInstance.hasProperty(instance, property.name) &&
+            RuntimeEquality.valuesEqual(ClassInstance.getProperty(instance, property.name)!, value)
+        );
+    }
+
     private assignClassInstanceField(instance: ClassInstance, field: string, value: NodeInput, parent: NodeInput, scope: Scope): ClassInstance {
         if (!this.context.canAccessClassMember(instance.classDefinition, 'private')) {
             const updated = this.callClassDotSubsasgn(instance, field, value, parent, scope);
@@ -1867,19 +2856,30 @@ class Interpreter implements InterpreterInterface {
         if (property?.isConstant) {
             this.context.throwEvalError(`cannot assign to constant property '${field}' for class ${instance.classDefinition.name}.`);
         }
-        if (property?.isDependent) {
-            const setter = instance.classDefinition.findMethod(`set.${field}`, (item) => !item.isStatic);
+        if (property && this.shouldAbortClassPropertySet(instance, property, value)) {
+            return instance;
+        }
+        if (property?.setMethodName || property?.isDependent) {
+            this.validateClassPropertyValue(property, value, scope);
+            const setterName = property.setMethodName ?? `set.${field}`;
+            const setter = instance.classDefinition.findMethod(setterName, (item) => !item.isStatic);
             if (!setter) {
+                if (property.setMethodName) {
+                    this.context.throwEvalError(`SetMethod '${property.setMethodName}' for property '${field}' in class ${instance.classDefinition.name} is not defined.`);
+                }
                 this.context.throwEvalError(`cannot assign to dependent property '${field}' for class ${instance.classDefinition.name} without a set accessor.`);
             }
             const updated = AST.reduceToFirstIfReturnList(this.context.callClassInstanceMethod(instance, setter, [value as NodeExpr], parent));
             if (!ClassInstance.isInstanceOf(updated)) {
-                this.context.throwEvalError(`set accessor for dependent property '${field}' must return an object of class ${instance.classDefinition.name}.`);
+                this.context.throwEvalError(`set accessor for property '${field}' must return an object of class ${instance.classDefinition.name}.`);
             }
             if (property.isSetObservable) {
                 this.dispatchClassEvent(updated, field, this.propertyEventData(updated, field));
             }
             return updated;
+        }
+        if (property) {
+            this.validateClassPropertyValue(property, value, scope);
         }
         try {
             ClassInstance.setProperty(instance, field, value);
@@ -1957,11 +2957,7 @@ class Interpreter implements InterpreterInterface {
     }
 
     private assignClassArrayIndexedField(id: string, array: MultiArray, index: NodeExpr[], field: string, value: NodeInput, parent: NodeInput, scope: Scope): MultiArray {
-        const evaluatedIndex = index.map((arg: NodeExpr, i: number) => {
-            arg.parent = parent;
-            arg.index = i;
-            return AST.reduceToFirstIfReturnList(this.Evaluator(arg, scope));
-        });
+        const evaluatedIndex = index.map((arg: NodeExpr) => AST.reduceToFirstIfReturnList(this.Evaluator(arg, scope)));
         const selected = MultiArray.getElements(array, id, [], evaluatedIndex);
         const selectedValues = MultiArray.linearize(selected as NodeExpr);
         const values = MultiArray.linearize(value as NodeExpr);
@@ -1995,24 +2991,8 @@ class Interpreter implements InterpreterInterface {
         }
         MultiArray.setType(result);
         const values = MultiArray.linearize(result);
-        if (this.context.requestedOutputCount > 1 && !values.every((value) => ClassBoundMethod.isInstanceOf(value))) {
-            return AST.nodeReturnList(
-                (evaluated: ReturnHandlerResult, index: number): NodeExpr => {
-                    const value = evaluated[`out${index}`];
-                    if (typeof value === 'undefined') {
-                        AST.throwErrorIfGreaterThanReturnList(index, index + 1, (message) => this.context.throwEvalError(message));
-                    }
-                    return value;
-                },
-                (length: number): ReturnHandlerResult => {
-                    AST.throwErrorIfGreaterThanReturnList(values.length, length, (message) => this.context.throwEvalError(message));
-                    const out: ReturnHandlerResult = { length };
-                    for (let index = 0; index < length; index++) {
-                        out[`out${index}`] = values[index] as NodeExpr;
-                    }
-                    return out;
-                },
-            );
+        if ((this.context.requestedOutputCount > 1 || this.context.commaListExpansionEnabled) && !values.every((value) => ClassBoundMethod.isInstanceOf(value))) {
+            return this.valueReturnList(values as NodeInput[]);
         }
         return result;
     }
@@ -2030,8 +3010,6 @@ class Interpreter implements InterpreterInterface {
         subs.isCell = true;
         for (let i = 0; i < args.length; i++) {
             const arg = args[i];
-            arg.parent = parent;
-            arg.index = i;
             subs.array[0][i] = arg.type === ':' ? CharString.create(':') : AST.reduceToFirstIfReturnList(this.Evaluator(arg, scope));
         }
         MultiArray.setType(subs);
@@ -2117,11 +3095,10 @@ class Interpreter implements InterpreterInterface {
                 AST.throwErrorIfGreaterThanReturnList(maxOutputCount, length, (message) => this.context.throwEvalError(message));
                 const result = this.callClassInstanceMethodWithOutputCount(instance, method, [descriptor as NodeExpr], parent, length);
                 const out: ReturnHandlerResult = { length };
-                if (result.type === 'RETLIST') {
-                    const returnList = result as NodeReturnList;
-                    const evaluated = returnList.handler(length);
+                if (AST.isNodeReturnList(result)) {
+                    const evaluated = result.handler(length);
                     for (let index = 0; index < length; index++) {
-                        out[`out${index}`] = returnList.selector(evaluated, index);
+                        out[`out${index}`] = result.selector(evaluated, index);
                     }
                     return out;
                 }
@@ -2212,10 +3189,10 @@ class Interpreter implements InterpreterInterface {
 
     private collectSubsasgnAssignmentTarget(node: NodeExpr, scope: Scope): AssignmentTarget | undefined {
         const collect = (current: NodeExpr): { id: string; descriptors: Structure[] } | undefined => {
-            if (current.type === 'IDENT') {
+            if (AST.isNodeIdentifier(current)) {
                 return { id: current.id, descriptors: [] };
             }
-            if (current.type === 'IDX') {
+            if (AST.isNodeIndexExpr(current)) {
                 const base = collect(current.expr);
                 if (!base) {
                     return undefined;
@@ -2223,7 +3200,7 @@ class Interpreter implements InterpreterInterface {
                 base.descriptors.push(this.createSubscriptDescriptor(current.delim, current.args, current, scope));
                 return base;
             }
-            if (current.type === '.') {
+            if (AST.isNodeIndirectRef(current)) {
                 const base = collect(current.obj);
                 if (!base) {
                     return undefined;
@@ -2247,6 +3224,139 @@ class Interpreter implements InterpreterInterface {
         };
         const result = collect(node);
         return result && result.descriptors.length > 0 ? { id: result.id, field: [], descriptors: result.descriptors } : undefined;
+    }
+
+    private indexedAssignmentRhs(delimiter: IndexingDelimiterType | undefined, value: NodeInput): MultiArray {
+        return delimiter === '{}' ? AST.nodeFirstRow(AST.nodeList([value]), true) : MultiArray.scalarToMultiArray(value);
+    }
+
+    private readNativeSubscriptDescriptor(descriptor: Structure): NativeSubscriptDescriptor {
+        const type = descriptor.field.type;
+        const subs = descriptor.field.subs;
+        if (!CharString.isInstanceOf(type) || (type.str !== '()' && type.str !== '{}' && type.str !== '.')) {
+            this.context.throwEvalError('invalid subsasgn descriptor.');
+        }
+        if (!MultiArray.isInstanceOf(subs) || !subs.isCell) {
+            this.context.throwEvalError('invalid subsasgn descriptor.');
+        }
+        return {
+            type: type.str as IndexingDelimiterType | '.',
+            subs: MultiArray.linearize(subs) as NodeInput[],
+        };
+    }
+
+    private nativeDescriptorIndexList(descriptor: NativeSubscriptDescriptor, target: MultiArray): (ComplexType | MultiArray)[] {
+        return descriptor.subs.map((subscript, index) => {
+            if (CharString.isInstanceOf(subscript) && subscript.str === ':') {
+                return descriptor.subs.length === 1 ? MultiArray.expandColon(MultiArray.linearLength(target)) : MultiArray.expandColon(MultiArray.getDimension(target, index));
+            }
+            return subscript as ComplexType | MultiArray;
+        });
+    }
+
+    private nativeSubscriptScalar(target: NodeInput, descriptor: NativeSubscriptDescriptor): NodeInput {
+        if (descriptor.type === '.') {
+            const field = descriptor.subs[0];
+            if (!CharString.isInstanceOf(field)) {
+                this.context.throwEvalError('invalid subsasgn descriptor.');
+            }
+            return Structure.getField(target, [field.str]) as NodeInput;
+        }
+        if (!MultiArray.isInstanceOf(target)) {
+            this.context.throwEvalError(`matrix cannot be indexed with ${descriptor.type[0]}`);
+        }
+        const indices = this.nativeDescriptorIndexList(descriptor, target);
+        const selected = MultiArray.getElements(target, '', [], indices, this);
+        return MultiArray.MultiArrayToScalar(selected) as NodeInput;
+    }
+
+    private setNativeIndexedValue(target: MultiArray, descriptor: NativeSubscriptDescriptor, value: NodeInput): MultiArray {
+        const result = MultiArray.copy(target);
+        const tempScope = Scope.create();
+        tempScope.defineName('__subsasgn__', result);
+        MultiArray.setElements(
+            tempScope,
+            '__subsasgn__',
+            [],
+            this.nativeDescriptorIndexList(descriptor, result),
+            this.indexedAssignmentRhs(descriptor.type as IndexingDelimiterType, value),
+            undefined,
+            this,
+        );
+        return tempScope.resolveName('__subsasgn__')!.node as MultiArray;
+    }
+
+    private blankNativeSubsasgnValue(nextDescriptor?: NativeSubscriptDescriptor): NodeInput {
+        if (!nextDescriptor || nextDescriptor.type === '.') {
+            return new Structure({});
+        }
+        if (nextDescriptor.type === '()' && nextDescriptor.subs.length === 1) {
+            return new MultiArray([1, 0], undefined, false);
+        }
+        if (nextDescriptor.type === '{}' && nextDescriptor.subs.length === 1) {
+            return new MultiArray([1, 0], undefined, true);
+        }
+        return MultiArray.emptyArray(nextDescriptor.type === '{}');
+    }
+
+    private nativeSubscriptScalarForAssignment(target: NodeInput, descriptor: NativeSubscriptDescriptor, nextDescriptor?: NativeSubscriptDescriptor): NodeInput {
+        try {
+            return this.nativeSubscriptScalar(target, descriptor);
+        } catch (error: unknown) {
+            if (MultiArray.isInstanceOf(target)) {
+                return this.blankNativeSubsasgnValue(nextDescriptor);
+            }
+            throw error as Error;
+        }
+    }
+
+    private assignNativeSubsasgnDescriptors(target: NodeInput, descriptors: Structure[], value: NodeInput): NodeInput {
+        if (descriptors.length === 0) {
+            return value;
+        }
+        const nativeDescriptors = descriptors.map((descriptor) => this.readNativeSubscriptDescriptor(descriptor));
+        const assign = (current: NodeInput, index: number): NodeInput => {
+            const descriptor = nativeDescriptors[index];
+            if (!descriptor) {
+                return value;
+            }
+            if (descriptor.type === '.') {
+                const field = descriptor.subs[0];
+                if (!CharString.isInstanceOf(field)) {
+                    this.context.throwEvalError('invalid subsasgn descriptor.');
+                }
+                if (!Structure.isInstanceOf(current) && !Structure.isStructure(current)) {
+                    this.context.throwEvalError('value cannot be indexed with .');
+                }
+                const result = Structure.isInstanceOf(current) ? Structure.copy(current) : MultiArray.copy(current as MultiArray);
+                let currentField: NodeInput;
+                try {
+                    currentField = Structure.getField(result, [field.str]) as NodeInput;
+                } catch (error: unknown) {
+                    currentField = this.blankNativeSubsasgnValue(nativeDescriptors[index + 1]);
+                }
+                const nested = index === descriptors.length - 1 ? value : assign(currentField, index + 1);
+                Structure.setNewField(result, [field.str], nested);
+                return result;
+            }
+            if (!MultiArray.isInstanceOf(current)) {
+                this.context.throwEvalError(`matrix cannot be indexed with ${descriptor.type[0]}`);
+            }
+            const nested = index === descriptors.length - 1 ? value : assign(this.nativeSubscriptScalarForAssignment(current, descriptor, nativeDescriptors[index + 1]), index + 1);
+            return this.setNativeIndexedValue(current, descriptor, nested);
+        };
+        return assign(target, 0);
+    }
+
+    private shouldUseNativeChainedSubsasgn(descriptors: Structure[]): boolean {
+        if (descriptors.length > 2) {
+            return true;
+        }
+        if (descriptors.length < 2) {
+            return false;
+        }
+        const [first, second] = descriptors.map((descriptor) => this.readNativeSubscriptDescriptor(descriptor).type);
+        return !(first === '()' && second === '.');
     }
 
     private callClassSubsasgn(instance: ClassInstance, index: NodeExpr[], delimiter: IndexingDelimiterType, value: NodeInput, parent: NodeInput, scope: Scope): ClassInstance | undefined {
@@ -2379,6 +3489,42 @@ class Interpreter implements InterpreterInterface {
         return error.stackFrames?.[0] === currentCallableFrame;
     }
 
+    private registerFunctionDefinition(func: NodeFunctionDefinition, scope: Scope, nested: boolean): void {
+        this.validateFunctionSignature(func);
+        this.validateFunctionArgumentsBlocks(func);
+        scope.defineFunction(func.id, func);
+        if (nested) {
+            func.definingScope = scope;
+            func.attributes = { ...(func.attributes ?? {}), nested: true };
+        } else {
+            /* Store a lexical capture overlay while keeping live fallback for forward references. */
+            func.definingScope = scope.capture((node) => MathOperation.copy(node), this.context.allowForwardReference);
+            if (func.attributes?.nested) {
+                func.attributes = { ...func.attributes };
+                delete func.attributes.nested;
+            }
+        }
+    }
+
+    private preregisterScriptLocalFunctions(list: NodeList, scope: Scope): void {
+        if (list.parent !== null) {
+            return;
+        }
+        if (this.context.currentFrame?.func?.type === 'FCNDEF') {
+            return;
+        }
+        for (const statement of list.list) {
+            if (statement.type !== 'FCNDEF') {
+                continue;
+            }
+            const func = statement as NodeFunctionDefinition;
+            if (scope.functionTable[func.id] === func) {
+                continue;
+            }
+            this.registerFunctionDefinition(func, scope, false);
+        }
+    }
+
     private getArgumentValidationName(validation: NodeArgumentValidation): string {
         return FunctionArguments.validationName(validation, (message) => this.context.throwSyntaxError(message));
     }
@@ -2395,16 +3541,32 @@ class Interpreter implements InterpreterInterface {
         FunctionArguments.validateBlocks(func, (message) => this.context.throwSyntaxError(message));
     }
 
-    private validateFunctionSignatureList(nodes: NodeInput[], variadicName: 'varargin' | 'varargout', listKind: 'parameter' | 'return', functionDisplayName: string): void {
+    private validateFunctionSignatureList<T extends NodeFunctionParameter | NodeFunctionReturn>(
+        nodes: readonly unknown[],
+        isValidEntry: (node: unknown) => node is T,
+        variadicName: 'varargin' | 'varargout',
+        listKind: 'parameter' | 'return',
+        functionDisplayName: string,
+    ): void {
         const seen = new Set<string>();
         nodes.forEach((node, index) => {
-            if (node.type === '<~>') {
-                return;
-            }
-            if (node.type !== 'IDENT') {
+            if (!isValidEntry(node)) {
                 this.context.throwSyntaxError(`invalid ${listKind} list in ${functionDisplayName}.`);
             }
-            const name = (node as NodeIdentifier).id;
+            if (AST.isNodeIgnoredTarget(node)) {
+                return;
+            }
+            let name: string;
+            if (AST.isNodeDefaultedParameter(node)) {
+                if (listKind !== 'parameter' || functionDisplayName === 'anonymous function') {
+                    this.context.throwSyntaxError(`invalid ${listKind} list in ${functionDisplayName}.`);
+                }
+                name = node.left.id;
+            } else if (AST.isNodeIdentifier(node)) {
+                name = node.id;
+            } else {
+                this.context.throwSyntaxError(`invalid ${listKind} list in ${functionDisplayName}.`);
+            }
             if (seen.has(name)) {
                 this.context.throwSyntaxError(`duplicate ${listKind} name '${name}' in ${functionDisplayName}.`);
             }
@@ -2412,17 +3574,20 @@ class Interpreter implements InterpreterInterface {
             if (name === variadicName && index !== nodes.length - 1) {
                 this.context.throwSyntaxError(`${variadicName} must be the last ${listKind} in ${functionDisplayName}.`);
             }
+            if (node.type === '=' && name === variadicName) {
+                this.context.throwSyntaxError(`${variadicName} default value is not supported in ${functionDisplayName}.`);
+            }
         });
     }
 
     private validateFunctionSignature(func: NodeFunctionDefinition): void {
         const functionDisplayName = `function ${func.id}`;
-        this.validateFunctionSignatureList(func.parameter.list, 'varargin', 'parameter', functionDisplayName);
-        this.validateFunctionSignatureList(func.return.list, 'varargout', 'return', functionDisplayName);
+        this.validateFunctionSignatureList(func.parameter.list, AST.isNodeFunctionParameter, 'varargin', 'parameter', functionDisplayName);
+        this.validateFunctionSignatureList(func.return.list, AST.isNodeFunctionReturn, 'varargout', 'return', functionDisplayName);
     }
 
     private validateAnonymousFunctionSignature(handle: FunctionHandle): void {
-        this.validateFunctionSignatureList(handle.parameter, 'varargin', 'parameter', 'anonymous function');
+        this.validateFunctionSignatureList(handle.parameter, AST.isNodeFunctionParameter, 'varargin', 'parameter', 'anonymous function');
     }
 
     private getValueClassName(value: NodeInput): string {
@@ -2459,12 +3624,52 @@ class Interpreter implements InterpreterInterface {
             {
                 resolveEntry: (item, namesOnly) => this.getArgumentValidationEntry(item, scope, namesOnly),
                 evaluate: (expr) => AST.reduceToFirstIfReturnList(this.Evaluator(expr, scope)),
+                matchesClass: (value, className) => this.valueMatchesValidationClass(value, className, scope),
                 throwEvalError: (message) => this.context.throwEvalError(message),
                 throwSyntaxError: (message) => this.context.throwSyntaxError(message),
             },
             localNamesOnly,
             displayName,
         );
+    }
+
+    private classPropertyValidationNode(property: ClassPropertyDefinition): NodeArgumentValidation {
+        return {
+            type: 'ARGVALID',
+            name: property.node.name,
+            size: property.size,
+            class: property.class,
+            functions: property.functions,
+            default: property.defaultValue,
+            omitAnswer: true,
+            omitOutput: true,
+        } as NodeArgumentValidation;
+    }
+
+    private validateClassPropertyValue(property: ClassPropertyDefinition, value: NodeInput, scope: Scope): void {
+        const validation = this.classPropertyValidationNode(property);
+        FunctionArguments.validateArgumentValidation(
+            validation,
+            new Map<string, number>(),
+            {
+                resolveEntry: () => ({ node: value }),
+                evaluate: (expr) => AST.reduceToFirstIfReturnList(this.Evaluator(expr, scope)),
+                matchesClass: (item, className) => this.valueMatchesValidationClass(item, className, scope),
+                throwEvalError: (message) => this.context.throwEvalError(message),
+                throwSyntaxError: (message) => this.context.throwSyntaxError(message),
+            },
+            false,
+            property.name,
+            'property',
+        );
+    }
+
+    public validateClassInstancePropertyDefaults(instance: ClassInstance, scope: Scope): void {
+        for (const property of instance.classDefinition.allProperties()) {
+            if (!property.isDependent && ClassInstance.hasProperty(instance, property.name)) {
+                this.validateClassPropertyValue(property, ClassInstance.getProperty(instance, property.name)!, scope);
+            }
+        }
     }
 
     private validateFunctionArguments(func: NodeFunctionDefinition, scope: Scope, targetAttribute: 'Input' | 'Output', namesToValidate?: Set<string>, localNamesOnly = false): void {
@@ -2474,6 +3679,7 @@ class Interpreter implements InterpreterInterface {
             {
                 resolveEntry: (validation, namesOnly) => this.getArgumentValidationEntry(validation, scope, namesOnly),
                 evaluate: (expr) => AST.reduceToFirstIfReturnList(this.Evaluator(expr, scope)),
+                matchesClass: (value, className) => this.valueMatchesValidationClass(value, className, scope),
                 throwEvalError: (message) => this.context.throwEvalError(message),
                 throwSyntaxError: (message) => this.context.throwSyntaxError(message),
             },
@@ -2578,9 +3784,13 @@ class Interpreter implements InterpreterInterface {
         }
         if (tree) {
             if (FunctionHandle.isInstanceOf(tree)) {
-                if (tree.id && !tree.closure && scope.resolveFunction(this.context.aliasNameFunction(tree.id))) {
+                const resolvedFunctionHandleTarget = tree.id && !tree.closure ? this.resolveRuntimeFunction(tree.id, scope) : undefined;
+                if (resolvedFunctionHandleTarget?.functionDefinition) {
                     const handle = FunctionHandle.copy(tree);
-                    handle.closure = scope.capture((node) => MathOperation.copy(node), this.context.allowForwardReference);
+                    handle.id = tree.id!.includes('.') ? resolvedFunctionHandleTarget.resolvedName : this.context.aliasNameFunction(tree.id!);
+                    if (resolvedFunctionHandleTarget.functionDefinition.type === 'FCNDEF') {
+                        handle.closure = scope.capture((node) => MathOperation.copy(node), this.context.allowForwardReference);
+                    }
                     return handle;
                 }
                 if (!tree.id && !tree.closure) {
@@ -2631,11 +3841,11 @@ class Interpreter implements InterpreterInterface {
                     case '~=':
                     case '&':
                     case '|':
+                        return this.evaluateBinaryOperation(tree, scope);
                     case '&&':
                     case '||':
-                        return this.evaluateBinaryOperation(tree, scope);
+                        return this.evaluateShortCircuitOperation(tree, scope);
                     case '()':
-                        tree.right.parent = tree;
                         return AST.reduceToFirstIfReturnList(this.Evaluator(tree.right, scope));
                     case '!':
                     case '~':
@@ -2644,14 +3854,12 @@ class Interpreter implements InterpreterInterface {
                         return this.evaluateUnaryOperation(tree, scope, 'right');
                     case '++_':
                     case '--_':
-                        tree.right.parent = tree;
                         return (this.opTable[tree.type] as IncDecOperator)(tree.right);
                     case ".'":
                     case "'":
                         return this.evaluateUnaryOperation(tree, scope, 'left');
                     case '_++':
                     case '_--':
-                        tree.left.parent = tree;
                         return (this.opTable[tree.type] as IncDecOperator)(tree.left);
                     case '=':
                     case '+=':
@@ -2669,8 +3877,6 @@ class Interpreter implements InterpreterInterface {
                     case '&=':
                     case '|=': {
                         /* `tree` is an assignment */
-                        tree.left.parent = tree;
-                        tree.right.parent = tree;
                         const assignment = this.validateAssignment(tree.left, true, scope);
                         const op: OperatorType | '' = tree.type.substring(0, tree.type.length - 1);
                         if (assignment.length > 1 && op.length > 0) {
@@ -2682,7 +3888,7 @@ class Interpreter implements InterpreterInterface {
                         this.context.pushForwardReferenceTargets(assignment.map(({ id }) => id).filter((id) => id !== '~'));
                         this.context.pushRequestedOutputCount(assignment.length);
                         try {
-                            right = tree.right.type === 'RETLIST' ? tree.right : MathOperation.copy(this.Evaluator(tree.right, scope));
+                            right = AST.isNodeReturnList(tree.right) ? tree.right : MathOperation.copy(this.Evaluator(tree.right, scope));
                         } catch (e: unknown) {
                             if (!this.context.allowForwardReference) {
                                 throw e as Error;
@@ -2697,26 +3903,23 @@ class Interpreter implements InterpreterInterface {
                             this.context.popRequestedOutputCount();
                             this.context.popForwardReferenceTargets();
                         }
-                        /* Convert `right` to `'RETLIST'` if the node is not already of that type. */
-                        if (right.type !== 'RETLIST') {
-                            const result = right;
-                            right = AST.nodeReturnList((evaluated: ReturnHandlerResult, index: number) => {
-                                if (index === 0) {
-                                    return result;
-                                } else {
-                                    AST.throwErrorIfGreaterThanReturnList(1, index + 1, (message) => this.context.throwEvalError(message));
-                                }
-                            });
-                        }
+                        const rightReturnList = AST.ensureReturnList(right);
                         const resultList = AST.nodeListFirst();
-                        const evaluated = (right as NodeReturnList).handler(assignment.length);
+                        const evaluated = rightReturnList.handler(assignment.length);
+                        const selectRightValue = (index: number): NodeExpr => {
+                            const value = rightReturnList.selector(evaluated, index);
+                            if (typeof value === 'undefined') {
+                                AST.throwErrorIfGreaterThanReturnList(index, index + 1, (message) => this.context.throwEvalError(message));
+                            }
+                            return value;
+                        };
                         for (let n = 0; n < assignment.length; n++) {
                             const { id, index, delimiter, field, descriptors } = assignment[n];
                             if (id !== '~') {
                                 /* Apply one assignment target. */
                                 if (descriptors && descriptors.length > 0 && !op) {
                                     const entry = scope.resolveName(id);
-                                    const rightValue = AST.reduceToFirstIfReturnList(this.Evaluator((right as NodeReturnList).selector(evaluated, n)));
+                                    const rightValue = AST.reduceToFirstIfReturnList(this.Evaluator(selectRightValue(n)));
                                     if (entry && ClassInstance.isInstanceOf(entry.node) && !this.context.canAccessClassMember(entry.node.classDefinition, 'private')) {
                                         const updated = this.callClassSubsasgnDescriptors(entry.node, descriptors, rightValue, tree);
                                         if (updated) {
@@ -2724,6 +3927,23 @@ class Interpreter implements InterpreterInterface {
                                             AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), entry.node));
                                             continue;
                                         }
+                                    }
+                                    if (!entry && this.shouldUseNativeChainedSubsasgn(descriptors)) {
+                                        const firstDescriptor = this.readNativeSubscriptDescriptor(descriptors[0]);
+                                        const initialValue = this.blankNativeSubsasgnValue(firstDescriptor);
+                                        const assigned = this.assignNativeSubsasgnDescriptors(initialValue, descriptors, rightValue);
+                                        const newEntry = scope.defineName(id, assigned);
+                                        AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), newEntry.node));
+                                        continue;
+                                    }
+                                    if (
+                                        entry &&
+                                        this.shouldUseNativeChainedSubsasgn(descriptors) &&
+                                        (MultiArray.isInstanceOf(entry.node) || Structure.isInstanceOf(entry.node) || Structure.isStructure(entry.node))
+                                    ) {
+                                        entry.node = this.assignNativeSubsasgnDescriptors(entry.node, descriptors, rightValue);
+                                        AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), entry.node));
+                                        continue;
                                     }
                                 }
                                 if (index) {
@@ -2744,9 +3964,7 @@ class Interpreter implements InterpreterInterface {
                                                                 AST.nodeOperation(
                                                                     op,
                                                                     MultiArray.getElements(entry.node, id, field, index),
-                                                                    MultiArray.scalarToMultiArray(
-                                                                        AST.reduceToFirstIfReturnList(this.Evaluator((right as NodeReturnList).selector(evaluated, n))),
-                                                                    ),
+                                                                    MultiArray.scalarToMultiArray(AST.reduceToFirstIfReturnList(this.Evaluator(selectRightValue(n)))),
                                                                 ),
                                                                 scope,
                                                             ),
@@ -2763,7 +3981,7 @@ class Interpreter implements InterpreterInterface {
                                         }
                                     } else {
                                         /* Direct assignment to an indexed matrix element. */
-                                        const rightValue = AST.reduceToFirstIfReturnList(this.Evaluator((right as NodeReturnList).selector(evaluated, n)));
+                                        const rightValue = AST.reduceToFirstIfReturnList(this.Evaluator(selectRightValue(n)));
                                         const entry = scope.resolveName(id);
                                         if (entry && ClassInstance.isInstanceOf(entry.node) && field.length === 0) {
                                             const updated = this.callClassSubsasgn(entry.node, index, delimiter ?? '()', rightValue, tree, scope);
@@ -2774,11 +3992,7 @@ class Interpreter implements InterpreterInterface {
                                             }
                                         }
                                         if (entry && MultiArray.isInstanceOf(entry.node) && field.length === 0 && this.hasClassInstanceElement(entry.node)) {
-                                            const evaluatedIndex = index.map((arg: NodeExpr, i: number) => {
-                                                arg.parent = tree.left;
-                                                arg.index = i;
-                                                return AST.reduceToFirstIfReturnList(this.Evaluator(arg));
-                                            });
+                                            const evaluatedIndex = index.map((arg: NodeExpr) => AST.reduceToFirstIfReturnList(this.Evaluator(arg)));
                                             const selected = MultiArray.MultiArrayToScalar(AST.reduceToFirstIfReturnList(MultiArray.getElements(entry.node, id, [], evaluatedIndex)));
                                             if (ClassInstance.isInstanceOf(selected)) {
                                                 const updated = this.callClassSubsasgn(selected, index, delimiter ?? '()', rightValue, tree, scope);
@@ -2798,18 +4012,14 @@ class Interpreter implements InterpreterInterface {
                                             scope,
                                             id,
                                             field,
-                                            index.map((arg: NodeExpr, i: number) => {
-                                                arg.parent = tree.left;
-                                                arg.index = i;
-                                                return AST.reduceToFirstIfReturnList(this.Evaluator(arg));
-                                            }),
-                                            MultiArray.scalarToMultiArray(rightValue),
+                                            index.map((arg: NodeExpr) => AST.reduceToFirstIfReturnList(this.Evaluator(arg))),
+                                            this.indexedAssignmentRhs(delimiter, rightValue),
                                         );
                                         AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), scope.resolveName(id)!.node));
                                     }
                                 } else {
                                     /* Name or structure-field assignment. */
-                                    const rightN = (right as NodeReturnList).selector(evaluated, n);
+                                    const rightN = selectRightValue(n);
                                     rightN.parent = tree.right;
                                     const expr = op.length
                                         ? typeof error !== 'undefined'
@@ -2824,6 +4034,8 @@ class Interpreter implements InterpreterInterface {
                                             }
                                             if (Structure.isInstanceOf(entry.node)) {
                                                 Structure.setNewField(entry.node, field, AST.reduceToFirstIfReturnList(expr));
+                                            } else if (MultiArray.isInstanceOf(entry.node) && Structure.isStructure(entry.node)) {
+                                                Structure.setNewField(entry.node, field, AST.reduceToFirstIfReturnList(expr));
                                             } else if (ClassInstance.isInstanceOf(entry.node)) {
                                                 const value = AST.reduceToFirstIfReturnList(expr);
                                                 entry.node = this.assignNestedClassInstanceField(entry.node, field, value, tree, scope);
@@ -2831,7 +4043,7 @@ class Interpreter implements InterpreterInterface {
                                                 entry.node = this.assignNestedClassArrayField(entry.node, field, AST.reduceToFirstIfReturnList(expr), tree, scope);
                                             } else if (ClassEventListener.isInstanceOf(entry.node)) {
                                                 if (field.length !== 1) {
-                                                    this.context.throwEvalError('nested event.listener property assignment is not supported yet.');
+                                                    this.context.throwEvalError(`cannot assign nested property '${field.join('.')}' for event.listener.`);
                                                 }
                                                 this.setClassEventListenerField(entry.node, field[0], AST.reduceToFirstIfReturnList(expr));
                                             } else {
@@ -2864,7 +4076,7 @@ class Interpreter implements InterpreterInterface {
                                 }
                             }
                         }
-                        if (tree.parent === null || tree.parent.parent === null) {
+                        if (!tree.parent || !tree.parent.parent) {
                             /* Assignment at the root expression returns the assignment result. */
                             if (resultList.list.length === 1) {
                                 /* Single assignment returns its only assignment node. */
@@ -2894,21 +4106,10 @@ class Interpreter implements InterpreterInterface {
                         if (this.context.currentFrame?.func?.type === 'FCNDEF' && scope.hasLocalFunction(func.id)) {
                             return AST.nodeVoid();
                         }
-                        this.validateFunctionSignature(func);
-                        this.validateFunctionArgumentsBlocks(func);
-                        /* Register function in the current scope. */
-                        scope.defineFunction(func.id, func);
-                        if (this.context.currentFrame?.func?.type === 'FCNDEF') {
-                            func.definingScope = scope;
-                            func.attributes = { ...(func.attributes ?? {}), nested: true };
-                        } else {
-                            /* Store a lexical capture overlay while keeping live fallback for forward references. */
-                            func.definingScope = scope.capture((node) => MathOperation.copy(node), this.context.allowForwardReference);
-                            if (func.attributes?.nested) {
-                                func.attributes = { ...func.attributes };
-                                delete func.attributes.nested;
-                            }
+                        if (scope.functionTable[func.id] === func) {
+                            return AST.nodeVoid();
                         }
+                        this.registerFunctionDefinition(func, scope, this.context.currentFrame?.func?.type === 'FCNDEF');
                         /* MATLAB-like behavior: function definition does not execute anything. */
                         return AST.nodeVoid();
                     }
@@ -2925,10 +4126,9 @@ class Interpreter implements InterpreterInterface {
                     case 'GLOBAL': {
                         for (const declaration of tree.list) {
                             const declarationNode = AST.getDeclarationNode(declaration);
-                            if (declarationNode.type === 'IDENT') {
+                            if (AST.isNodeIdentifier(declarationNode)) {
                                 this.context.declareGlobal(declarationNode.id, undefined, scope);
-                            } else if (declarationNode.type === '=' && declarationNode.left.type === 'IDENT') {
-                                declarationNode.right.parent = declarationNode;
+                            } else if (AST.isNodeDefaultedParameter(declarationNode)) {
                                 const value = AST.reduceToFirstIfReturnList(this.Evaluator(declarationNode.right, scope));
                                 this.context.declareGlobal(declarationNode.left.id, value, scope);
                             } else {
@@ -2940,10 +4140,9 @@ class Interpreter implements InterpreterInterface {
                     case 'PERSIST': {
                         for (const declaration of tree.list) {
                             const declarationNode = AST.getDeclarationNode(declaration);
-                            if (declarationNode.type === 'IDENT') {
+                            if (AST.isNodeIdentifier(declarationNode)) {
                                 this.context.declarePersistent(declarationNode.id, undefined, scope);
-                            } else if (declarationNode.type === '=' && declarationNode.left.type === 'IDENT') {
-                                declarationNode.right.parent = declarationNode;
+                            } else if (AST.isNodeDefaultedParameter(declarationNode)) {
                                 const value = AST.reduceToFirstIfReturnList(this.Evaluator(declarationNode.right, scope));
                                 this.context.declarePersistent(declarationNode.left.id, value, scope);
                             } else {
@@ -2952,6 +4151,11 @@ class Interpreter implements InterpreterInterface {
                         }
                         return AST.nodeVoid();
                     }
+                    case 'IMPORT':
+                        for (const importName of tree.imports) {
+                            this.context.defineImport(importName.id, scope);
+                        }
+                        return AST.nodeVoid();
                     case '.': {
                         const qualifiedNameAccess = this.resolveQualifiedNameAccess(tree, scope);
                         if (typeof qualifiedNameAccess !== 'undefined') {
@@ -3047,43 +4251,13 @@ class Interpreter implements InterpreterInterface {
                             return current;
                         }
                         if (ClassDefinition.isInstanceOf(obj)) {
-                            let current: NodeInput = obj;
-                            for (const field of fields) {
-                                if (ClassDefinition.isInstanceOf(current)) {
-                                    const property = current.findProperty(field);
-                                    if (property?.isConstant) {
-                                        this.assertCanReadClassProperty(property, field, current.name);
-                                        current = property.defaultValue ? AST.reduceToFirstIfReturnList(this.Evaluator(property.defaultValue, scope)) : MultiArray.emptyArray();
-                                        continue;
-                                    }
-                                    const enumeration = current.findEnumeration(field);
-                                    if (enumeration) {
-                                        const args = enumeration.args.map((arg) => AST.reduceToFirstIfReturnList(this.Evaluator(arg, scope)));
-                                        current = ClassEnumerationValue.create(enumeration.classDefinition, enumeration, args);
-                                        continue;
-                                    }
-                                    if (field === 'empty') {
-                                        current = ClassEmptyMethod.bind(current);
-                                        continue;
-                                    }
-                                    const method = current.findMethod(field, (item) => item.isStatic);
-                                    if (method) {
-                                        if (!this.context.canAccessClassMember(method.classDefinition, method.access)) {
-                                            this.context.throwEvalError(`method '${field}' has ${method.access} access for class ${current.name}.`);
-                                        }
-                                        current = ClassStaticMethod.bind(current, method);
-                                        continue;
-                                    }
-                                    this.context.throwEvalError(`unknown static method '${field}' for class ${current.name}.`);
-                                } else {
-                                    current = Structure.getField(current, [field]);
-                                }
-                            }
-                            return current;
+                            return this.resolveClassDefinitionMemberChain(obj, fields, scope);
                         }
                         const result = Structure.getFields(obj, fields);
                         if (result.length === 1) {
                             return result[0];
+                        } else if (this.context.requestedOutputCount > 1 || this.context.commaListExpansionEnabled) {
+                            return this.valueReturnList(result as NodeInput[]);
                         } else {
                             return AST.nodeList(result);
                         }
@@ -3132,6 +4306,7 @@ class Interpreter implements InterpreterInterface {
                         return this.resolveMetaclassLiteral(tree.className.id, scope);
                     }
                     case 'LIST': {
+                        this.preregisterScriptLocalFunctions(tree, scope);
                         const result = {
                             type: 'LIST',
                             list: new Array(tree.list.length),
@@ -3146,7 +4321,6 @@ class Interpreter implements InterpreterInterface {
                                 tree.list[i]['args'] = [];
                             }
                             /* PHASE 1: Prepare input node. */
-                            tree.list[i].parent = result;
                             tree.list[i].index = i;
                             /* Evaluate */
                             const item = AST.reduceToFirstIfReturnList(this.Evaluator(tree.list[i], scope));
@@ -3197,11 +4371,6 @@ class Interpreter implements InterpreterInterface {
                         return result;
                     }
                     case 'RANGE':
-                        tree.start_.parent = tree;
-                        tree.stop_.parent = tree;
-                        if (tree.stride_) {
-                            tree.stride_.parent = tree;
-                        }
                         return MultiArray.expandRange(
                             AST.reduceToFirstIfReturnList(this.Evaluator(tree.start_, scope)),
                             AST.reduceToFirstIfReturnList(this.Evaluator(tree.stop_, scope)),
@@ -3225,6 +4394,8 @@ class Interpreter implements InterpreterInterface {
                                 return Complex.one();
                             } else if (MultiArray.isInstanceOf(expr)) {
                                 return parent.args.length === 1 ? Complex.create(MultiArray.linearLength(expr)) : Complex.create(MultiArray.getDimension(expr, index));
+                            } else if (CharString.isInstanceOf(expr)) {
+                                return Complex.create(expr.length);
                             } else {
                                 return Complex.one();
                             }
@@ -3239,6 +4410,8 @@ class Interpreter implements InterpreterInterface {
                                 return tree.parent.args.length === 1
                                     ? MultiArray.expandColon(MultiArray.linearLength(expr))
                                     : MultiArray.expandColon(MultiArray.getDimension(expr, tree.index));
+                            } else if (CharString.isInstanceOf(expr)) {
+                                return MultiArray.expandColon(expr.length);
                             } else {
                                 return Complex.one();
                             }
@@ -3258,7 +4431,6 @@ class Interpreter implements InterpreterInterface {
                                 }
                             }
                         }
-                        tree.expr.parent = tree;
                         const expr = AST.reduceToFirstIfReturnList(this.Evaluator(tree.expr, scope));
                         if (ClassInstance.isInstanceOf(expr)) {
                             const subsrefResult = this.callClassSubsref(expr, tree, scope);
@@ -3269,20 +4441,21 @@ class Interpreter implements InterpreterInterface {
                         return this.context.apply(expr, tree.args, tree);
                     }
                     case 'CMDWLIST': {
-                        const result = this.commandWordListTable[tree.id].func(...tree.args.map((word: CharString) => word.str));
+                        const entry = this.commandWordListTable[tree.id];
+                        if (!entry) {
+                            this.context.throwUndefinedReferenceError(tree.id);
+                        }
+                        const result = entry.func(...tree.args.map((word: CharString) => word.str));
                         return typeof result !== 'undefined' ? result : tree;
                     }
                     case 'IF': {
                         for (let ifTest = 0; ifTest < tree.expression.length; ifTest++) {
-                            tree.expression[ifTest].parent = tree;
                             if (this.toBoolean(AST.reduceToFirstIfReturnList(this.Evaluator(tree.expression[ifTest], scope)))) {
-                                tree.then[ifTest].parent = tree;
                                 return AST.reduceToFirstIfReturnList(this.Evaluator(tree.then[ifTest], scope));
                             }
                         }
                         /* No one `then` clause. */
                         if (tree.else) {
-                            tree.else.parent = tree;
                             return AST.reduceToFirstIfReturnList(this.Evaluator(tree.else, scope));
                         }
                         /* Return null NodeList. */
@@ -3293,19 +4466,14 @@ class Interpreter implements InterpreterInterface {
                         };
                     }
                     case 'SWITCH': {
-                        tree.expression.parent = tree;
                         const switchValue = AST.reduceToFirstIfReturnList(this.Evaluator(tree.expression, scope));
                         for (const switchCase of tree.cases) {
-                            switchCase.parent = tree;
-                            switchCase.expression.parent = switchCase;
                             const caseValue = AST.reduceToFirstIfReturnList(this.Evaluator(switchCase.expression, scope));
                             if (this.switchCaseMatches(switchValue, caseValue, scope)) {
-                                switchCase.then.parent = switchCase;
                                 return AST.reduceToFirstIfReturnList(this.Evaluator(switchCase.then, scope));
                             }
                         }
                         if (tree.otherwise) {
-                            tree.otherwise.parent = tree;
                             return AST.reduceToFirstIfReturnList(this.Evaluator(tree.otherwise, scope));
                         }
                         return {
@@ -3321,12 +4489,10 @@ class Interpreter implements InterpreterInterface {
                             parent: tree,
                         };
                         while (true) {
-                            tree.expression.parent = tree;
                             if (!this.toBoolean(AST.reduceToFirstIfReturnList(this.Evaluator(tree.expression, scope)))) {
                                 return result;
                             }
                             try {
-                                tree.body.parent = tree;
                                 result = AST.reduceToFirstIfReturnList(this.Evaluator(tree.body, scope));
                             } catch (e: unknown) {
                                 if (e instanceof ContinueSignal) {
@@ -3347,7 +4513,6 @@ class Interpreter implements InterpreterInterface {
                         };
                         while (true) {
                             try {
-                                tree.body.parent = tree;
                                 result = AST.reduceToFirstIfReturnList(this.Evaluator(tree.body, scope));
                             } catch (e: unknown) {
                                 if (e instanceof BreakSignal) {
@@ -3357,7 +4522,6 @@ class Interpreter implements InterpreterInterface {
                                     throw e;
                                 }
                             }
-                            tree.expression.parent = tree;
                             if (this.toBoolean(AST.reduceToFirstIfReturnList(this.Evaluator(tree.expression, scope)))) {
                                 return result;
                             }
@@ -3369,14 +4533,11 @@ class Interpreter implements InterpreterInterface {
                             list: [],
                             parent: tree,
                         };
-                        tree.expression.parent = tree;
-                        const values = this.forLoopValues(AST.reduceToFirstIfReturnList(this.Evaluator(tree.expression, scope)));
+                        const values = this.forLoopValues(AST.reduceToFirstIfReturnList(this.Evaluator(tree.expression, scope)), tree.target);
                         for (const value of values) {
-                            const assignment = AST.nodeOperation('=', tree.target, this.forLoopAssignmentValue(tree.target, value));
-                            assignment.parent = tree;
+                            const assignment = AST.nodeOperation('=', this.cloneAssignmentTarget(tree.target), this.forLoopAssignmentValue(tree.target, value));
                             this.Evaluator(assignment, scope);
                             try {
-                                tree.body.parent = tree;
                                 result = AST.reduceToFirstIfReturnList(this.Evaluator(tree.body, scope));
                             } catch (e: unknown) {
                                 if (e instanceof ContinueSignal) {
@@ -3391,11 +4552,9 @@ class Interpreter implements InterpreterInterface {
                         return result;
                     }
                     case 'SPMD':
-                        tree.body.parent = tree;
                         return AST.reduceToFirstIfReturnList(this.Evaluator(tree.body, scope));
                     case 'TRY': {
                         try {
-                            tree.body.parent = tree;
                             return AST.reduceToFirstIfReturnList(this.Evaluator(tree.body, scope));
                         } catch (e: unknown) {
                             if (e instanceof ReturnSignal || e instanceof BreakSignal || e instanceof ContinueSignal) {
@@ -3405,7 +4564,6 @@ class Interpreter implements InterpreterInterface {
                                 if (tree.catchIdentifier) {
                                     scope.defineName(tree.catchIdentifier.id, this.exceptionToStruct(e));
                                 }
-                                tree.catchBody.parent = tree;
                                 return AST.reduceToFirstIfReturnList(this.Evaluator(tree.catchBody, scope));
                             }
                             return {
@@ -3424,13 +4582,11 @@ class Interpreter implements InterpreterInterface {
                         let thrown: unknown;
                         let didThrow = false;
                         try {
-                            tree.body.parent = tree;
                             result = AST.reduceToFirstIfReturnList(this.Evaluator(tree.body, scope));
                         } catch (e: unknown) {
                             thrown = e;
                             didThrow = true;
                         }
-                        tree.cleanup.parent = tree;
                         AST.reduceToFirstIfReturnList(this.Evaluator(tree.cleanup, scope));
                         if (didThrow) {
                             throw thrown;
@@ -3464,11 +4620,22 @@ class Interpreter implements InterpreterInterface {
         } catch (e) {
             this._exitStatus = Interpreter.response.EVAL_ERROR;
             if (e instanceof BreakSignal) {
-                this.context.throwEvalError('break is only valid inside a loop.');
+                try {
+                    this.context.throwEvalError('break is only valid inside a loop.');
+                } catch (error) {
+                    this.lastError = error;
+                    throw error;
+                }
             }
             if (e instanceof ContinueSignal) {
-                this.context.throwEvalError('continue is only valid inside a loop.');
+                try {
+                    this.context.throwEvalError('continue is only valid inside a loop.');
+                } catch (error) {
+                    this.lastError = error;
+                    throw error;
+                }
             }
+            this.lastError = e;
             throw e;
         }
     }
@@ -3480,7 +4647,12 @@ class Interpreter implements InterpreterInterface {
      * @returns Evaluated runtime value or AST result.
      */
     public Execute(input: string): NodeInput {
-        return this.Evaluate(this.Parse(input));
+        try {
+            return this.Evaluate(this.Parse(input));
+        } catch (error) {
+            this.lastError = error;
+            throw error;
+        }
     }
 
     /**
@@ -3701,6 +4873,8 @@ class Interpreter implements InterpreterInterface {
                             return declarationUnparse('global', tree);
                         case 'PERSIST':
                             return declarationUnparse('persistent', tree);
+                        case 'IMPORT':
+                            return 'import ' + tree.imports.map((entry: NodeIdentifier) => this.Unparse(entry)).join(' ');
                         case 'RETURN':
                             return 'return';
                         case 'BREAK':
@@ -3737,15 +4911,23 @@ class Interpreter implements InterpreterInterface {
                         case 'FOR':
                             return (
                                 (tree.parallel ? 'PARFOR ' : 'FOR ') +
+                                (tree.workers ? '(' : '') +
                                 this.Unparse(tree.target) +
                                 '=' +
                                 this.Unparse(tree.expression) +
+                                (tree.workers ? ',' + this.Unparse(tree.workers) + ')' : '') +
                                 '\n' +
                                 this.Unparse(tree.body) +
                                 (tree.parallel ? '\nENDPARFOR' : '\nENDFOR')
                             );
                         case 'SPMD':
-                            return 'SPMD\n' + this.Unparse(tree.body) + '\nENDSPMD';
+                            return (
+                                'SPMD' +
+                                (tree.workers ? ' (' + tree.workers.list.map((worker: NodeInput) => this.Unparse(worker)).join(',') + ')' : '') +
+                                '\n' +
+                                this.Unparse(tree.body) +
+                                '\nENDSPMD'
+                            );
                         case 'TRY':
                             return (
                                 'TRY\n' +
@@ -3761,7 +4943,7 @@ class Interpreter implements InterpreterInterface {
                                 classAttributeListUnparse(tree.attributes) +
                                 (tree.attributes.length > 0 ? ' ' : '') +
                                 tree.id +
-                                (tree.superclasses.length > 0 ? ' < ' + tree.superclasses.map((superclass: NodeIdentifier) => this.Unparse(superclass)).join(',') : '') +
+                                (tree.superclasses.length > 0 ? ' < ' + tree.superclasses.map((superclass: NodeIdentifier) => this.Unparse(superclass)).join('&') : '') +
                                 (tree.sections.length > 0 ? '\n' + tree.sections.map((section: NodeClassSection) => this.Unparse(section)).join('\n') : '') +
                                 '\nENDCLASSDEF'
                             );
@@ -3774,7 +4956,13 @@ class Interpreter implements InterpreterInterface {
                                 classSectionEndKeyword(tree.kind)
                             );
                         case 'CLASS_PROPERTY':
-                            return tree.id + (tree.defaultValue ? '=' + this.Unparse(tree.defaultValue).trimEnd() : '');
+                            return (
+                                tree.id +
+                                (tree.size.length > 0 ? '(' + nodeListInlineUnparse(tree.size) + ')' : '') +
+                                (tree.class && !isEmptyListNode(tree.class) ? ' ' + this.Unparse(tree.class).trimEnd() : '') +
+                                (tree.functions.length > 0 ? ' {' + nodeListInlineUnparse(tree.functions) + '}' : '') +
+                                (tree.defaultValue ? '=' + this.Unparse(tree.defaultValue).trimEnd() : '')
+                            );
                         case 'CLASS_EVENT':
                             return tree.id;
                         case 'CLASS_ENUMERATION':
@@ -3814,6 +5002,49 @@ class Interpreter implements InterpreterInterface {
     public UnparserMathML(tree: NodeInput, parentPrecedence = 0): string {
         const declarationUnparseMathML = (keyword: string, tree: NodeInput): string =>
             `<mrow><mi>${keyword}</mi><mspace width="0.4em"/>${tree.list.map((node: NodeExpr) => this.UnparserMathML(AST.getDeclarationNode(node))).join('<mspace width="0.4em"/>')}</mrow>`;
+        const inlineListMathML = (list: NodeInput[]): string => list.map((node) => this.UnparserMathML(node)).join('<mo>,</mo>');
+        const isEmptyListNode = (node: NodeInput | null): boolean => !!node && node.type === 'LIST' && node.list.length === 0;
+        const keywordRow = (keyword: string, expression?: string): string =>
+            `<mtr><mtd><mo><b>${keyword}</b></mo></mtd>${typeof expression === 'undefined' ? '' : `<mtd>${expression}</mtd>`}</mtr>`;
+        const bodyRow = (body: NodeInput): string => `<mtr><mtd></mtd><mtd>${this.UnparserMathML(body)}</mtd></mtr>`;
+        const controlBlockMathML = (begin: string, body: NodeInput, end: string, expression?: string): string =>
+            `<mtable>${keywordRow(begin, expression)}${bodyRow(body)}${keywordRow(end)}</mtable>`;
+        const fencedMathML = (left: string, inner: string, right: string): string => MathML.format['()'](left, inner, right);
+        const classAttributeListMathML = (attributes: NodeClassAttribute[]): string => (attributes.length > 0 ? fencedMathML('(', inlineListMathML(attributes), ')') : '');
+        const classSectionEndKeyword = (kind: string): string => {
+            switch (kind) {
+                case 'PROPERTIES':
+                    return 'endproperties';
+                case 'METHODS':
+                    return 'endmethods';
+                case 'EVENTS':
+                    return 'endevents';
+                case 'ENUMERATION':
+                    return 'endenumeration';
+                default:
+                    return 'end';
+            }
+        };
+        const argumentValidationMathML = (validation: NodeArgumentValidation): string => {
+            const size = validation.size.length > 0 ? fencedMathML('(', inlineListMathML(validation.size), ')') : '';
+            const cl = validation.class && !isEmptyListNode(validation.class) ? '<mspace width="0.33em"/>' + this.UnparserMathML(validation.class) : '';
+            const functions = validation.functions.length > 0 ? '<mspace width="0.33em"/>' + fencedMathML('{', inlineListMathML(validation.functions), '}') : '';
+            const dflt = validation.default ? '<mo>=</mo>' + this.UnparserMathML(validation.default) : '';
+            return `<mrow>${this.UnparserMathML(validation.name)}${size}${cl}${functions}${dflt}</mrow>`;
+        };
+        const functionHeaderMathML = (func: NodeFunctionDefinition): string => {
+            const returns =
+                func.return.list.length === 0 ? '' : func.return.list.length === 1 ? this.UnparserMathML(func.return.list[0]) : fencedMathML('[', inlineListMathML(func.return.list), ']');
+            const params = fencedMathML('(', inlineListMathML(func.parameter.list), ')');
+            return `${returns ? returns + '<mo>=</mo>' : ''}${MathML.format['IDENT'](func.id)}${params}`;
+        };
+        const functionDefinitionMathML = (func: NodeFunctionDefinition): string => {
+            if (func.attributes?.prototype) {
+                return functionHeaderMathML(func);
+            }
+            const argumentRows = func.arguments.list.map((node: NodeInput) => bodyRow(node)).join('');
+            return `<mtable>${keywordRow('function', functionHeaderMathML(func))}${argumentRows}${bodyRow(func.statements)}${keywordRow('endfunction')}</mtable>`;
+        };
         try {
             if (tree) {
                 if (tree === undefined) {
@@ -3873,28 +5104,29 @@ class Interpreter implements InterpreterInterface {
                             const precedence = this.nodePrecedence(tree);
                             const leftUnparse = this.UnparserMathML(tree.left, precedence);
                             const rightUnparse = this.UnparserMathML(tree.right, precedence);
-                            return MathML.format[tree.type](
+                            return MathML.formatDynamic(
+                                tree.type,
                                 this.nodePrecedence(tree.left) < precedence ? MathML.format['()']('(', leftUnparse, ')') : leftUnparse,
                                 this.nodePrecedence(tree.right) < precedence ? MathML.format['()']('(', rightUnparse, ')') : rightUnparse,
                             );
                         }
                         case '/':
-                            return MathML.format[tree.type](this.UnparserMathML(tree.left), this.UnparserMathML(tree.right));
+                            return MathML.formatDynamic(tree.type, this.UnparserMathML(tree.left), this.UnparserMathML(tree.right));
                         case '**':
                         case '^':
-                            return MathML.format[tree.type](this.UnparserMathML(tree.left, this.precedenceTable['_' + tree.type]), this.UnparserMathML(tree.right));
+                            return MathML.formatDynamic(tree.type, this.UnparserMathML(tree.left, this.precedenceTable['_' + tree.type]), this.UnparserMathML(tree.right));
                         case '!':
                         case '~':
                         case '+_':
                         case '-_':
                         case '++_':
                         case '--_':
-                            return MathML.format[tree.type](this.UnparserMathML(tree.right));
+                            return MathML.formatDynamic(tree.type, this.UnparserMathML(tree.right));
                         case '_++':
                         case '_--':
                         case ".'":
                         case "'":
-                            return MathML.format[tree.type](this.UnparserMathML(tree.left, this.precedenceTable['_' + tree.type]));
+                            return MathML.formatDynamic(tree.type, this.UnparserMathML(tree.left, this.precedenceTable['_' + tree.type]));
                         case 'IDENT':
                             return MathML.format['IDENT'](substSymbol(tree.id));
                         case '.':
@@ -3919,7 +5151,7 @@ class Interpreter implements InterpreterInterface {
                         case 'ENDRANGE':
                         case ':':
                         case '<~>':
-                            return MathML.format[tree.type]();
+                            return MathML.formatDynamic(tree.type);
                         case 'IDX':
                             if (tree.args.length === 0) {
                                 return MathML.format['IDX'](this.UnparserMathML(tree.expr), tree.delim[0], [], tree.delim[1]);
@@ -3929,8 +5161,8 @@ class Interpreter implements InterpreterInterface {
                                     const aliasTreeName = this.context.aliasNameFunction(tree.expr.id);
                                     if (aliasTreeName in this.context.builtInFunctionTable && this.context.builtInFunctionTable[aliasTreeName].UnparserMathML) {
                                         unparse = this.context.builtInFunctionTable[aliasTreeName].UnparserMathML(tree);
-                                    } else if (aliasTreeName in this.context.builtInFunctionTable && aliasTreeName in MathML.format) {
-                                        unparse = MathML.format[aliasTreeName](...tree.args.map((arg: NodeExpr) => this.UnparserMathML(arg)));
+                                    } else if (aliasTreeName in this.context.builtInFunctionTable && MathML.formatFunction(aliasTreeName)) {
+                                        unparse = MathML.formatDynamic(aliasTreeName, ...tree.args.map((arg: NodeExpr) => this.UnparserMathML(arg)));
                                     } else {
                                         unparse = MathML.format['IDX'](
                                             MathML.format['IDENT'](substSymbol(tree.expr.id)),
@@ -3956,22 +5188,86 @@ class Interpreter implements InterpreterInterface {
                                 tree.id,
                                 tree.args.map((arg: CharString) => this.UnparserMathML(arg)),
                             );
+                        case 'ARGVALID':
+                            return argumentValidationMathML(tree);
+                        case 'ARGS':
+                            return `<mtable>${keywordRow('arguments', tree.attribute ? this.UnparserMathML(tree.attribute) : undefined)}${tree.validation
+                                .map((validation: NodeArgumentValidation) => bodyRow(validation))
+                                .join('')}${keywordRow('endarguments')}</mtable>`;
                         case 'GLOBAL':
                             return declarationUnparseMathML('global', tree);
                         case 'PERSIST':
                             return declarationUnparseMathML('persistent', tree);
+                        case 'IMPORT':
+                            return '<mrow><mi>import</mi><mspace width="0.33em"/>' + tree.imports.map((entry: NodeIdentifier) => this.UnparserMathML(entry)).join('<mo>,</mo>') + '</mrow>';
                         case 'RETURN':
                             return '<mi>return</mi>';
+                        case 'BREAK':
+                            return '<mi>break</mi>';
+                        case 'CONTINUE':
+                            return '<mi>continue</mi>';
                         case 'IF':
                             const ifThenArray = tree.expression.map(
-                                (expr: NodeInput, i: number) =>
-                                    `<mtr><mtd><mo>${i === 0 ? '<b>if</b>' : '<b>elseif</b>'}</mo></mtd><mtd>${this.UnparserMathML(
-                                        tree.expression[0],
-                                    )}</mtd></mtr><mtr><mtd></mtd><mtd>${this.UnparserMathML(tree.then[0])}</mtd></mtr>`,
+                                (expr: NodeInput, i: number) => `${keywordRow(i === 0 ? 'if' : 'elseif', this.UnparserMathML(expr))}${bodyRow(tree.then[i])}`,
                             );
-                            const ifElse = tree.else ? `<mtr><mtd><mo><b>else</b></mo></mtd></mtr><mtr><mtd></mtd><mtd>${this.UnparserMathML(tree.else)}</mtd></mtr>` : '';
-                            return `<mtable>${ifThenArray.join('')}${ifElse}<mtr><mtd><mo><b>endif</b></mo></mtd></mtr></mtable>`;
+                            const ifElse = tree.else ? `${keywordRow('else')}${bodyRow(tree.else)}` : '';
+                            return `<mtable>${ifThenArray.join('')}${ifElse}${keywordRow('endif')}</mtable>`;
+                        case 'SWITCH':
+                            return `<mtable>${keywordRow('switch', this.UnparserMathML(tree.expression))}${tree.cases
+                                .map((caseNode: NodeSwitchCase) => `${keywordRow('case', this.UnparserMathML(caseNode.expression))}${bodyRow(caseNode.then)}`)
+                                .join('')}${tree.otherwise ? `${keywordRow('otherwise')}${bodyRow(tree.otherwise)}` : ''}${keywordRow('endswitch')}</mtable>`;
+                        case 'WHILE':
+                            return controlBlockMathML('while', tree.body, 'endwhile', this.UnparserMathML(tree.expression));
+                        case 'DO_UNTIL':
+                            return `<mtable>${keywordRow('do')}${bodyRow(tree.body)}${keywordRow('until', this.UnparserMathML(tree.expression))}</mtable>`;
+                        case 'FOR':
+                            return controlBlockMathML(
+                                tree.parallel ? 'parfor' : 'for',
+                                tree.body,
+                                tree.parallel ? 'endparfor' : 'endfor',
+                                this.UnparserMathML(tree.target) +
+                                    '<mo form="infix" stretchy="true">=</mo>' +
+                                    this.UnparserMathML(tree.expression) +
+                                    (tree.workers ? '<mo>,</mo>' + this.UnparserMathML(tree.workers) : ''),
+                            );
+                        case 'SPMD':
+                            return controlBlockMathML('spmd', tree.body, 'endspmd', tree.workers ? this.UnparserMathML(tree.workers) : undefined);
+                        case 'TRY':
+                            return `<mtable>${keywordRow('try')}${bodyRow(tree.body)}${
+                                tree.catchBody ? keywordRow('catch', tree.catchIdentifier ? this.UnparserMathML(tree.catchIdentifier) : undefined) + bodyRow(tree.catchBody) : ''
+                            }${keywordRow('end_try_catch')}</mtable>`;
+                        case 'UNWIND_PROTECT':
+                            return `<mtable>${keywordRow('unwind_protect')}${bodyRow(tree.body)}${keywordRow('unwind_protect_cleanup')}${bodyRow(tree.cleanup)}${keywordRow(
+                                'end_unwind_protect',
+                            )}</mtable>`;
+                        case 'CLASSDEF':
+                            return `<mtable>${keywordRow(
+                                'classdef',
+                                `${classAttributeListMathML(tree.attributes)}${tree.attributes.length > 0 ? '<mspace width="0.33em"/>' : ''}${MathML.format['IDENT'](tree.id)}${
+                                    tree.superclasses.length > 0
+                                        ? '<mspace width="0.33em"/><mo>&lt;</mo><mspace width="0.33em"/>' +
+                                          tree.superclasses.map((superclass: NodeIdentifier) => this.UnparserMathML(superclass)).join('<mo>&amp;</mo>')
+                                        : ''
+                                }`,
+                            )}${tree.sections.map((section: NodeClassSection) => bodyRow(section)).join('')}${keywordRow('endclassdef')}</mtable>`;
+                        case 'CLASS_SECTION':
+                            return `<mtable>${keywordRow(
+                                tree.kind.toLowerCase(),
+                                tree.attributes.length > 0 ? classAttributeListMathML(tree.attributes) : undefined,
+                            )}${bodyRow(tree.members)}${keywordRow(classSectionEndKeyword(tree.kind))}</mtable>`;
+                        case 'CLASS_PROPERTY':
+                            return argumentValidationMathML(tree.validation);
+                        case 'CLASS_EVENT':
+                            return MathML.format['IDENT'](tree.id);
+                        case 'CLASS_ENUMERATION':
+                            return `<mrow>${MathML.format['IDENT'](tree.id)}${tree.args.length > 0 ? fencedMathML('(', inlineListMathML(tree.args), ')') : ''}</mrow>`;
+                        case 'CLASS_ATTRIBUTE':
+                            if (tree.value && (tree.value.type === '~' || tree.value.type === '!')) {
+                                return `<mrow><mo>${tree.value.type}</mo>${MathML.format['IDENT'](tree.id)}</mrow>`;
+                            }
+                            return `<mrow>${MathML.format['IDENT'](tree.id)}${tree.value ? '<mo>=</mo>' + this.UnparserMathML(tree.value) : ''}</mrow>`;
                         case 'FCNDEF':
+                            return functionDefinitionMathML(tree);
                         case 'VOID':
                             return MathML.format['VOID']();
                         default:
@@ -4046,7 +5342,21 @@ class Interpreter implements InterpreterInterface {
     }
 }
 
-export type { ClassSource, ClassSourceProvider, ClassSourceTable, InterpreterConfig, IncDecOperator };
+export type {
+    ClassSource,
+    ClassSourceProvider,
+    ClassSourceTable,
+    FunctionSource,
+    FunctionSourceProvider,
+    FunctionSourceTable,
+    InterpreterConfig,
+    IncDecOperator,
+    ScriptSource,
+    ScriptSourceProvider,
+    ScriptSourceTable,
+    SourceResolver,
+};
 export type { BuiltinCallable, Callable, FunctionDefinitionCallable, LambdaCallable } from './Callable';
+export { ManifestSourceResolver, TableSourceResolver } from './SourceResolver';
 export { Scope, CallFrame, InterpreterError, EvalError, ReferenceError, UndefinedReferenceError, CircularReferenceError, SyntaxError, Context, Interpreter };
 export default { Scope, CallFrame, InterpreterError, EvalError, ReferenceError, UndefinedReferenceError, CircularReferenceError, SyntaxError, Context, Interpreter };

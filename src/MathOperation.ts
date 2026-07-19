@@ -10,16 +10,9 @@ import { type ComplexType, Complex } from './Complex';
 import { type ElementType, MultiArray } from './MultiArray';
 import { Structure } from './Structure';
 import { FunctionHandle } from './FunctionHandle';
-import { ClassDefinition } from './ClassDefinition';
 import { ClassInstance } from './ClassInstance';
-import { ClassBoundMethod } from './ClassBoundMethod';
-import { ClassStaticMethod } from './ClassStaticMethod';
-import { ClassEmptyMethod } from './ClassEmptyMethod';
-import { ClassEnumerationValue } from './ClassEnumerationValue';
-import { ClassMetaObject } from './ClassMeta';
-import { BLAS } from './BLAS';
 import { LinearAlgebra } from './LinearAlgebra';
-import { LAPACK } from './LAPACK';
+import { RuntimeValue } from './RuntimeValue';
 
 /**
  * Generic mathematical object.
@@ -58,35 +51,7 @@ abstract class MathOperation {
      * @param value
      * @returns
      */
-    public static readonly copy: UnaryMathOperation = (value: MathObject): MathObject => {
-        if (Complex.isInstanceOf(value)) {
-            return Complex.copy(value as ComplexType);
-        } else if (MultiArray.isInstanceOf(value)) {
-            return MultiArray.copy(value as MultiArray);
-        } else if (CharString.isInstanceOf(value)) {
-            return CharString.copy(value as CharString);
-        } else if (Structure.isInstanceOf(value)) {
-            return Structure.copy(value as Structure);
-        } else if (FunctionHandle.isInstanceOf(value)) {
-            return FunctionHandle.copy(value as FunctionHandle);
-        } else if (ClassDefinition.isInstanceOf(value)) {
-            return ClassDefinition.copy(value as ClassDefinition);
-        } else if (ClassInstance.isInstanceOf(value)) {
-            return ClassInstance.copy(value as ClassInstance);
-        } else if (ClassBoundMethod.isInstanceOf(value)) {
-            return ClassBoundMethod.copy(value as ClassBoundMethod);
-        } else if (ClassStaticMethod.isInstanceOf(value)) {
-            return ClassStaticMethod.copy(value as ClassStaticMethod);
-        } else if (ClassEmptyMethod.isInstanceOf(value)) {
-            return ClassEmptyMethod.copy(value as ClassEmptyMethod);
-        } else if (ClassEnumerationValue.isInstanceOf(value)) {
-            return ClassEnumerationValue.copy(value as ClassEnumerationValue);
-        } else if (ClassMetaObject.isInstanceOf(value)) {
-            return ClassMetaObject.copy(value as ClassMetaObject);
-        } else {
-            return value;
-        }
-    };
+    public static readonly copy: UnaryMathOperation = (value: MathObject): MathObject => RuntimeValue.copy(value);
 
     /**
      * Element-Wise operations.
@@ -123,13 +88,24 @@ abstract class MathOperation {
     private static readonly hasClassInstanceOperand = (value: MathObject): boolean =>
         ClassInstance.isInstanceOf(value) || (MultiArray.isInstanceOf(value) && MultiArray.linearize(value).some((element) => ClassInstance.isInstanceOf(element)));
 
+    private static readonly numericScalarValue = (value: MathObject): ComplexType | undefined => {
+        if (Complex.isInstanceOf(value)) {
+            return value as ComplexType;
+        }
+        if (MultiArray.isInstanceOf(value) && RuntimeValue.isScalar(value)) {
+            const element = MultiArray.firstElement(value as MultiArray);
+            return Complex.isInstanceOf(element) ? (element as ComplexType) : undefined;
+        }
+        return undefined;
+    };
+
     private static readonly classInstanceEqualityOperation = (op: 'eq' | 'ne', left: MathObject, right: MathObject): MathObject => {
         const compare = (leftValue: ElementType, rightValue: ElementType): ComplexType => {
             if (!ClassInstance.isInstanceOf(leftValue) || !ClassInstance.isInstanceOf(rightValue)) {
-                throw new EvalError(`binary operator '${op}' not implemented for class instance operands.`);
+                throw new EvalError(`binary operator '${op}' is not defined for class instance operands.`);
             }
             if (!leftValue.classDefinition.isHandleClass() || !rightValue.classDefinition.isHandleClass()) {
-                throw new EvalError(`binary operator '${op}' not implemented for value class operands.`);
+                throw new EvalError(`binary operator '${op}' is not defined for value class operands.`);
             }
             const same = leftValue === rightValue;
             return (op === 'eq' ? same : !same) ? Complex.true() : Complex.false();
@@ -293,20 +269,7 @@ abstract class MathOperation {
         } else if (MultiArray.isInstanceOf(left) && Complex.isInstanceOf(right)) {
             return MultiArray.scalarOpMultiArray('mul', Complex.inv(right as ComplexType), left as MultiArray);
         } else {
-            // return BLAS.gemm(left as MultiArray, LinearAlgebra.inv(right as MultiArray));
-            const denom = LinearAlgebra.inv(right as MultiArray);
-            const result = new MultiArray([(left as MultiArray).dimension[0], (denom as MultiArray).dimension[1]]);
-            BLAS.gemm(
-                Complex.one(),
-                (left as MultiArray).array as ComplexType[][],
-                (left as MultiArray).dimension[0],
-                (left as MultiArray).dimension[1],
-                (denom as MultiArray).array as ComplexType[][],
-                (denom as MultiArray).dimension[1],
-                Complex.zero(),
-                result.array as ComplexType[][],
-            );
-            return result;
+            return LinearAlgebra.mrdivide(left as MultiArray, right as MultiArray);
         }
     };
 
@@ -338,12 +301,7 @@ abstract class MathOperation {
         } else if (MultiArray.isInstanceOf(left) && Complex.isInstanceOf(right)) {
             throw new EvalError(`operator \\: nonconformant arguments (op1 is ${left.dimension.join('x')}, op2 is 1x1).`);
         } else {
-            if ((left as MultiArray).dimension[1] === (right as MultiArray).dimension[0]) {
-                // MATLAB: X = A \ B
-                return LAPACK.mldivide(left as MultiArray, right as MultiArray).X;
-            } else {
-                throw new EvalError(`operator \\: nonconformant arguments (op1 is ${(left as MultiArray).dimension.join('x')}, op2 is ${(right as MultiArray).dimension.join('x')}).`);
-            }
+            return LinearAlgebra.mldivide(left as MultiArray, right as MultiArray);
         }
     };
 
@@ -368,12 +326,16 @@ abstract class MathOperation {
         if (CharString.isInstanceOf(right)) {
             right = MultiArray.fromCharString(right as CharString);
         }
-        if (Complex.isInstanceOf(left) && Complex.isInstanceOf(right)) {
-            return Complex.power(left as ComplexType, right as ComplexType);
-        } else if (MultiArray.isInstanceOf(left) && Complex.isInstanceOf(right)) {
-            return LinearAlgebra.power(left as MultiArray, right as ComplexType);
+        const leftScalar = MathOperation.numericScalarValue(left);
+        const rightScalar = MathOperation.numericScalarValue(right);
+        if (leftScalar && rightScalar) {
+            return Complex.power(leftScalar, rightScalar);
+        } else if (MultiArray.isInstanceOf(left) && rightScalar) {
+            return LinearAlgebra.power(left as MultiArray, rightScalar);
+        } else if (leftScalar && MultiArray.isInstanceOf(right)) {
+            return LinearAlgebra.scalarPower(leftScalar, right as MultiArray);
         } else {
-            // TODO: implement matrix power.
+            // TODO: implement general matrix exponent operands.
             throw new Error("invalid exponent in '^'.");
         }
     };
@@ -404,7 +366,7 @@ abstract class MathOperation {
         if (MultiArray.isInstanceOf(left)) {
             return LinearAlgebra.transpose(left as MultiArray);
         } else {
-            return left!.copy();
+            return RuntimeValue.copy(left);
         }
     };
 
@@ -422,7 +384,7 @@ abstract class MathOperation {
         } else if (MultiArray.isInstanceOf(left)) {
             return LinearAlgebra.ctranspose(left as MultiArray);
         } else {
-            return left!.copy();
+            return RuntimeValue.copy(left);
         }
     };
 

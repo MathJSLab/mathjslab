@@ -32,6 +32,37 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             copy.str = 'beta';
             expect(value.str).toBe('alpha');
         });
+
+        it('Should expose strings as MATLAB-style row character vectors.', () => {
+            const value = new CharString('abcd', "'");
+
+            expect(value.length).toBe(4);
+            expect(value.dimension).toEqual([1, 4]);
+            expect(value.vector()).toEqual(['a', 'b', 'c', 'd']);
+            expect(value.toCharacterScalars().map((item) => item.str)).toEqual(['a', 'b', 'c', 'd']);
+            expect(value.toCharacterScalars().every((item) => item.quote === "'")).toBe(true);
+            expect(value.characterAt(2)?.str).toBe('c');
+            expect(value.select([0, 2]).str).toBe('ac');
+
+            value.str = 'xy';
+            expect(value.length).toBe(2);
+            expect(value.dimension).toEqual([1, 2]);
+            expect(value.vector()).toEqual(['x', 'y']);
+        });
+
+        it('Should preserve JavaScript string-unit indexing for compatibility with previous character behavior.', () => {
+            const value = new CharString('😀');
+
+            expect(value.length).toBe('😀'.length);
+            expect(value.vector()).toEqual('😀'.split(''));
+        });
+
+        it('Should join scalar character values preserving quote style.', () => {
+            const value = CharString.fromCharacterScalars([new CharString('a', "'"), new CharString('b', "'")]);
+
+            expect(value.str).toBe('ab');
+            expect(value.quote).toBe("'");
+        });
     });
 
     describe('Formatting and logical conversion', () => {

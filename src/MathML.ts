@@ -17,11 +17,16 @@
 /**
  * Generic MathML formatting function.
  */
-type FormatFunctionGeneric<T extends (string | string[])[] = (string | string[])[]> = (...args: T) => string;
+type FormatArgument = string | string[];
+type FormatFunctionGeneric<T extends FormatArgument[] = FormatArgument[]> = (...args: T) => string;
 /**
  * Generic type for FormatRegistry.
  */
-type FormatRegistryGeneric<T = any> = { [K in keyof T]: T[K] };
+type FormatRegistryGeneric<T = Record<string, FormatFunctionGeneric>> = { [K in keyof T]: T[K] };
+type BuiltInFormatRegistryExtensions = {
+    PERSIST: () => string;
+    VOID: () => string;
+};
 /**
  * Format registry function signatures.
  */
@@ -113,11 +118,11 @@ type FormatFunctionUnion<T extends string = string> = FormatRegistry<T>[KeyOfFor
 /**
  * Union of format functions registry and generic format functions registry.
  */
-type FormatRegistryUnion<T extends string = string, K = any> = FormatRegistry<T> & FormatRegistryGeneric<K>;
+type FormatRegistryUnion<T extends string = string, K = BuiltInFormatRegistryExtensions> = FormatRegistry<T> & FormatRegistryGeneric<K>;
 /**
  * Keys of union of format functions registry and generic format functions registry.
  */
-type KeyOfFormatRegistryUnion<T extends string = string, K = any> = keyof FormatRegistryUnion<T, K>;
+type KeyOfFormatRegistryUnion<T extends string = string, K = BuiltInFormatRegistryExtensions> = keyof FormatRegistryUnion<T, K>;
 /**
  * # `MathML` - Utilities for MathML formatting.
  *
@@ -130,8 +135,8 @@ type KeyOfFormatRegistryUnion<T extends string = string, K = any> = keyof Format
  * arguments into structures formatted in MathML language.
  *
  * The way the types were defined allows you to specify the signature of the
- * functions and at the same time allows a generic reference to a formatting
- * function to be used, such as `Math.format['key-name' as any]`.
+ * functions and at the same time allows generic references to dynamic
+ * formatting functions.
  *
  * The `MathML` class is an abstract class that was not designed to be
  * instantiated or inherited, but extensions with dynamic properties and
@@ -260,11 +265,40 @@ abstract class MathML {
         gamma: (...args) => '<mi>&Gamma;</mi><mrow><mo fence="true" stretchy="true">(</mo>' + args[0] + '<mo fence="true" stretchy="true">)</mo></mrow>',
         factorial: (...args) => '<mrow>' + args[0] + '</mrow><mo format="postfix" stretchy="true">!</mo>',
     };
+
+    /**
+     * Look up a formatter by a dynamic AST or built-in key.
+     *
+     * Known keys remain available through the strongly typed `format` registry;
+     * this helper is only for keys discovered at runtime.
+     *
+     * @param name Dynamic formatter key.
+     * @returns Generic formatter, if present.
+     */
+    public static readonly formatFunction = (name: string): FormatFunctionGeneric | undefined => {
+        const formatter = (MathML.format as unknown as Record<string, unknown>)[name];
+        return typeof formatter === 'function' ? (formatter as FormatFunctionGeneric) : undefined;
+    };
+
+    /**
+     * Invoke a dynamic formatter.
+     *
+     * @param name Dynamic formatter key.
+     * @param args MathML fragments supplied to the formatter.
+     * @returns Formatted MathML.
+     */
+    public static readonly formatDynamic = (name: string, ...args: FormatArgument[]): string => {
+        const formatter = MathML.formatFunction(name);
+        if (!formatter) {
+            throw new Error(`MathML formatter '${name}' is not defined.`);
+        }
+        return formatter(...args);
+    };
 }
 /**
  * Exports.
  */
-export type { FormatFunctionUnion as FormatFunction, FormatRegistryUnion as FormatRegistry, KeyOfFormatRegistryUnion as KeyOfFormatRegistry };
+export type { FormatArgument, FormatFunctionUnion as FormatFunction, FormatRegistryUnion as FormatRegistry, KeyOfFormatRegistryUnion as KeyOfFormatRegistry };
 const format = MathML.format;
 export { format, MathML };
 /**

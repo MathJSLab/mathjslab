@@ -4,10 +4,9 @@ import { BLAS } from './BLAS';
 import { MathOperation } from './MathOperation';
 import { LinearAlgebra } from './LinearAlgebra';
 import { Interpreter } from './Interpreter';
-import { LAPACK } from './LAPACK';
+import { LAPACK, EXPECT_TOL } from './LAPACK';
 import { LAPACKunused } from './LAPACKunused';
 
-const EXPECT_TOL = 1e-14;
 const MAX_ITERACTION = 1e3;
 const DEFAULT_EIG_TOL = EXPECT_TOL;
 

@@ -6,7 +6,7 @@
  * * https://mathworld.wolfram.com/ComplexNumber.html
  */
 
-import { Interpreter } from './Interpreter';
+import type { RuntimeDisplay } from './RuntimeDisplay';
 
 export type Rounding = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
@@ -96,7 +96,7 @@ export interface ComplexInterface<REAL, TYPE = number, PARENT = unknown> {
 /**
  * Key of ComplexInterface type.
  */
-export type ComplexInterfaceKey = keyof ComplexInterface<any, any>;
+export type ComplexInterfaceKey = keyof ComplexInterface<unknown, unknown>;
 export { ComplexInterfaceKeyTable } from './ComplexInterfaceKeyTable';
 
 export type OmitComplexInterfaceDynamic<REAL, TYPE, PARENT> = Omit<ComplexInterface<REAL, TYPE, PARENT>, ComplexInterfaceKey>;
@@ -139,9 +139,12 @@ export type TestNumLikeComplexHandler<REAL, COMPLEX extends ComplexInterface<REA
 export type CompareValueComplexHandler<REAL> = (cmp: TCompareOperationName, left: REAL, right: REAL) => boolean;
 export type CmpComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>> = (cmp: TCompareOperationName, left: COMPLEX, right: COMPLEX) => COMPLEX;
 export type ParseComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>> = (value: string) => COMPLEX;
-export type PrecedenceComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>, INTERPRETER = Interpreter, PRECEDENCE = number> = (value: COMPLEX, interpreter: INTERPRETER) => PRECEDENCE;
+export type PrecedenceComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>, INTERPRETER = RuntimeDisplay, PRECEDENCE = number> = (
+    value: COMPLEX,
+    interpreter: INTERPRETER,
+) => PRECEDENCE;
 export type UnparseValueComplexHandler<REAL> = (value: REAL) => string;
-export type UnparseComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>, INTERPRETER = Interpreter, PRECEDENCE = number> = (
+export type UnparseComplexHandler<REAL, COMPLEX extends ComplexInterface<REAL>, INTERPRETER = RuntimeDisplay, PRECEDENCE = number> = (
     value: COMPLEX,
     interpreter: INTERPRETER,
     parentPrecedence?: PRECEDENCE,
@@ -483,11 +486,11 @@ export interface ComplexInterfaceStatic<
     readonly imagGreaterThan: (z: COMPLEX, value: NumLike<REAL>) => boolean;
     readonly parse: (value: string) => COMPLEX;
     readonly unparseValue: (value: REAL) => string;
-    readonly unparse: (value: COMPLEX, interpreter: Interpreter, parentPrecedence: PRECEDENCE) => string;
+    readonly unparse: (value: COMPLEX, interpreter: RuntimeDisplay, parentPrecedence: PRECEDENCE) => string;
     readonly toString: (value: COMPLEX) => string;
     readonly unparseMathMLValue: (value: REAL) => string;
-    readonly precedence: (value: COMPLEX, interpreter: Interpreter) => PRECEDENCE;
-    readonly unparseMathML: (value: COMPLEX, interpreter: Interpreter, parentPrecedence: PRECEDENCE) => string;
+    readonly precedence: (value: COMPLEX, interpreter: RuntimeDisplay) => PRECEDENCE;
+    readonly unparseMathML: (value: COMPLEX, interpreter: RuntimeDisplay, parentPrecedence: PRECEDENCE) => string;
     readonly copy: (value: COMPLEX) => COMPLEX;
     /**
      * Reduce precision of real or imaginary part.
@@ -740,7 +743,7 @@ export interface ComplexInterfaceStatic<
 /**
  * Key of ComplexInterfaceStatic type.
  */
-export type ComplexInterfaceStaticKey = keyof ComplexInterfaceStatic<any, any>;
+export type ComplexInterfaceStaticKey = keyof ComplexInterfaceStatic<unknown, ComplexInterface<unknown>>;
 export { ComplexInterfaceStaticKeyTable } from './ComplexInterfaceStaticKeyTable';
 
 export const roundingMode: Record<string, Rounding | Modulo> = {
@@ -840,14 +843,14 @@ export const parseFactory = <REAL, COMPLEX extends ComplexInterface<REAL, TYPE, 
  */
 export const precedenceFactory = <REAL, COMPLEX extends ComplexInterface<REAL, TYPE, PARENT>, TYPE = number, PARENT = unknown, PRECEDENCE = number, ROUNDING = Rounding, MODULO = Modulo>(
     ctor: ComplexInterfaceStatic<REAL, COMPLEX, TYPE, PARENT, PRECEDENCE, ROUNDING, MODULO>,
-): ((value: COMPLEX, interpreter: Interpreter) => number) => {
+): ((value: COMPLEX, interpreter: RuntimeDisplay) => number) => {
     /**
-     * Returns the precedence of a `ctor` `value` by querying the precedence table in `interpreter` object (`Interpreter.ts`).
+     * Returns the precedence of a `ctor` `value` by querying the display precedence table.
      * @param value `ctor` value.
-     * @param interpreter `Interpreter` instance.
+     * @param interpreter Runtime display context.
      * @returns Precedence level.
      */
-    return (value: COMPLEX, interpreter: Interpreter): number => {
+    return (value: COMPLEX, interpreter: RuntimeDisplay): number => {
         if (value.type !== ctor.LOGICAL) {
             const value_prec = ctor.toMaxPrecision(value);
             if (!ctor.realIsZero(value_prec) && !ctor.imagIsZero(value_prec)) {
@@ -904,7 +907,7 @@ export const unparseValueFactory =
  */
 export const unparseFactory = <REAL, COMPLEX extends ComplexInterface<REAL, TYPE, PARENT>, TYPE = number, PARENT = unknown, PRECEDENCE = number, ROUNDING = Rounding, MODULO = Modulo>(
     ctor: ComplexInterfaceStatic<REAL, COMPLEX, TYPE, PARENT, PRECEDENCE, ROUNDING, MODULO>,
-): ((value: COMPLEX, interpreter: Interpreter, parentPrecedence?: number) => string) => {
+): ((value: COMPLEX, interpreter: RuntimeDisplay, parentPrecedence?: number) => string) => {
     /**
      * Unparse `ctor` value. Show true/false if logical value,
      * otherwise show real and imaginary parts enclosed by parenthesis if
@@ -913,7 +916,7 @@ export const unparseFactory = <REAL, COMPLEX extends ComplexInterface<REAL, TYPE
      * @param value Value to unparse.
      * @returns String of unparsed value.
      */
-    return (value: COMPLEX, interpreter: Interpreter, parentPrecedence: number = 0): string => {
+    return (value: COMPLEX, interpreter: RuntimeDisplay, parentPrecedence: number = 0): string => {
         if (value.type !== ctor.LOGICAL) {
             const value_prec = ctor.toMaxPrecision(value);
             if (!ctor.realIsZero(value_prec) && !ctor.imagIsZero(value_prec)) {
@@ -1064,7 +1067,7 @@ export const unparseMathMLValueFactory =
  */
 export const unparseMathMLFactory = <REAL, COMPLEX extends ComplexInterface<REAL, TYPE, PARENT>, TYPE = number, PARENT = unknown, PRECEDENCE = number, ROUNDING = Rounding, MODULO = Modulo>(
     ctor: ComplexInterfaceStatic<REAL, COMPLEX, TYPE, PARENT, PRECEDENCE, ROUNDING, MODULO>,
-): ((value: COMPLEX, interpreter: Interpreter, parentPrecedence?: number) => string) => {
+): ((value: COMPLEX, interpreter: RuntimeDisplay, parentPrecedence?: number) => string) => {
     /**
      * Unparse `ctor` value as MathML language. Show true/false if
      * logical value, otherwise show real and imaginary parts enclosed by
@@ -1073,7 +1076,7 @@ export const unparseMathMLFactory = <REAL, COMPLEX extends ComplexInterface<REAL
      * @param value value to unparse.
      * @returns string of unparsed value.
      */
-    return (value: COMPLEX, interpreter: Interpreter, parentPrecedence: number = 0): string => {
+    return (value: COMPLEX, interpreter: RuntimeDisplay, parentPrecedence: number = 0): string => {
         if (value.type !== ctor.LOGICAL) {
             const value_prec = ctor.toMaxPrecision(value);
             if (!ctor.realIsZero(value_prec) && !ctor.imagIsZero(value_prec)) {

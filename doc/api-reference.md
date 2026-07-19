@@ -88,24 +88,238 @@ Declarative built-in signature metadata.
 
 Runtime string value used by the AST and interpreter.
 
-`CharString` preserves the source quote style when the parser knows it, but
-semantic operations treat `str` as the canonical value. Truthiness follows
-MATLAB/Octave-like string behavior: empty strings are false and non-empty
-strings are true.
+`CharString` preserves the source quote style when the parser knows it. The
+value is stored as a row character vector, while `str` remains the canonical
+textual view. Truthiness follows MATLAB/Octave-like string behavior: empty
+strings are false and non-empty strings are true.
+
+## ClassAccess
+
+- Kind: `type`
+- Source: `src/ClassMember.ts`
+
+Access specifier stored in class member metadata.
+
+MATLAB accepts named levels such as `public`, `protected`, `private`, and
+class-qualified access lists. The runtime stores the parsed value as text and
+lets the interpreter decide which forms it can enforce.
 
 ## ClassAttributeTable
 
 - Kind: `type`
 - Source: `src/AST.ts`
 
-No JSDoc documentation is available yet.
+Duplicate-preserving class attribute table keyed by attribute name.
+
+MATLAB/Octave diagnostics need to distinguish a repeated attribute from an
+effective attribute value, so the AST keeps the full list for each key.
+
+## ClassBoundMethod
+
+- Kind: `class`
+- Source: `src/ClassBoundMethod.ts`
+
+Runtime value representing an instance method already bound to an object.
+
+## ClassDefinition
+
+- Kind: `class`
+- Source: `src/ClassDefinition.ts`
+
+Normalized runtime representation of a parsed MATLAB/Octave `classdef`.
+
+The parser keeps the original AST shape. `ClassDefinition` indexes that AST
+into member tables, inheritance metadata, and attribute-derived flags used by
+the interpreter when instantiating objects or dispatching methods.
+
+## ClassEmptyMethod
+
+- Kind: `class`
+- Source: `src/ClassEmptyMethod.ts`
+
+Runtime value for the built-in `ClassName.empty` static method.
+
+## ClassEnumerationDefinition
+
+- Kind: `interface`
+- Source: `src/ClassMember.ts`
+
+Runtime metadata for an enumeration member declared in an `enumeration` block.
+
+## ClassEnumerationTable
+
+- Kind: `type`
+- Source: `src/ClassDefinition.ts`
+
+Enumeration lookup table keyed by enumeration member name.
+
+## ClassEnumerationValue
+
+- Kind: `class`
+- Source: `src/ClassEnumerationValue.ts`
+
+Runtime value representing one member of a MATLAB/Octave enumeration class.
+
+## ClassEventData
+
+- Kind: `class`
+- Source: `src/ClassEventData.ts`
+
+Runtime value compatible with MATLAB's `event.EventData` shape.
+
+## ClassEventDefinition
+
+- Kind: `interface`
+- Source: `src/ClassMember.ts`
+
+Runtime metadata for an event declared in an `events` block.
+
+## ClassEventListener
+
+- Kind: `class`
+- Source: `src/ClassEventListener.ts`
+
+Runtime listener object returned by event subscription APIs.
+
+## ClassEventSource
+
+- Kind: `type`
+- Source: `src/ClassEventListener.ts`
+
+Minimal source-object contract stored by event listeners.
+
+The concrete runtime object is a `ClassInstance`, but listeners only need the
+defining class name for display and the original object identity for callback
+dispatch. Keeping this structural avoids a module cycle with `ClassInstance`.
+
+## ClassInstance
+
+- Kind: `class`
+- Source: `src/ClassInstance.ts`
+
+Runtime value representing one MATLAB/Octave class object instance.
+
+Value classes are copied when passed to methods, while handle classes keep
+identity and can be marked as deleted.
+
+## ClassInstancePropertyTable
+
+- Kind: `type`
+- Source: `src/ClassInstance.ts`
+
+Instance property storage keyed by property name.
+
+## ClassMember
+
+- Kind: `class`
+- Source: `src/ClassMember.ts`
+
+Shared helpers for interpreting `classdef` member attributes.
+
+## ClassMetaClass
+
+- Kind: `class`
+- Source: `src/ClassMeta.ts`
+
+Meta object representing a class definition.
+
+## ClassMetaEnumerationMember
+
+- Kind: `class`
+- Source: `src/ClassMeta.ts`
+
+Meta object representing an enumeration member.
+
+## ClassMetaEvent
+
+- Kind: `class`
+- Source: `src/ClassMeta.ts`
+
+Meta object representing a class event.
+
+## ClassMetaKind
+
+- Kind: `type`
+- Source: `src/ClassMeta.ts`
+
+Supported meta-object kind names.
+
+## ClassMetaMember
+
+- Kind: `class`
+- Source: `src/ClassMeta.ts`
+
+Base class for meta objects that wrap class members.
+
+## ClassMetaMethod
+
+- Kind: `class`
+- Source: `src/ClassMeta.ts`
+
+Meta object representing a class method.
+
+## ClassMetaObject
+
+- Kind: `class`
+- Source: `src/ClassMeta.ts`
+
+Base class for MATLAB-like class meta objects.
+
+## ClassMetaProperty
+
+- Kind: `class`
+- Source: `src/ClassMeta.ts`
+
+Meta object representing a class property.
+
+## ClassMethodDefinition
+
+- Kind: `interface`
+- Source: `src/ClassMember.ts`
+
+Runtime metadata for a method declared in a `methods` block.
+
+## ClassMethodTable
+
+- Kind: `type`
+- Source: `src/ClassDefinition.ts`
+
+Method lookup table keyed by method name.
+
+## ClassPropertyDefaultEvaluator
+
+- Kind: `type`
+- Source: `src/ClassInstance.ts`
+
+Callback used to evaluate property default expressions at construction time.
+
+## ClassPropertyDefinition
+
+- Kind: `interface`
+- Source: `src/ClassMember.ts`
+
+Runtime metadata for a property declared in a `properties` block.
+
+## ClassPropertyEvent
+
+- Kind: `class`
+- Source: `src/ClassPropertyEvent.ts`
+
+Runtime value compatible with MATLAB's `event.PropertyEvent` shape.
+
+## ClassPropertyTable
+
+- Kind: `type`
+- Source: `src/ClassDefinition.ts`
+
+Property lookup table keyed by property name.
 
 ## ClassSectionKind
 
 - Kind: `type`
 - Source: `src/AST.ts`
 
-No JSDoc documentation is available yet.
+Supported `classdef` section kinds.
 
 ## ClassSource
 
@@ -113,9 +327,6 @@ No JSDoc documentation is available yet.
 - Source: `src/Interpreter.ts`
 
 Host-provided class source entry.
-
-Browser-first execution cannot assume filesystem access, so external classes
-are supplied by explicit source strings or providers.
 
 ## ClassSourceProvider
 
@@ -131,6 +342,13 @@ Callback used to provide classdef source for a class name.
 
 Table of host-provided class sources keyed by class name.
 
+## ClassStaticMethod
+
+- Kind: `class`
+- Source: `src/ClassStaticMethod.ts`
+
+Runtime value representing a static class method selected from a class.
+
 ## CommandWordListEntry
 
 - Kind: `type`
@@ -143,7 +361,10 @@ Table of host-provided class sources keyed by class name.
 - Kind: `type`
 - Source: `src/AST.ts`
 
-`commandWordListFunction` type.
+Command-form external function.
+
+Returning `undefined` leaves evaluation with the original command-word-list
+node; returning a value supplies the evaluated result.
 
 ## CommandWordListTable
 
@@ -263,6 +484,13 @@ omitted values.
 
 No JSDoc documentation is available yet.
 
+## FormatArgument
+
+- Kind: `type`
+- Source: `src/MathML.ts`
+
+Generic MathML formatting function.
+
 ## FormatFunctionUnion
 
 - Kind: `type`
@@ -362,6 +590,27 @@ This enables proper implementation of:
 - Source: `src/AST.ts`
 
 No JSDoc documentation is available yet.
+
+## FunctionSource
+
+- Kind: `type`
+- Source: `src/Interpreter.ts`
+
+Host-provided function-file source entry.
+
+## FunctionSourceProvider
+
+- Kind: `type`
+- Source: `src/Interpreter.ts`
+
+Callback used to provide function-file source for a function name.
+
+## FunctionSourceTable
+
+- Kind: `type`
+- Source: `src/Interpreter.ts`
+
+Table of host-provided function-file sources keyed by primary function name.
 
 ## FunctionTable
 
@@ -474,8 +723,8 @@ MathML formatting functions where the arguments are of type `string` or
 arguments into structures formatted in MathML language.
 
 The way the types were defined allows you to specify the signature of the
-functions and at the same time allows a generic reference to a formatting
-function to be used, such as `Math.format['key-name' as any]`.
+functions and at the same time allows generic references to dynamic
+formatting functions.
 
 The `MathML` class is an abstract class that was not designed to be
 instantiated or inherited, but extensions with dynamic properties and
@@ -622,7 +871,7 @@ Attribute declaration for `classdef`, `properties`, and `methods`.
 - Kind: `interface`
 - Source: `src/AST.ts`
 
-Minimal `classdef` node.
+`classdef` declaration node.
 
 ## NodeClassEnumeration
 
@@ -715,9 +964,10 @@ Declaration node for `global` and `persistent`.
 
 AST node that can appear in expression position.
 
-The `any` tail is retained for historical compatibility with runtime value
-classes and generated parser actions. New code should prefer the concrete
-node/value types exported from this module.
+The `any` tail is retained for historical compatibility with generated
+parser actions and evaluator paths that still use expression nodes as a broad
+intermediate carrier. Prefer `StrictNodeExpr` in new hand-written code when a
+fully typed expression contract is practical.
 
 ## NodeFor
 
@@ -740,6 +990,20 @@ Common fields shared by user-defined and built-in functions.
 
 AST node for a MATLAB/Octave-like user function definition.
 
+## NodeFunctionParameter
+
+- Kind: `type`
+- Source: `src/AST.ts`
+
+Parameter-list entry accepted by MATLAB/Octave function definitions.
+
+## NodeFunctionReturn
+
+- Kind: `type`
+- Source: `src/AST.ts`
+
+Return-list entry accepted by MATLAB/Octave function definitions.
+
 ## NodeIdentifier
 
 - Kind: `interface`
@@ -760,6 +1024,13 @@ Name node.
 - Source: `src/AST.ts`
 
 Ignored return target (`~`) in a return or assignment list.
+
+## NodeImport
+
+- Kind: `interface`
+- Source: `src/AST.ts`
+
+MATLAB-style package/class import declaration.
 
 ## NodeIndexExpr
 
@@ -788,6 +1059,14 @@ Any AST node that can be used as an executable/evaluable input.
 - Source: `src/AST.ts`
 
 List node
+
+## NodeListElement
+
+- Kind: `type`
+- Source: `src/AST.ts`
+
+Non-expression AST nodes that are stored in `NodeList` while a surrounding
+builder assembles a larger statement node.
 
 ## NodeLiteral
 
@@ -951,12 +1230,54 @@ Materialize the outputs requested by a caller.
 
 Lazily evaluated return values keyed by result name.
 
+`length` is metadata, while dynamic output fields hold expression values.
+
 ## ReturnSelector
 
 - Kind: `type`
 - Source: `src/AST.ts`
 
 Select a single output from a realized return handler result.
+
+## RuntimeDisplay
+
+- Kind: `type`
+- Source: `src/RuntimeDisplay.ts`
+
+Minimal rendering surface required by runtime values.
+
+Runtime values should not depend on the concrete `Interpreter` class just to
+render child values or inspect operator precedence. The interpreter implements
+this interface, but tests and future renderers can provide smaller objects.
+
+## RuntimeEvaluationContext
+
+- Kind: `type`
+- Source: `src/RuntimeDisplay.ts`
+
+Minimal evaluation surface required when runtime containers evaluate their
+child expressions.
+
+## ScriptSource
+
+- Kind: `type`
+- Source: `src/Interpreter.ts`
+
+Host-provided script-file source entry.
+
+## ScriptSourceProvider
+
+- Kind: `type`
+- Source: `src/Interpreter.ts`
+
+Callback used to provide script-file source for a script name.
+
+## ScriptSourceTable
+
+- Kind: `type`
+- Source: `src/Interpreter.ts`
+
+Table of host-provided script-file sources keyed by script name.
 
 ## singleQuoteCharacter
 
@@ -971,6 +1292,16 @@ Single quote string character literal.
 - Source: `src/CharString.ts`
 
 Single quote string character type.
+
+## StrictNodeExpr
+
+- Kind: `type`
+- Source: `src/AST.ts`
+
+AST node that can appear in expression position.
+
+Strict expression shape used by new code that can stay inside the typed AST
+and runtime-value surface.
 
 ## stringClass
 

@@ -1,7 +1,10 @@
 /// <reference types="jest" />
 import path from 'node:path';
 import type { NodeArgumentValidation, NodeExpr, NodeFunctionDefinition, NodeInput } from './AST';
-import { AST, CharString, Complex, MultiArray } from './AST';
+import { AST } from './AST';
+import { CharString } from './CharString';
+import { Complex } from './Complex';
+import { MultiArray } from './MultiArray';
 import { FunctionArguments } from './FunctionArguments';
 
 const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.sep}]+)\\.spec\\.([cm]?[jt]s)\$`))!;
@@ -132,6 +135,30 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             ]);
         });
 
+        it('Should report unsupported argument declaration shapes with stable diagnostics.', () => {
+            const nestedNameValue = argValidation({ name: AST.nodeIndirectRef(AST.nodeIndirectRef(AST.nodeIdentifier('opts'), 'Inner'), 'Value') });
+            const invalidSizeKind = argValidation({ size: [new CharString('n')] });
+            const invalidSizeValue = argValidation({ size: [Complex.create(0)] });
+            const invalidClass = argValidation({ class: AST.nodeList([AST.nodeIdentifier('double'), Complex.create(1)]) });
+            const invalidBuiltInValidator = argValidation({
+                functions: [AST.nodeIndexExpr(AST.nodeIdentifier('mustBeGreaterThan'), AST.nodeList([AST.nodeIdentifier('x')]))],
+            });
+            const invalidValidatorShape = argValidation({ functions: [AST.nodeOperation('+', AST.nodeIdentifier('x'), Complex.create(1))] });
+
+            expect(() => FunctionArguments.nameValueTarget(nestedNameValue, throwSyntaxError)).toThrow('arguments block name-value declaration must be a single dotted identifier.');
+            expect(() => FunctionArguments.literalArgumentSize(invalidSizeKind, throwSyntaxError)).toThrow(
+                "arguments block size validation for 'x' must use positive integer, symbolic, or ':' dimensions.",
+            );
+            expect(() => FunctionArguments.literalArgumentSize(invalidSizeValue, throwSyntaxError)).toThrow("arguments block size validation for 'x' must use positive integer dimensions.");
+            expect(() => FunctionArguments.argumentClassNames(invalidClass, throwSyntaxError)).toThrow("arguments block class validation for 'x' must use class identifiers.");
+            expect(() => FunctionArguments.argumentValidators(invalidBuiltInValidator, throwSyntaxError)).toThrow(
+                "arguments block function validation for 'x' has invalid mustBeGreaterThan arguments.",
+            );
+            expect(() => FunctionArguments.argumentValidators(invalidValidatorShape, throwSyntaxError)).toThrow(
+                "arguments block function validation for 'x' must be a validator identifier or function call.",
+            );
+        });
+
         it('Should validate argument blocks against function parameters and outputs.', () => {
             const input = functionDefinition(['x'], ['y'], [argValidation({ name: AST.nodeIdentifier('x') })]);
             const output = functionDefinition(['x'], ['y'], [argValidation({ name: AST.nodeIdentifier('y') })], 'Output');
@@ -140,6 +167,18 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => FunctionArguments.validateBlocks(input, throwSyntaxError)).not.toThrow();
             expect(() => FunctionArguments.validateBlocks(output, throwSyntaxError)).not.toThrow();
             expect(() => FunctionArguments.validateBlocks(bad, throwSyntaxError)).toThrow("arguments block declaration 'z' does not match a function parameter in function f.");
+        });
+
+        it('Should validate alternative argument classes during block registration.', () => {
+            const valid = functionDefinition(
+                ['x'],
+                ['y'],
+                [argValidation({ name: AST.nodeIdentifier('x'), class: AST.nodeList([AST.nodeIdentifier('double'), AST.nodeIdentifier('char')]) })],
+            );
+            const invalid = functionDefinition(['x'], ['y'], [argValidation({ name: AST.nodeIdentifier('x'), class: AST.nodeList([AST.nodeIdentifier('double'), Complex.create(1)]) })]);
+
+            expect(() => FunctionArguments.validateBlocks(valid, throwSyntaxError)).not.toThrow();
+            expect(() => FunctionArguments.validateBlocks(invalid, throwSyntaxError)).toThrow("arguments block class validation for 'x' must use class identifiers.");
         });
 
         it('Should validate values through resolver and evaluator callbacks.', () => {
@@ -189,6 +228,25 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                     throwSyntaxError,
                 }),
             ).toThrow("arguments block validation failed for 'x': mustBePositive.");
+        });
+
+        it('Should validate text values with mustBeMember.', () => {
+            const allowed = new MultiArray([1, 2], [[new CharString('red'), new CharString('blue')]], true);
+            const validation = argValidation({
+                class: AST.nodeIdentifier('char'),
+                functions: [AST.nodeIndexExpr(AST.nodeIdentifier('mustBeMember'), AST.nodeList([AST.nodeIdentifier('x'), allowed]))],
+            });
+            const callbacks = (value: NodeInput) => ({
+                resolveEntry: () => ({ node: value }),
+                evaluate: (expr: NodeExpr): NodeInput => (expr.type === 'IDENT' ? value : expr),
+                throwEvalError,
+                throwSyntaxError,
+            });
+
+            expect(() => FunctionArguments.validateArgumentValidation(validation, new Map<string, number>(), callbacks(new CharString('red')))).not.toThrow();
+            expect(() => FunctionArguments.validateArgumentValidation(validation, new Map<string, number>(), callbacks(new CharString('green')))).toThrow(
+                "arguments block validation failed for 'x': mustBeMember.",
+            );
         });
 
         it('Should split positional and name-value call arguments.', () => {

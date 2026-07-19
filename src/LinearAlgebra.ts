@@ -1,4 +1,5 @@
 import { type ComplexType, Complex } from './Complex';
+import { CharString } from './CharString';
 import { type ElementType, MultiArray } from './MultiArray';
 import { BLAS } from './BLAS';
 import { LAPACK } from './LAPACK';
@@ -17,6 +18,7 @@ type LinearAlgebraConfig = {
      */
     qrPhaseEpsilon: number;
 };
+type CrossDimensionArgument = ElementType | number;
 
 /** Public list of accepted `LinearAlgebra.set` configuration keys. */
 export const LinearAlgebraConfigKeyTable: (keyof LinearAlgebraConfig)[] = ['wasteLU', 'qrPhaseEpsilon'];
@@ -349,43 +351,90 @@ abstract class LinearAlgebra {
         },
         outputs: { arity: 1 },
     };
+
+    private static readonly multiplyMatrices = (left: MultiArray, right: MultiArray): MultiArray => {
+        const result = new MultiArray([left.dimension[0], right.dimension[1]]);
+        BLAS.gemm(
+            Complex.one(),
+            left.array as ComplexType[][],
+            left.dimension[0],
+            left.dimension[1],
+            right.array as ComplexType[][],
+            right.dimension[1],
+            Complex.zero(),
+            result.array as ComplexType[][],
+        );
+        MultiArray.setType(result);
+        return result;
+    };
+
+    private static readonly formatDimensions = (value: MultiArray): string => value.dimension.join('x');
+
+    private static readonly hermitianEigenExpansion = (matrix: MultiArray, diagonalMap: (value: ComplexType) => ComplexType): MultiArray => {
+        if (!LAPACK.is_hermitian(matrix.array as ComplexType[][])) {
+            throw new Error("invalid exponent in '^'.");
+        }
+        const decomposition = LAPACK.jacobi_symmetric_hermitian(BLAS.copy(matrix.array as ComplexType[][]) as ComplexType[][], 1000, 1e-14);
+        const vectors = new MultiArray([matrix.dimension[0], matrix.dimension[1]]);
+        vectors.array = decomposition.V;
+        const diagonalPowers = MultiArray.toDiagonalMatrix(decomposition.D.map(diagonalMap));
+        const vectorsTimesPowers = LinearAlgebra.multiplyMatrices(vectors, diagonalPowers);
+        return LinearAlgebra.multiplyMatrices(vectorsTimesPowers, LinearAlgebra.ctranspose(vectors));
+    };
+
     /**
-     * Matrix power (multiple multiplication).
-     * @param left
-     * @param right
-     * @returns
+     * Matrix power for square matrices and scalar exponents.
+     *
+     * MATLAB/Octave-compatible integer powers are computed through
+     * exponentiation by squaring. Non-integer scalar exponents currently use
+     * the Hermitian/symmetric eigenvalue expansion supported by the numerical
+     * backend.
+     *
+     * @param left Square matrix base.
+     * @param right Integer real scalar exponent.
+     * @returns Matrix power result.
      */
     public static readonly power = (left: MultiArray, right: ComplexType): MultiArray => {
-        let temp1;
-        if (Complex.realIsInteger(right) && Complex.imagEquals(right, 0)) {
-            if (Complex.realEquals(right, 0)) {
-                temp1 = LinearAlgebra.eye(Complex.create(left.dimension[0], 0)) as MultiArray;
-            } else if (Complex.realGreaterThan(right, 0)) {
-                temp1 = MultiArray.copy(left);
-            } else {
-                temp1 = LinearAlgebra.inv(left);
-            }
-            if (Math.abs(Complex.realToNumber(right)) != 1) {
-                let temp2: MultiArray;
-                for (let i = 1; i < Math.abs(Complex.realToNumber(right)); i++) {
-                    temp2 = new MultiArray([temp1.dimension[0], temp1.dimension[1]]); // Initialized with zeros.
-                    BLAS.gemm(
-                        Complex.one(), // alpha = 1
-                        temp1.array as ComplexType[][], // A raw
-                        temp1.dimension[0],
-                        temp1.dimension[1],
-                        temp1.array as ComplexType[][], // B raw
-                        temp1.dimension[1],
-                        Complex.zero(), // beta = 0, so the previous C value is ignored.
-                        temp2.array as ComplexType[][], // Output storage.
-                    );
-                }
-                temp1 = temp2!;
-            }
-            return temp1;
-        } else {
-            throw new Error(`exponent must be integer real in matrix '^'.`);
+        if (left.dimension.length !== 2 || left.dimension[0] !== left.dimension[1]) {
+            throw new EvalError(`operator ^: only square matrices can be raised to scalar powers.`);
         }
+        if (Complex.realIsInteger(right) && Complex.imagEquals(right, 0)) {
+            let exponent = Math.abs(Complex.realToNumber(right));
+            let result = LinearAlgebra.eye(Complex.create(left.dimension[0], 0)) as MultiArray;
+            let factor = Complex.realGreaterThan(right, 0) || Complex.realEquals(right, 0) ? MultiArray.copy(left) : LinearAlgebra.inv(left);
+            while (exponent > 0) {
+                if (exponent % 2 === 1) {
+                    result = LinearAlgebra.multiplyMatrices(result, factor);
+                }
+                exponent = Math.floor(exponent / 2);
+                if (exponent > 0) {
+                    factor = LinearAlgebra.multiplyMatrices(factor, factor);
+                }
+            }
+            return result;
+        } else {
+            return LinearAlgebra.hermitianEigenExpansion(left, (value) => Complex.power(value, right));
+        }
+    };
+
+    /**
+     * Scalar base raised to a Hermitian/symmetric matrix exponent.
+     *
+     * MATLAB/Octave define `a^B` for scalar `a` and square matrix `B` through
+     * an eigenvalue expansion. The current numerical backend exposes a
+     * Hermitian/symmetric eigensolver, so this method intentionally accepts
+     * that well-conditioned subset and rejects general square matrices until a
+     * general eigensolver or Schur path is available.
+     *
+     * @param left Scalar base.
+     * @param right Hermitian/symmetric matrix exponent.
+     * @returns Matrix result `V * diag(left .^ lambda) * V'`.
+     */
+    public static readonly scalarPower = (left: ComplexType, right: MultiArray): MultiArray => {
+        if (right.dimension.length !== 2 || right.dimension[0] !== right.dimension[1]) {
+            throw new EvalError(`operator ^: matrix exponent must be square when base is scalar.`);
+        }
+        return LinearAlgebra.hermitianEigenExpansion(right, (value) => Complex.power(left, value));
     };
 
     public static readonly detSignature: BuiltInFunctionSignature = {
@@ -453,14 +502,14 @@ abstract class LinearAlgebra {
         for (let i = 0; i < m; i++) {
             for (let j = 0; j < n; j++) {
                 if (i > j) {
-                    L.array[i][j] = Acopy.array[i][j] as any;
+                    L.array[i][j] = Acopy.array[i][j] as ComplexType;
                     U.array[i][j] = Complex.zero();
                 } else if (i === j) {
                     L.array[i][j] = Complex.one();
-                    U.array[i][j] = Acopy.array[i][j] as any;
+                    U.array[i][j] = Acopy.array[i][j] as ComplexType;
                 } else {
                     L.array[i][j] = Complex.zero();
-                    U.array[i][j] = Acopy.array[i][j] as any;
+                    U.array[i][j] = Acopy.array[i][j] as ComplexType;
                 }
             }
         }
@@ -546,6 +595,292 @@ abstract class LinearAlgebra {
             MultiArray.setType(result);
             return result;
         }
+    };
+
+    public static readonly condSignature: BuiltInFunctionSignature = {
+        inputs: [
+            { arity: 1, parameters: [{ name: 'matrix', classes: ['double'], validators: ['matrix2d'] }] },
+            {
+                arity: 2,
+                parameters: [
+                    { name: 'matrix', classes: ['double'], validators: ['matrix2d'] },
+                    {
+                        name: 'normType',
+                        alternatives: [
+                            { name: 'numericNormType', classes: ['double'], validators: ['numeric', 'scalar', 'real'] },
+                            { name: 'frobeniusNormType', classes: ['char'], allowedStrings: ['fro'] },
+                        ],
+                    },
+                ],
+            },
+        ],
+        outputs: { arity: 1 },
+    };
+
+    /**
+     * Matrix condition number for inversion.
+     *
+     * The default and `p = 2` forms use the singular value ratio. The
+     * remaining MATLAB-compatible orders use `norm(A, p) * norm(inv(A), p)`.
+     *
+     * @param A Input matrix.
+     * @param normType Optional norm type: `1`, `2`, `Inf`, or `'fro'`.
+     * @returns Scalar condition number.
+     */
+    public static readonly cond = (A: MultiArray, normType: ComplexType | CharString = Complex.create(2)): ComplexType => {
+        if (!A || A.dimension.length !== 2) {
+            AST.throwInvalidCallError('cond');
+        }
+        if (A.dimension[0] === 0 || A.dimension[1] === 0) {
+            return Complex.zero();
+        }
+        if (CharString.isInstanceOf(normType)) {
+            if (normType.str !== 'fro') {
+                AST.throwInvalidCallError('cond');
+            }
+            return LinearAlgebra.squareMatrixNormCondition(A, 'fro');
+        }
+        const p = Complex.realToNumber(MultiArray.firstElement(normType) as ComplexType);
+        if (p === 2) {
+            const singularValuesSquared = LinearAlgebra.singularValuesSquared(A);
+            if (singularValuesSquared.length === 0) {
+                return Complex.zero();
+            }
+            const largest = singularValuesSquared[singularValuesSquared.length - 1];
+            const smallest = singularValuesSquared[0];
+            if (smallest <= Math.max(1e-14 * largest, 0)) {
+                return Complex.inf_0();
+            }
+            return Complex.create(Math.sqrt(largest / smallest));
+        } else if (p === 1 || p === Infinity) {
+            return LinearAlgebra.squareMatrixNormCondition(A, p);
+        }
+        AST.throwInvalidCallError('cond');
+        throw new EvalError('Invalid call to cond.');
+    };
+
+    public static readonly rankSignature: BuiltInFunctionSignature = {
+        inputs: [
+            { arity: 1, parameters: [{ name: 'matrix', classes: ['double'], validators: ['matrix2d'] }] },
+            {
+                arity: 2,
+                parameters: [
+                    { name: 'matrix', classes: ['double'], validators: ['matrix2d'] },
+                    { name: 'tolerance', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'nonnegative'] },
+                ],
+            },
+        ],
+        outputs: { arity: 1 },
+    };
+
+    /**
+     * Numerical matrix rank estimated from singular values.
+     *
+     * MATLAB defines the default tolerance as `max(size(A)) * eps(norm(A))`
+     * and counts singular values strictly larger than the tolerance.
+     *
+     * @param A Input matrix.
+     * @param tolerance Optional singular-value tolerance.
+     * @returns Rank as a scalar double value.
+     */
+    public static readonly rank = (A: MultiArray, tolerance?: ComplexType): ComplexType => {
+        if (!A || A.dimension.length !== 2) {
+            AST.throwInvalidCallError('rank');
+        }
+        const singularValues = LinearAlgebra.singularValues(A);
+        if (singularValues.length === 0) {
+            return Complex.zero();
+        }
+        const tol =
+            typeof tolerance === 'undefined' ? Math.max(A.dimension[0], A.dimension[1]) * Number.EPSILON * singularValues[singularValues.length - 1] : Complex.realToNumber(tolerance);
+        if (!Number.isFinite(tol) || tol < 0 || (typeof tolerance !== 'undefined' && !Complex.imagIsZero(tolerance))) {
+            AST.throwInvalidCallError('rank');
+        }
+        return Complex.create(LinearAlgebra.rankByElimination(A, tol));
+    };
+
+    /**
+     * Condition number through a matrix norm and inverse.
+     *
+     * @param A Input matrix.
+     * @param normType Matrix norm type.
+     * @returns `norm(A, p) * norm(inv(A), p)`.
+     */
+    private static readonly squareMatrixNormCondition = (A: MultiArray, normType: 1 | typeof Infinity | 'fro'): ComplexType => {
+        if (A.dimension[0] !== A.dimension[1]) {
+            AST.throwInvalidCallError('cond');
+        }
+        return Complex.mul(LinearAlgebra.matrixNorm(A, normType), LinearAlgebra.matrixNorm(LinearAlgebra.inv(A), normType));
+    };
+
+    /**
+     * Matrix norm subset required by condition-number computation.
+     *
+     * @param matrix Input matrix.
+     * @param normType Norm type.
+     * @returns Requested matrix norm.
+     */
+    private static readonly matrixNorm = (matrix: MultiArray, normType: 1 | typeof Infinity | 'fro'): ComplexType => {
+        if (normType === 1) {
+            let max = 0;
+            for (let column = 0; column < matrix.dimension[1]; column++) {
+                let sum = 0;
+                for (let row = 0; row < matrix.dimension[0]; row++) {
+                    sum += Complex.realToNumber(Complex.abs(matrix.array[row][column] as ComplexType));
+                }
+                max = Math.max(max, sum);
+            }
+            return Complex.create(max);
+        }
+        if (normType === Infinity) {
+            let max = 0;
+            for (let row = 0; row < matrix.dimension[0]; row++) {
+                let sum = 0;
+                for (let column = 0; column < matrix.dimension[1]; column++) {
+                    sum += Complex.realToNumber(Complex.abs(matrix.array[row][column] as ComplexType));
+                }
+                max = Math.max(max, sum);
+            }
+            return Complex.create(max);
+        }
+        let sum = Complex.zero();
+        for (const value of MultiArray.linearize(matrix) as ComplexType[]) {
+            const abs = Complex.abs(value);
+            sum = Complex.add(sum, Complex.mul(abs, abs));
+        }
+        return Complex.sqrt(sum);
+    };
+
+    /**
+     * Compute squared singular values through the smaller Gram matrix.
+     *
+     * @param A Input matrix.
+     * @returns Sorted nonnegative squared singular values.
+     */
+    private static readonly singularValuesSquared = (A: MultiArray): number[] => {
+        const rows = A.dimension[0];
+        const columns = A.dimension[1];
+        const size = Math.min(rows, columns);
+        if (size === 0) {
+            return [];
+        }
+        const gram: ComplexType[][] = Array.from({ length: size }, () => Array.from({ length: size }, () => Complex.zero()));
+        if (rows >= columns) {
+            for (let column = 0; column < columns; column++) {
+                for (let otherColumn = column; otherColumn < columns; otherColumn++) {
+                    let sum = Complex.zero();
+                    for (let row = 0; row < rows; row++) {
+                        sum = Complex.add(sum, Complex.mul(Complex.conj(A.array[row][column] as ComplexType), A.array[row][otherColumn] as ComplexType));
+                    }
+                    gram[column][otherColumn] = sum;
+                    gram[otherColumn][column] = column === otherColumn ? sum : Complex.conj(sum);
+                }
+            }
+        } else {
+            for (let row = 0; row < rows; row++) {
+                for (let otherRow = row; otherRow < rows; otherRow++) {
+                    let sum = Complex.zero();
+                    for (let column = 0; column < columns; column++) {
+                        sum = Complex.add(sum, Complex.mul(A.array[row][column] as ComplexType, Complex.conj(A.array[otherRow][column] as ComplexType)));
+                    }
+                    gram[row][otherRow] = sum;
+                    gram[otherRow][row] = row === otherRow ? sum : Complex.conj(sum);
+                }
+            }
+        }
+        const { D } = LAPACK.jacobi_symmetric_hermitian(gram, 1000, 1e-14);
+        return D.map((value) => Math.max(0, Complex.realToNumber(value))).sort((left, right) => left - right);
+    };
+
+    /**
+     * Compute singular values in ascending order.
+     *
+     * @param A Input matrix.
+     * @returns Sorted nonnegative singular values.
+     */
+    private static readonly singularValues = (A: MultiArray): number[] => LinearAlgebra.singularValuesSquared(A).map((value) => Math.sqrt(value));
+
+    /**
+     * Estimate rank by Gaussian elimination with partial pivoting.
+     *
+     * This uses the MATLAB-compatible tolerance computed by `rank` but avoids
+     * deciding exact dependencies through the squared condition of `A' * A`.
+     *
+     * @param A Input matrix.
+     * @param tolerance Pivot tolerance.
+     * @returns Estimated rank.
+     */
+    private static readonly rankByElimination = (A: MultiArray, tolerance: number): number => {
+        const work = (A.array as ComplexType[][]).map((row) => row.map((value) => Complex.create(Complex.realToNumber(value), Complex.imagToNumber(value))));
+        const rows = A.dimension[0];
+        const columns = A.dimension[1];
+        let rank = 0;
+        for (let column = 0; column < columns && rank < rows; column++) {
+            let pivotRow = rank;
+            let pivotAbs = Complex.realToNumber(Complex.abs(work[pivotRow][column]));
+            for (let row = rank + 1; row < rows; row++) {
+                const candidateAbs = Complex.realToNumber(Complex.abs(work[row][column]));
+                if (candidateAbs > pivotAbs) {
+                    pivotAbs = candidateAbs;
+                    pivotRow = row;
+                }
+            }
+            if (pivotAbs <= tolerance) {
+                continue;
+            }
+            if (pivotRow !== rank) {
+                const tmp = work[rank];
+                work[rank] = work[pivotRow];
+                work[pivotRow] = tmp;
+            }
+            const pivot = work[rank][column];
+            for (let row = rank + 1; row < rows; row++) {
+                const factor = Complex.rdiv(work[row][column], pivot);
+                if (Complex.realIsZero(Complex.abs(factor))) {
+                    continue;
+                }
+                for (let otherColumn = column; otherColumn < columns; otherColumn++) {
+                    work[row][otherColumn] = Complex.sub(work[row][otherColumn], Complex.mul(factor, work[rank][otherColumn]));
+                }
+            }
+            rank++;
+        }
+        return rank;
+    };
+
+    /**
+     * Matrix left division wrapper for the language-level `\` operator.
+     *
+     * This keeps parser/interpreter arithmetic routed through the
+     * MATLAB/Octave-facing linear algebra layer while `LAPACK` remains the
+     * numerical backend.
+     *
+     * @param A Coefficient matrix.
+     * @param B Right-hand side matrix.
+     * @returns Solution matrix `X` for `A * X = B`.
+     */
+    public static readonly mldivide = (A: MultiArray, B: MultiArray): MultiArray => {
+        if (A.dimension.length !== 2 || B.dimension.length !== 2 || A.dimension[0] !== A.dimension[1] || A.dimension[0] !== B.dimension[0]) {
+            throw new EvalError(`operator \\: nonconformant arguments (op1 is ${LinearAlgebra.formatDimensions(A)}, op2 is ${LinearAlgebra.formatDimensions(B)}).`);
+        }
+        return LAPACK.mldivide(A, B).X;
+    };
+
+    /**
+     * Matrix right division wrapper for the language-level `/` operator.
+     *
+     * Implements `A / B` through the MATLAB/Octave identity
+     * `((B') \ (A'))'`, routing the actual solve through `mldivide`.
+     *
+     * @param A Numerator matrix.
+     * @param B Denominator matrix.
+     * @returns Solution matrix `X` for `X * B = A`.
+     */
+    public static readonly mrdivide = (A: MultiArray, B: MultiArray): MultiArray => {
+        if (A.dimension.length !== 2 || B.dimension.length !== 2 || B.dimension[0] !== B.dimension[1] || A.dimension[1] !== B.dimension[1]) {
+            throw new EvalError(`operator /: nonconformant arguments (op1 is ${LinearAlgebra.formatDimensions(A)}, op2 is ${LinearAlgebra.formatDimensions(B)}).`);
+        }
+        return LinearAlgebra.ctranspose(LinearAlgebra.mldivide(LinearAlgebra.ctranspose(B), LinearAlgebra.ctranspose(A)));
     };
 
     public static readonly gaussSignature: BuiltInFunctionSignature = {
@@ -745,6 +1080,18 @@ abstract class LinearAlgebra {
         },
         outputs: { arity: 1 },
     };
+
+    private static readonly dimensionArgumentToNumber = (dim: CrossDimensionArgument): number | undefined => {
+        if (typeof dim === 'number') {
+            return dim;
+        }
+        if (MultiArray.isInstanceOf(dim)) {
+            const linearized = MultiArray.linearize(dim);
+            return linearized.length > 0 ? LinearAlgebra.dimensionArgumentToNumber(linearized[0]) : undefined;
+        }
+        return Complex.isInstanceOf(dim) ? Complex.realToNumber(dim) : undefined;
+    };
+
     /**
      * Cross product along dimension `dim` (MATLAB semantics).
      * A and B must have the same size except along `dim` where size must be 3.
@@ -754,45 +1101,14 @@ abstract class LinearAlgebra {
      * @param dim
      * @returns
      */
-    public static readonly cross = (A: MultiArray, B: MultiArray, dim?: any): MultiArray => {
+    public static readonly cross = (A: MultiArray, B: MultiArray, dim?: CrossDimensionArgument): MultiArray => {
         /* Copy original dimension arrays */
         const adimOrig = A.dimension.slice();
         const bdimOrig = B.dimension.slice();
         /* Determine operation dimension (MATLAB: dim is 1-based) */
         let dZero: number | undefined;
         if (typeof dim !== 'undefined') {
-            /* Accept a few shapes for dim:
-             * - a plain number (1-based)
-             * - a MultiArray scalar (extract its first element)
-             * - a ComplexType-like object (use its real part if present)
-             * - anything coercible to Number(...) */
-            let numericDim: number | undefined;
-            /* If looks like a MultiArray (heuristic: has 'dimension' or 'array' properties) */
-            if (typeof dim === 'object' && dim !== null && ('dimension' in dim || 'array' in dim)) {
-                try {
-                    /* attempt to linearize and read first element */
-                    const lin = MultiArray.linearize(dim as MultiArray);
-                    if (lin && lin.length > 0) {
-                        const first = lin[0];
-                        /* If ComplexType-like, prefer real part */
-                        if (first && typeof first === 'object' && 're' in first) {
-                            numericDim = Number((first as any).re);
-                        } else {
-                            numericDim = Number(first);
-                        }
-                    } else {
-                        numericDim = undefined;
-                    }
-                } catch (e) {
-                    numericDim = undefined;
-                }
-            } else if (typeof dim === 'object' && dim !== null && 're' in dim) {
-                /* Complex-like scalar (e.g. { re, im }) */
-                numericDim = Number((dim as any).re);
-            } else {
-                /* fallback: try primitive coercion */
-                numericDim = Number(dim);
-            }
+            const numericDim = LinearAlgebra.dimensionArgumentToNumber(dim);
             /* Validate numericDim */
             if (typeof numericDim === 'undefined' || !Number.isFinite(numericDim)) {
                 throw new EvalError(`cross: invalid dimension ${String(dim)}.`);
@@ -889,26 +1205,26 @@ abstract class LinearAlgebra {
      * @returns
      */
     public static readonly kron = (A: ElementType, B: ElementType): MultiArray => {
-        A = MultiArray.scalarToMultiArray(A);
-        B = MultiArray.scalarToMultiArray(B);
+        const MA = MultiArray.scalarToMultiArray(A);
+        const MB = MultiArray.scalarToMultiArray(B);
         // Validate input dimensions
-        if (!A || A.dimension.length < 2 || !B || B.dimension.length < 2) {
+        if (!MA || MA.dimension.length < 2 || !MB || MB.dimension.length < 2) {
             throw new Error('kron: inputs must be at least 2-D arrays');
         }
-        const m = A.dimension[0];
-        const n = A.dimension[1];
-        const p = B.dimension[0];
-        const q = B.dimension[1];
+        const m = MA.dimension[0];
+        const n = MA.dimension[1];
+        const p = MB.dimension[0];
+        const q = MB.dimension[1];
         // Create result dimension
         const Cdim = [m * p, n * q];
         const C = new MultiArray(Cdim);
         // Compute Kronecker product
         for (let i = 0; i < m; i++) {
             for (let j = 0; j < n; j++) {
-                const aij = A.array[i][j] as ComplexType;
+                const aij = MA.array[i][j] as ComplexType;
                 for (let i2 = 0; i2 < p; i2++) {
                     for (let j2 = 0; j2 < q; j2++) {
-                        const bij = B.array[i2][j2] as ComplexType;
+                        const bij = MB.array[i2][j2] as ComplexType;
                         const value = Complex.mul(aij, bij);
                         C.array[i * p + i2][j * q + j2] = value;
                     }
@@ -1537,6 +1853,8 @@ abstract class LinearAlgebra {
         trace: { func: LinearAlgebra.trace, signature: LinearAlgebra.traceSignature },
         det: { func: LinearAlgebra.det, signature: LinearAlgebra.detSignature },
         inv: { func: LinearAlgebra.inv, signature: LinearAlgebra.invSignature },
+        cond: { func: LinearAlgebra.cond, signature: LinearAlgebra.condSignature },
+        rank: { func: LinearAlgebra.rank, signature: LinearAlgebra.rankSignature },
         gauss: { func: LinearAlgebra.gauss, signature: LinearAlgebra.gaussSignature },
         lu: { func: LinearAlgebra.lu, signature: LinearAlgebra.luSignature },
         dot: { func: LinearAlgebra.dot, signature: LinearAlgebra.dotSignature },

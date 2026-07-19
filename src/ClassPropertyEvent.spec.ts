@@ -1,6 +1,7 @@
 /// <reference types="jest" />
 import type { NodeClassDef } from './AST';
-import { CharString, Complex } from './AST';
+import { CharString } from './CharString';
+import { Complex } from './Complex';
 import { ClassDefinition } from './ClassDefinition';
 import { ClassEventData } from './ClassEventData';
 import { ClassInstance } from './ClassInstance';

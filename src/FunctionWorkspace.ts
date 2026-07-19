@@ -1,6 +1,9 @@
 import type { FunctionTable, NameEntry, NameTable, NodeExpr, NodeFunctionDefinition, NodeInput } from './AST';
-import { AST, CharString, Complex, MultiArray } from './AST';
-import { MathOperation } from './MathOperation';
+import { AST } from './AST';
+import { CharString } from './CharString';
+import { Complex } from './Complex';
+import { MultiArray } from './MultiArray';
+import { RuntimeValue } from './RuntimeValue';
 
 type WorkspaceScope = {
     parent?: WorkspaceScope;
@@ -13,6 +16,7 @@ type WorkspaceScope = {
 
 type ThrowSyntaxError = (message: string) => never;
 type EvaluateInScope = (source: string, scope: WorkspaceScope) => NodeInput;
+type UnparseInputArgument = (arg: NodeExpr) => string;
 
 /**
  * Workspace helpers shared by function calls and MATLAB/Octave workspace
@@ -69,12 +73,14 @@ class FunctionWorkspace {
     }
 
     /**
-     * Implement `inputname(n)` using the original unevaluated call arguments.
+     * Implement `inputname(n[, onlyVariableNames])`.
      *
-     * MATLAB/Octave return an empty string when the selected argument is not a
-     * plain identifier or when the index is outside the supplied input list.
+     * With the default `onlyVariableNames = true`, MATLAB/Octave return an
+     * empty string unless the selected argument is a plain variable name. When
+     * `onlyVariableNames` is false, the original caller expression is returned
+     * when an unparser is supplied.
      */
-    public static inputName(inputArgs: NodeExpr[], indexNode: NodeInput, throwSyntaxError: ThrowSyntaxError): CharString {
+    public static inputName(inputArgs: NodeExpr[], indexNode: NodeInput, throwSyntaxError: ThrowSyntaxError, onlyVariableNames = true, unparse?: UnparseInputArgument): CharString {
         const valueNode = MultiArray.isInstanceOf(indexNode) && MultiArray.isScalar(indexNode) ? MultiArray.firstElement(indexNode) : indexNode;
         if (!Complex.isInstanceOf(valueNode) || !Complex.imagIsZero(valueNode)) {
             throwSyntaxError('inputname: argument number must be a positive integer.');
@@ -87,7 +93,10 @@ class FunctionWorkspace {
         if (!arg) {
             return new CharString('');
         }
-        return new CharString(arg.type === 'IDENT' ? arg.id : '');
+        if (arg.type === 'IDENT') {
+            return new CharString(arg.id);
+        }
+        return new CharString(!onlyVariableNames && unparse ? unparse(arg).trim() : '');
     }
 
     /**
@@ -132,7 +141,7 @@ class FunctionWorkspace {
      * an answer in the command UI.
      */
     public static assignIn(scope: Pick<WorkspaceScope, 'defineName'>, name: string, value: NodeInput): NodeInput {
-        scope.defineName(name, MathOperation.copy(value));
+        scope.defineName(name, RuntimeValue.copy(value));
         return AST.nodeVoid();
     }
 
@@ -147,11 +156,11 @@ class FunctionWorkspace {
     public static declarePersistent(name: string, value: NodeInput | undefined, func: NodeFunctionDefinition, scope: Pick<WorkspaceScope, 'defineName'>): void {
         const table = this.ensurePersistentTable(func);
         if (typeof value !== 'undefined' && typeof table[name] === 'undefined') {
-            table[name] = MathOperation.copy(value);
+            table[name] = RuntimeValue.copy(value);
         } else if (typeof table[name] === 'undefined') {
             table[name] = AST.emptyArray();
         }
-        scope.defineName(name, MathOperation.copy(table[name]));
+        scope.defineName(name, RuntimeValue.copy(table[name]));
     }
 
     /**
@@ -163,7 +172,7 @@ class FunctionWorkspace {
             if (typeof table[name] === 'undefined') {
                 table[name] = AST.emptyArray();
             }
-            scope.defineName(name, MathOperation.copy(table[name]));
+            scope.defineName(name, RuntimeValue.copy(table[name]));
         }
     }
 
@@ -178,7 +187,7 @@ class FunctionWorkspace {
         for (const name of Object.keys(table)) {
             const entry = scope.hasLocalName(name) ? scope.nameTable[name] : undefined;
             if (entry && typeof entry.node !== 'undefined') {
-                table[name] = MathOperation.copy(entry.node);
+                table[name] = RuntimeValue.copy(entry.node);
             }
         }
     }
@@ -198,7 +207,7 @@ class FunctionWorkspace {
         }
         entry.global = true;
         if (typeof value !== 'undefined') {
-            entry.node = MathOperation.copy(value);
+            entry.node = RuntimeValue.copy(value);
             delete entry.undefinedReference;
         }
         scopeNameTable[name] = entry;

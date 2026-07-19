@@ -5,6 +5,12 @@ import { ElementType, MultiArray } from './MultiArray';
 import { AST, type FunctionSignatureEntry, type BuiltInFunctionSignature } from './AST';
 import { BLAS } from './BLAS';
 
+type ConfigurationEntry = {
+    set: (config: ElementType) => void;
+    setDefault: () => void;
+    get: () => ElementType;
+};
+
 /**
  * MathJSLab configuration.
  */
@@ -22,41 +28,36 @@ abstract class Configuration {
     /**
      * Configuration parameters table.
      */
-    private static readonly configuration: Record<
-        string,
-        {
-            set: (config: any) => void;
-            setDefault: () => void;
-            get: () => any;
-        }
-    > = {
+    private static readonly configuration: Record<string, ConfigurationEntry> = {
         blockThreshold: {
-            set: (threshold: ComplexType) => BLAS.set({ blockThreshold: MultiArray.testInteger(threshold, 'configure', 'blockThreshold configuration parameter') }),
+            set: (threshold: ElementType) =>
+                BLAS.set({ blockThreshold: MultiArray.testInteger(Configuration.requireComplex(threshold), 'configure', 'blockThreshold configuration parameter') }),
             setDefault: () => BLAS.set({ blockThreshold: BLAS.defaultSettings.blockThreshold }),
             get: () => Complex.create(BLAS.settings.blockThreshold),
         },
         blockSize: {
-            set: (size: ComplexType) => BLAS.set({ blockSize: MultiArray.testInteger(size, 'configure', 'blockSize configuration parameter') }),
+            set: (size: ElementType) => BLAS.set({ blockSize: MultiArray.testInteger(Configuration.requireComplex(size), 'configure', 'blockSize configuration parameter') }),
             setDefault: () => BLAS.set({ blockSize: BLAS.defaultSettings.blockSize }),
             get: () => Complex.create(BLAS.settings.blockSize),
         },
         real: {
-            set: (engine: CharString) => (Complex.engine = engine.str as RealTypeDescriptor),
+            set: (engine: ElementType) => (Complex.engine = Configuration.requireCharString(engine).str as RealTypeDescriptor),
             setDefault: () => (Complex.engine = 'decimal'),
             get: () => new CharString(Complex.engine),
         },
         precision: {
-            set: (precision: ComplexType) => Complex.set({ precision: Complex.realToNumber(precision) }),
+            set: (precision: ElementType) => Complex.set({ precision: Complex.realToNumber(Configuration.requireComplex(precision)) }),
             setDefault: () => Complex.set({ precision: Complex.defaultSettings.precision }),
             get: () => Complex.create(Complex.settings.precision),
         },
         precisionCompare: {
-            set: (precisionCompare: ComplexType) => Complex.set({ precisionCompare: Complex.realToNumber(precisionCompare) }),
+            set: (precisionCompare: ElementType) => Complex.set({ precisionCompare: Complex.realToNumber(Configuration.requireComplex(precisionCompare)) }),
             setDefault: () => Complex.set({ precisionCompare: Complex.defaultSettings.precisionCompare }),
             get: () => Complex.create(Complex.settings.precisionCompare),
         },
         rounding: {
-            set: (rounding: CharString) => {
+            set: (value: ElementType) => {
+                const rounding = Configuration.requireCharString(value);
                 const roundingMode = Configuration.roundingName.indexOf(rounding.str as RoundingName);
                 if (roundingMode > 0) {
                     Complex.set({ rounding: roundingMode as Rounding });
@@ -68,27 +69,28 @@ abstract class Configuration {
             get: () => new CharString(Configuration.roundingName[Complex.settings.rounding as number]),
         },
         toExpPos: {
-            set: (toExpPos: ComplexType) => Complex.set({ toExpPos: Complex.realToNumber(toExpPos) }),
+            set: (toExpPos: ElementType) => Complex.set({ toExpPos: Complex.realToNumber(Configuration.requireComplex(toExpPos)) }),
             setDefault: () => Complex.set({ toExpPos: Complex.defaultSettings.toExpPos }),
             get: () => Complex.create(Complex.settings.toExpPos),
         },
         toExpNeg: {
-            set: (toExpNeg: ComplexType) => Complex.set({ toExpNeg: Complex.realToNumber(toExpNeg) }),
+            set: (toExpNeg: ElementType) => Complex.set({ toExpNeg: Complex.realToNumber(Configuration.requireComplex(toExpNeg)) }),
             setDefault: () => Complex.set({ toExpNeg: Complex.defaultSettings.toExpNeg }),
             get: () => Complex.create(Complex.settings.toExpNeg),
         },
         minE: {
-            set: (minE: ComplexType) => Complex.set({ minE: Complex.realToNumber(minE) }),
+            set: (minE: ElementType) => Complex.set({ minE: Complex.realToNumber(Configuration.requireComplex(minE)) }),
             setDefault: () => Complex.set({ minE: Complex.defaultSettings.minE }),
             get: () => Complex.create(Complex.settings.minE),
         },
         maxE: {
-            set: (maxE: ComplexType) => Complex.set({ maxE: Complex.realToNumber(maxE) }),
+            set: (maxE: ElementType) => Complex.set({ maxE: Complex.realToNumber(Configuration.requireComplex(maxE)) }),
             setDefault: () => Complex.set({ maxE: Complex.defaultSettings.maxE }),
             get: () => Complex.create(Complex.settings.maxE),
         },
         modulo: {
-            set: (modulo: CharString) => {
+            set: (value: ElementType) => {
+                const modulo = Configuration.requireCharString(value);
                 const moduloMode = Configuration.moduloName.indexOf(modulo.str as ModuloName);
                 if (moduloMode > 0) {
                     Complex.set({ modulo: moduloMode as Modulo });
@@ -100,11 +102,29 @@ abstract class Configuration {
             get: () => new CharString(Configuration.moduloName[Complex.settings.modulo as number] as string),
         },
         crypto: {
-            set: (crypto: ComplexType) => Complex.set({ crypto: Boolean(Complex.realToNumber(crypto)) }),
+            set: (crypto: ElementType) => Complex.set({ crypto: Boolean(Complex.realToNumber(Configuration.requireComplex(crypto))) }),
             setDefault: () => Complex.set({ crypto: Complex.defaultSettings.crypto }),
             get: () => Complex.create(Number(Complex.settings.crypto), 0, Complex.LOGICAL),
         },
     };
+
+    private static readonly requireComplex = (value: ElementType): ComplexType => {
+        if (Complex.isInstanceOf(value)) {
+            return value;
+        }
+        AST.throwInvalidCallError('configure');
+        throw new Error('unreachable');
+    };
+
+    private static readonly requireCharString = (value: ElementType): CharString => {
+        if (CharString.isInstanceOf(value)) {
+            return value;
+        }
+        AST.throwInvalidCallError('configure');
+        throw new Error('unreachable');
+    };
+
+    private static readonly configurationEntry = (name: string): ConfigurationEntry | undefined => Configuration.configuration[name];
 
     public static readonly configureSignature: BuiltInFunctionSignature = {
         inputs: {
@@ -131,14 +151,14 @@ abstract class Configuration {
     public static configure(): CharString;
     public static configure(config: CharString, value: ElementType): CharString;
     public static configure(CONFIG: MultiArray): CharString;
-    public static configure(...args: any[]): CharString | undefined {
-        const setConfig = (config: [CharString, any]): void => {
-            if (CharString.isInstanceOf(config[0])) {
-                if (config[0].str in Configuration.configuration) {
-                    Configuration.configuration[config[0].str].set(config[1]);
-                } else {
-                    throw new ReferenceError(`configure: invalid configuration: '${config[0].str}'.`);
+    public static configure(...args: ElementType[]): CharString | undefined {
+        const setConfig = (name: ElementType, value: ElementType): void => {
+            if (CharString.isInstanceOf(name)) {
+                const entry = Configuration.configurationEntry(name.str);
+                if (!entry) {
+                    throw new ReferenceError(`configure: invalid configuration: '${name.str}'.`);
                 }
+                entry.set(value);
             } else {
                 AST.throwInvalidCallError('configure');
             }
@@ -152,8 +172,8 @@ abstract class Configuration {
         } else if (args.length === 1 && MultiArray.isInstanceOf(args[0])) {
             /* Array of configuration key and value. */
             if (args[0].dimension[1] === 2) {
-                (args[0].array as [CharString, any][]).forEach((config: [CharString, any]) => {
-                    setConfig(config);
+                args[0].array.forEach((config) => {
+                    setConfig(config[0], config[1]);
                 });
                 return new CharString(`${args[0].array.length} configuration values set.`);
             } else {
@@ -161,8 +181,8 @@ abstract class Configuration {
             }
         } else if (args.length === 2 && CharString.isInstanceOf(args[0])) {
             /* Configuration key and value. */
-            setConfig(args as [CharString, any]);
-            return new CharString(`Configuration parameter '${args[0].str}' set to '${Configuration.configuration[args[0].str].get().toString()}'`);
+            setConfig(args[0], args[1]);
+            return new CharString(`Configuration parameter '${args[0].str}' set to '${Configuration.configuration[args[0].str].get()!.toString()}'`);
         } else {
             AST.throwInvalidCallError('configure');
         }

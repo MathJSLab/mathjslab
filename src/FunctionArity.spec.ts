@@ -1,7 +1,10 @@
 /// <reference types="jest" />
 import path from 'node:path';
 import type { NodeBuiltInFunction, NodeFunctionDefinition } from './AST';
-import { AST, CharString, Complex, MultiArray } from './AST';
+import { AST } from './AST';
+import { CharString } from './CharString';
+import { Complex } from './Complex';
+import { MultiArray } from './MultiArray';
 import { Callables } from './Callable';
 import { FunctionArity } from './FunctionArity';
 import { FunctionHandle } from './FunctionHandle';

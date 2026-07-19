@@ -1,6 +1,5 @@
 import { CharString, StringQuoteCharacter } from './CharString';
 import { Complex, ComplexType } from './Complex';
-import { Scope } from './Scope';
 import { FunctionHandle } from './FunctionHandle';
 import { type ElementType, MultiArray } from './MultiArray';
 
@@ -106,6 +105,7 @@ type NodeType =
     | 'ARGS'
     | 'GLOBAL'
     | 'PERSIST'
+    | 'IMPORT'
     | 'RETURN'
     | 'BREAK'
     | 'CONTINUE'
@@ -134,6 +134,7 @@ type NodeType =
  * Table of symbolic aliases recognized by the lexer/parser layer.
  */
 type AliasNameTable = Record<string, RegExp>;
+type DefiningScope = unknown;
 
 /**
  * Common metadata carried by all AST nodes.
@@ -147,7 +148,7 @@ interface NodeBase {
     /** Node discriminant. */
     type: NodeType | number;
     /** Parent AST node or runtime wrapper, when known. */
-    parent?: any;
+    parent?: NodeBase;
     /** Index inside a parent list, when the node belongs to a list. */
     index?: number;
     /** Whether evaluation output should be suppressed. */
@@ -174,6 +175,7 @@ type NodeInput =
     | NodeExpr
     | NodeList
     | NodeDeclaration
+    | NodeImport
     | NodeReturn
     | NodeBreak
     | NodeContinue
@@ -195,11 +197,52 @@ type NodeInput =
 /**
  * AST node that can appear in expression position.
  *
- * The `any` tail is retained for historical compatibility with runtime value
- * classes and generated parser actions. New code should prefer the concrete
- * node/value types exported from this module.
+ * Strict expression shape used by new code that can stay inside the typed AST
+ * and runtime-value surface.
  */
-type NodeExpr = ElementType | NodeIdentifier | NodeIndexExpr | NodeSuperclassConstructor | NodeOperation | NodeRange | NodeIndirectRef | NodeReturnList | any;
+type StrictNodeExpr =
+    | Exclude<ElementType, null | undefined>
+    | NodeVoid
+    | NodeIdentifier
+    | NodeCmdWList
+    | NodeIndexExpr
+    | NodeSuperclassConstructor
+    | NodeMetaClass
+    | NodeRange
+    | NodeColon
+    | NodeEndRange
+    | NodeOperation
+    | NodeIgnoredTarget
+    | NodeIndirectRef
+    | NodeReturnList;
+
+/**
+ * Non-expression AST nodes that are stored in `NodeList` while a surrounding
+ * builder assembles a larger statement node.
+ */
+type NodeListElement =
+    | NodeExpr
+    | NodeElseIf
+    | NodeElse
+    | NodeSwitchCase
+    | NodeFunctionDefinition
+    | NodeArgumentValidation
+    | NodeArguments
+    | NodeClassSection
+    | NodeClassProperty
+    | NodeClassEvent
+    | NodeClassEnumeration
+    | NodeClassAttribute;
+
+/**
+ * AST node that can appear in expression position.
+ *
+ * The `any` tail is retained for historical compatibility with generated
+ * parser actions and evaluator paths that still use expression nodes as a broad
+ * intermediate carrier. Prefer `StrictNodeExpr` in new hand-written code when a
+ * fully typed expression contract is practical.
+ */
+type NodeExpr = StrictNodeExpr | any;
 
 /**
  * Reserved node.
@@ -321,11 +364,21 @@ interface NodeIgnoredTarget extends NodeBase {
 }
 
 /**
+ * Return-list entry accepted by MATLAB/Octave function definitions.
+ */
+type NodeFunctionReturn = NodeIdentifier | NodeIgnoredTarget;
+
+/**
+ * Parameter-list entry accepted by MATLAB/Octave function definitions.
+ */
+type NodeFunctionParameter = NodeIdentifier | NodeIgnoredTarget | NodeOperation;
+
+/**
  * List node
  */
 interface NodeList extends NodeBase {
     type: 'LIST';
-    list: NodeInput[];
+    list: NodeListElement[];
 }
 
 /**
@@ -339,8 +392,13 @@ interface NodeIndirectRef extends NodeBase {
 
 /**
  * Lazily evaluated return values keyed by result name.
+ *
+ * `length` is metadata, while dynamic output fields hold expression values.
  */
-type ReturnHandlerResult = { length: number } & Record<string, NodeExpr>;
+type ReturnHandlerResult = {
+    length: number;
+    [name: string]: NodeExpr | number | undefined;
+};
 
 /**
  * Select a single output from a realized return handler result.
@@ -373,6 +431,8 @@ interface NodeReturnList extends NodeBase {
     type: 'RETLIST';
     selector: ReturnSelector;
     handler: ReturnHandler;
+    commaSeparated?: boolean;
+    returnListLength?: number;
 }
 
 /**
@@ -384,7 +444,7 @@ interface NodeFunction extends NodeBase {
     mapper: boolean;
     ev: boolean[];
     func: Function;
-    definingScope?: Scope;
+    definingScope?: DefiningScope;
     attributes?: {
         /**
          * Per-function persistent variable storage.
@@ -407,6 +467,14 @@ interface NodeFunction extends NodeBase {
          * Marks a classdef method declaration without an inline function body.
          */
         prototype?: boolean;
+
+        /**
+         * Marks a subfunction registered from a function-file source.
+         *
+         * Function-file subfunctions share the file function table with the
+         * primary function, but they are not exported to the caller/base scope.
+         */
+        subfunction?: boolean;
     };
 }
 
@@ -578,9 +646,12 @@ type NameTable = Record<string, NameEntry>;
 type UndefinedReferenceTable = Record<string, Set<string>>;
 
 /**
- * `commandWordListFunction` type.
+ * Command-form external function.
+ *
+ * Returning `undefined` leaves evaluation with the original command-word-list
+ * node; returning a value supplies the evaluated result.
  */
-type CommandWordListFunction = (...args: string[]) => any;
+type CommandWordListFunction = (...args: string[]) => NodeInput | void;
 
 /**
  * `commandWordListTable` entry type.
@@ -636,6 +707,14 @@ interface NodeArguments extends NodeBase {
 interface NodeDeclaration extends NodeBase {
     type: 'GLOBAL' | 'PERSIST';
     list: NodeExpr[];
+}
+
+/**
+ * MATLAB-style package/class import declaration.
+ */
+interface NodeImport extends NodeBase {
+    type: 'IMPORT';
+    imports: NodeIdentifier[];
 }
 
 /**
@@ -730,6 +809,7 @@ interface NodeFor extends NodeBase {
     type: 'FOR';
     target: NodeExpr;
     expression: NodeExpr;
+    workers: NodeExpr | null;
     body: NodeList;
     parallel: boolean;
 }
@@ -739,6 +819,7 @@ interface NodeFor extends NodeBase {
  */
 interface NodeSpmd extends NodeBase {
     type: 'SPMD';
+    workers: NodeList | null;
     body: NodeList;
 }
 
@@ -761,18 +842,33 @@ interface NodeUnwindProtect extends NodeBase {
     cleanup: NodeList;
 }
 
+/**
+ * Supported `classdef` section kinds.
+ */
 type ClassSectionKind = 'PROPERTIES' | 'METHODS' | 'EVENTS' | 'ENUMERATION';
+
+/**
+ * Duplicate-preserving class attribute table keyed by attribute name.
+ *
+ * MATLAB/Octave diagnostics need to distinguish a repeated attribute from an
+ * effective attribute value, so the AST keeps the full list for each key.
+ */
 type ClassAttributeTable = Record<string, NodeClassAttribute[]>;
 
 /**
- * Minimal `classdef` node.
+ * `classdef` declaration node.
  */
 interface NodeClassDef extends NodeBase {
     type: 'CLASSDEF';
+    /** Class name declared after `classdef`. */
     id: string;
+    /** Attribute nodes declared in the class header. */
     attributes: NodeClassAttribute[];
+    /** Attribute nodes grouped by name while preserving duplicates. */
     attributeTable: ClassAttributeTable;
+    /** Direct superclass identifiers from the `< A & B` clause. */
     superclasses: NodeIdentifier[];
+    /** Ordered `properties`, `methods`, `events`, and `enumeration` sections. */
     sections: NodeClassSection[];
 }
 
@@ -781,9 +877,13 @@ interface NodeClassDef extends NodeBase {
  */
 interface NodeClassSection extends NodeBase {
     type: 'CLASS_SECTION';
+    /** Section kind, normalized independently from the concrete end keyword. */
     kind: ClassSectionKind;
+    /** Section-level attributes such as `Access`, `Static`, or `Hidden`. */
     attributes: NodeClassAttribute[];
+    /** Section attributes grouped by name while preserving duplicates. */
     attributeTable: ClassAttributeTable;
+    /** Member list for this section. */
     members: NodeList;
 }
 
@@ -792,7 +892,25 @@ interface NodeClassSection extends NodeBase {
  */
 interface NodeClassProperty extends NodeBase {
     type: 'CLASS_PROPERTY';
+    /** Property name as source text. */
     id: string;
+    /**
+     * Canonical argument-validation-shaped declaration.
+     *
+     * Class property declarations reuse MATLAB's `arguments` validation syntax,
+     * so downstream code can validate size, class, and `mustBe*` functions
+     * through the same infrastructure used for function arguments.
+     */
+    validation: NodeArgumentValidation;
+    /** Identifier node for diagnostics and metadata construction. */
+    name: NodeIdentifier;
+    /** Literal/symbolic size validation list. */
+    size: NodeInput[];
+    /** Class validation node, or an empty list/null when absent. */
+    class: NodeInput | null;
+    /** Validator function declarations. */
+    functions: NodeInput[];
+    /** Default value expression, when declared. */
     defaultValue: NodeExpr | null;
 }
 
@@ -801,6 +919,7 @@ interface NodeClassProperty extends NodeBase {
  */
 interface NodeClassEvent extends NodeBase {
     type: 'CLASS_EVENT';
+    /** Event name. */
     id: string;
 }
 
@@ -809,7 +928,9 @@ interface NodeClassEvent extends NodeBase {
  */
 interface NodeClassEnumeration extends NodeBase {
     type: 'CLASS_ENUMERATION';
+    /** Enumeration member name. */
     id: string;
+    /** Constructor-like arguments attached to the member declaration. */
     args: NodeExpr[];
 }
 
@@ -818,7 +939,9 @@ interface NodeClassEnumeration extends NodeBase {
  */
 interface NodeClassAttribute extends NodeBase {
     type: 'CLASS_ATTRIBUTE';
+    /** Attribute name as declared in source. */
     id: string;
+    /** Optional attribute value, including identifiers, strings, cells, or negated markers. */
     value: NodeExpr | null;
 }
 
@@ -866,6 +989,103 @@ abstract class AST {
     public static readonly nodeCopy = <T = object>(node: T): T => Object.assign({}, node);
 
     /**
+     * Test whether an unknown value has the common AST/runtime node shape.
+     */
+    public static readonly isNodeBase = (value: unknown): value is NodeBase =>
+        typeof value === 'object' && value !== null && 'type' in value && (typeof (value as NodeBase).type === 'string' || typeof (value as NodeBase).type === 'number');
+
+    /**
+     * Test whether an unknown value is an identifier node.
+     */
+    public static readonly isNodeIdentifier = (value: unknown): value is NodeIdentifier =>
+        AST.isNodeBase(value) && value.type === 'IDENT' && typeof (value as NodeIdentifier).id === 'string';
+
+    /**
+     * Test whether an unknown value is a list node.
+     */
+    public static readonly isNodeList = (value: unknown): value is NodeList => AST.isNodeBase(value) && value.type === 'LIST' && Array.isArray((value as NodeList).list);
+
+    /**
+     * Test whether an unknown value is an index expression node.
+     */
+    public static readonly isNodeIndexExpr = (value: unknown): value is NodeIndexExpr =>
+        AST.isNodeBase(value) && value.type === 'IDX' && ((value as NodeIndexExpr).delim === '()' || (value as NodeIndexExpr).delim === '{}') && Array.isArray((value as NodeIndexExpr).args);
+
+    /**
+     * Test whether an unknown value is a dot-reference node.
+     */
+    public static readonly isNodeIndirectRef = (value: unknown): value is NodeIndirectRef => AST.isNodeBase(value) && value.type === '.' && Array.isArray((value as NodeIndirectRef).field);
+
+    /**
+     * Test whether an unknown value is a lazy return-list node.
+     */
+    public static readonly isNodeReturnList = (value: unknown): value is NodeReturnList =>
+        AST.isNodeBase(value) && value.type === 'RETLIST' && typeof (value as NodeReturnList).selector === 'function' && typeof (value as NodeReturnList).handler === 'function';
+
+    /**
+     * Test whether an unknown value is an ignored target (`~`) node.
+     */
+    public static readonly isNodeIgnoredTarget = (value: unknown): value is NodeIgnoredTarget => AST.isNodeBase(value) && value.type === '<~>';
+
+    /**
+     * Test whether an unknown value is a function return-list entry.
+     */
+    public static readonly isNodeFunctionReturn = (value: unknown): value is NodeFunctionReturn => AST.isNodeIdentifier(value) || AST.isNodeIgnoredTarget(value);
+
+    /**
+     * Test whether an unknown value is a defaulted function parameter.
+     */
+    public static readonly isNodeDefaultedParameter = (value: unknown): value is NodeOperation & { type: '='; left: NodeIdentifier; right: NodeExpr } =>
+        AST.isNodeBase(value) && value.type === '=' && AST.isNodeIdentifier((value as NodeOperation & { left?: unknown }).left) && 'right' in value;
+
+    /**
+     * Test whether an unknown value is a function parameter-list entry.
+     */
+    public static readonly isNodeFunctionParameter = (value: unknown): value is NodeFunctionParameter =>
+        AST.isNodeIdentifier(value) || AST.isNodeIgnoredTarget(value) || AST.isNodeDefaultedParameter(value);
+
+    /**
+     * Test whether an unknown value is a function definition node.
+     */
+    public static readonly isNodeFunctionDefinition = (value: unknown): value is NodeFunctionDefinition => AST.isNodeBase(value) && value.type === 'FCNDEF';
+
+    /**
+     * Test whether an unknown value is a class definition node.
+     */
+    public static readonly isNodeClassDef = (value: unknown): value is NodeClassDef => AST.isNodeBase(value) && value.type === 'CLASSDEF';
+
+    /**
+     * Test whether an unknown value is an `arguments` block node.
+     */
+    public static readonly isNodeArguments = (value: unknown): value is NodeArguments => AST.isNodeBase(value) && value.type === 'ARGS' && Array.isArray((value as NodeArguments).validation);
+
+    /**
+     * Test whether an unknown value is one declaration inside an `arguments` block.
+     */
+    public static readonly isNodeArgumentValidation = (value: unknown): value is NodeArgumentValidation =>
+        AST.isNodeBase(value) && value.type === 'ARGVALID' && 'name' in value && Array.isArray((value as NodeArgumentValidation).size);
+
+    /**
+     * Test whether an unknown value is a `case` clause node.
+     */
+    public static readonly isNodeSwitchCase = (value: unknown): value is NodeSwitchCase => AST.isNodeBase(value) && value.type === 'CASE';
+
+    /**
+     * Test whether an unknown value is a class section node.
+     */
+    public static readonly isNodeClassSection = (value: unknown): value is NodeClassSection => AST.isNodeBase(value) && value.type === 'CLASS_SECTION';
+
+    /**
+     * Test whether an unknown value is a class attribute node.
+     */
+    public static readonly isNodeClassAttribute = (value: unknown): value is NodeClassAttribute => AST.isNodeBase(value) && value.type === 'CLASS_ATTRIBUTE';
+
+    /**
+     * Test whether an unknown value is a class enumeration member node.
+     */
+    public static readonly isNodeClassEnumeration = (value: unknown): value is NodeClassEnumeration => AST.isNodeBase(value) && value.type === 'CLASS_ENUMERATION';
+
+    /**
      * Create an explicit no-value node.
      */
     public static readonly nodeVoid = (): NodeVoid => ({
@@ -889,12 +1109,16 @@ abstract class AST {
     /**
      * Create a metaclass literal node (`?ClassName`).
      */
-    public static readonly nodeMetaClass = (className: NodeIdentifier): NodeMetaClass => ({
-        type: 'METACLASS',
-        className,
-        omitAnswer: false,
-        omitOutput: false,
-    });
+    public static readonly nodeMetaClass = (className: NodeIdentifier): NodeMetaClass => {
+        const result: NodeMetaClass = {
+            type: 'METACLASS',
+            className,
+            omitAnswer: false,
+            omitOutput: false,
+        };
+        result.className.parent = result;
+        return result;
+    };
 
     /**
      * Create command word list node.
@@ -933,8 +1157,9 @@ abstract class AST {
             omitOutput: false,
         };
         result.expr.parent = result;
-        result.args.forEach((node) => {
+        result.args.forEach((node, index) => {
             node.parent = result;
+            node.index = index;
         });
         return result;
     };
@@ -1119,7 +1344,7 @@ abstract class AST {
      * @param node First element of list node.
      * @returns A NodeList.
      */
-    public static readonly nodeListFirst = (node?: NodeInput): NodeList => {
+    public static readonly nodeListFirst = (node?: NodeListElement): NodeList => {
         const result: NodeList = {
             type: 'LIST',
             list: node ? [node] : [],
@@ -1138,7 +1363,7 @@ abstract class AST {
      * @param node Element to append to list.
      * @returns NodeList with element appended.
      */
-    public static readonly appendNodeList = (lnode: NodeList, node: NodeInput): NodeList => {
+    public static readonly appendNodeList = (lnode: NodeList, node: NodeListElement): NodeList => {
         node.parent = lnode;
         lnode.list.push(node);
         return lnode;
@@ -1149,7 +1374,7 @@ abstract class AST {
      * @param list
      * @returns
      */
-    public static readonly nodeList = (list: NodeInput[]): NodeList => {
+    public static readonly nodeList = (list: NodeListElement[]): NodeList => {
         const result: NodeList = {
             type: 'LIST',
             list,
@@ -1184,15 +1409,23 @@ abstract class AST {
     public static readonly nodeIndirectRef = (left: NodeExpr, right: string | NodeExpr): NodeIndirectRef => {
         if (left.type === '.') {
             left.field.push(right);
+            if (typeof right !== 'string') {
+                right.parent = left;
+            }
             return left;
         } else {
-            return {
+            const result: NodeIndirectRef = {
                 type: '.',
                 obj: left,
                 field: [right],
                 omitAnswer: false,
                 omitOutput: false,
             };
+            result.obj.parent = result;
+            if (typeof right !== 'string') {
+                right.parent = result;
+            }
+            return result;
         }
     };
 
@@ -1218,8 +1451,8 @@ abstract class AST {
      * @returns `node` as NodeReturnList
      */
     public static readonly ensureReturnList = (node: NodeExpr): NodeReturnList => {
-        if (node.type === 'RETLIST') {
-            return node as NodeReturnList;
+        if (AST.isNodeReturnList(node)) {
+            return node;
         }
         const result = node;
         return AST.nodeReturnList((evaluated: ReturnHandlerResult, index: number): NodeExpr | never => {
@@ -1254,11 +1487,8 @@ abstract class AST {
      * @returns Reduced node if `tree` is a NodeReturnList.
      */
     public static readonly reduceToFirstIfReturnList = (tree: NodeInput): NodeInput => {
-        if (tree.type === 'RETLIST') {
-            const result =
-                typeof (tree as NodeReturnList).handler !== 'undefined'
-                    ? (tree as NodeReturnList).selector((tree as NodeReturnList).handler(1), 0)
-                    : (tree as NodeReturnList).selector({ length: 1 }, 0);
+        if (AST.isNodeReturnList(tree)) {
+            const result = tree.selector(tree.handler(1), 0);
             result.parent = tree.parent;
             return result;
         } else {
@@ -1390,7 +1620,7 @@ abstract class AST {
         const result = {
             type: 'ARGS',
             attribute,
-            validation: validationList.list as unknown as NodeArgumentValidation[],
+            validation: validationList.list.filter(AST.isNodeArgumentValidation),
             omitAnswer: true,
             omitOutput: true,
         } as NodeArguments;
@@ -1456,7 +1686,40 @@ abstract class AST {
      * @returns
      */
     public static readonly nodeAppendDeclaration = (node: NodeDeclaration, declaration: NodeExpr): NodeDeclaration => {
-        node.list.push(declaration);
+        const declarationNode = AST.getDeclarationNode(declaration);
+        declarationNode.parent = node;
+        node.list.push(declarationNode);
+        return node;
+    };
+
+    /**
+     * Create the first node for a MATLAB-style `import` declaration.
+     *
+     * @param importName Fully qualified class/package name, optionally ending in `.*`.
+     * @returns Import declaration node.
+     */
+    public static readonly nodeImportFirst = (importName: NodeIdentifier): NodeImport =>
+        AST.nodeAppendImport(
+            {
+                type: 'IMPORT',
+                imports: [],
+                omitAnswer: true,
+                omitOutput: true,
+            } as NodeImport,
+            importName,
+        );
+
+    /**
+     * Append one fully qualified import name to an `import` declaration.
+     *
+     * @param node Import declaration to extend.
+     * @param importName Fully qualified class/package name.
+     * @returns The same import declaration node.
+     */
+    public static readonly nodeAppendImport = (node: NodeImport, importName: NodeIdentifier): NodeImport => {
+        importName.parent = node;
+        importName.index = node.imports.length;
+        node.imports.push(importName);
         return node;
     };
 
@@ -1512,25 +1775,34 @@ abstract class AST {
      * @param then
      * @returns
      */
-    public static readonly nodeElseIf = (expression: NodeExpr, then: NodeList): NodeElseIf => ({
-        type: 'ELSEIF',
-        expression,
-        then,
-        omitAnswer: true,
-        omitOutput: true,
-    });
+    public static readonly nodeElseIf = (expression: NodeExpr, then: NodeList): NodeElseIf => {
+        const result: NodeElseIf = {
+            type: 'ELSEIF',
+            expression,
+            then,
+            omitAnswer: true,
+            omitOutput: true,
+        };
+        result.expression.parent = result;
+        result.then.parent = result;
+        return result;
+    };
 
     /**
      *
      * @param elseStmt
      * @returns
      */
-    public static readonly nodeElse = (elseStmt: NodeList): NodeElse => ({
-        type: 'ELSE',
-        else: elseStmt,
-        omitAnswer: true,
-        omitOutput: true,
-    });
+    public static readonly nodeElse = (elseStmt: NodeList): NodeElse => {
+        const result: NodeElse = {
+            type: 'ELSE',
+            else: elseStmt,
+            omitAnswer: true,
+            omitOutput: true,
+        };
+        result.else.parent = result;
+        return result;
+    };
 
     /**
      * Create a `switch` statement node.
@@ -1539,7 +1811,7 @@ abstract class AST {
         const result = {
             type: 'SWITCH',
             expression,
-            cases: cases.list as unknown as NodeSwitchCase[],
+            cases: cases.list.filter(AST.isNodeSwitchCase),
             otherwise,
             omitAnswer: true,
             omitOutput: true,
@@ -1603,11 +1875,12 @@ abstract class AST {
     /**
      * Create a `for` statement node.
      */
-    public static readonly nodeFor = (target: NodeExpr, expression: NodeExpr, body: NodeList, parallel: boolean = false): NodeFor => {
+    public static readonly nodeFor = (target: NodeExpr, expression: NodeExpr, body: NodeList, parallel: boolean = false, workers: NodeExpr | null = null): NodeFor => {
         const result = {
             type: 'FOR',
             target,
             expression,
+            workers,
             body,
             parallel,
             omitAnswer: true,
@@ -1615,6 +1888,9 @@ abstract class AST {
         } as NodeFor;
         result.target.parent = result;
         result.expression.parent = result;
+        if (result.workers) {
+            result.workers.parent = result;
+        }
         result.body.parent = result;
         return result;
     };
@@ -1622,13 +1898,17 @@ abstract class AST {
     /**
      * Create an `spmd` statement node.
      */
-    public static readonly nodeSpmd = (body: NodeList): NodeSpmd => {
+    public static readonly nodeSpmd = (body: NodeList, workers: NodeList | null = null): NodeSpmd => {
         const result = {
             type: 'SPMD',
+            workers,
             body,
             omitAnswer: true,
             omitOutput: true,
         } as NodeSpmd;
+        if (result.workers) {
+            result.workers.parent = result;
+        }
         result.body.parent = result;
         return result;
     };
@@ -1683,10 +1963,10 @@ abstract class AST {
         const result = {
             type: 'CLASSDEF',
             id: id.id,
-            attributes: attributes.list as unknown as NodeClassAttribute[],
+            attributes: attributes.list.filter(AST.isNodeClassAttribute),
             attributeTable: {},
-            superclasses: superclasses.list as unknown as NodeIdentifier[],
-            sections: sections.list as unknown as NodeClassSection[],
+            superclasses: superclasses.list.filter(AST.isNodeIdentifier),
+            sections: sections.list.filter(AST.isNodeClassSection),
             omitAnswer: true,
             omitOutput: true,
         } as NodeClassDef;
@@ -1704,7 +1984,7 @@ abstract class AST {
         const result = {
             type: 'CLASS_SECTION',
             kind,
-            attributes: attributes.list as unknown as NodeClassAttribute[],
+            attributes: attributes.list.filter(AST.isNodeClassAttribute),
             attributeTable: {},
             members,
             omitAnswer: true,
@@ -1720,17 +2000,29 @@ abstract class AST {
     /**
      * Create a simple class property declaration.
      */
-    public static readonly nodeClassProperty = (id: NodeIdentifier, defaultValue: NodeExpr | null = null): NodeClassProperty => {
+    public static readonly nodeClassProperty = (
+        id: NodeIdentifier,
+        sizeOrDefaultValue: NodeList | NodeExpr | null = AST.nodeListFirst(),
+        cl: NodeInput | null = null,
+        functions: NodeList = AST.nodeListFirst(),
+        defaultValue: NodeExpr | null = null,
+    ): NodeClassProperty => {
+        const legacyDefaultValue = sizeOrDefaultValue && sizeOrDefaultValue.type !== 'LIST' ? (sizeOrDefaultValue as NodeExpr) : null;
+        const size = sizeOrDefaultValue && sizeOrDefaultValue.type === 'LIST' ? (sizeOrDefaultValue as NodeList) : AST.nodeListFirst();
+        const validation = AST.nodeArgumentValidation(id, size, cl, functions, legacyDefaultValue ?? defaultValue);
         const result = {
             type: 'CLASS_PROPERTY',
             id: id.id,
-            defaultValue,
+            validation,
+            name: validation.name as NodeIdentifier,
+            size: validation.size,
+            class: validation.class,
+            functions: validation.functions,
+            defaultValue: validation.default,
             omitAnswer: true,
             omitOutput: true,
         } as NodeClassProperty;
-        if (result.defaultValue) {
-            result.defaultValue.parent = result;
-        }
+        result.validation.parent = result;
         return result;
     };
 
@@ -1751,7 +2043,7 @@ abstract class AST {
         const result = {
             type: 'CLASS_ENUMERATION',
             id: id.id,
-            args: args.list as unknown as NodeExpr[],
+            args: args.list.filter((node): node is NodeExpr => !AST.isNodeClassSection(node) && !AST.isNodeClassAttribute(node) && !AST.isNodeClassEnumeration(node)),
             omitAnswer: true,
             omitOutput: true,
         } as NodeClassEnumeration;
@@ -1784,6 +2076,8 @@ export type {
     AliasNameTable,
     NodeBase,
     NodeInput,
+    NodeListElement,
+    StrictNodeExpr,
     NodeExpr,
     NodeReserved,
     NodeLiteral,
@@ -1801,6 +2095,8 @@ export type {
     UnaryOperationL,
     BinaryOperation,
     NodeIgnoredTarget,
+    NodeFunctionReturn,
+    NodeFunctionParameter,
     NodeList,
     NodeIndirectRef,
     ReturnHandlerResult,
@@ -1827,6 +2123,7 @@ export type {
     NodeArgumentValidation,
     NodeArguments,
     NodeDeclaration,
+    NodeImport,
     NodeReturn,
     NodeBreak,
     NodeContinue,
@@ -1852,30 +2149,3 @@ export type {
 };
 export { AST };
 export default { AST };
-
-/**
- * External exports.
- */
-export type { SingleQuoteCharacter, DoubleQuoteCharacter, StringQuoteCharacter } from './CharString';
-export { singleQuoteCharacter, doubleQuoteCharacter, stringClass, CharString } from './CharString';
-export type { Decimal, RealType, NumberObjectType, RealTypeDescriptor, ComplexType } from './Complex';
-export { Complex } from './Complex';
-export type { ElementType } from './MultiArray';
-export { MultiArray } from './MultiArray';
-export { Structure } from './Structure';
-export { FunctionHandle } from './FunctionHandle';
-export type { ClassAccess, ClassPropertyDefinition, ClassMethodDefinition, ClassEventDefinition, ClassEnumerationDefinition } from './ClassMember';
-export type { ClassMethodTable } from './ClassDefinition';
-export type { ClassInstancePropertyTable } from './ClassInstance';
-export { ClassMember } from './ClassMember';
-export { ClassDefinition } from './ClassDefinition';
-export { ClassInstance } from './ClassInstance';
-export { ClassBoundMethod } from './ClassBoundMethod';
-export { ClassStaticMethod } from './ClassStaticMethod';
-export { ClassEmptyMethod } from './ClassEmptyMethod';
-export { ClassEnumerationValue } from './ClassEnumerationValue';
-export { ClassEventListener } from './ClassEventListener';
-export { ClassEventData } from './ClassEventData';
-export { ClassPropertyEvent } from './ClassPropertyEvent';
-export type { ClassMetaKind } from './ClassMeta';
-export { ClassMetaObject, ClassMetaClass, ClassMetaMember, ClassMetaProperty, ClassMetaMethod, ClassMetaEvent, ClassMetaEnumerationMember } from './ClassMeta';

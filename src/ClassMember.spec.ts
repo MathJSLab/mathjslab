@@ -1,5 +1,6 @@
 /// <reference types="jest" />
-import { AST, CharString } from './AST';
+import { AST } from './AST';
+import { CharString } from './CharString';
 import { ClassMember } from './ClassMember';
 
 describe('ClassMember', () => {

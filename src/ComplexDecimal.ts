@@ -1,7 +1,7 @@
 import { Decimal } from 'decimal.js';
 
 import * as TypeOfComplex from './ComplexInterface';
-import { Interpreter } from './Interpreter';
+import type { RuntimeDisplay } from './RuntimeDisplay';
 
 const defaultSettings: Partial<TypeOfComplex.ComplexConfig> = {
     precision: 336,
@@ -19,19 +19,28 @@ Decimal.set(defaultSettings);
 /**
  * `Decimal` object extensions for factories compatibility.
  */
-(Decimal as any).create = (x: Decimal | number | string) => new Decimal(x);
-(Decimal as any).neg = (x: Decimal) => x.neg();
-(Decimal as any).MINUSONE = new Decimal(-1);
-(Decimal as any).ZERO = new Decimal(0);
-(Decimal as any).TWO = new Decimal(2);
-(Decimal as any).PI = Decimal.acos(-1);
-(Decimal as any).PI_DEG = new Decimal(180);
-(Decimal as any).INF = new Decimal(Infinity);
-(Decimal as any).unparse = (value: Decimal) => value.valueOf();
-(Decimal as any).isZero = (x: Decimal) => x.isZero();
-(Decimal as any).isNeg = (x: Decimal) => x.isNeg();
-(Decimal as any).isNaN = (x: Decimal) => x.isNaN();
-(Decimal as any).isFinite = (x: Decimal) => x.isFinite();
+const decimalBackend = Decimal as typeof Decimal & TypeOfComplex.RealInterfaceStatic<Decimal>;
+decimalBackend.create = (x: Decimal | number | string) => new Decimal(x);
+decimalBackend.neg = (x: Decimal) => x.neg();
+decimalBackend.MINUSONE = new Decimal(-1);
+decimalBackend.ZERO = new Decimal(0);
+decimalBackend.TWO = new Decimal(2);
+decimalBackend.PI = Decimal.acos(-1);
+decimalBackend.PI_DEG = new Decimal(180);
+decimalBackend.INF = new Decimal(Infinity);
+decimalBackend.unparse = (value: Decimal) => value.valueOf();
+decimalBackend.isZero = (x: Decimal) => x.isZero();
+decimalBackend.isNeg = (x: Decimal) => x.isNeg();
+decimalBackend.isNaN = (x: Decimal) => x.isNaN();
+decimalBackend.isFinite = (x: Decimal) => x.isFinite();
+
+const setComplexConfigValue = (settings: TypeOfComplex.ComplexConfig, key: TypeOfComplex.ComplexConfigKey, value: unknown): void => {
+    (settings as Record<TypeOfComplex.ComplexConfigKey, unknown>)[key] = value;
+};
+
+const setDecimalConfigValue = (settings: Decimal.Config, key: Exclude<TypeOfComplex.ComplexConfigKey, 'precisionCompare'>, value: unknown): void => {
+    (settings as Record<string, unknown>)[key] = value;
+};
 
 /**
  * # `ComplexDecimal`
@@ -60,10 +69,12 @@ class ComplexDecimal implements TypeOfComplex.ComplexInterface<Decimal, number, 
         const decimal: Decimal.Config = {};
         TypeOfComplex.ComplexConfigKeyTable.forEach((param) => {
             if (typeof config[param] !== 'undefined') {
+                const value = config[param];
                 if (param !== 'precisionCompare') {
-                    (this.settings as any)[param] = (decimal as any)[param] = config[param];
+                    setComplexConfigValue(this.settings, param, value);
+                    setDecimalConfigValue(decimal, param, value);
                 } else {
-                    (this.settings as any)[param] = config[param];
+                    setComplexConfigValue(this.settings, param, value);
                 }
             }
         });
@@ -75,7 +86,7 @@ class ComplexDecimal implements TypeOfComplex.ComplexInterface<Decimal, number, 
     public re: Decimal;
     public im: Decimal;
     public type: number;
-    public parent: any;
+    public parent: unknown;
 
     public static readonly setNumberType: TypeOfComplex.OneArgNoReturnComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.setNumberTypeFactory<Decimal, ComplexDecimal, number, unknown>(
         ComplexDecimal,
@@ -139,13 +150,13 @@ class ComplexDecimal implements TypeOfComplex.ComplexInterface<Decimal, number, 
     public static readonly imagGreaterThan = (z: ComplexDecimal, value: Decimal.Value): boolean => z.im.gt(value);
 
     public static readonly parse: TypeOfComplex.ParseComplexHandler<Decimal, ComplexDecimal> = TypeOfComplex.parseFactory<Decimal, ComplexDecimal, number, unknown>(ComplexDecimal);
-    public static readonly precedence: TypeOfComplex.PrecedenceComplexHandler<Decimal, ComplexDecimal, Interpreter, number> = TypeOfComplex.precedenceFactory<
+    public static readonly precedence: TypeOfComplex.PrecedenceComplexHandler<Decimal, ComplexDecimal, RuntimeDisplay, number> = TypeOfComplex.precedenceFactory<
         Decimal,
         ComplexDecimal,
         number
     >(ComplexDecimal);
     public static readonly unparseValue: TypeOfComplex.UnparseValueComplexHandler<Decimal> = TypeOfComplex.unparseValueFactory<Decimal, ComplexDecimal>(Decimal, ComplexDecimal);
-    public static readonly unparse: TypeOfComplex.UnparseComplexHandler<Decimal, ComplexDecimal, Interpreter, number> = TypeOfComplex.unparseFactory<
+    public static readonly unparse: TypeOfComplex.UnparseComplexHandler<Decimal, ComplexDecimal, RuntimeDisplay, number> = TypeOfComplex.unparseFactory<
         Decimal,
         ComplexDecimal,
         number,
@@ -156,7 +167,7 @@ class ComplexDecimal implements TypeOfComplex.ComplexInterface<Decimal, number, 
         return ComplexDecimal.toString(this);
     }
     public static readonly unparseMathMLValue: TypeOfComplex.UnparseValueComplexHandler<Decimal> = TypeOfComplex.unparseMathMLValueFactory<Decimal, ComplexDecimal>(Decimal, ComplexDecimal);
-    public static readonly unparseMathML: TypeOfComplex.UnparseComplexHandler<Decimal, ComplexDecimal, Interpreter, number> = TypeOfComplex.unparseMathMLFactory<
+    public static readonly unparseMathML: TypeOfComplex.UnparseComplexHandler<Decimal, ComplexDecimal, RuntimeDisplay, number> = TypeOfComplex.unparseMathMLFactory<
         Decimal,
         ComplexDecimal,
         number

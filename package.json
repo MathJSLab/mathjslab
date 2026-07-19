@@ -1,6 +1,6 @@
 {
     "name": "mathjslab",
-    "version": "2.1.2",
+    "version": "2.1.3",
     "description": "MathJSLab - An interpreter with language syntax like MATLAB®/Octave, ISBN 978-65-00-82338-7.",
     "keywords": [
         "MathJSLab",
@@ -103,7 +103,7 @@
         "get:antlr": "npm run tsx script/get-antlr.ts",
         "install:approve:all": "npm install-scripts approve --all && npm install",
         "install:all": "npm install && npm run clone:copy:clean:repository && npm run get:antlr",
-        "update": "npx npm-check-updates -u -x typescript && npm run install:all",
+        "update": "npx npm-check-updates -u -x typescript,eslint,@eslint/js && npm run install:all",
         "format": "prettier --write **/*.{js,cjs,mjs,ts,cts,mts,json,md}",
         "lint": "eslint --fix",
         "docs": "npm run tsx script/generate-api-docs.ts",
@@ -154,18 +154,18 @@
         "globalthis": "^1.0.4"
     },
     "devDependencies": {
-        "@eslint/js": "^10.0.1",
+        "@eslint/js": "^9.39.5",
         "@types/eslint-config-prettier": "^6.11.3",
         "@types/jest": "^30.0.0",
         "@types/node": "^26.1.1",
         "@types/turndown": "^5.0.6",
         "@types/webpack": "^5.28.5",
         "@types/webpack-bundle-analyzer": "^4.7.0",
-        "@typescript-eslint/eslint-plugin": "^8.63.0",
-        "@typescript-eslint/parser": "^8.63.0",
+        "@typescript-eslint/eslint-plugin": "^8.64.0",
+        "@typescript-eslint/parser": "^8.64.0",
         "ajv": "^8.20.0",
         "cross-env": "^10.1.0",
-        "eslint": "^10.7.0",
+        "eslint": "^9.39.5",
         "eslint-config-prettier": "^10.1.8",
         "eslint-import-resolver-typescript": "^4.4.5",
         "eslint-plugin-import": "^2.32.0",
@@ -189,7 +189,7 @@
         "typedoc": "^0.28.20",
         "typescript": "^6.0.3",
         "webpack": "^5.108.4",
-        "webpack-bundle-analyzer": "^5.3.0",
+        "webpack-bundle-analyzer": "^5.3.1",
         "webpack-cli": "^7.2.1"
     },
     "engines": {
@@ -197,5 +197,9 @@
         "npm": ">=8",
         "pnpm": "false",
         "yarn": "false"
+    },
+    "allowScripts": {
+        "esbuild@0.28.1": true,
+        "unrs-resolver@1.12.2": true
     }
 }

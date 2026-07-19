@@ -1,5 +1,5 @@
 import * as TypeOfComplex from './ComplexInterface';
-import { Interpreter } from './Interpreter';
+import type { RuntimeDisplay } from './RuntimeDisplay';
 
 const defaultSettings: Partial<TypeOfComplex.ComplexConfig> = {
     precision: 15 /* 16 can be used too, but 15 ensures compatibility */,
@@ -16,24 +16,25 @@ const defaultSettings: Partial<TypeOfComplex.ComplexConfig> = {
 /**
  * Native `Math` object extensions for factories compatibility.
  */
-(Math as any).add = (a: number, b: number) => a + b;
-(Math as any).sub = (a: number, b: number) => a - b;
-(Math as any).neg = (x: number) => -x;
-(Math as any).mul = (a: number, b: number) => a * b;
-(Math as any).div = (a: number, b: number) => a / b;
-(Math as any).mod = (a: number, b: number) => a % b;
-(Math as any).ln = Math.log;
-(Math as any).create = (x: number | string) => Number(x);
-(Math as any).MINUSONE = -1;
-(Math as any).ZERO = 0;
-(Math as any).TWO = 2;
-(Math as any).PI_DEG = 180;
-(Math as any).INF = Infinity;
-(Math as any).unparse = (value: number) => (value === 0 ? (Object.is(value, -0) ? '-0' : '0') : value.toString());
-(Math as any).isZero = (x: number) => x === 0;
-(Math as any).isNeg = (x: number) => (x === 0 ? Object.is(x, -0) : x < 0);
-(Math as any).isNaN = Number.isNaN;
-(Math as any).isFinite = Number.isFinite;
+const mathBackend = Math as Math & TypeOfComplex.RealInterfaceStatic<number>;
+mathBackend.add = (a: number, b: number) => a + b;
+mathBackend.sub = (a: number, b: number) => a - b;
+mathBackend.neg = (x: number) => -x;
+mathBackend.mul = (a: number, b: number) => a * b;
+mathBackend.div = (a: number, b: number) => a / b;
+mathBackend.mod = (a: number, b: number) => a % b;
+mathBackend.ln = Math.log;
+mathBackend.create = (x: number | string) => Number(x);
+mathBackend.MINUSONE = -1;
+mathBackend.ZERO = 0;
+mathBackend.TWO = 2;
+mathBackend.PI_DEG = 180;
+mathBackend.INF = Infinity;
+mathBackend.unparse = (value: number) => (value === 0 ? (Object.is(value, -0) ? '-0' : '0') : value.toString());
+mathBackend.isZero = (x: number) => x === 0;
+mathBackend.isNeg = (x: number) => (x === 0 ? Object.is(x, -0) : x < 0);
+mathBackend.isNaN = Number.isNaN;
+mathBackend.isFinite = Number.isFinite;
 
 /**
  * # ComplexNumber
@@ -63,7 +64,7 @@ class ComplexNumber implements TypeOfComplex.ComplexInterface<number, number, un
     public re: number;
     public im: number;
     public type: number;
-    public parent: any;
+    public parent: unknown;
 
     public static readonly setNumberType: TypeOfComplex.OneArgNoReturnComplexHandler<number, ComplexNumber> = TypeOfComplex.setNumberTypeFactory<number, ComplexNumber, number, unknown>(
         ComplexNumber,
@@ -129,19 +130,21 @@ class ComplexNumber implements TypeOfComplex.ComplexInterface<number, number, un
     public static readonly imagGreaterThan = (z: ComplexNumber, value: TypeOfComplex.NumLike<number>): boolean => z.im > Number(value);
 
     public static readonly parse: TypeOfComplex.ParseComplexHandler<number, ComplexNumber> = TypeOfComplex.parseFactory<number, ComplexNumber>(ComplexNumber);
-    public static readonly precedence: TypeOfComplex.PrecedenceComplexHandler<number, ComplexNumber, Interpreter, number> = TypeOfComplex.precedenceFactory<number, ComplexNumber, number>(
+    public static readonly precedence: TypeOfComplex.PrecedenceComplexHandler<number, ComplexNumber, RuntimeDisplay, number> = TypeOfComplex.precedenceFactory<number, ComplexNumber, number>(
         ComplexNumber,
     );
     public static readonly unparseValue: TypeOfComplex.UnparseValueComplexHandler<number> = TypeOfComplex.unparseValueFactory<number, ComplexNumber>(Math, ComplexNumber);
-    public static readonly unparse: TypeOfComplex.UnparseComplexHandler<number, ComplexNumber, Interpreter> = TypeOfComplex.unparseFactory<number, ComplexNumber>(ComplexNumber);
+    public static readonly unparse: TypeOfComplex.UnparseComplexHandler<number, ComplexNumber, RuntimeDisplay> = TypeOfComplex.unparseFactory<number, ComplexNumber>(ComplexNumber);
     public static readonly toString: TypeOfComplex.ToStringComplexHandler<number, ComplexNumber> = TypeOfComplex.toStringFactory<number, ComplexNumber, number, unknown>(ComplexNumber);
     public toString(): string {
         return ComplexNumber.toString(this);
     }
     public static readonly unparseMathMLValue: TypeOfComplex.UnparseValueComplexHandler<number> = TypeOfComplex.unparseMathMLValueFactory<number, ComplexNumber>(Math, ComplexNumber);
-    public static readonly unparseMathML: TypeOfComplex.UnparseComplexHandler<number, ComplexNumber, Interpreter, number> = TypeOfComplex.unparseMathMLFactory<number, ComplexNumber, number>(
+    public static readonly unparseMathML: TypeOfComplex.UnparseComplexHandler<number, ComplexNumber, RuntimeDisplay, number> = TypeOfComplex.unparseMathMLFactory<
+        number,
         ComplexNumber,
-    );
+        number
+    >(ComplexNumber);
 
     public static copy: TypeOfComplex.OneArgComplexHandler<number, ComplexNumber> = TypeOfComplex.copyFactory<number, ComplexNumber>(ComplexNumber);
 

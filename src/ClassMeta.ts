@@ -5,12 +5,21 @@ import { Complex } from './Complex';
 import { MultiArray } from './MultiArray';
 import { Structure } from './Structure';
 import type { ClassAttributeTable, NodeArgumentValidation, NodeExpr, NodeIdentifier, NodeInput } from './AST';
-import type { Interpreter } from './Interpreter';
+import type { RuntimeDisplay } from './RuntimeDisplay';
 
 /** Member metadata variants that can be exposed as MATLAB-like meta objects. */
 type ClassMetaMemberDefinition = ClassPropertyDefinition | ClassMethodDefinition | ClassEventDefinition | ClassEnumerationDefinition;
 /** Supported meta-object kind names. */
 type ClassMetaKind = 'meta.class' | 'meta.property' | 'meta.method' | 'meta.event' | 'meta.EnumerationMember';
+/**
+ * Callback used by runtime-created meta objects to evaluate property defaults
+ * lazily.
+ */
+type ClassPropertyDefaultProvider = (property: ClassPropertyDefinition) => NodeInput | undefined;
+type ValidationMetadata = Pick<NodeArgumentValidation, 'name' | 'size' | 'class' | 'functions'> & {
+    default?: NodeExpr | null;
+    defaultValue?: NodeExpr | null;
+};
 
 /**
  * Convert strings to a column cell array of `CharString` values.
@@ -114,15 +123,17 @@ const argumentValidationNames = (validations: NodeArgumentValidation[]): MultiAr
  * @param validation Validation declaration.
  * @returns Metadata structure.
  */
-const validationStruct = (validation: NodeArgumentValidation): Structure =>
-    new Structure({
+const validationStruct = (validation: ValidationMetadata): Structure => {
+    const defaultValue = validation.default ?? validation.defaultValue ?? null;
+    return new Structure({
         Name: CharString.create(nodeName(validation.name) ?? ''),
         Size: stringArray(validation.size.map((item) => expressionText(item as NodeExpr))),
         Class: validation.class ? CharString.create(expressionText(validation.class as NodeExpr)) : emptyString(),
         Validators: stringArray(validation.functions.map((item) => expressionText(item as NodeExpr))),
-        HasDefault: bool(Boolean(validation.default)),
-        DefaultValue: validation.default ?? MultiArray.emptyArray(),
+        HasDefault: bool(Boolean(defaultValue)),
+        DefaultValue: defaultValue ?? MultiArray.emptyArray(),
     });
+};
 
 /**
  * Convert argument validation declarations to a cell column vector.
@@ -130,7 +141,7 @@ const validationStruct = (validation: NodeArgumentValidation): Structure =>
  * @param validations Validation declarations.
  * @returns Cell column vector of validation metadata structures.
  */
-const validationList = (validations: NodeArgumentValidation[]): MultiArray => {
+const validationList = (validations: ValidationMetadata[]): MultiArray => {
     const result = MultiArray.toColumnVector(validations.map((validation) => validationStruct(validation)));
     result.isCell = true;
     return result;
@@ -163,7 +174,7 @@ abstract class ClassMetaObject {
     /** Runtime type tag stored on all meta objects. */
     public readonly type = ClassMetaObject.CLASS_META;
     /** Optional AST-style parent pointer used by generic value handling. */
-    public parent: any;
+    public parent?: unknown;
     /** MATLAB-like meta object kind. */
     public abstract readonly kind: ClassMetaKind;
 
@@ -216,7 +227,7 @@ abstract class ClassMetaObject {
      * @param _interpreter Interpreter requesting unparse.
      * @returns Human-readable meta-object summary.
      */
-    public static readonly unparse = (meta: ClassMetaObject, _interpreter: Interpreter): string => `${meta.kind} ${meta.displayName()}`;
+    public static readonly unparse = (meta: ClassMetaObject, _interpreter: RuntimeDisplay): string => `${meta.kind} ${meta.displayName()}`;
 }
 
 /**
@@ -230,8 +241,13 @@ class ClassMetaClass extends ClassMetaObject {
      * Create a class meta object.
      *
      * @param definition Class metadata.
+     * @param propertyDefaultProvider Optional callback used to expose evaluated
+     * property defaults from runtime-created meta objects.
      */
-    private constructor(public readonly definition: ClassDefinition) {
+    private constructor(
+        public readonly definition: ClassDefinition,
+        private readonly propertyDefaultProvider?: ClassPropertyDefaultProvider,
+    ) {
         super();
     }
 
@@ -247,9 +263,12 @@ class ClassMetaClass extends ClassMetaObject {
      * Create a class meta object.
      *
      * @param definition Class metadata.
+     * @param propertyDefaultProvider Optional callback used to expose evaluated
+     * property defaults from runtime-created meta objects.
      * @returns Class meta object.
      */
-    public static readonly create = (definition: ClassDefinition): ClassMetaClass => new ClassMetaClass(definition);
+    public static readonly create = (definition: ClassDefinition, propertyDefaultProvider?: ClassPropertyDefaultProvider): ClassMetaClass =>
+        new ClassMetaClass(definition, propertyDefaultProvider);
 
     /**
      * Return the class name.
@@ -274,31 +293,35 @@ class ClassMetaClass extends ClassMetaObject {
             case 'DetailedDescription':
                 return emptyString();
             case 'SuperclassList':
-                return metaArray(this.definition.superclassDefinitions.map((definition) => ClassMetaClass.create(definition)));
+                return metaArray(this.definition.superclassDefinitions.map((definition) => ClassMetaClass.create(definition, this.propertyDefaultProvider)));
             case 'SuperClasses':
                 return stringArray(this.definition.superclasses);
             case 'PropertyList':
-                return metaArray(this.definition.allProperties().map((property) => ClassMetaProperty.create(property)));
+                return metaArray(this.definition.allProperties().map((property) => ClassMetaProperty.create(property, this.propertyDefaultProvider)));
             case 'MethodList':
-                return metaArray(this.definition.allMethods().map((method) => ClassMetaMethod.create(method)));
+                return metaArray(this.definition.allMethods().map((method) => ClassMetaMethod.create(method, this.propertyDefaultProvider)));
             case 'EventList':
-                return metaArray(this.definition.allEvents().map((event) => ClassMetaEvent.create(event)));
+                return metaArray(this.definition.allEvents().map((event) => ClassMetaEvent.create(event, this.propertyDefaultProvider)));
             case 'EnumerationMemberList':
-                return metaArray(this.definition.allEnumerations().map((enumeration) => ClassMetaEnumerationMember.create(enumeration)));
+                return metaArray(this.definition.allEnumerations().map((enumeration) => ClassMetaEnumerationMember.create(enumeration, this.propertyDefaultProvider)));
             case 'Abstract':
                 return bool(this.definition.isEffectivelyAbstract());
             case 'Sealed':
                 return bool(this.definition.isSealed);
+            case 'Hidden':
+                return bool(this.definition.isHidden);
             case 'ConstructOnLoad':
-                return bool(false);
+                return bool(this.definition.isConstructOnLoad);
             case 'HandleCompatible':
-                return bool(this.definition.isHandleClass());
+                return bool(this.definition.isHandleClass() || this.definition.isHandleCompatible);
             case 'InferiorClasses':
-                return stringArray([]);
+                return stringArray(this.definition.inferiorClasses);
+            case 'AllowedSubclasses':
+                return stringArray(this.definition.allowedSubclasses);
             case 'ContainingPackage':
-                return emptyString();
+                return CharString.create(this.definition.packageName);
             case 'RestrictsSubclassing':
-                return bool(this.definition.isSealed);
+                return bool(this.definition.isRestrictsSubclassing);
             case 'AttributeNames':
                 return attributeNames(this.definition.attributes);
             default:
@@ -315,8 +338,13 @@ abstract class ClassMetaMember extends ClassMetaObject {
      * Create a member meta object.
      *
      * @param member Member metadata.
+     * @param propertyDefaultProvider Optional callback propagated back through
+     * `DefiningClass`.
      */
-    protected constructor(public readonly member: ClassMetaMemberDefinition) {
+    protected constructor(
+        public readonly member: ClassMetaMemberDefinition,
+        private readonly propertyDefaultProvider?: ClassPropertyDefaultProvider,
+    ) {
         super();
     }
 
@@ -341,7 +369,7 @@ abstract class ClassMetaMember extends ClassMetaObject {
             case 'Name':
                 return CharString.create(this.member.name);
             case 'DefiningClass':
-                return ClassMetaClass.create(this.member.classDefinition);
+                return ClassMetaClass.create(this.member.classDefinition, this.propertyDefaultProvider);
             case 'Hidden':
                 return bool('isHidden' in this.member && this.member.isHidden);
             case 'Description':
@@ -366,18 +394,41 @@ class ClassMetaProperty extends ClassMetaMember {
      * Create a property meta object.
      *
      * @param property Property metadata.
+     * @param defaultProvider Optional callback used to evaluate the property's
+     * default expression lazily.
      */
-    private constructor(public readonly property: ClassPropertyDefinition) {
-        super(property);
+    private constructor(
+        public readonly property: ClassPropertyDefinition,
+        private readonly defaultProvider?: ClassPropertyDefaultProvider,
+    ) {
+        super(property, defaultProvider);
     }
 
     /**
      * Create a property meta object.
      *
      * @param property Property metadata.
+     * @param defaultProvider Optional callback used to evaluate the property's
+     * default expression lazily.
      * @returns Property meta object.
      */
-    public static readonly create = (property: ClassPropertyDefinition): ClassMetaProperty => new ClassMetaProperty(property);
+    public static readonly create = (property: ClassPropertyDefinition, defaultProvider?: ClassPropertyDefaultProvider): ClassMetaProperty =>
+        new ClassMetaProperty(property, defaultProvider);
+
+    /**
+     * Return the default value exposed through metadata.
+     *
+     * Runtime-created meta objects evaluate defaults lazily; unit-created meta
+     * objects without a provider preserve the parsed default expression.
+     *
+     * @returns Evaluated/default expression value, or `null` when absent.
+     */
+    private defaultValue(): NodeInput | null {
+        if (!this.property.defaultValue) {
+            return null;
+        }
+        return this.defaultProvider?.(this.property) ?? this.property.defaultValue;
+    }
 
     /**
      * Read a supported `meta.property` property.
@@ -401,6 +452,8 @@ class ClassMetaProperty extends ClassMetaMember {
                 return bool(this.property.isConstant);
             case 'Dependent':
                 return bool(this.property.isDependent);
+            case 'Abstract':
+                return bool(this.property.isAbstract);
             case 'Transient':
                 return bool(this.property.isTransient);
             case 'GetObservable':
@@ -412,14 +465,29 @@ class ClassMetaProperty extends ClassMetaMember {
             case 'HasDefault':
                 return bool(Boolean(this.property.defaultValue));
             case 'DefaultValue':
-                return this.property.defaultValue ?? MultiArray.emptyArray();
+                return this.defaultValue() ?? MultiArray.emptyArray();
             case 'Validation':
-                return validationList([]);
+                return validationList(
+                    this.property.size.length > 0 || this.property.class || this.property.functions.length > 0 || this.property.defaultValue
+                        ? [
+                              {
+                                  name: this.property.node.name,
+                                  size: this.property.size,
+                                  class: this.property.class,
+                                  functions: this.property.functions,
+                                  defaultValue: this.defaultValue(),
+                              },
+                          ]
+                        : [],
+                );
             case 'GetMethod':
+                return this.property.getMethodName ? CharString.create(this.property.getMethodName) : MultiArray.emptyArray();
             case 'SetMethod':
-                return MultiArray.emptyArray();
+                return this.property.setMethodName ? CharString.create(this.property.setMethodName) : MultiArray.emptyArray();
             case 'NonCopyable':
-                return bool(false);
+                return bool(this.property.isNonCopyable);
+            case 'PartialMatchPriority':
+                return Complex.create(this.property.partialMatchPriority);
             default:
                 return undefined;
         }
@@ -437,18 +505,26 @@ class ClassMetaMethod extends ClassMetaMember {
      * Create a method meta object.
      *
      * @param method Method metadata.
+     * @param propertyDefaultProvider Optional callback propagated through
+     * `DefiningClass`.
      */
-    private constructor(public readonly method: ClassMethodDefinition) {
-        super(method);
+    private constructor(
+        public readonly method: ClassMethodDefinition,
+        propertyDefaultProvider?: ClassPropertyDefaultProvider,
+    ) {
+        super(method, propertyDefaultProvider);
     }
 
     /**
      * Create a method meta object.
      *
      * @param method Method metadata.
+     * @param propertyDefaultProvider Optional callback propagated through
+     * `DefiningClass`.
      * @returns Method meta object.
      */
-    public static readonly create = (method: ClassMethodDefinition): ClassMetaMethod => new ClassMetaMethod(method);
+    public static readonly create = (method: ClassMethodDefinition, propertyDefaultProvider?: ClassPropertyDefaultProvider): ClassMetaMethod =>
+        new ClassMetaMethod(method, propertyDefaultProvider);
 
     /**
      * Read a supported `meta.method` property.
@@ -497,18 +573,26 @@ class ClassMetaEvent extends ClassMetaMember {
      * Create an event meta object.
      *
      * @param event Event metadata.
+     * @param propertyDefaultProvider Optional callback propagated through
+     * `DefiningClass`.
      */
-    private constructor(public readonly event: ClassEventDefinition) {
-        super(event);
+    private constructor(
+        public readonly event: ClassEventDefinition,
+        propertyDefaultProvider?: ClassPropertyDefaultProvider,
+    ) {
+        super(event, propertyDefaultProvider);
     }
 
     /**
      * Create an event meta object.
      *
      * @param event Event metadata.
+     * @param propertyDefaultProvider Optional callback propagated through
+     * `DefiningClass`.
      * @returns Event meta object.
      */
-    public static readonly create = (event: ClassEventDefinition): ClassMetaEvent => new ClassMetaEvent(event);
+    public static readonly create = (event: ClassEventDefinition, propertyDefaultProvider?: ClassPropertyDefaultProvider): ClassMetaEvent =>
+        new ClassMetaEvent(event, propertyDefaultProvider);
 
     /**
      * Read a supported `meta.event` property.
@@ -545,18 +629,26 @@ class ClassMetaEnumerationMember extends ClassMetaMember {
      * Create an enumeration-member meta object.
      *
      * @param enumeration Enumeration metadata.
+     * @param propertyDefaultProvider Optional callback propagated through
+     * `DefiningClass`.
      */
-    private constructor(public readonly enumeration: ClassEnumerationDefinition) {
-        super(enumeration);
+    private constructor(
+        public readonly enumeration: ClassEnumerationDefinition,
+        propertyDefaultProvider?: ClassPropertyDefaultProvider,
+    ) {
+        super(enumeration, propertyDefaultProvider);
     }
 
     /**
      * Create an enumeration-member meta object.
      *
      * @param enumeration Enumeration metadata.
+     * @param propertyDefaultProvider Optional callback propagated through
+     * `DefiningClass`.
      * @returns Enumeration-member meta object.
      */
-    public static readonly create = (enumeration: ClassEnumerationDefinition): ClassMetaEnumerationMember => new ClassMetaEnumerationMember(enumeration);
+    public static readonly create = (enumeration: ClassEnumerationDefinition, propertyDefaultProvider?: ClassPropertyDefaultProvider): ClassMetaEnumerationMember =>
+        new ClassMetaEnumerationMember(enumeration, propertyDefaultProvider);
 
     /**
      * Read a supported `meta.EnumerationMember` property.

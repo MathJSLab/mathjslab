@@ -3,6 +3,7 @@ import path from 'node:path';
 import { ComplexDecimal } from './ComplexDecimal';
 import { Interpreter } from './Interpreter';
 import { MultiArray } from './MultiArray';
+import { Complex } from './Complex';
 
 let interpreter: Interpreter;
 
@@ -23,6 +24,21 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         it('MultiArray should be defined', () => {
             expect(MultiArray).toBeDefined();
         }, 100);
+
+        it('Empty arrays should be false in logical conditions.', () => {
+            expect(Complex.realEquals(MultiArray.toLogical(MultiArray.emptyArray()), 0)).toBe(true);
+            expect(Complex.realEquals(MultiArray.emptyArray().toLogical(), 0)).toBe(true);
+        });
+
+        it('Array-local shape predicates should remain limited to MultiArray values.', () => {
+            expect(MultiArray.isScalar(Complex.one())).toBe(true);
+            expect(MultiArray.isVector(Complex.one())).toBe(false);
+            expect(MultiArray.isMatrix(Complex.one())).toBe(true);
+            expect(MultiArray.isRowVector(MultiArray.firstRow([Complex.one(), Complex.two()]))).toBe(true);
+            expect(MultiArray.isVector(MultiArray.firstRow([Complex.one(), Complex.two()]))).toBe(true);
+            expect(MultiArray.isColumnVector(MultiArray.toColumnVector([Complex.one(), Complex.two()]))).toBe(true);
+            expect(MultiArray.isEmpty(MultiArray.emptyArray())).toBe(true);
+        });
 
         it('Interpreter should be defined', () => {
             expect(Interpreter).toBeDefined();

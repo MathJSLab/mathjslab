@@ -5,7 +5,7 @@ const tsconfig = '<rootDir>/tsconfig.jest.json';
 const transform = {
     '^.+\\.[cm]?ts$': ['ts-jest', { tsconfig }],
 };
-const postfix = '.spec.{j,cj,mj,t,ct,mt}s';
+const postfix = '.spec.?([cm])[jt]s';
 const src_prefix = '<rootDir>/src/**/';
 const test_prefix = '<rootDir>/test/';
 const testEnvironment = 'node';
@@ -18,85 +18,85 @@ module.exports = {
     projects: [
         {
             displayName: 'unit-tests',
-            testEnvironment: 'node',
+            testEnvironment,
             testMatch: [src_prefix + '*' + postfix],
             transform,
         },
         {
             displayName: 'complex-tests',
-            testEnvironment: 'node',
+            testEnvironment,
             testMatch: [src_prefix + 'Complex*' + postfix],
             transform,
         },
         {
             displayName: 'blas-tests',
-            testEnvironment: 'node',
+            testEnvironment,
             testMatch: [src_prefix + 'BLAS' + postfix],
             transform,
         },
         {
             displayName: 'lapack-tests',
-            testEnvironment: 'node',
+            testEnvironment,
             testMatch: [src_prefix + 'LAPACK' + postfix],
             transform,
         },
         {
             displayName: 'blas-lapack-tests',
-            testEnvironment: 'node',
+            testEnvironment,
             testMatch: [src_prefix + '@(BLAS|LAPACK)' + postfix],
             transform,
         },
         {
             displayName: 'scope-callframe-callable-context-tests',
-            testEnvironment: 'node',
+            testEnvironment,
             testMatch: [src_prefix + '@(Scope|CallFrame|Callable|Context)' + postfix],
             transform,
         },
         {
             displayName: 'interpreter-tests',
-            testEnvironment: 'node',
+            testEnvironment,
             testMatch: [src_prefix + 'Interpreter{,Error}' + postfix],
             transform,
         },
         {
             displayName: 'function-tests',
-            testEnvironment: 'node',
+            testEnvironment,
             testMatch: [src_prefix + 'Function*' + postfix],
             transform,
         },
         {
             displayName: 'class-tests',
-            testEnvironment: 'node',
+            testEnvironment,
             testMatch: [src_prefix + 'Class*' + postfix],
             transform,
         },
         {
             displayName: 'function-infrastructure-tests',
-            testEnvironment: 'node',
+            testEnvironment,
             testMatch: [test_prefix + 'function-infrastructure/**/*' + postfix],
             transform,
         },
         {
             displayName: 'node-tests',
-            testEnvironment: 'node',
+            testEnvironment,
             testMatch: [test_prefix + 'node/**/*' + postfix],
             transform,
         },
         {
             displayName: 'node-cjs2015-tests',
-            testEnvironment: 'node',
+            testEnvironment,
             testMatch: [test_prefix + 'node/**/*cjs2015' + postfix],
             transform,
         },
         {
             displayName: 'node-cjs2022-tests',
-            testEnvironment: 'node',
+            testEnvironment,
             testMatch: [test_prefix + 'node/**/*cjs2022' + postfix],
             transform,
         },
         {
             displayName: 'node-esm2022-tests',
-            testEnvironment: 'node',
+            testEnvironment,
             testMatch: [test_prefix + 'node/**/*esm2022' + postfix],
             transform,
         },

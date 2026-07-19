@@ -33,16 +33,16 @@ const stringClass = 3;
 /**
  * Runtime string value used by the AST and interpreter.
  *
- * `CharString` preserves the source quote style when the parser knows it, but
- * semantic operations treat `str` as the canonical value. Truthiness follows
- * MATLAB/Octave-like string behavior: empty strings are false and non-empty
- * strings are true.
+ * `CharString` preserves the source quote style when the parser knows it. The
+ * value is stored as a row character vector, while `str` remains the canonical
+ * textual view. Truthiness follows MATLAB/Octave-like string behavior: empty
+ * strings are false and non-empty strings are true.
  */
 class CharString {
     /**
-     * String value property.
+     * Character vector backing the textual value.
      */
-    public str: string;
+    private characters: string[];
 
     /**
      * Type of string quote (single or double).
@@ -62,7 +62,7 @@ class CharString {
     /**
      * Parent node.
      */
-    public parent: any;
+    public parent?: unknown;
 
     /**
      * `CharString` constructor.
@@ -70,8 +70,41 @@ class CharString {
      * @param quote Source quote style to preserve when unparsing.
      */
     public constructor(str: string, quote: StringQuoteCharacter = doubleQuoteCharacter) {
-        this.str = str;
+        this.characters = str.split('');
         this.quote = quote;
+    }
+
+    /**
+     * Textual scalar view of the character vector.
+     *
+     * This accessor preserves the long-standing public `str` contract while
+     * letting the runtime store strings as character vectors internally.
+     */
+    public get str(): string {
+        return this.characters.join('');
+    }
+
+    /**
+     * Replace the textual value and rebuild the backing character vector.
+     *
+     * @param value New textual value.
+     */
+    public set str(value: string) {
+        this.characters = value.split('');
+    }
+
+    /**
+     * Number of characters in the vector.
+     */
+    public get length(): number {
+        return this.characters.length;
+    }
+
+    /**
+     * MATLAB/Octave-style row-vector dimensions for this character value.
+     */
+    public get dimension(): [number, number] {
+        return [1, this.length];
     }
 
     /**
@@ -102,6 +135,77 @@ class CharString {
      */
     public copy(): CharString {
         return new CharString(this.str, this.quote);
+    }
+
+    /**
+     * Return a copy of the backing character vector.
+     *
+     * @param value String wrapper.
+     * @returns Character array.
+     */
+    public static readonly vector = (value: CharString): string[] => value.characters.slice();
+
+    /**
+     * Return a copy of this value's character vector.
+     *
+     * @returns Character array.
+     */
+    public vector(): string[] {
+        return CharString.vector(this);
+    }
+
+    /**
+     * Convert this value to scalar `CharString` elements, one per character.
+     *
+     * @param value String wrapper.
+     * @returns Character scalar values preserving quote style.
+     */
+    public static readonly toCharacterScalars = (value: CharString): CharString[] => value.characters.map((character) => new CharString(character, value.quote));
+
+    /**
+     * Convert this value to scalar `CharString` elements.
+     *
+     * @returns Character scalar values preserving quote style.
+     */
+    public toCharacterScalars(): CharString[] {
+        return CharString.toCharacterScalars(this);
+    }
+
+    /**
+     * Build a string from scalar character values.
+     *
+     * @param values Scalar character values.
+     * @param quote Quote style for the resulting value.
+     * @returns A joined `CharString`.
+     */
+    public static readonly fromCharacterScalars = (values: CharString[], quote: StringQuoteCharacter = values[0]?.quote ?? doubleQuoteCharacter): CharString =>
+        new CharString(values.map((value) => value.str).join(''), quote);
+
+    /**
+     * Return the character at a zero-based position.
+     *
+     * @param index Zero-based character index.
+     * @returns Scalar character value, or `undefined` when out of range.
+     */
+    public characterAt(index: number): CharString | undefined {
+        const character = this.characters[index];
+        return typeof character === 'undefined' ? undefined : new CharString(character, this.quote);
+    }
+
+    /**
+     * Select characters by zero-based indices.
+     *
+     * @param indices Zero-based character indices.
+     * @returns New `CharString` containing selected characters.
+     */
+    public select(indices: number[]): CharString {
+        return new CharString(
+            indices
+                .map((index) => this.characters[index])
+                .filter((character): character is string => typeof character !== 'undefined')
+                .join(''),
+            this.quote,
+        );
     }
 
     /**

@@ -2,7 +2,7 @@ import type { NodeInput } from './AST';
 import { CharString } from './CharString';
 import type { ClassInstance } from './ClassInstance';
 import { ClassEventData } from './ClassEventData';
-import type { Interpreter } from './Interpreter';
+import type { RuntimeDisplay } from './RuntimeDisplay';
 
 /**
  * Runtime value compatible with MATLAB's `event.PropertyEvent` shape.
@@ -74,7 +74,7 @@ class ClassPropertyEvent extends ClassEventData {
      * @param _interpreter Interpreter requesting unparse.
      * @returns Human-readable event data summary.
      */
-    public static readonly unparse = (eventData: ClassEventData, _interpreter: Interpreter): string =>
+    public static readonly unparse = (eventData: ClassEventData, _interpreter: RuntimeDisplay): string =>
         ClassPropertyEvent.isInstanceOf(eventData)
             ? `event.PropertyEvent ${eventData.source.classDefinition.name}.${eventData.propertyName}`
             : ClassEventData.unparse(eventData, _interpreter);

@@ -1,5 +1,4 @@
-import { ComplexInterfaceStaticKey } from './ComplexInterface';
-export const ComplexInterfaceStaticKeyTable: ComplexInterfaceStaticKey[] = [
+export const ComplexInterfaceStaticKeyTable = [
     'LOGICAL',
     'REAL',
     'COMPLEX',
@@ -170,4 +169,4 @@ export const ComplexInterfaceStaticKeyTable: ComplexInterfaceStaticKey[] = [
     'applyFunction',
     'mapFunction',
     'twoArgFunction',
-];
+] as const;

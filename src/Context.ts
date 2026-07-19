@@ -10,23 +10,20 @@ import type {
     NodeFunctionDefinition,
     NodeReturnList,
     ReturnHandlerResult,
-    ClassMethodDefinition,
 } from './AST';
-import {
-    AST,
-    CharString,
-    Complex,
-    ComplexType,
-    FunctionHandle,
-    MultiArray,
-    Structure,
-    ClassDefinition,
-    ClassInstance,
-    ClassBoundMethod,
-    ClassStaticMethod,
-    ClassEmptyMethod,
-    ClassEventListener,
-} from './AST';
+import type { ClassMethodDefinition } from './ClassMember';
+import { AST } from './AST';
+import { CharString } from './CharString';
+import { Complex, type ComplexType } from './Complex';
+import { FunctionHandle } from './FunctionHandle';
+import { MultiArray } from './MultiArray';
+import { Structure } from './Structure';
+import { ClassDefinition } from './ClassDefinition';
+import { ClassInstance } from './ClassInstance';
+import { ClassBoundMethod } from './ClassBoundMethod';
+import { ClassStaticMethod } from './ClassStaticMethod';
+import { ClassEmptyMethod } from './ClassEmptyMethod';
+import { ClassEventListener } from './ClassEventListener';
 import type { BinaryMathOperation, KeyOfTypeOfMathOperation, UnaryMathOperation } from './MathOperation';
 import { Scope } from './Scope';
 import { CallFrame } from './CallFrame';
@@ -37,21 +34,126 @@ import { FunctionCall } from './FunctionCall';
 import { FunctionStack } from './FunctionStack';
 import { FunctionWorkspace } from './FunctionWorkspace';
 import { CircularReferenceError, EvalError, ReferenceError, SyntaxError, UndefinedReferenceError } from './InterpreterError';
+import { RuntimeValue } from './RuntimeValue';
 
+/**
+ * Interpreter services used by `Context`.
+ *
+ * Keeping this as a narrow structural interface avoids a hard cycle between the
+ * execution context and the full interpreter implementation while still letting
+ * the context call back into parsing/evaluation-sensitive operations.
+ */
 interface ContextInterpreter {
+    /** Whether debug tracing is enabled for call/index dispatch. */
     debug: boolean;
+    /** Evaluate one AST/runtime node in a scope. */
     Evaluator(tree: NodeInput, scope?: Scope): NodeInput;
+    /** Return parameters backed exclusively by name-value declarations. */
     getFunctionNameValueParameters(func: NodeFunctionDefinition): Set<string>;
+    /** Split call-site expressions into positional and name-value groups. */
     splitFunctionCallNameValueArguments(func: NodeFunctionDefinition, args: NodeExpr[]): { positional: NodeExpr[]; named: Map<string, NodeExpr> };
+    /** Return default input expressions keyed by parameter name. */
     getFunctionInputArgumentDefaults(func: NodeFunctionDefinition): Map<string, NodeExpr>;
+    /** Bind evaluated name-value arguments into a function call scope. */
     bindFunctionNameValueArguments(func: NodeFunctionDefinition, scope: Scope, values: Map<string, NodeInput>): void;
+    /** Register nested functions visible from a function body. */
     registerNestedFunctions(func: NodeFunctionDefinition, scope: Scope): void;
+    /** Validate input `arguments` blocks after inputs are bound. */
     validateFunctionInputArguments(func: NodeFunctionDefinition, scope: Scope): void;
+    /** Validate `arguments (Repeating)` declarations against `varargin`. */
     validateFunctionRepeatingArguments(func: NodeFunctionDefinition, scope: Scope, values: NodeInput[]): void;
+    /** Validate output `arguments` blocks after the body executes. */
     validateFunctionOutputArguments(func: NodeFunctionDefinition, scope: Scope, requestedOutputCount: number): void;
+    /** Validate property defaults for a newly instantiated class object. */
+    validateClassInstancePropertyDefaults(instance: ClassInstance, scope: Scope): void;
+    /** Resolve a function source through the configured function provider API. */
+    loadFunctionDefinition(name: string, scope: Scope): NodeFunctionDefinition | undefined;
+    /** Resolve a class source through the configured class provider API. */
     loadClassDefinition(name: string, scope: Scope): ClassDefinition | undefined;
 }
 
+/** Structural node shape used when walking parent links for diagnostics. */
+type ParentLinkedNode = NodeExpr & {
+    start?: unknown;
+    parent?: unknown;
+};
+
+/** Structural shape for debug output that only needs an optional identifier. */
+type IdentifierLikeNode = {
+    id?: unknown;
+};
+
+/**
+ * Kinds of MATLAB/Octave symbols that can be resolved from a name.
+ */
+type SymbolResolutionKind = 'variable' | 'class' | 'function' | 'builtin';
+
+/**
+ * Source tier that produced a resolved symbol.
+ */
+type SymbolResolutionSource = 'local' | 'import' | 'builtin';
+
+/**
+ * Options that tune name lookup while keeping the default MATLAB/Octave
+ * precedence intact.
+ */
+type SymbolResolutionOptions = {
+    /** Whether variable bindings should be considered. */
+    variables?: boolean;
+    /** Whether class definitions should be considered. */
+    classes?: boolean;
+    /** Whether class source providers may be loaded as part of class lookup. */
+    loadClasses?: boolean;
+    /** Whether user functions and built-ins should be considered. */
+    functions?: boolean;
+    /** Whether imported simple-name candidates may be considered. */
+    imports?: boolean;
+};
+
+/**
+ * Structured result for one resolved name.
+ */
+type SymbolResolution = {
+    /** Symbol category selected by name precedence. */
+    kind: SymbolResolutionKind;
+    /** Name requested by the caller. */
+    name: string;
+    /** Canonical name actually resolved after aliases/imports. */
+    resolvedName: string;
+    /** Lookup tier that produced the result. */
+    source: SymbolResolutionSource;
+    /** Variable entry when {@link kind} is `variable`. */
+    entry?: NameEntry;
+    /** Class definition when {@link kind} is `class`. */
+    classDefinition?: ClassDefinition;
+    /** Function node when {@link kind} is `function` or `builtin`. */
+    functionDefinition?: NodeFunctionDefinition | NodeBuiltInFunction;
+};
+
+/**
+ * Kinds of call/index dispatch selected after a callee expression is evaluated.
+ */
+type CallDispatchKind = 'callable' | 'bound-method' | 'bound-method-array' | 'static-method' | 'empty-method' | 'constructor' | 'functional-class-method' | 'undefined-function' | 'indexing';
+
+/**
+ * Structured call/index dispatch decision.
+ */
+type CallDispatch = {
+    /** Selected dispatch category. */
+    kind: CallDispatchKind;
+    /** Callable wrapper for built-ins, user functions, and anonymous handles. */
+    callable?: Callable;
+    /** Evaluated callee or indexed value. */
+    expr: NodeExpr;
+    /** Unresolved functional method name for `method(obj, ...)` syntax. */
+    functionalName?: string;
+    /** Pre-evaluated receiver for functional class method dispatch. */
+    functionalReceiver?: NodeInput;
+};
+
+/**
+ * Internal control-flow signal used to leave a function body on `return`.
+ */
 class ReturnSignal extends Error {
     public constructor() {
         super('return');
@@ -59,6 +161,9 @@ class ReturnSignal extends Error {
     }
 }
 
+/**
+ * Internal control-flow signal used to leave loop bodies on `break`.
+ */
 class BreakSignal extends Error {
     public constructor() {
         super('break');
@@ -66,6 +171,9 @@ class BreakSignal extends Error {
     }
 }
 
+/**
+ * Internal control-flow signal used to continue loop bodies on `continue`.
+ */
 class ContinueSignal extends Error {
     public constructor() {
         super('continue');
@@ -73,6 +181,15 @@ class ContinueSignal extends Error {
     }
 }
 
+/**
+ * Execution context for MathJSLab evaluation.
+ *
+ * `Context` owns the call stack, global workspace, built-in table, arity state,
+ * comma-separated-list expansion state, class access stack, and MATLAB-like
+ * workspace helpers. The interpreter owns AST traversal and delegates runtime
+ * mechanics here so function calls, built-ins, class dispatch, and diagnostics
+ * share one consistent state model.
+ */
 class Context {
     /**
      * Function call stack.
@@ -136,6 +253,10 @@ class Context {
          * Requested output counts for expressions currently being evaluated.
          */
         private requestedOutputCountStack: number[] = [],
+        /**
+         * Whether the current evaluation context should expand comma-separated lists.
+         */
+        private commaListExpansionStack: boolean[] = [],
         /**
          * Classes whose method bodies are currently executing.
          */
@@ -233,17 +354,143 @@ class Context {
         return this.currentScope.resolveName(name);
     }
 
-    public resolveFunction(name: string): NodeFunctionDefinition | NodeBuiltInFunction | undefined {
+    /**
+     * Resolve a name using the current MATLAB/Octave-like precedence model.
+     *
+     * The default order is variable, registered class, local/provider function,
+     * host-loadable class, explicit/wildcard imports for class/function
+     * candidates, and finally built-ins. Returning a structured result keeps
+     * this order visible to dispatch, `exist`, `which`, and future
+     * filesystem-like lookup work.
+     *
+     * @param name Name requested by source code.
+     * @param scope Lookup scope.
+     * @param options Optional switches for focused lookup callers.
+     * @returns Structured resolution result, if any.
+     */
+    public resolveSymbol(name: string, scope: Scope = this.currentScope, options: SymbolResolutionOptions = {}): SymbolResolution | undefined {
+        const variables = options.variables ?? true;
+        const classes = options.classes ?? true;
+        const loadClasses = options.loadClasses ?? true;
+        const functions = options.functions ?? true;
+        const imports = options.imports ?? true;
         const canonical = this.aliasNameFunction(name);
-        const func = this.currentScope.resolveFunction(canonical);
-        if (func) return func;
-        return this.builtInFunctionTable[canonical];
+
+        if (variables) {
+            const entry = scope.resolveName(canonical);
+            if (entry && typeof entry.node !== 'undefined' && !ClassDefinition.isInstanceOf(entry.node)) {
+                return { kind: 'variable', name, resolvedName: canonical, source: 'local', entry };
+            }
+        }
+
+        if (classes) {
+            const directClass = this.resolveClassDefinitionByExactName(canonical, scope, false);
+            if (directClass) {
+                return { kind: 'class', name, resolvedName: canonical, source: 'local', classDefinition: directClass };
+            }
+        }
+
+        if (functions) {
+            const directFunction = scope.resolveFunction(canonical);
+            if (directFunction) {
+                return {
+                    kind: directFunction.type === 'BUILTIN' ? 'builtin' : 'function',
+                    name,
+                    resolvedName: canonical,
+                    source: directFunction.type === 'BUILTIN' ? 'builtin' : 'local',
+                    functionDefinition: directFunction,
+                };
+            }
+            const loadedFunction = this.interpreter?.loadFunctionDefinition(canonical, scope);
+            if (loadedFunction) {
+                return { kind: 'function', name, resolvedName: canonical, source: 'local', functionDefinition: loadedFunction };
+            }
+        }
+
+        if (classes && loadClasses) {
+            const loadedClass = this.resolveClassDefinitionByExactName(canonical, scope, true);
+            if (loadedClass) {
+                return { kind: 'class', name, resolvedName: canonical, source: 'local', classDefinition: loadedClass };
+            }
+        }
+
+        if (imports && !canonical.includes('.')) {
+            for (const importedName of scope.importedNameCandidates(canonical)) {
+                const importedCanonical = this.aliasNameFunction(importedName);
+                if (classes) {
+                    const importedClass = this.resolveClassDefinitionByExactName(importedCanonical, scope, false);
+                    if (importedClass) {
+                        return { kind: 'class', name, resolvedName: importedCanonical, source: 'import', classDefinition: importedClass };
+                    }
+                }
+                if (functions) {
+                    const importedFunction = scope.resolveFunction(importedCanonical);
+                    if (importedFunction) {
+                        return {
+                            kind: importedFunction.type === 'BUILTIN' ? 'builtin' : 'function',
+                            name,
+                            resolvedName: importedCanonical,
+                            source: importedFunction.type === 'BUILTIN' ? 'builtin' : 'import',
+                            functionDefinition: importedFunction,
+                        };
+                    }
+                    const importedLoaded = this.interpreter?.loadFunctionDefinition(importedCanonical, scope);
+                    if (importedLoaded) {
+                        return { kind: 'function', name, resolvedName: importedCanonical, source: 'import', functionDefinition: importedLoaded };
+                    }
+                }
+                if (classes && loadClasses) {
+                    const importedLoadedClass = this.resolveClassDefinitionByExactName(importedCanonical, scope, true);
+                    if (importedLoadedClass) {
+                        return { kind: 'class', name, resolvedName: importedCanonical, source: 'import', classDefinition: importedLoadedClass };
+                    }
+                }
+            }
+        }
+
+        if (functions) {
+            const builtin = this.builtInFunctionTable[canonical];
+            if (builtin) {
+                return { kind: 'builtin', name, resolvedName: canonical, source: 'builtin', functionDefinition: builtin };
+            }
+        }
+
+        return undefined;
     }
 
+    /**
+     * Resolve a function by name from lexical scope, provider API, or built-ins.
+     *
+     * @param name Function name or alias.
+     * @param scope Lookup scope, defaulting to the current scope.
+     * @returns User-defined or built-in function node, if found.
+     */
+    public resolveFunction(name: string, scope: Scope = this.currentScope): NodeFunctionDefinition | NodeBuiltInFunction | undefined {
+        return this.resolveSymbol(name, scope, { variables: false, classes: false })?.functionDefinition;
+    }
+
+    /**
+     * Resolve a class definition by name.
+     *
+     * In-memory class definitions are stored as names. Provider-loaded classes
+     * are registered into the global scope so later lookups reuse the same
+     * metadata object.
+     *
+     * @param name Class name.
+     * @param scope Lookup scope, defaulting to the current scope.
+     * @returns Class definition, if found.
+     */
     public resolveClassDefinition(name: string, scope: Scope = this.currentScope): ClassDefinition | undefined {
+        return this.resolveSymbol(name, scope, { variables: false, functions: false })?.classDefinition;
+    }
+
+    private resolveClassDefinitionByExactName(name: string, scope: Scope = this.currentScope, loadFromProvider = true): ClassDefinition | undefined {
         const entry = scope.resolveName(name);
         if (entry && ClassDefinition.isInstanceOf(entry.node)) {
             return entry.node;
+        }
+        if (!loadFromProvider) {
+            return undefined;
         }
         const loaded = this.interpreter?.loadClassDefinition(name, scope);
         if (!loaded) {
@@ -254,19 +501,54 @@ class Context {
         return loaded;
     }
 
+    /**
+     * Register one package/class import in a scope.
+     *
+     * @param qualifiedName Fully qualified import name.
+     * @param scope Scope receiving the import.
+     */
+    public defineImport(qualifiedName: string, scope: Scope = this.currentScope): void {
+        scope.defineImport(qualifiedName);
+    }
+
+    /**
+     * Define or replace a variable in the current scope.
+     *
+     * @param name Variable name.
+     * @param value Value to store.
+     */
     public assignName(name: string, value: NodeInput) {
         this.currentScope.defineName(name, value);
     }
 
+    /**
+     * Define or replace a user function in the current scope.
+     *
+     * @param name Function name.
+     * @param func Function definition node.
+     */
     public assignFunction(name: string, func: NodeFunctionDefinition) {
         this.currentScope.defineFunction(name, func);
     }
 
+    /**
+     * Register a class definition as a named runtime value.
+     *
+     * @param definition Class metadata to register.
+     * @param scope Scope that should receive the class name.
+     * @returns The same class definition for fluent callers.
+     */
     public defineClassDefinition(definition: ClassDefinition, scope: Scope = this.currentScope): ClassDefinition {
         scope.defineName(definition.name, definition);
         return definition;
     }
 
+    /**
+     * Create a child lexical scope.
+     *
+     * @param parent Parent scope, defaulting to the current scope.
+     * @returns New child scope.
+     */
     public createChildScope(parent: Scope = this.currentScope): Scope {
         return Scope.create(parent);
     }
@@ -310,6 +592,38 @@ class Context {
         return this.requestedOutputCountStack[this.requestedOutputCountStack.length - 1] ?? 1;
     }
 
+    /**
+     * Enter a context where comma-separated lists should expand.
+     *
+     * @param enabled Whether expansion is enabled for the nested evaluation.
+     */
+    public pushCommaListExpansion(enabled = true): void {
+        this.commaListExpansionStack.push(enabled);
+    }
+
+    /**
+     * Leave the current comma-separated-list expansion context.
+     *
+     * @returns Removed expansion flag, if any.
+     */
+    public popCommaListExpansion(): boolean | undefined {
+        return this.commaListExpansionStack.pop();
+    }
+
+    /**
+     * Whether the current evaluation context expands comma-separated lists.
+     */
+    public get commaListExpansionEnabled(): boolean {
+        return this.commaListExpansionStack[this.commaListExpansionStack.length - 1] ?? false;
+    }
+
+    /**
+     * Test class member access against the active class access stack.
+     *
+     * @param classDefinition Class that owns the member.
+     * @param access Effective access string (`public`, `protected`, `private`, or friend list).
+     * @returns `true` when the current class execution context may access the member.
+     */
     public canAccessClassMember(classDefinition: ClassDefinition, access = 'public'): boolean {
         if (access === 'public') {
             return true;
@@ -319,6 +633,13 @@ class Context {
         }
         if (access === 'protected') {
             return this.classAccessStack.some((currentClass) => currentClass === classDefinition || currentClass.isSubclassOf(classDefinition));
+        }
+        const friendClassNames = access.startsWith('{') && access.endsWith('}') ? access.slice(1, -1).split(',') : [access];
+        if (friendClassNames.every((name) => name.startsWith('?'))) {
+            return friendClassNames.some((name) => {
+                const friendClassName = name.slice(1);
+                return this.classAccessStack.some((currentClass) => currentClass.name === friendClassName || currentClass.isSubclassOfName(friendClassName));
+            });
         }
         return this.classAccessStack.includes(classDefinition);
     }
@@ -382,10 +703,10 @@ class Context {
         }
         seen.add(node);
         const record = node as Record<string, unknown>;
-        if (record.type === 'IDENT' && typeof record.id === 'string') {
-            const entry = scope.resolveName(record.id);
-            if (entry?.undefinedReference || (!entry && record.id === fallback)) {
-                return record.id;
+        if (AST.isNodeIdentifier(node)) {
+            const entry = scope.resolveName(node.id);
+            if (entry?.undefinedReference || (!entry && node.id === fallback)) {
+                return node.id;
             }
         }
         for (const key of Object.keys(record)) {
@@ -426,13 +747,19 @@ class Context {
         }
     }
 
+    /**
+     * Resolve a value expression to a callable wrapper when possible.
+     *
+     * @param expr Evaluated expression that may be a function handle.
+     * @returns Callable wrapper for function handles, or `undefined`.
+     */
     public resolveCallable(expr: NodeExpr): Callable | undefined {
         /* Function handles may point to named functions or inline lambda bodies. */
         if (FunctionHandle.isInstanceOf(expr)) {
             /* Named handle, for example `@sin`. */
             if (expr.id) {
-                const canonical = this.aliasNameFunction(expr.id);
-                const func = expr.closure?.resolveFunction(canonical) ?? this.resolveFunction(expr.id);
+                const resolved = this.resolveSymbol(expr.id, (expr.closure as Scope | undefined) ?? this.currentScope, { variables: false, classes: false });
+                const func = resolved?.functionDefinition;
                 if (!func) {
                     this.throwReferenceError(`'${expr.id}' undefined.`);
                 }
@@ -444,23 +771,36 @@ class Context {
         return undefined;
     }
 
+    /**
+     * Resolve an identifier according to MATLAB/Octave name precedence.
+     *
+     * Variables are preferred, followed by call-frame metadata such as
+     * `nargin`, class definitions, functions, and finally undefined-reference
+     * handling. When the identifier is part of a call expression, unresolved
+     * names may remain as call targets for later dispatch.
+     *
+     * @param tree Identifier node.
+     * @param scope Scope used for lookup.
+     * @returns Resolved runtime value or callable placeholder.
+     */
     public resolveIdentifier(tree: NodeInput, scope: Scope): NodeExpr {
         const name = tree.id;
         /* 1. Variable lookup. */
-        const entry = scope.resolveName(name);
-        if (entry && entry.node) {
+        const variable = this.resolveSymbol(name, scope, { classes: false, functions: false, imports: false });
+        if (variable?.kind === 'variable') {
+            const entry = variable.entry!;
             if (this.allowForwardReference && entry.undefinedReference) {
                 this.throwIfCircularReference(name, scope);
                 this.throwUndefinedReferenceError(entry.undefinedReference);
             }
-            entry.node.parent = tree;
-            return entry.node;
+            entry.node!.parent = tree;
+            return entry.node as NodeExpr;
         }
         /* 2. Function call-frame metadata. */
-        if (name === 'nargin' && !(tree.parent && tree.parent.type === 'IDX')) {
+        if (name === 'nargin' && !AST.isNodeIndexExpr(tree.parent)) {
             return this.currentFunctionArgumentCount(name);
         }
-        if (name === 'nargout' && !(tree.parent && tree.parent.type === 'IDX')) {
+        if (name === 'nargout' && !AST.isNodeIndexExpr(tree.parent)) {
             return this.currentFunctionOutputCount(name);
         }
         if (name === 'meta') {
@@ -470,71 +810,157 @@ class Context {
                 }),
             });
         }
-        /* 3. Function lookup. */
-        const classDefinition = this.resolveClassDefinition(name, scope);
-        if (classDefinition) {
-            classDefinition.parent = tree;
-            return classDefinition;
-        }
-        const func = this.resolveFunction(name);
-        if (func) {
-            /* A function name may be converted to a handle when it is being called. */
-            if (tree.parent && tree.parent.type === 'IDX') {
-                const handle = FunctionHandle.create(name);
-                handle.parent = tree;
-                return handle;
+        /* 3. Structured class/function precedence. */
+        const resolved = this.resolveSymbol(name, scope, { variables: false });
+        switch (resolved?.kind) {
+            case 'variable': {
+                const entry = resolved.entry!;
+                if (this.allowForwardReference && entry.undefinedReference) {
+                    this.throwIfCircularReference(name, scope);
+                    this.throwUndefinedReferenceError(entry.undefinedReference);
+                }
+                entry.node!.parent = tree;
+                return entry.node as NodeExpr;
             }
-            /* Otherwise a bare function name is an invalid MATLAB-like call. */
-            AST.throwInvalidCallError(name, true, (message) => this.throwSyntaxError(message));
+            case 'class':
+                resolved.classDefinition!.parent = tree;
+                return resolved.classDefinition!;
+            case 'function':
+            case 'builtin':
+                /* A function name may be converted to a handle when it is being called. */
+                if (AST.isNodeIndexExpr(tree.parent)) {
+                    const handle = FunctionHandle.create(resolved.resolvedName);
+                    handle.parent = tree;
+                    return handle;
+                }
+                /* Otherwise a bare function name is an invalid MATLAB-like call. */
+                AST.throwInvalidCallError(name, true, (message) => this.throwSyntaxError(message));
         }
         /* 4. Undefined identifier. */
-        if (tree.parent && tree.parent.type === 'IDX') {
+        if (AST.isNodeIndexExpr(tree.parent)) {
             return tree as NodeExpr;
         }
         this.throwUndefinedReferenceError(name);
     }
 
+    /**
+     * Expand a comma-separated return list into individual values.
+     *
+     * Non-list values are reduced to their first return value and wrapped in a
+     * single-element array. This mirrors MATLAB/Octave behavior for cell and
+     * struct comma-separated lists in calls and assignments.
+     *
+     * @param value Evaluated value or return list.
+     * @returns Expanded values.
+     */
+    public expandCommaSeparatedList(value: NodeInput): NodeInput[] {
+        if (!AST.isNodeReturnList(value) || !value.commaSeparated) {
+            return [AST.reduceToFirstIfReturnList(value)];
+        }
+        const length = value.returnListLength ?? value.handler(0).length;
+        const evaluated = value.handler(length);
+        const result: NodeInput[] = [];
+        for (let index = 0; index < length; index++) {
+            result.push(value.selector(evaluated, index));
+        }
+        return result;
+    }
+
+    /**
+     * Evaluate one call/assignment expression with comma-list expansion enabled.
+     *
+     * @param arg Expression to evaluate.
+     * @returns Expanded values produced by the expression.
+     */
+    public evaluateCommaListExpression(arg: NodeExpr): NodeInput[] {
+        this.pushRequestedOutputCount(1);
+        this.pushCommaListExpansion();
+        try {
+            return this.expandCommaSeparatedList(this.interpreter!.Evaluator(arg, this.currentScope));
+        } finally {
+            this.popCommaListExpansion();
+            this.popRequestedOutputCount();
+        }
+    }
+
+    /**
+     * Evaluate and expand a list of positional call arguments.
+     *
+     * @param args Argument expressions.
+     * @returns Expanded argument values retyped as expressions for call helpers.
+     */
+    public expandCommaListArguments(args: NodeExpr[]): NodeExpr[] {
+        return args.flatMap((arg) => this.evaluateCommaListExpression(arg)) as NodeExpr[];
+    }
+
     private evaluateArgs(args: NodeExpr[], parent: NodeInput, mode: 'all' | boolean[]): NodeExpr[] {
-        return args.map((arg: NodeExpr, i: number) => {
-            arg.parent = parent;
-            arg.index = i;
+        return args.flatMap((arg: NodeExpr, i: number) => {
             if (mode === 'all') {
                 this.pushRequestedOutputCount(1);
+                this.pushCommaListExpansion();
                 try {
-                    return AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(arg, this.currentScope));
+                    return this.expandCommaSeparatedList(this.interpreter!.Evaluator(arg, this.currentScope)) as NodeExpr[];
                 } finally {
+                    this.popCommaListExpansion();
                     this.popRequestedOutputCount();
                 }
             }
             const ev = mode;
             if (ev.length > 0 && i < ev.length && !ev[i]) {
-                return arg;
+                return [arg];
             }
             this.pushRequestedOutputCount(1);
+            this.pushCommaListExpansion();
             try {
-                return AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(arg, this.currentScope));
+                return this.expandCommaSeparatedList(this.interpreter!.Evaluator(arg, this.currentScope)) as NodeExpr[];
             } finally {
+                this.popCommaListExpansion();
                 this.popRequestedOutputCount();
             }
         });
     }
 
+    /**
+     * Throw an evaluation error annotated with the current stack trace.
+     *
+     * @param message Error message.
+     */
     public throwEvalError(message: string): never {
         throw new EvalError(message, this.getStackTrace());
     }
 
+    /**
+     * Throw a reference error annotated with the current stack trace.
+     *
+     * @param message Error message.
+     */
     public throwReferenceError(message: string): never {
         throw new ReferenceError(message, this.getStackTrace());
     }
 
+    /**
+     * Throw an undefined-reference error annotated with the current stack trace.
+     *
+     * @param identifier Missing identifier.
+     */
     public throwUndefinedReferenceError(identifier: string): never {
         throw new UndefinedReferenceError(identifier, this.getStackTrace());
     }
 
+    /**
+     * Throw a circular-reference error annotated with the current stack trace.
+     *
+     * @param chain Dependency chain that closes the cycle.
+     */
     public throwCircularReferenceError(chain: string[]): never {
         throw new CircularReferenceError(chain, this.getStackTrace());
     }
 
+    /**
+     * Throw a syntax error annotated with the current stack trace.
+     *
+     * @param message Error message.
+     */
     public throwSyntaxError(message: string): never {
         throw new SyntaxError(message, this.getStackTrace());
     }
@@ -551,10 +977,23 @@ class Context {
         return FunctionStack.callerWorkspace(this.callStack, this.globalScope!, (parent) => Scope.create(parent as Scope | undefined), forAssignment) as Scope;
     }
 
+    /**
+     * Resolve a MATLAB-like workspace selector.
+     *
+     * @param name Workspace name such as `base` or `caller`.
+     * @param forAssignment Whether the resolved workspace will be assigned into.
+     * @returns Target scope.
+     */
     public resolveWorkspace(name: string, forAssignment = false): Scope {
         return FunctionWorkspace.resolveWorkspace(name, this.globalScope!, this.getCallerWorkspace(forAssignment), (message) => this.throwSyntaxError(message)) as Scope;
     }
 
+    /**
+     * Return the current function's input argument count.
+     *
+     * @param name Built-in name used for diagnostics.
+     * @returns Numeric scalar count.
+     */
     public currentFunctionArgumentCount(name: 'nargin' | 'nargout'): ComplexType {
         const count = FunctionStack.currentArgumentCount(this.callStack);
         if (typeof count === 'undefined') {
@@ -563,10 +1002,19 @@ class Context {
         return Complex.create(count);
     }
 
+    /**
+     * Return the current function's input count, or zero outside a function.
+     */
     public currentFunctionArgumentCountOrZero(): ComplexType {
         return Complex.create(FunctionStack.currentArgumentCount(this.callStack) ?? 0);
     }
 
+    /**
+     * Return the output count requested from the current function.
+     *
+     * @param name Built-in name used for diagnostics.
+     * @returns Numeric scalar count.
+     */
     public currentFunctionOutputCount(name: 'nargin' | 'nargout'): ComplexType {
         const count = FunctionStack.currentOutputCount(this.callStack);
         if (typeof count === 'undefined') {
@@ -575,22 +1023,41 @@ class Context {
         return Complex.create(count);
     }
 
+    /**
+     * Return the current requested output count, or zero outside a function.
+     */
     public currentFunctionOutputCountOrZero(): ComplexType {
         return Complex.create(FunctionStack.currentOutputCount(this.callStack) ?? 0);
     }
 
-    public currentFunctionInputName(indexNode: NodeInput): CharString {
+    /**
+     * Implement `inputname` for the current function frame.
+     *
+     * @param indexNode One-based argument index.
+     * @returns Original caller expression text when available.
+     */
+    public currentFunctionInputName(indexNode: NodeInput, onlyVariableNames = true, unparse?: (arg: NodeExpr) => string): CharString {
         const frame = this.getCurrentFunctionCountFrame();
         if (!frame) {
             this.throwEvalError('inputname is only valid inside a function.');
         }
-        return FunctionWorkspace.inputName(frame.inputArgs, indexNode, (message) => this.throwSyntaxError(message));
+        return FunctionWorkspace.inputName(frame.inputArgs, indexNode, (message) => this.throwSyntaxError(message), onlyVariableNames, unparse);
     }
 
+    /**
+     * Return the current function display name.
+     */
     public currentFunctionName(): string {
         return FunctionStack.currentFunctionName(this.callStack);
     }
 
+    /**
+     * Declare a persistent variable in the current function.
+     *
+     * @param name Variable name.
+     * @param value Initial value, when supplied by the declaration.
+     * @param scope Function scope receiving the live binding.
+     */
     public declarePersistent(name: string, value: NodeInput | undefined, scope: Scope): void {
         const func = this.getCurrentFunctionDefinition();
         if (!func) {
@@ -599,18 +1066,40 @@ class Context {
         FunctionWorkspace.declarePersistent(name, value, func, scope);
     }
 
+    /**
+     * Load persistent variables into a function call scope.
+     *
+     * @param func Function definition whose persistent storage should be loaded.
+     * @param scope Function call scope.
+     */
     public loadPersistentVariables(func: NodeFunctionDefinition, scope: Scope): void {
         FunctionWorkspace.loadPersistentVariables(func, scope);
     }
 
+    /**
+     * Store persistent variables after a function call completes.
+     *
+     * @param func Function definition whose persistent storage should be updated.
+     * @param scope Function call scope.
+     */
     public storePersistentVariables(func: NodeFunctionDefinition, scope: Scope): void {
         FunctionWorkspace.storePersistentVariables(func, scope);
     }
 
+    /**
+     * Declare a variable as global in a scope.
+     *
+     * @param name Global variable name.
+     * @param value Optional initial value.
+     * @param scope Scope that should reference the global binding.
+     */
     public declareGlobal(name: string, value: NodeInput | undefined, scope: Scope): void {
         FunctionWorkspace.declareGlobal(name, value, this.globalNameSet, this.globalScope!.nameTable, scope.nameTable);
     }
 
+    /**
+     * Clear all global bindings from the global scope and active frames.
+     */
     public clearGlobalVariables(): void {
         FunctionWorkspace.clearGlobalVariables(
             this.globalNameSet,
@@ -620,22 +1109,45 @@ class Context {
     }
 
     private resolveCallSite(node: NodeInput | undefined): NodeExpr | undefined {
-        let current: any = node;
+        let current: ParentLinkedNode | undefined = node as ParentLinkedNode | undefined;
         while (current) {
             if (current.start) return current;
-            current = current.parent;
+            current = current.parent as ParentLinkedNode | undefined;
         }
         return undefined;
     }
 
+    private static debugIdentifier(value: unknown): string | undefined {
+        const id = (value as IdentifierLikeNode | undefined)?.id;
+        return typeof id === 'string' ? id : undefined;
+    }
+
+    /**
+     * Return normalized input signatures for a built-in node.
+     *
+     * @param node Built-in function node.
+     * @returns Input signature overloads.
+     */
     public builtInInputSignatures(node: NodeBuiltInFunction): BuiltInFunctionInputSignature[] {
         return FunctionSignature.inputSignatures(node);
     }
 
+    /**
+     * Return normalized output signatures for a built-in node.
+     *
+     * @param node Built-in function node.
+     * @returns Output signature overloads.
+     */
     public builtInOutputSignatures(node: NodeBuiltInFunction): BuiltInFunctionInputSignature[] {
         return FunctionSignature.outputSignatures(node);
     }
 
+    /**
+     * Compute the MATLAB-like declared arity for built-in signatures.
+     *
+     * @param signatures Input or output signature overloads.
+     * @returns Fixed or negative variadic arity, when declared.
+     */
     public builtInDeclaredArity(signatures: BuiltInFunctionInputSignature[]): number | undefined {
         return FunctionSignature.declaredArity(signatures);
     }
@@ -649,7 +1161,7 @@ class Context {
     }
 
     private valueDimensions(value: NodeInput): number[] {
-        return MultiArray.isInstanceOf(value) ? (value as MultiArray).dimension.slice() : [1, 1];
+        return RuntimeValue.dimensions(value);
     }
 
     private sizeReturnList(value: NodeInput): NodeReturnList {
@@ -680,11 +1192,12 @@ class Context {
         const { inputLayout, returnLayout, callArguments, inputDefaults } = FunctionCall.prepareFunctionCall(func, args, requestedOutputCount, {
             nameValueParameters: (item) => this.interpreter!.getFunctionNameValueParameters(item),
             splitCallArguments: (item, itemArgs) => this.interpreter!.splitFunctionCallNameValueArguments(item, itemArgs),
+            expandPositionalArguments: (itemArgs) => this.expandCommaListArguments(itemArgs),
             inputDefaults: (item) => this.interpreter!.getFunctionInputArgumentDefaults(item),
             throwEvalError: (message) => this.throwEvalError(message),
         });
         /* Create a function scope, preserving the definition scope when available. */
-        const functionScope = Scope.create(func.definingScope ?? this.currentScope);
+        const functionScope = Scope.create((func.definingScope as Scope | undefined) ?? this.currentScope);
         functionScope.assignExistingParentNames = Boolean(func.attributes?.nested);
         FunctionCall.initializeFixedReturnSlots(returnLayout.returnNames, functionScope.nameTable);
         /* Bind evaluated arguments to formal parameter names. */
@@ -718,7 +1231,8 @@ class Context {
         FunctionCall.bindVarargin(inputLayout, evaluatedArgs, (name, value) => functionScope.defineName(name, value));
         FunctionCall.bindVarargout(returnLayout, requestedOutputCount, (name, value) => functionScope.defineName(name, value));
         /* Push the user-defined function frame for stack trace reporting. */
-        this.pushCallStackFrame(new CallFrame(functionScope, callable, this.resolveCallSite(parent), func.id, args.length, requestedOutputCount, args));
+        const inputCount = callArguments.positional.length + args.length - (callArguments.rawPositionalCount ?? callArguments.positional.length);
+        this.pushCallStackFrame(new CallFrame(functionScope, callable, this.resolveCallSite(parent), func.id, inputCount, requestedOutputCount, args));
         this.loadPersistentVariables(func, functionScope);
         let result: NodeExpr;
         try {
@@ -746,7 +1260,7 @@ class Context {
     }
 
     private instantiateClassDefaults(classDefinition: ClassDefinition): ClassInstance {
-        return ClassInstance.instantiate(classDefinition, (defaultValue) => {
+        const instance = ClassInstance.instantiate(classDefinition, (defaultValue) => {
             this.pushRequestedOutputCount(1);
             try {
                 return AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(defaultValue, this.currentScope));
@@ -754,14 +1268,18 @@ class Context {
                 this.popRequestedOutputCount();
             }
         });
+        this.interpreter!.validateClassInstancePropertyDefaults(instance, this.currentScope);
+        return instance;
     }
 
     private constructClassInstance(classDefinition: ClassDefinition, args: NodeExpr[], parent: NodeInput): ClassInstance {
         if (classDefinition.isEffectivelyAbstract()) {
             const abstractMethods = classDefinition.unresolvedAbstractMethods().map((method) => method.name);
+            const abstractProperties = classDefinition.unresolvedAbstractProperties().map((property) => property.name);
+            const missingImplementations = [...abstractMethods, ...abstractProperties];
             this.throwEvalError(
-                abstractMethods.length > 0
-                    ? `cannot instantiate abstract class ${classDefinition.name}: missing implementations for ${abstractMethods.join(', ')}.`
+                missingImplementations.length > 0
+                    ? `cannot instantiate abstract class ${classDefinition.name}: missing implementations for ${missingImplementations.join(', ')}.`
                     : `cannot instantiate abstract class ${classDefinition.name}.`,
             );
         }
@@ -780,7 +1298,7 @@ class Context {
         const constructorMethod = classDefinition.methodTable[classDefinition.name]?.find((method) => !method.isStatic);
         if (!constructorMethod) {
             if (args.length > 0) {
-                this.throwEvalError(`constructor arguments are not supported yet for class ${classDefinition.name}.`);
+                this.throwEvalError(`constructor for class ${classDefinition.name} accepts no input arguments.`);
             }
             return instance;
         }
@@ -790,10 +1308,11 @@ class Context {
         const { inputLayout, returnLayout, callArguments, inputDefaults } = FunctionCall.prepareFunctionCall(func, args, requestedOutputCount, {
             nameValueParameters: (item) => this.interpreter!.getFunctionNameValueParameters(item),
             splitCallArguments: (item, itemArgs) => this.interpreter!.splitFunctionCallNameValueArguments(item, itemArgs),
+            expandPositionalArguments: (itemArgs) => this.expandCommaListArguments(itemArgs),
             inputDefaults: (item) => this.interpreter!.getFunctionInputArgumentDefaults(item),
             throwEvalError: (message) => this.throwEvalError(message),
         });
-        const functionScope = Scope.create(func.definingScope ?? this.currentScope);
+        const functionScope = Scope.create((func.definingScope as Scope | undefined) ?? this.currentScope);
         FunctionCall.initializeFixedReturnSlots(returnLayout.returnNames, functionScope.nameTable);
         const firstReturn = returnLayout.returnNames[0];
         if (firstReturn && firstReturn.type !== '<~>') {
@@ -831,7 +1350,8 @@ class Context {
         FunctionCall.bindVarargout(returnLayout, requestedOutputCount, (name, value) => functionScope.defineName(name, value));
 
         const callable = Callables.fromFunctionNode(func);
-        this.pushCallStackFrame(new CallFrame(functionScope, callable, this.resolveCallSite(parent), func.id, args.length, requestedOutputCount, args));
+        const inputCount = callArguments.positional.length + args.length - (callArguments.rawPositionalCount ?? callArguments.positional.length);
+        this.pushCallStackFrame(new CallFrame(functionScope, callable, this.resolveCallSite(parent), func.id, inputCount, requestedOutputCount, args));
         this.loadPersistentVariables(func, functionScope);
         this.classAccessStack.push(classDefinition);
         try {
@@ -864,9 +1384,21 @@ class Context {
         return constructed;
     }
 
+    /**
+     * Call an instance method with class access and value/handle receiver rules.
+     *
+     * @param instance Receiver object.
+     * @param method Method metadata selected from the class hierarchy.
+     * @param args Explicit method arguments, excluding the receiver.
+     * @param parent Call-site node used for stack traces.
+     * @returns Method return expression or return list.
+     */
     public callClassInstanceMethod(instance: ClassInstance, method: ClassMethodDefinition, args: NodeExpr[], parent: NodeInput): NodeExpr {
         if (method.isAbstract) {
             this.throwEvalError(`cannot call abstract method '${method.name}' for class ${method.classDefinition.name}.`);
+        }
+        if (method.node.attributes?.prototype) {
+            this.throwEvalError(`method '${method.name}' for class ${method.classDefinition.name} is declared without a body.`);
         }
         try {
             ClassInstance.throwIfDeleted(instance);
@@ -878,9 +1410,20 @@ class Context {
         );
     }
 
+    /**
+     * Call a static class method with class access enabled.
+     *
+     * @param method Static method metadata.
+     * @param args Method argument expressions.
+     * @param parent Call-site node used for stack traces.
+     * @returns Method return expression or return list.
+     */
     public callClassStaticMethod(method: ClassMethodDefinition, args: NodeExpr[], parent: NodeInput): NodeExpr {
         if (method.isAbstract) {
             this.throwEvalError(`cannot call abstract method '${method.name}' for class ${method.classDefinition.name}.`);
+        }
+        if (method.node.attributes?.prototype) {
+            this.throwEvalError(`method '${method.name}' for class ${method.classDefinition.name} is declared without a body.`);
         }
         return this.withClassAccess(method.classDefinition, () => this.callFunctionDefinition(Callables.functionDefinition(method.node), args, parent, this.requestedOutputCount));
     }
@@ -944,6 +1487,63 @@ class Context {
         return MultiArray.MultiArrayToScalar(result) as NodeExpr;
     }
 
+    private callFunctionalClassMethodArray(name: string, receiver: MultiArray, args: NodeExpr[], parent: NodeInput): NodeExpr {
+        if (!MultiArray.linearize(receiver).every((item) => ClassInstance.isInstanceOf(item))) {
+            this.throwUndefinedReferenceError(name);
+        }
+        const result = new MultiArray(receiver.dimension);
+        for (let n = 0; n < MultiArray.linearLength(receiver); n++) {
+            const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(receiver.dimension[0], receiver.dimension[1], n);
+            const instance = receiver.array[i][j] as ClassInstance;
+            if (name === 'delete') {
+                result.array[i][j] = this.deleteClassInstance(instance, parent);
+                continue;
+            }
+            const method = instance.classDefinition.findMethod(name, (item) => !item.isStatic);
+            if (!method) {
+                this.throwEvalError(`unknown method '${name}' for class ${instance.classDefinition.name}.`);
+            }
+            if (!this.canAccessClassMember(method.classDefinition, method.access)) {
+                this.throwEvalError(`method '${name}' has ${method.access} access for class ${instance.classDefinition.name}.`);
+            }
+            this.pushRequestedOutputCount(1);
+            try {
+                result.array[i][j] = AST.reduceToFirstIfReturnList(this.callClassInstanceMethod(instance, method, args, parent));
+            } finally {
+                this.popRequestedOutputCount();
+            }
+        }
+        MultiArray.setType(result);
+        if (this.requestedOutputCount > 1) {
+            const values = MultiArray.linearize(result);
+            return AST.nodeReturnList(
+                (evaluated: ReturnHandlerResult, index: number): NodeExpr => {
+                    const value = evaluated[`out${index}`];
+                    if (typeof value === 'undefined') {
+                        AST.throwErrorIfGreaterThanReturnList(index, index + 1, (message) => this.throwEvalError(message));
+                    }
+                    return value;
+                },
+                (length: number): ReturnHandlerResult => {
+                    AST.throwErrorIfGreaterThanReturnList(values.length, length, (message) => this.throwEvalError(message));
+                    const out: ReturnHandlerResult = { length };
+                    for (let index = 0; index < length; index++) {
+                        out[`out${index}`] = values[index] as NodeExpr;
+                    }
+                    return out;
+                },
+            );
+        }
+        return MultiArray.MultiArrayToScalar(result) as NodeExpr;
+    }
+
+    /**
+     * Delete a handle class instance, honoring an overloadable `delete` method.
+     *
+     * @param instance Handle instance to delete.
+     * @param parent Call-site node used for stack traces.
+     * @returns Void node.
+     */
     public deleteClassInstance(instance: ClassInstance, parent: NodeInput): NodeExpr {
         if (!instance.classDefinition.isHandleClass()) {
             this.throwEvalError(`delete is only supported for handle class instances.`);
@@ -961,11 +1561,14 @@ class Context {
         return AST.nodeVoid();
     }
 
-    private callFunctionalClassMethod(name: string, args: NodeExpr[], parent: NodeInput): NodeExpr {
+    private evaluateFunctionalClassMethodReceiver(args: NodeExpr[], parent: NodeInput): NodeInput | undefined {
         if (args.length === 0) {
-            this.throwUndefinedReferenceError(name);
+            return undefined;
         }
         const receiverExpression = args[0];
+        if (!this.interpreter) {
+            return receiverExpression;
+        }
         receiverExpression.parent = parent;
         receiverExpression.index = 0;
         this.pushRequestedOutputCount(1);
@@ -975,9 +1578,27 @@ class Context {
         } finally {
             this.popRequestedOutputCount();
         }
+        return receiver;
+    }
+
+    private isFunctionalClassMethodReceiver(receiver: NodeInput | undefined): boolean {
+        return (
+            ClassInstance.isInstanceOf(receiver) ||
+            ClassEventListener.isInstanceOf(receiver) ||
+            (MultiArray.isInstanceOf(receiver) && MultiArray.linearize(receiver).every((item) => ClassInstance.isInstanceOf(item)))
+        );
+    }
+
+    private callFunctionalClassMethod(name: string, args: NodeExpr[], parent: NodeInput, receiver = this.evaluateFunctionalClassMethodReceiver(args, parent)): NodeExpr {
+        if (!receiver) {
+            this.throwUndefinedReferenceError(name);
+        }
         if (name === 'delete' && ClassEventListener.isInstanceOf(receiver)) {
             ClassEventListener.delete(receiver);
             return AST.nodeVoid();
+        }
+        if (MultiArray.isInstanceOf(receiver) && MultiArray.linearize(receiver).every((item) => ClassInstance.isInstanceOf(item))) {
+            return this.callFunctionalClassMethodArray(name, receiver, args.slice(1), parent);
         }
         if (!ClassInstance.isInstanceOf(receiver)) {
             this.throwUndefinedReferenceError(name);
@@ -995,17 +1616,25 @@ class Context {
         return this.callClassInstanceMethod(receiver, method, args.slice(1), parent);
     }
 
+    /**
+     * Dispatch a built-in, anonymous function, or user-defined function call.
+     *
+     * @param callable Resolved callable wrapper.
+     * @param args Raw call argument expressions.
+     * @param parent Call-site node used for metadata and stack traces.
+     * @returns Call result.
+     */
     callCallable(callable: Callable, args: NodeExpr[], parent: NodeInput): NodeExpr {
         const requestedOutputCount = this.requestedOutputCount;
         switch (callable.type) {
             case 'BUILTIN': {
                 const node = callable.node;
                 const alias = this.aliasNameFunction(node.id);
-                this.validateBuiltInInputArity(node, args.length);
                 const evaluatedArgs =
                     (node.id === 'feval' || node.id === 'builtin') && args.length > 0
                         ? [this.evaluateArgs([args[0]], parent, 'all')[0], ...args.slice(1)]
                         : this.evaluateArgs(args, parent, node.ev);
+                this.validateBuiltInInputArity(node, evaluatedArgs.length);
                 /* Push a frame before entering the built-in so errors can capture this call. */
                 this.pushCallStackFrame(new CallFrame(this.currentScope, callable, this.resolveCallSite(parent), node.id, evaluatedArgs.length, requestedOutputCount, args));
                 try {
@@ -1028,11 +1657,12 @@ class Context {
                 const lambda = callable.node;
                 const params = lambda.parameter as FunctionParameter[];
                 const { hasVarargin, fixedParamCount } = FunctionCall.lambdaInputLayout(params);
-                FunctionCall.validateLambdaInputArity(args.length, hasVarargin, fixedParamCount, (message) => this.throwEvalError(message));
-                const lambdaScope = Scope.create(lambda.closure ?? this.currentScope);
+                const callArgs = this.expandCommaListArguments(args);
+                FunctionCall.validateLambdaInputArity(callArgs.length, hasVarargin, fixedParamCount, (message) => this.throwEvalError(message));
+                const lambdaScope = Scope.create((lambda.closure as Scope | undefined) ?? this.currentScope);
                 FunctionCall.bindLambdaInputs(
                     params,
-                    args,
+                    callArgs,
                     parent,
                     hasVarargin,
                     fixedParamCount,
@@ -1046,7 +1676,7 @@ class Context {
                         }
                     },
                 );
-                this.pushCallStackFrame(new CallFrame(lambdaScope, callable, this.resolveCallSite(parent), FunctionHandle.toString(lambda), args.length, requestedOutputCount, args));
+                this.pushCallStackFrame(new CallFrame(lambdaScope, callable, this.resolveCallSite(parent), FunctionHandle.toString(lambda), callArgs.length, requestedOutputCount, args));
                 try {
                     const result = this.interpreter!.Evaluator(lambda.expression, lambdaScope);
                     return result;
@@ -1062,53 +1692,138 @@ class Context {
         }
     }
 
-    apply(expr: NodeExpr, args: NodeExpr[], parent: NodeInput): NodeExpr {
-        /* Debug-only structural trace for call/index dispatch. */
-        if (this.interpreter!.debug) {
-            console.log('[APPLY]', {
-                exprType: expr?.type,
-                isFunctionHandle: FunctionHandle.isInstanceOf(expr),
-                exprId: (expr as any)?.id,
-                delim: parent.delim,
-                argsCount: args.length,
-            });
-        }
-        /* First try function-call semantics. */
+    private valueReturnList(values: NodeInput[]): NodeReturnList {
+        const result = AST.nodeReturnList(
+            (evaluated: ReturnHandlerResult, index: number): NodeExpr => {
+                const value = evaluated[`out${index}`];
+                if (typeof value === 'undefined') {
+                    AST.throwErrorIfGreaterThanReturnList(index, index + 1, (message) => this.throwEvalError(message));
+                }
+                return value;
+            },
+            (length: number): ReturnHandlerResult => {
+                AST.throwErrorIfGreaterThanReturnList(values.length, length, (message) => this.throwEvalError(message));
+                const out: ReturnHandlerResult = { length };
+                for (let index = 0; index < length; index++) {
+                    out[`out${index}`] = values[index] as NodeExpr;
+                }
+                return out;
+            },
+        );
+        result.commaSeparated = true;
+        result.returnListLength = values.length;
+        return result;
+    }
+
+    /**
+     * Classify an evaluated expression before applying call/index syntax.
+     *
+     * This helper keeps MATLAB/Octave dispatch precedence visible in one
+     * place: callable handles/functions first, class method wrappers next,
+     * constructors and functional method syntax after that, and native indexing
+     * as the final fallback.
+     *
+     * @param expr Evaluated callee or indexed expression.
+     * @param parent Index expression node carrying delimiter metadata.
+     * @param args Raw call/index arguments, used only to classify functional method calls.
+     * @returns Structured dispatch decision.
+     */
+    public resolveCallDispatch(expr: NodeExpr, parent: NodeInput, args: NodeExpr[] = []): CallDispatch {
         const callable = this.resolveCallable(expr);
-        if (this.interpreter!.debug) {
-            console.log('[CALLABLE]', callable?.type ?? 'NONE');
-        }
-        /* A function handle should have resolved to a callable by this point. */
         if (!callable && FunctionHandle.isInstanceOf(expr)) {
             throw new Error('Unexpected non-callable FunctionHandle.');
         }
         if (callable) {
-            return this.callCallable(callable, args, parent);
+            return { kind: 'callable', callable, expr };
         }
         if (ClassBoundMethod.isInstanceOf(expr)) {
-            return this.callClassInstanceMethod(expr.instance, expr.method, args, parent);
+            return { kind: 'bound-method', expr };
         }
         if (MultiArray.isInstanceOf(expr) && MultiArray.linearize(expr).every((item) => ClassBoundMethod.isInstanceOf(item))) {
-            return this.callClassBoundMethodArray(expr, args, parent);
+            return { kind: 'bound-method-array', expr };
         }
         if (ClassStaticMethod.isInstanceOf(expr)) {
-            return this.callClassStaticMethod(expr.method, args, parent);
+            return { kind: 'static-method', expr };
         }
         if (ClassEmptyMethod.isInstanceOf(expr)) {
-            return this.callClassEmptyMethod(expr, args, parent);
+            return { kind: 'empty-method', expr };
         }
         if (ClassDefinition.isInstanceOf(expr)) {
-            return this.constructClassInstance(expr, args, parent);
+            return { kind: 'constructor', expr };
         }
-        if (expr?.type === 'IDENT' && parent.delim === '()') {
-            return this.callFunctionalClassMethod(expr.id, args, parent);
+        if (AST.isNodeIdentifier(expr) && parent.delim === '()') {
+            const receiver = this.evaluateFunctionalClassMethodReceiver(args, parent);
+            return this.isFunctionalClassMethodReceiver(receiver)
+                ? { kind: 'functional-class-method', expr, functionalName: expr.id, functionalReceiver: receiver }
+                : { kind: 'undefined-function', expr, functionalName: expr.id };
         }
-        /* Fall back to indexing when the expression is not callable. */
-        if (this.interpreter!.debug) {
-            console.warn('[FALLBACK → INDEX]', {
-                exprType: expr?.type,
-                exprId: (expr as any)?.id,
-            });
+        return { kind: 'indexing', expr };
+    }
+
+    /**
+     * Execute one non-indexing call dispatch decision.
+     *
+     * @param dispatch Structured dispatch decision.
+     * @param args Raw call argument expressions.
+     * @param parent Index expression node carrying delimiter metadata.
+     * @returns Call result, or `undefined` when native indexing should handle it.
+     */
+    private applyCallDispatch(dispatch: CallDispatch, args: NodeExpr[], parent: NodeInput): NodeExpr | undefined {
+        switch (dispatch.kind) {
+            case 'callable':
+                return this.callCallable(dispatch.callable!, args, parent);
+            case 'bound-method':
+                return this.callClassInstanceMethod((dispatch.expr as ClassBoundMethod).instance, (dispatch.expr as ClassBoundMethod).method, args, parent);
+            case 'bound-method-array':
+                return this.callClassBoundMethodArray(dispatch.expr as MultiArray, args, parent);
+            case 'static-method':
+                return this.callClassStaticMethod((dispatch.expr as ClassStaticMethod).method, args, parent);
+            case 'empty-method':
+                return this.callClassEmptyMethod(dispatch.expr as ClassEmptyMethod, args, parent);
+            case 'constructor':
+                return this.constructClassInstance(dispatch.expr as ClassDefinition, args, parent);
+            case 'functional-class-method':
+                return this.callFunctionalClassMethod(dispatch.functionalName!, args, parent, dispatch.functionalReceiver);
+            case 'undefined-function':
+                this.throwUndefinedReferenceError(dispatch.functionalName!);
+            case 'indexing':
+                return undefined;
+        }
+    }
+
+    private charStringIndexArray(value: CharString): MultiArray {
+        const result = new MultiArray(value.dimension);
+        result.array[0] = value.toCharacterScalars();
+        MultiArray.setType(result);
+        return result;
+    }
+
+    private charStringIndexResult(value: NodeExpr, quote: CharString['quote']): CharString {
+        const selected = MultiArray.isInstanceOf(value) ? MultiArray.linearize(value) : [value];
+        if (!selected.every((item) => CharString.isInstanceOf(item))) {
+            this.throwEvalError('character string indexing produced a non-character value.');
+        }
+        return CharString.fromCharacterScalars(selected as CharString[], quote);
+    }
+
+    /**
+     * Apply native MATLAB/Octave indexing after call dispatch declines.
+     *
+     * @param expr Evaluated indexed expression.
+     * @param args Raw index expressions.
+     * @param parent Index expression node carrying delimiter metadata.
+     * @returns Indexed value or comma-separated return list.
+     */
+    private applyNativeIndexing(expr: NodeExpr, args: NodeExpr[], parent: NodeInput): NodeExpr {
+        if (CharString.isInstanceOf(expr)) {
+            if (parent.delim === '{}') {
+                this.throwEvalError('matrix cannot be indexed with {');
+            }
+            const array = this.charStringIndexArray(expr);
+            const evaluatedArgs = this.evaluateArgs(args, parent, 'all');
+            const result = MultiArray.getElements(array, parent.expr.id, [], evaluatedArgs);
+            result!.parent = parent;
+            return this.charStringIndexResult(result, expr.quote);
         }
         if (parent.delim === '{}' && !(MultiArray.isInstanceOf(expr) && expr.isCell)) {
             this.throwEvalError('matrix cannot be indexed with {');
@@ -1121,7 +1836,54 @@ class Context {
             (result as MultiArray).isCell = true;
             return result;
         }
+        if (array.isCell && parent.delim === '{}' && (this.requestedOutputCount > 1 || this.commaListExpansionEnabled)) {
+            const values = MultiArray.linearize(result);
+            if (values.length > 1) {
+                return this.valueReturnList(values as NodeInput[]);
+            }
+        }
         return MultiArray.MultiArrayToScalar(result);
+    }
+
+    /**
+     * Apply call or indexing syntax to an evaluated expression.
+     *
+     * MATLAB/Octave use the same parentheses for function calls and array
+     * indexing. This dispatcher first attempts callable/class dispatch and then
+     * falls back to array/cell indexing, including comma-separated-list rules.
+     *
+     * @param expr Evaluated callee/indexed expression.
+     * @param args Raw index or call argument expressions.
+     * @param parent Index expression node carrying delimiter metadata.
+     * @returns Call or indexing result.
+     */
+    apply(expr: NodeExpr, args: NodeExpr[], parent: NodeInput): NodeExpr {
+        /* Debug-only structural trace for call/index dispatch. */
+        if (this.interpreter!.debug) {
+            console.log('[APPLY]', {
+                exprType: expr?.type,
+                isFunctionHandle: FunctionHandle.isInstanceOf(expr),
+                exprId: Context.debugIdentifier(expr),
+                delim: parent.delim,
+                argsCount: args.length,
+            });
+        }
+        const dispatch = this.resolveCallDispatch(expr, parent, args);
+        if (this.interpreter!.debug) {
+            console.log('[DISPATCH]', dispatch.kind, dispatch.callable?.type ?? '');
+        }
+        const callResult = this.applyCallDispatch(dispatch, args, parent);
+        if (callResult) {
+            return callResult;
+        }
+        /* Fall back to indexing when the expression is not callable. */
+        if (this.interpreter!.debug) {
+            console.warn('[FALLBACK → INDEX]', {
+                exprType: expr?.type,
+                exprId: Context.debugIdentifier(expr),
+            });
+        }
+        return this.applyNativeIndexing(expr, args, parent);
     }
 
     /**
@@ -1256,5 +2018,6 @@ class Context {
     }
 }
 
+export type { CallDispatch, CallDispatchKind, SymbolResolution, SymbolResolutionKind, SymbolResolutionOptions, SymbolResolutionSource };
 export { Context, ReturnSignal, BreakSignal, ContinueSignal };
 export default Context;

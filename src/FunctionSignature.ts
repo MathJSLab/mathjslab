@@ -10,6 +10,9 @@ import { FunctionValidation } from './FunctionValidation';
 class FunctionSignature {
     /**
      * Normalize a built-in's input signature declaration to an array.
+     *
+     * @param node Built-in function node.
+     * @returns Input overloads, or an empty array when the built-in is unchecked.
      */
     public static inputSignatures(node: NodeBuiltInFunction): BuiltInFunctionInputSignature[] {
         const inputs = node.signature?.inputs;
@@ -21,6 +24,9 @@ class FunctionSignature {
 
     /**
      * Normalize a built-in's output signature declaration to an array.
+     *
+     * @param node Built-in function node.
+     * @returns Output overloads, or an empty array when no output signature is declared.
      */
     public static outputSignatures(node: NodeBuiltInFunction): BuiltInFunctionInputSignature[] {
         const outputs = node.signature?.outputs;
@@ -32,6 +38,9 @@ class FunctionSignature {
 
     /**
      * Minimum accepted argument count for one signature.
+     *
+     * @param signature Declarative built-in signature.
+     * @returns Minimum accepted input/output count.
      */
     public static arityMinimum(signature: BuiltInFunctionInputSignature): number {
         return signature.min ?? (signature.arity < 0 ? Math.max(Math.abs(signature.arity) - 1, 0) : signature.arity);
@@ -39,6 +48,9 @@ class FunctionSignature {
 
     /**
      * Maximum accepted argument count for one signature.
+     *
+     * @param signature Declarative built-in signature.
+     * @returns Maximum accepted input/output count, or `Infinity` for variadic signatures.
      */
     public static arityMaximum(signature: BuiltInFunctionInputSignature): number {
         return signature.max ?? (signature.arity < 0 ? Infinity : signature.arity);
@@ -46,6 +58,10 @@ class FunctionSignature {
 
     /**
      * Return the 1-based variadic position, when a signature is variadic.
+     *
+     * @param signature Declarative built-in signature.
+     * @param preferParameterPosition Prefer explicit parameter metadata over legacy negative arity.
+     * @returns One-based variadic parameter position, if any.
      */
     public static variadicPosition(signature: BuiltInFunctionInputSignature, preferParameterPosition = false): number | undefined {
         const parameterPosition = signature.parameters?.findIndex((parameter) => parameter.variadic) ?? -1;
@@ -63,6 +79,9 @@ class FunctionSignature {
 
     /**
      * Derive the `nargin`/`nargout` display arity for one or more overloads.
+     *
+     * @param signatures Built-in overload declarations.
+     * @returns MATLAB-like arity value, including negative variadic encodings.
      */
     public static declaredArity(signatures: BuiltInFunctionInputSignature[]): number | undefined {
         if (signatures.length === 0) {
@@ -92,6 +111,10 @@ class FunctionSignature {
 
     /**
      * Check whether a count satisfies one signature's arity interval.
+     *
+     * @param signature Declarative built-in signature.
+     * @param argCount Count to test.
+     * @returns `true` when the count is accepted by the signature.
      */
     public static arityMatches(signature: BuiltInFunctionInputSignature, argCount: number): boolean {
         const min = this.arityMinimum(signature);
@@ -101,6 +124,10 @@ class FunctionSignature {
 
     /**
      * Return input overloads whose arity matches the supplied arguments.
+     *
+     * @param node Built-in function node.
+     * @param argCount Input count to match.
+     * @returns Matching input overloads.
      */
     public static matchingInputSignatures(node: NodeBuiltInFunction, argCount: number): BuiltInFunctionInputSignature[] {
         return this.inputSignatures(node).filter((input) => this.arityMatches(input, argCount));
@@ -108,6 +135,10 @@ class FunctionSignature {
 
     /**
      * Check whether a built-in accepts the supplied number of inputs.
+     *
+     * @param node Built-in function node.
+     * @param argCount Input count to test.
+     * @returns `true` when the built-in has no signature or an arity match exists.
      */
     public static inputArityIsValid(node: NodeBuiltInFunction, argCount: number): boolean {
         const inputs = this.inputSignatures(node);
@@ -116,6 +147,10 @@ class FunctionSignature {
 
     /**
      * Check whether at least one matching overload accepts the argument values.
+     *
+     * @param node Built-in function node.
+     * @param args Evaluated input values.
+     * @returns `true` when parameter validators accept the values.
      */
     public static inputParametersAreValid(node: NodeBuiltInFunction, args: NodeInput[]): boolean {
         const inputs = this.matchingInputSignatures(node, args.length);

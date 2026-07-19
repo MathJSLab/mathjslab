@@ -1,6 +1,8 @@
 /// <reference types="jest" />
 import path from 'node:path';
-import { AST, Complex, MultiArray } from './AST';
+import { AST } from './AST';
+import { Complex } from './Complex';
+import { MultiArray } from './MultiArray';
 import type { NodeExpr, NodeFunctionDefinition } from './AST';
 import { FunctionCall } from './FunctionCall';
 

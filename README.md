@@ -15,9 +15,7 @@
 [![NPM Downloads](https://img.shields.io/npm/d18m/mathjslab)](https://www.npmjs.com/package/mathjslab)
 [![jsDelivr hits (npm)](https://img.shields.io/jsdelivr/npm/hy/mathjslab)](https://www.jsdelivr.com/package/npm/mathjslab)
 [![Libraries.io SourceRank](https://img.shields.io/librariesio/sourcerank/npm/mathjslab)](https://libraries.io/npm/mathjslab/sourcerank)
-[![NPM Bundle Size](https://img.shields.io/bundlephobia/min/mathjslab)](https://www.npmjs.com/package/mathjslab)
 [![NPM Unpacked Size](https://img.shields.io/npm/unpacked-size/mathjslab)](https://www.npmjs.com/package/mathjslab)
-[![Minzip Size](https://img.shields.io/bundlephobia/minzip/mathjslab)](https://www.npmjs.com/package/mathjslab)
 [![NPM package minimized gzipped size](https://img.shields.io/bundlejs/size/mathjslab)](https://www.npmjs.com/package/mathjslab)
 
 > An [interpreter](<https://en.wikipedia.org/wiki/Interpreter_(computing)>)
@@ -342,13 +340,17 @@ The engine implements a practical subset of
 [MATLAB&reg;](https://www.mathworks.com/products/matlab.html)/[Octave](https://www.gnu.org/software/octave/)
 syntax, including expressions, arrays, cell arrays, structures, control flow,
 loops, user functions, anonymous functions, function handles, `arguments`
-blocks, command syntax, and initial `classdef` support.
+blocks, imports, command syntax, comma-separated lists, and substantial
+`classdef` support, including class metadata, properties, methods, events,
+enumerations, listeners, and common static/instance dispatch paths.
 
-The main remaining limitations are browser-oriented external loading,
-incomplete MATLAB/Octave library coverage, and class semantics that are still
-being expanded. Numeric values use one complex numeric type; other implemented
-runtime types include logical values, character strings, structures, function
-handles, and class objects. Common arrays can hold any runtime value.
+The main remaining limitations are general external filesystem access,
+incomplete MATLAB/Octave library and toolbox coverage, and class semantics that
+still need focused compatibility work for less common edge cases. Browser-first
+host-provided source APIs are available for `.m` functions, scripts, and class
+sources. Numeric values use one complex numeric type; other implemented runtime
+types include logical values, character strings, structures, function handles,
+and class objects. Common arrays can hold any runtime value.
 
 ## Trademark Notes
 

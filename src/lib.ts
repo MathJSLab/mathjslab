@@ -4,3 +4,4 @@ export * from './lib-core';
  */
 export type { ElementType } from './MultiArray';
 export type { FormatFunction, FormatRegistry, KeyOfFormatRegistry } from './MathML';
+export type { RuntimeDisplay, RuntimeEvaluationContext } from './RuntimeDisplay';

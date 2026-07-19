@@ -19,19 +19,28 @@ forms:
 - script statement lists with comma, semicolon, newline, comments, block
   comments, and line continuations;
 - expression parsing for numeric, string, matrix, cell, range, indexing,
-  dynamic field, function-call, anonymous-function, and function-handle forms;
+  dynamic field, function-call, anonymous-function, function-handle,
+  metaclass-literal, and package/class-qualified name forms;
 - command syntax through word-list command nodes, including continuation lines
-  and comments after ellipsis;
+  and comments after ellipsis, while keeping command parsing restricted to
+  registered command-word names;
+- MATLAB package/class `import` declarations, including wildcard imports, as
+  first-class no-op declarations that participate in later name lookup;
 - user function definitions with return lists, parameter lists, ignored `~`
   entries, nested statements, and `arguments` blocks;
 - empty and non-empty `arguments` blocks, including input/output attributes and
   AST validation declarations;
 - control-flow blocks including `if`, `switch`, loops, `try`, and
-  `unwind_protect`;
+  `unwind_protect`, with `parfor` preserving optional worker expressions;
 - `classdef` syntax for class attributes, superclass lists, `properties`,
   `methods`, `events`, and `enumeration` sections;
 - class section attributes, including negated attributes such as `~Dependent`
   and `!Hidden`;
+- class property declarations with size, class, validator-function, and default
+  clauses, preserving the same validation node structure used by function
+  `arguments` blocks;
+- adjacent event and enumeration declarations such as `events A B` and
+  `enumeration Red(1) Blue(2)`;
 - class method bodies and abstract-style method prototypes such as
   `y = area(obj)` and `reset(obj)`.
 
@@ -45,12 +54,21 @@ The AST layer normalizes parse output into node contracts exported from
 - empty `arguments` blocks are preserved as `NodeArguments` with an empty
   validation list, so parse/unparse round-trips do not erase source structure;
 - `NodeArgumentValidation` keeps the declared name, optional size, class,
-  validator functions, and default expression as distinct child nodes;
+  validator functions, and default expression as distinct child nodes. Class
+  property validation declarations reuse this shape so parser and runtime
+  validation paths stay aligned;
+- `NodeImport` stores imported qualified names as identifier-like entries with
+  parent/index links, including wildcard names such as `pkg.*`;
+- `NodeFor` preserves `parallel === true` for `parfor` and stores optional
+  worker expressions separately from the loop target/range;
 - `NodeClassDef.sections` contains `NodeClassSection` entries with
   `attributeTable` indexes for duplicate-preserving attribute lookup;
 - method prototypes inside class `methods` sections are represented as
   `NodeFunctionDefinition` nodes with `attributes.prototype === true`;
-- AST factory methods are responsible for parent pointers on child nodes.
+- superclass lists preserve package-qualified names and multiple inheritance
+  separators in a normalized `&` form;
+- AST factory methods are responsible for parent pointers on child nodes. The
+  interpreter should not repair ordinary parent links during evaluation.
 
 ## Compatibility Tests
 
@@ -58,14 +76,22 @@ The release-facing parser/AST compatibility fixtures are concentrated in:
 
 - `src/ParserCompatibility.spec.ts` for parse, unparse, and execution fixtures;
 - `src/ParserAstCompatibility.spec.ts` for structural AST contracts;
-- `src/AST.spec.ts` for AST factory behavior and parent-pointer invariants.
+- `src/AST.spec.ts` for AST factory behavior and parent-pointer invariants;
+- `src/IndexingCompatibility.spec.ts` for indexing, comma-separated-list, and
+  assignment compatibility fixtures;
+- `src/DispatchCompatibility.spec.ts` for function/class dispatch precedence
+  and operator compatibility fixtures;
+- `src/CompatibilityStability.spec.ts` for integrated parser/AST/runtime
+  stability scenarios that combine imports, class sources, functions, and
+  control flow;
+- `src/SyntaxDiagnostic.spec.ts` for source-aware syntax diagnostic formatting.
 
 When changing the grammar, regenerate the ANTLR output and run at least:
 
 ```sh
 npm run build:parser
 npm run build:types
-npm run test:unit -- --runTestsByPath src/AST.spec.ts src/ParserCompatibility.spec.ts src/ParserAstCompatibility.spec.ts
+npx jest --selectProjects unit-tests --runInBand --runTestsByPath src/AST.spec.ts src/ParserCompatibility.spec.ts src/ParserAstCompatibility.spec.ts src/IndexingCompatibility.spec.ts src/DispatchCompatibility.spec.ts src/CompatibilityStability.spec.ts src/SyntaxDiagnostic.spec.ts
 ```
 
 For release preparation, also run the class and function infrastructure suites,
@@ -74,21 +100,34 @@ because class parsing and function parsing share several AST contracts:
 ```sh
 npm run test:class
 npm run test:function-infrastructure
+npm run build:types
 npm run test:unit
 ```
 
 ## Known Boundaries
 
-The parser and AST are intentionally ahead of some runtime features. These
-forms may parse structurally before the interpreter has full MATLAB/Octave
-semantics for every case:
+The parser, AST, and interpreter now share explicit contracts for many high
+value language forms, but MathJSLab is not yet a complete MATLAB/Octave
+language implementation. Remaining boundaries include:
 
-- external file lookup for functions and classes is represented by public APIs,
-  but browser-first execution means external filesystem access is deferred;
-- class method prototypes preserve syntax and metadata, but method dispatch
-  semantics should continue to be implemented through the class runtime layer;
-- class attributes are parsed and indexed, but only attributes already consumed
-  by the runtime have semantic enforcement;
+- general external filesystem lookup for functions, scripts, and classes is
+  deferred. Browser-first host-provided source APIs exist for function files,
+  script files, and class sources, and those APIs remain the compatibility
+  contract until a general external-file layer is designed;
+- runtime class support covers metadata, construction, properties, methods,
+  events, enumerations, listeners, accessors, inheritance, superclass calls,
+  `subsref`, `subsasgn`, and common static/instance dispatch paths, but less
+  common class edge cases should still grow through focused, test-backed
+  increments;
+- class attributes are parsed and indexed broadly. Runtime enforcement exists
+  for the attributes consumed by class metadata, access checks, construction,
+  events, abstract/sealed behavior, and dispatch; remaining attributes should
+  be enabled only when their MATLAB/Octave semantics are implemented;
+- MATLAB/Octave built-in library and toolbox coverage remains intentionally
+  incomplete and is separate from parser/AST language compatibility;
+- syntax diagnostics are normalized and source-aware, but exact MATLAB/Octave
+  diagnostic wording is not a parser contract unless a test fixture requires
+  it;
 - Octave-specific grammar branches should continue to be imported in focused
   increments, with parser fixtures added before or alongside interpreter
   behavior.

@@ -1,13 +1,15 @@
-import type { NodeExpr, NodeFunctionDefinition, NodeIdentifier, NodeIgnoredTarget, NodeInput, ReturnHandlerResult, NameTable } from './AST';
-import { AST, MultiArray } from './AST';
+import type { NodeExpr, NodeFunctionDefinition, NodeFunctionParameter, NodeFunctionReturn, NodeIdentifier, NodeInput, ReturnHandlerResult, NameTable } from './AST';
+import { AST } from './AST';
+import { MultiArray } from './MultiArray';
 
 /**
  * Interpreter error callback used by pure call helpers.
  */
 type ThrowEvalError = (message: string) => never;
 
-type ReturnName = NodeIdentifier | NodeIgnoredTarget;
-type FunctionParameter = NodeIdentifier | NodeIgnoredTarget;
+type ReturnName = NodeFunctionReturn;
+type FunctionParameter = NodeFunctionParameter;
+type DefaultedFunctionParameter = NodeFunctionParameter & { type: '='; left: NodeIdentifier; right: NodeExpr };
 
 /**
  * Workspace binding callback used while wiring evaluated inputs and outputs.
@@ -84,6 +86,10 @@ type FunctionCallArguments = {
      */
     positional: NodeExpr[];
     /**
+     * Positional argument count before comma-separated-list expansion.
+     */
+    rawPositionalCount?: number;
+    /**
      * Name-value argument expressions keyed by option name.
      */
     named: Map<string, NodeExpr>;
@@ -128,6 +134,10 @@ type FunctionCallPreparationCallbacks = {
      */
     splitCallArguments: (func: NodeFunctionDefinition, args: NodeExpr[]) => FunctionCallArguments;
     /**
+     * Expand comma-separated-list expressions in positional call arguments.
+     */
+    expandPositionalArguments?: (args: NodeExpr[]) => NodeExpr[];
+    /**
      * Return default expressions keyed by input parameter name.
      */
     inputDefaults: (func: NodeFunctionDefinition) => Map<string, NodeExpr>;
@@ -147,11 +157,19 @@ type FunctionCallPreparationCallbacks = {
  */
 class FunctionCall {
     private static isIdentifier(node: FunctionParameter): node is NodeIdentifier {
-        return node.type === 'IDENT';
+        return AST.isNodeIdentifier(node);
+    }
+
+    private static isDefaultedIdentifier(node: FunctionParameter): node is DefaultedFunctionParameter {
+        return AST.isNodeDefaultedParameter(node);
+    }
+
+    private static parameterName(node: FunctionParameter): string | undefined {
+        return this.isIdentifier(node) ? node.id : this.isDefaultedIdentifier(node) ? node.left.id : undefined;
     }
 
     private static isNamed(node: FunctionParameter, name: string): boolean {
-        return this.isIdentifier(node) && node.id === name;
+        return this.parameterName(node) === name;
     }
 
     /**
@@ -162,10 +180,13 @@ class FunctionCall {
      * catch-all parameter.
      */
     public static inputLayout(func: NodeFunctionDefinition, nameValueParameters: Set<string>): FunctionInputLayout {
-        const params = func.parameter.list as FunctionParameter[];
+        const params = func.parameter.list.filter(AST.isNodeFunctionParameter);
         const hasVarargin = params.length > 0 && this.isNamed(params[params.length - 1], 'varargin');
         const fixedParamCount = hasVarargin ? params.length - 1 : params.length;
-        const positionalParams = params.slice(0, fixedParamCount).filter((param) => param.type === '<~>' || !nameValueParameters.has(param.id));
+        const positionalParams = params.slice(0, fixedParamCount).filter((param) => {
+            const name = this.parameterName(param);
+            return param.type === '<~>' || !name || !nameValueParameters.has(name);
+        });
         return {
             params,
             hasVarargin,
@@ -187,8 +208,8 @@ class FunctionCall {
      * Compute the return layout, including `varargout`.
      */
     public static returnLayout(func: NodeFunctionDefinition): FunctionReturnLayout {
-        const returnNames = func.return.list as ReturnName[];
-        const names = returnNames.map((r) => (r.type === '<~>' ? '~' : r.id));
+        const returnNames = func.return.list.filter(AST.isNodeFunctionReturn);
+        const names = returnNames.map((r) => (AST.isNodeIgnoredTarget(r) ? '~' : r.id));
         const hasVarargout = names.length > 0 && names[names.length - 1] === 'varargout';
         return {
             returnNames,
@@ -205,7 +226,8 @@ class FunctionCall {
         let minFixedParamCount = positionalParams.length;
         while (minFixedParamCount > 0) {
             const param = positionalParams[minFixedParamCount - 1];
-            if (!this.isIdentifier(param) || !inputDefaults.has(param.id)) {
+            const name = this.parameterName(param);
+            if (!name || !inputDefaults.has(name)) {
                 break;
             }
             minFixedParamCount--;
@@ -253,7 +275,21 @@ class FunctionCall {
     public static prepareFunctionCall(func: NodeFunctionDefinition, args: NodeExpr[], requestedOutputCount: number, callbacks: FunctionCallPreparationCallbacks): PreparedFunctionCall {
         const inputLayout = this.inputLayout(func, callbacks.nameValueParameters(func));
         const returnLayout = this.returnLayout(func);
-        const callArguments = callbacks.splitCallArguments(func, args);
+        let callArguments = callbacks.splitCallArguments(func, args);
+        callArguments.rawPositionalCount = callArguments.positional.length;
+        if (callbacks.expandPositionalArguments) {
+            const expandedPositional = callbacks.expandPositionalArguments(callArguments.positional);
+            const expandedSplit = callbacks.splitCallArguments(func, expandedPositional);
+            const named = new Map(expandedSplit.named);
+            for (const [name, value] of callArguments.named) {
+                named.set(name, value);
+            }
+            callArguments = {
+                positional: expandedSplit.positional,
+                rawPositionalCount: callArguments.rawPositionalCount,
+                named,
+            };
+        }
         const inputDefaults = callbacks.inputDefaults(func);
         const minFixedParamCount = this.minimumPositionalCount(inputLayout.positionalParams, inputDefaults);
         this.validateFunctionInputArity(func, callArguments.positional.length, inputLayout.hasVarargin, inputLayout.positionalParamCount, minFixedParamCount, callbacks.throwEvalError);
@@ -287,7 +323,7 @@ class FunctionCall {
      */
     public static initializeFixedReturnSlots(returnNames: ReturnName[], nameTable: NameTable): void {
         for (const returnName of returnNames) {
-            if (returnName.type !== '<~>' && returnName.id !== 'varargout' && !Object.prototype.hasOwnProperty.call(nameTable, returnName.id)) {
+            if (!AST.isNodeIgnoredTarget(returnName) && returnName.id !== 'varargout' && !Object.prototype.hasOwnProperty.call(nameTable, returnName.id)) {
                 nameTable[returnName.id] = {};
             }
         }
@@ -355,14 +391,15 @@ class FunctionCall {
         for (let i = 0; i < inputLayout.positionalParamCount; i++) {
             const param = inputLayout.positionalParams[i];
             if (i < evaluatedArgs.length) {
-                if (this.isIdentifier(param)) {
-                    defineName(param.id, evaluatedArgs[i]);
+                const name = this.parameterName(param);
+                if (name) {
+                    defineName(name, evaluatedArgs[i]);
                 }
             } else {
-                if (!this.isIdentifier(param)) {
+                const paramName = this.parameterName(param);
+                if (!paramName) {
                     throwEvalError(`invalid number of arguments in function ${func.id}`);
                 }
-                const paramName = param.id;
                 const defaultValue = inputDefaults.get(paramName);
                 if (!defaultValue) {
                     throwEvalError(`invalid number of arguments in function ${func.id}`);

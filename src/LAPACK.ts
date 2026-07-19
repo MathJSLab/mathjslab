@@ -1,9 +1,8 @@
 import { type ComplexType, type NumLikeType, Complex, toNumber } from './Complex';
 import { type ElementType, MultiArray } from './MultiArray';
 import { BLAS } from './BLAS';
-import { MathOperation } from './MathOperation';
-import { LinearAlgebra } from './LinearAlgebra';
-import { EXPECT_TOL } from './LAPACKtest';
+
+const EXPECT_TOL = 1e-14;
 
 type LAPACKConfig = {
     /**
@@ -40,6 +39,30 @@ abstract class LAPACK {
      * `LAPACK` current settings.
      */
     public static readonly settings: LAPACKConfig = LAPACK.defaultSettings;
+
+    /**
+     * Multiply two matrix-valued `MultiArray` objects inside the LAPACK layer.
+     *
+     * This helper intentionally stays on raw BLAS multiplication instead of
+     * routing through `MathOperation`, because LAPACK is the numerical backend
+     * for higher-level language operators.
+     *
+     * @param left Left matrix.
+     * @param right Right matrix.
+     * @returns Matrix product `left * right`.
+     */
+    private static readonly mtimes = (left: MultiArray, right: MultiArray): MultiArray => {
+        const rows = left.dimension[0];
+        const inner = left.dimension[1];
+        const columns = right.dimension[1];
+        if (inner !== right.dimension[0]) {
+            throw new Error(`LAPACK.mtimes: nonconformant arguments (op1 is ${left.dimension.join('x')}, op2 is ${right.dimension.join('x')}).`);
+        }
+        const result = new MultiArray([rows, columns]);
+        BLAS.gemm(Complex.one(), left.array as ComplexType[][], rows, inner, right.array as ComplexType[][], columns, Complex.zero(), result.array as ComplexType[][]);
+        MultiArray.setType(result);
+        return result;
+    };
 
     /**
      * Set configuration options for `LAPACK`.
@@ -257,7 +280,7 @@ abstract class LAPACK {
      * Each 2-D page `[m,n]` in `ND` array gets its own identity.
      * @param dims `number[] | ...number`
      */
-    public static readonly eye = (...dims: any[]): ComplexType[][] => {
+    public static readonly eye = (...dims: (number | number[])[]): ComplexType[][] => {
         const fullDims: number[] = dims.flat();
         const m = fullDims[0];
         const n = fullDims[1];
@@ -274,10 +297,10 @@ abstract class LAPACK {
         }
     };
 
-    public static readonly fillFactory = (fill: (_: any) => ComplexType): ((...dims: any[]) => ComplexType[][]) => {
-        return (...dims: any[]): ComplexType[][] => {
+    public static readonly fillFactory = (fill: () => ComplexType): ((...dims: (number | number[])[]) => ComplexType[][]) => {
+        return (...dims: (number | number[])[]): ComplexType[][] => {
             const fullDims: number[] = dims.flat();
-            return Array.from({ length: fullDims[0] * fullDims.slice(2).reduce((p, c) => p * c, 1) }, (_) => Array.from({ length: fullDims[1] }, fill));
+            return Array.from({ length: fullDims[0] * fullDims.slice(2).reduce((p, c) => p * c, 1) }, () => Array.from({ length: fullDims[1] }, fill));
         };
     };
 
@@ -294,11 +317,11 @@ abstract class LAPACK {
      * @param dims `number[] | ...number`
      * @returns
      */
-    public static readonly zeros = LAPACK.fillFactory((_) => Complex.zero());
+    public static readonly zeros = LAPACK.fillFactory(() => Complex.zero());
 
-    public static readonly ones = LAPACK.fillFactory((_) => Complex.one());
+    public static readonly ones = LAPACK.fillFactory(() => Complex.one());
 
-    public static readonly diag = (diag: ComplexType[], k: number = 0, ...dims: any[]): ComplexType[][] => {
+    public static readonly diag = (diag: ComplexType[], k: number = 0, ...dims: (number | number[])[]): ComplexType[][] => {
         const fullDims = dims.length > 0 ? dims.flat() : [diag.length, diag.length];
         const m = fullDims[0];
         const n = fullDims[1];
@@ -2977,7 +3000,7 @@ abstract class LAPACK {
             // Multiply Q by the tridiagonal eigenvectors.
             const vectors = new MultiArray([V.length, V[0].length]);
             vectors.array = V;
-            Q = MathOperation.mtimes(Q, vectors) as MultiArray;
+            Q = LAPACK.mtimes(Q, vectors);
             return { D: MultiArray.toDiagonalMatrix(D), V: Q };
         } else {
             // Eigenvalues only.
@@ -3020,7 +3043,7 @@ abstract class LAPACK {
             // Multiply Q by the tridiagonal eigenvectors.
             const Z = new MultiArray([n, n]);
             Z.array = V;
-            Q = MathOperation.mtimes(Q, Z) as MultiArray;
+            Q = LAPACK.mtimes(Q, Z);
             return { D: MultiArray.toDiagonalMatrix(D), V: Q };
         } else {
             // Case 2: real symmetric matrix.
@@ -3033,7 +3056,7 @@ abstract class LAPACK {
             const { D, V } = LAPACK.steqr_vectors(diag, offdiag);
             const Z = new MultiArray([n, n]);
             Z.array = V;
-            Q = MathOperation.mtimes(Q, Z) as MultiArray;
+            Q = LAPACK.mtimes(Q, Z);
             return { D: MultiArray.toDiagonalMatrix(D), V: Q };
         }
     };
@@ -3102,5 +3125,5 @@ abstract class LAPACK {
 }
 
 export type { ElementType };
-export { LAPACK };
+export { LAPACK, EXPECT_TOL };
 export default { LAPACK };

@@ -1,5 +1,6 @@
 /// <reference types="jest" />
-import { AST, Complex } from './AST';
+import { AST } from './AST';
+import { Complex } from './Complex';
 import { Scope } from './Scope';
 
 describe('Scope', () => {
@@ -47,6 +48,20 @@ describe('Scope', () => {
 
             expect(Complex.realToNumber(snapshot.resolveName('x')?.node)).toBe(7);
             expect(snapshot.resolveName('x')?.node).not.toBe(value);
+        });
+
+        it('Should order explicit and wildcard imports lexically.', () => {
+            const parent = Scope.create();
+            const child = Scope.create(parent);
+
+            parent.defineImport('pkg.parent.Target');
+            child.defineImport('pkg.child.*');
+
+            expect(child.importedNameCandidates('Target')).toEqual(['pkg.child.Target', 'pkg.parent.Target']);
+
+            child.defineImport('pkg.child.Target');
+
+            expect(child.importedNameCandidates('Target')).toEqual(['pkg.child.Target']);
         });
     });
 });

@@ -1,7 +1,7 @@
 import type { NodeInput } from './AST';
 import type { ClassEnumerationDefinition } from './ClassMember';
 import type { ClassDefinition } from './ClassDefinition';
-import type { Interpreter } from './Interpreter';
+import type { RuntimeDisplay } from './RuntimeDisplay';
 
 /**
  * Runtime value representing one member of a MATLAB/Octave enumeration class.
@@ -12,7 +12,7 @@ class ClassEnumerationValue {
     /** Runtime type tag stored on the enumeration value. */
     public readonly type = ClassEnumerationValue.CLASS_ENUMERATION_VALUE;
     /** Optional AST-style parent pointer used by generic value handling. */
-    public parent: any;
+    public parent?: unknown;
     /** Class that owns the enumeration member. */
     public readonly classDefinition: ClassDefinition;
     /** Enumeration member metadata. */
@@ -67,7 +67,7 @@ class ClassEnumerationValue {
      * @param _interpreter Interpreter requesting unparse.
      * @returns Fully qualified enumeration member name.
      */
-    public static readonly unparse = (value: ClassEnumerationValue, _interpreter: Interpreter): string => `${value.classDefinition.name}.${value.enumeration.name}`;
+    public static readonly unparse = (value: ClassEnumerationValue, _interpreter: RuntimeDisplay): string => `${value.classDefinition.name}.${value.enumeration.name}`;
 
     /**
      * Copy this enumeration value.

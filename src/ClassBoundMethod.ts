@@ -1,6 +1,6 @@
 import type { ClassMethodDefinition } from './ClassMember';
 import type { ClassInstance } from './ClassInstance';
-import type { Interpreter } from './Interpreter';
+import type { RuntimeDisplay } from './RuntimeDisplay';
 
 /**
  * Runtime value representing an instance method already bound to an object.
@@ -11,7 +11,7 @@ class ClassBoundMethod {
     /** Runtime type tag stored on the bound method. */
     public readonly type = ClassBoundMethod.CLASS_BOUND_METHOD;
     /** Optional AST-style parent pointer used by generic value handling. */
-    public parent: any;
+    public parent?: unknown;
     /** Object instance that will be supplied as the receiver. */
     public readonly instance: ClassInstance;
     /** Method metadata selected from the receiver class. */
@@ -60,7 +60,7 @@ class ClassBoundMethod {
      * @param _interpreter Interpreter requesting unparse.
      * @returns Human-readable method summary.
      */
-    public static readonly unparse = (boundMethod: ClassBoundMethod, _interpreter: Interpreter): string => {
+    public static readonly unparse = (boundMethod: ClassBoundMethod, _interpreter: RuntimeDisplay): string => {
         return `${boundMethod.instance.classDefinition.name}.${boundMethod.method.name} method`;
     };
 

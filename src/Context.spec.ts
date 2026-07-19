@@ -1,12 +1,15 @@
 /// <reference types="jest" />
 import type { NodeBuiltInFunction, NodeClassDef } from './AST';
-import { AST, Complex } from './AST';
+import { AST } from './AST';
+import { Complex } from './Complex';
 import { Callables } from './Callable';
 import { CallFrame } from './CallFrame';
 import { ClassDefinition } from './ClassDefinition';
+import { ClassInstance } from './ClassInstance';
 import { Context } from './Context';
 import { EvalError, ReferenceError, SyntaxError, UndefinedReferenceError, CircularReferenceError } from './InterpreterError';
 import { Interpreter } from './Interpreter';
+import { FunctionHandle } from './FunctionHandle';
 import { Scope } from './Scope';
 
 const parseClass = (source: string): NodeClassDef => (Interpreter.Create().Parse(source) as any).list[0] as NodeClassDef;
@@ -65,6 +68,41 @@ describe('Context', () => {
             expect(context.aliasNameFunction('cos')).toBe('cos');
         });
 
+        it('Should expose structured MATLAB/Octave name precedence.', () => {
+            const context = Context.create();
+            const localFunction = AST.nodeFunctionDefinition(AST.nodeIdentifier('target'), AST.nodeList([]), AST.nodeList([]), AST.nodeList([]), AST.nodeList([]));
+            const importedFunction = AST.nodeFunctionDefinition(AST.nodeIdentifier('pkg.target'), AST.nodeList([]), AST.nodeList([]), AST.nodeList([]), AST.nodeList([]));
+            const wildcardFunction = AST.nodeFunctionDefinition(AST.nodeIdentifier('pkg.wild.wildonly'), AST.nodeList([]), AST.nodeList([]), AST.nodeList([]), AST.nodeList([]));
+            const importedClass = ClassDefinition.create(parseClass(['classdef pkg.ImportedTarget', 'end'].join('\n')));
+
+            context.assignFunction('target', localFunction);
+            context.assignFunction('pkg.target', importedFunction);
+            context.assignFunction('pkg.wild.wildonly', wildcardFunction);
+            context.defineClassDefinition(importedClass);
+            context.defineBuiltInFunction('target', () => Complex.create(99));
+
+            expect(context.resolveSymbol('target')?.kind).toBe('function');
+            expect(context.resolveSymbol('target')?.source).toBe('local');
+
+            context.assignName('target', Complex.create(7));
+            const variable = context.resolveSymbol('target');
+            expect(variable?.kind).toBe('variable');
+            expect(Complex.realToNumber(variable?.entry?.node)).toBe(7);
+
+            context.currentScope.removeName('target');
+            context.currentScope.removeFunction('target');
+            context.defineImport('pkg.ImportedTarget');
+            expect(context.resolveSymbol('ImportedTarget')?.kind).toBe('class');
+            expect(context.resolveSymbol('ImportedTarget')?.resolvedName).toBe('pkg.ImportedTarget');
+
+            context.defineImport('pkg.target');
+            expect(context.resolveSymbol('target')?.kind).toBe('function');
+            expect(context.resolveSymbol('target')?.resolvedName).toBe('pkg.target');
+
+            context.defineImport('pkg.wild.*');
+            expect(context.resolveSymbol('wildonly')?.resolvedName).toBe('pkg.wild.wildonly');
+        });
+
         it('Should create child scopes with the current scope as default parent.', () => {
             const context = Context.create();
             const child = context.createChildScope();
@@ -82,6 +120,21 @@ describe('Context', () => {
 
             expect(context.resolveClassDefinition('ContextClass')).toBe(definition);
             expect(context.resolveClassDefinition('notAClass')).toBeUndefined();
+        });
+
+        it('Should classify call dispatch before applying calls or indexing.', () => {
+            const context = Context.create();
+            const parent = AST.nodeIndexExpr(AST.nodeIdentifier('target'), AST.nodeList([]), '()');
+            const classDefinition = ClassDefinition.create(parseClass(['classdef DispatchContextClass', 'end'].join('\n')));
+            const receiver = new ClassInstance(classDefinition);
+
+            context.defineBuiltInFunction('sin', () => Complex.create(0));
+
+            expect(context.resolveCallDispatch(FunctionHandle.create('sin'), parent).kind).toBe('callable');
+            expect(context.resolveCallDispatch(classDefinition, parent).kind).toBe('constructor');
+            expect(context.resolveCallDispatch(AST.nodeIdentifier('read'), parent, [receiver as any]).kind).toBe('functional-class-method');
+            expect(context.resolveCallDispatch(AST.nodeIdentifier('missing'), parent, [Complex.create(1)]).kind).toBe('undefined-function');
+            expect(context.resolveCallDispatch(Complex.create(1), parent).kind).toBe('indexing');
         });
 
         it('Should push and pop requested output counts and forward-reference targets.', () => {

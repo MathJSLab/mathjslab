@@ -1,7 +1,9 @@
 /// <reference types="jest" />
 import path from 'node:path';
 import type { FunctionTable, NameEntry, NameTable, NodeFunctionDefinition, NodeInput } from './AST';
-import { AST, CharString, Complex } from './AST';
+import { AST } from './AST';
+import { CharString } from './CharString';
+import { Complex } from './Complex';
 import type { WorkspaceScope } from './FunctionWorkspace';
 import { FunctionWorkspace } from './FunctionWorkspace';
 
@@ -88,6 +90,29 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                     throw new Error(message);
                 }),
             ).toThrow('inputname: argument number must be a positive integer.');
+        });
+
+        it('Should optionally resolve inputname from caller expressions.', () => {
+            const expression = AST.nodeOperation('+', AST.nodeIdentifier('x'), Complex.create(1));
+            const unparse = jest.fn(() => 'x+1');
+
+            expect(
+                FunctionWorkspace.inputName([expression], Complex.create(1), (message) => {
+                    throw new Error(message);
+                }).str,
+            ).toBe('');
+            expect(
+                FunctionWorkspace.inputName(
+                    [expression],
+                    Complex.create(1),
+                    (message) => {
+                        throw new Error(message);
+                    },
+                    false,
+                    unparse,
+                ).str,
+            ).toBe('x+1');
+            expect(unparse).toHaveBeenCalledWith(expression);
         });
 
         it('Should resolve base and caller workspaces.', () => {

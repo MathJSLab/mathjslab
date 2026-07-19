@@ -1,7 +1,7 @@
 import type { NodeInput } from './AST';
 import { CharString } from './CharString';
 import type { ClassInstance } from './ClassInstance';
-import type { Interpreter } from './Interpreter';
+import type { RuntimeDisplay } from './RuntimeDisplay';
 
 /**
  * Runtime value compatible with MATLAB's `event.EventData` shape.
@@ -12,7 +12,7 @@ class ClassEventData {
     /** Runtime type tag stored on event data objects. */
     public readonly type: number = ClassEventData.CLASS_EVENT_DATA;
     /** Optional AST-style parent pointer used by generic value handling. */
-    public parent: any;
+    public parent?: unknown;
     /** Object that raised the event. */
     public readonly source: ClassInstance;
     /** Name of the event that was raised. */
@@ -71,7 +71,7 @@ class ClassEventData {
      * @param _interpreter Interpreter requesting unparse.
      * @returns Human-readable event data summary.
      */
-    public static readonly unparse = (eventData: ClassEventData, _interpreter: Interpreter): string => `event.EventData ${eventData.source.classDefinition.name}.${eventData.eventName}`;
+    public static readonly unparse = (eventData: ClassEventData, _interpreter: RuntimeDisplay): string => `event.EventData ${eventData.source.classDefinition.name}.${eventData.eventName}`;
 
     /**
      * Copy event data.

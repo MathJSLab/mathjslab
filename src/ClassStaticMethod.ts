@@ -1,6 +1,6 @@
 import type { ClassMethodDefinition } from './ClassMember';
 import type { ClassDefinition } from './ClassDefinition';
-import type { Interpreter } from './Interpreter';
+import type { RuntimeDisplay } from './RuntimeDisplay';
 
 /**
  * Runtime value representing a static class method selected from a class.
@@ -11,7 +11,7 @@ class ClassStaticMethod {
     /** Runtime type tag stored on the static method wrapper. */
     public readonly type = ClassStaticMethod.CLASS_STATIC_METHOD;
     /** Optional AST-style parent pointer used by generic value handling. */
-    public parent: any;
+    public parent?: unknown;
     /** Class that owns the static method. */
     public readonly classDefinition: ClassDefinition;
     /** Static method metadata. */
@@ -60,7 +60,7 @@ class ClassStaticMethod {
      * @param _interpreter Interpreter requesting unparse.
      * @returns Human-readable method summary.
      */
-    public static readonly unparse = (staticMethod: ClassStaticMethod, _interpreter: Interpreter): string => {
+    public static readonly unparse = (staticMethod: ClassStaticMethod, _interpreter: RuntimeDisplay): string => {
         return `${staticMethod.classDefinition.name}.${staticMethod.method.name} static method`;
     };
 

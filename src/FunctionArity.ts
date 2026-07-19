@@ -1,11 +1,14 @@
 import type { NodeIdentifier, NodeIgnoredTarget, NodeInput } from './AST';
-import { Complex, MultiArray } from './AST';
+import { Complex } from './Complex';
+import { MultiArray } from './MultiArray';
 import type { Callable as ArityCallable } from './Callable';
 import { FunctionSignature } from './FunctionSignature';
 
 type ArityCheckName = 'narginchk' | 'nargoutchk';
 
+/** Error callback used by arity helpers. */
 type ThrowError = (message: string) => never;
+/** Identifier-like node used by `nargin`/`nargout` arity extraction. */
 type ArityName = NodeIdentifier | NodeIgnoredTarget;
 
 /**
@@ -18,6 +21,9 @@ type ArityName = NodeIdentifier | NodeIgnoredTarget;
 class FunctionArity {
     /**
      * Compute the number of accepted input arguments for a callable.
+     *
+     * @param callable Callable to inspect.
+     * @returns Fixed arity or negative variadic arity.
      */
     public static inputArity(callable: ArityCallable): number {
         switch (callable.type) {
@@ -36,6 +42,9 @@ class FunctionArity {
 
     /**
      * Compute the number of produced/requestable output arguments for a callable.
+     *
+     * @param callable Callable to inspect.
+     * @returns Fixed arity or negative variadic arity.
      */
     public static outputArity(callable: ArityCallable): number {
         switch (callable.type) {
@@ -52,6 +61,12 @@ class FunctionArity {
 
     /**
      * Validate and convert a `narginchk`/`nargoutchk` bound.
+     *
+     * @param name Built-in name used in diagnostics.
+     * @param bound Evaluated bound value.
+     * @param allowInfinity Whether positive infinity is accepted.
+     * @param throwSyntaxError Syntax-error callback.
+     * @returns Numeric bound.
      */
     public static countBound(name: ArityCheckName, bound: NodeInput, allowInfinity: boolean, throwSyntaxError: ThrowError): number {
         const valueNode = MultiArray.isInstanceOf(bound) && MultiArray.isScalar(bound) ? MultiArray.firstElement(bound) : bound;
@@ -67,6 +82,13 @@ class FunctionArity {
 
     /**
      * Implement the range check shared by `narginchk` and `nargoutchk`.
+     *
+     * @param name Built-in name used in diagnostics.
+     * @param min Minimum bound value.
+     * @param max Maximum bound value.
+     * @param count Actual argument count.
+     * @param throwSyntaxError Syntax-error callback.
+     * @param throwEvalError Evaluation-error callback.
      */
     public static checkFunctionCount(name: ArityCheckName, min: NodeInput, max: NodeInput, count: number, throwSyntaxError: ThrowError, throwEvalError: ThrowError): void {
         const minimum = this.countBound(name, min, false, throwSyntaxError);
@@ -81,6 +103,10 @@ class FunctionArity {
 
     /**
      * Convert an identifier list to the fixed/variadic arity convention.
+     *
+     * @param items Parameter or return-name nodes.
+     * @param variadicName Expected trailing variadic identifier.
+     * @returns Fixed list length or negative variadic position.
      */
     private static identifierListArity(items: ArityName[], variadicName: 'varargin' | 'varargout'): number {
         const last = items[items.length - 1];

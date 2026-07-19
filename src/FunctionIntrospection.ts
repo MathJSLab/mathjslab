@@ -1,5 +1,8 @@
 import type { FunctionTable, NodeExpr, NodeInput } from './AST';
-import { CharString, Complex, MultiArray, Structure } from './AST';
+import { CharString } from './CharString';
+import { Complex } from './Complex';
+import { MultiArray } from './MultiArray';
+import { Structure } from './Structure';
 import { FunctionHandle } from './FunctionHandle';
 
 /**
@@ -10,6 +13,11 @@ type IntrospectionScope = {
      * Functions visible from the inspected workspace.
      */
     functionTable: FunctionTable;
+    /**
+     * Lexical parent scope, used by function-file calls whose subfunctions live
+     * in the definition scope rather than in the transient call scope.
+     */
+    parent?: IntrospectionScope;
 };
 
 /**
@@ -51,25 +59,56 @@ type ThrowSyntaxError = (message: string) => never;
  * are still derived from active call frames and scopes.
  */
 class FunctionIntrospection {
+    private static functionNames(scope: IntrospectionScope): string[] {
+        return Object.keys(scope.functionTable).filter((name) => scope.functionTable[name]?.type === 'FCNDEF');
+    }
+
+    private static nearestFunctionScope(
+        frame: IntrospectionFrame | undefined,
+        currentScope: IntrospectionScope,
+    ): { scope: IntrospectionScope; excludeName?: string; hasFunctionFrame: boolean } {
+        if (!frame) {
+            return { scope: currentScope, hasFunctionFrame: false };
+        }
+        if (this.functionNames(frame.scope).length > 0) {
+            return { scope: frame.scope, hasFunctionFrame: true };
+        }
+        let scope = frame.scope.parent;
+        while (scope) {
+            if (this.functionNames(scope).length > 0) {
+                return { scope, excludeName: frame.func?.node?.id, hasFunctionFrame: true };
+            }
+            scope = scope.parent;
+        }
+        return { scope: frame.scope, hasFunctionFrame: true };
+    }
+
     /**
      * Return handles for user-defined functions visible in the nearest function scope.
+     *
+     * @param currentFrame Active call frame.
+     * @param currentScope Active scope used when no function frame exists.
+     * @returns Column cell array of function handles.
      */
     public static localFunctionHandles(currentFrame: IntrospectionFrame | undefined, currentScope: IntrospectionScope): MultiArray {
         const functionFrame = this.nearestFunctionFrame(currentFrame);
-        const scope = functionFrame?.scope ?? currentScope;
-        const names = Object.keys(scope.functionTable)
-            .filter((name) => scope.functionTable[name]?.type === 'FCNDEF')
+        const { scope, excludeName, hasFunctionFrame } = this.nearestFunctionScope(functionFrame, currentScope);
+        const names = this.functionNames(scope)
+            .filter((name) => name !== excludeName)
             .sort();
         const result = new MultiArray([names.length, 1], null, true);
         result.array = names.map((name) => {
-            const closure = functionFrame ? scope : undefined;
-            return [FunctionHandle.create(name, [], null, closure as any)];
+            const closure = hasFunctionFrame ? scope : undefined;
+            return [FunctionHandle.create(name, [], null, closure as unknown as Parameters<typeof FunctionHandle.create>[3])];
         });
         return result;
     }
 
     /**
      * Compute the display name for a stack frame.
+     *
+     * @param frame Frame to inspect.
+     * @returns User-facing function/frame name.
      */
     public static frameName(frame: IntrospectionFrame): string {
         if (frame.name) return frame.name;
@@ -89,6 +128,11 @@ class FunctionIntrospection {
 
     /**
      * Build the structure array returned by `dbstack`.
+     *
+     * @param args Evaluated `dbstack` arguments.
+     * @param callStack Current call stack.
+     * @param throwSyntaxError Syntax-error callback for invalid options.
+     * @returns Structure array with `file`, `name`, and `line` fields.
      */
     public static dbstackResult(args: NodeInput[], callStack: IntrospectionFrame[], throwSyntaxError: ThrowSyntaxError): MultiArray {
         const skip = this.dbstackSkip(args, throwSyntaxError);
@@ -111,6 +155,9 @@ class FunctionIntrospection {
 
     /**
      * Find the nearest user-defined function frame.
+     *
+     * @param currentFrame Active call frame.
+     * @returns Nearest enclosing function frame, if any.
      */
     private static nearestFunctionFrame(currentFrame: IntrospectionFrame | undefined): IntrospectionFrame | undefined {
         let functionFrame = currentFrame;
@@ -122,6 +169,10 @@ class FunctionIntrospection {
 
     /**
      * Parse `dbstack` skip/options arguments.
+     *
+     * @param args Evaluated `dbstack` arguments.
+     * @param throwSyntaxError Syntax-error callback.
+     * @returns Number of frames to omit from the top of the stack.
      */
     private static dbstackSkip(args: NodeInput[], throwSyntaxError: ThrowSyntaxError): number {
         let skip = 0;

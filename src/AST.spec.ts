@@ -1,6 +1,10 @@
 /// <reference types="jest" />
 import path from 'node:path';
-import { AST, CharString, Complex, FunctionHandle, MultiArray, type NodeExpr, type NodeIdentifier, type NodeInput, type NodeList } from './AST';
+import { AST, type NodeExpr, type NodeIdentifier, type NodeInput, type NodeList } from './AST';
+import { CharString } from './CharString';
+import { Complex } from './Complex';
+import { FunctionHandle } from './FunctionHandle';
+import { MultiArray } from './MultiArray';
 
 const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.sep}]+)\\.spec\\.([cm]?[jt]s)$`))!;
 const unitName = __filenameMatch[1];
@@ -36,6 +40,29 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(copy).not.toBe(source);
             expect(copy).toEqual(source);
             expect(copy.child).toBe(child);
+        });
+
+        it('Should narrow common AST node shapes with type guards.', () => {
+            const identifier = AST.nodeIdentifier('x');
+            const list = AST.nodeListFirst(identifier);
+            const index = AST.nodeIndexExpr(AST.nodeIdentifier('A'), AST.nodeListFirst(AST.nodeIdentifier('i')));
+            const ref = AST.nodeIndirectRef(AST.nodeIdentifier('obj'), 'field');
+            const ignored = AST.nodeIgnoredTarget();
+            const defaulted = AST.nodeOperation('=', AST.nodeIdentifier('x'), Complex.one() as NodeExpr);
+            const returnList = AST.nodeReturnList(() => Complex.one() as NodeExpr);
+
+            expect(AST.isNodeBase(identifier)).toBe(true);
+            expect(AST.isNodeIdentifier(identifier)).toBe(true);
+            expect(AST.isNodeList(list)).toBe(true);
+            expect(AST.isNodeIndexExpr(index)).toBe(true);
+            expect(AST.isNodeIndirectRef(ref)).toBe(true);
+            expect(AST.isNodeReturnList(returnList)).toBe(true);
+            expect(AST.isNodeIgnoredTarget(ignored)).toBe(true);
+            expect(AST.isNodeFunctionReturn(ignored)).toBe(true);
+            expect(AST.isNodeFunctionParameter(defaulted)).toBe(true);
+            expect(AST.isNodeDefaultedParameter({ type: '=', left: AST.nodeIdentifier('x') })).toBe(false);
+            expect(AST.isNodeIdentifier(Complex.one())).toBe(false);
+            expect(AST.isNodeBase(null)).toBe(false);
         });
 
         it('Should attach parent pointers when building and appending lists.', () => {
@@ -82,6 +109,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(expr.parent).toBe(index);
             expect(i.parent).toBe(index);
             expect(j.parent).toBe(index);
+            expect(i.index).toBe(0);
+            expect(j.index).toBe(1);
         });
 
         it('Should create range, colon, end-range, and superclass constructor nodes.', () => {
@@ -112,6 +141,11 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(instance.parent).toBe(ctor);
             expect(superclass.parent).toBe(ctor);
             expect(arg.parent).toBe(ctor);
+
+            const className = AST.nodeIdentifier('Sample');
+            const metaclass = AST.nodeMetaClass(className);
+            expect(metaclass.className).toBe(className);
+            expect(className.parent).toBe(metaclass);
         });
 
         it('Should build unary, binary, postfix, and assignment operation nodes.', () => {
@@ -142,12 +176,15 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         it('Should append indirect references to an existing reference chain.', () => {
             const base = AST.nodeIdentifier('obj');
             const first = AST.nodeIndirectRef(base, 'field');
-            const second = AST.nodeIndirectRef(first, AST.nodeIdentifier('dynamic'));
+            const dynamic = AST.nodeIdentifier('dynamic');
+            const second = AST.nodeIndirectRef(first, dynamic);
 
             expect(second).toBe(first);
+            expect(base.parent).toBe(first);
             expect(second.field).toHaveLength(2);
             expect(second.field[0]).toBe('field');
             expect((second.field[1] as NodeIdentifier).id).toBe('dynamic');
+            expect(dynamic.parent).toBe(first);
         });
     });
 
@@ -235,9 +272,15 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const elseList = AST.nodeListFirst(AST.nodeBreak());
             const elseifExpr = AST.nodeIdentifier('other');
             const elseifThen = AST.nodeListFirst(AST.nodeContinue());
+            const elseifNode = AST.nodeElseIf(elseifExpr, elseifThen);
+            const elseNode = AST.nodeElse(elseList);
 
-            AST.nodeIfAppendElseIf(nodeIf, AST.nodeElseIf(elseifExpr, elseifThen));
-            AST.nodeIfAppendElse(nodeIf, AST.nodeElse(elseList));
+            expect(elseifExpr.parent).toBe(elseifNode);
+            expect(elseifThen.parent).toBe(elseifNode);
+            expect(elseList.parent).toBe(elseNode);
+
+            AST.nodeIfAppendElseIf(nodeIf, elseifNode);
+            AST.nodeIfAppendElse(nodeIf, elseNode);
 
             expect(nodeIf.expression).toEqual([condition, elseifExpr]);
             expect(nodeIf.then).toEqual([thenList, elseifThen]);
@@ -279,7 +322,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(section.parent).toBe(classDef);
             expect(section.members.parent).toBe(section);
             expect(property.parent).toBe(section);
-            expect(property.defaultValue!.parent).toBe(property);
+            expect(property.validation.parent).toBe(property);
+            expect(property.validation.default).toBe(property.defaultValue);
+            expect(property.defaultValue!.parent).toBe(property.validation);
             expect(enumeration.args[0].parent).toBe(enumeration);
         });
 

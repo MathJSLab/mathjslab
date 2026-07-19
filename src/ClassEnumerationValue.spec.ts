@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 import type { NodeClassDef } from './AST';
-import { Complex } from './AST';
+import { Complex } from './Complex';
 import { ClassDefinition } from './ClassDefinition';
 import { ClassEnumerationValue } from './ClassEnumerationValue';
 import { Interpreter } from './Interpreter';

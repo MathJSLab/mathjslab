@@ -1,7 +1,9 @@
 /// <reference types="jest" />
 import path from 'node:path';
 import type { BuiltInFunctionParameter } from './AST';
-import { CharString, Complex, MultiArray } from './AST';
+import { CharString } from './CharString';
+import { Complex } from './Complex';
+import { MultiArray } from './MultiArray';
 import { FunctionHandle } from './FunctionHandle';
 import { FunctionValidation } from './FunctionValidation';
 
@@ -18,11 +20,13 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
         it('Should classify scalar, array, cell, text and function handle values.', () => {
             const matrix = new MultiArray([1, 2], [[Complex.create(1), Complex.create(2)]]);
+            const logicalRow = new MultiArray([1, 2], [[Complex.true(), Complex.false()]]);
             const cell = new MultiArray([1, 1], [[Complex.create(1)]], true);
 
             expect(FunctionValidation.className(Complex.create(1))).toBe('double');
             expect(FunctionValidation.className(Complex.true())).toBe('logical');
             expect(FunctionValidation.className(matrix)).toBe('double');
+            expect(FunctionValidation.className(logicalRow)).toBe('logical');
             expect(FunctionValidation.className(cell)).toBe('cell');
             expect(FunctionValidation.className(new CharString('x'))).toBe('char');
             expect(FunctionValidation.className(FunctionHandle.create('sin'))).toBe('function_handle');
@@ -30,10 +34,15 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
         it('Should expose numeric elements only for numeric scalar and non-cell arrays.', () => {
             const matrix = new MultiArray([1, 2], [[Complex.create(1), Complex.create(2)]]);
+            const logicalRow = new MultiArray([1, 2], [[Complex.true(), Complex.false()]]);
             const cell = new MultiArray([1, 1], [[Complex.create(1)]], true);
 
             expect(FunctionValidation.numericElements(Complex.create(1))).toHaveLength(1);
+            expect(FunctionValidation.numericElements(Complex.true())).toBeUndefined();
             expect(FunctionValidation.numericElements(matrix)).toHaveLength(2);
+            expect(FunctionValidation.numericElements(logicalRow)).toBeUndefined();
+            expect(FunctionValidation.numericElements(logicalRow, { includeLogical: true })).toHaveLength(2);
+            expect(FunctionValidation.isLogicalValue(logicalRow)).toBe(true);
             expect(FunctionValidation.numericElements(cell)).toBeUndefined();
             expect(FunctionValidation.numericElements(new CharString('x'))).toBeUndefined();
         });
@@ -50,9 +59,14 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const withZero = new MultiArray([1, 2], [[Complex.create(1), Complex.create(0)]]);
 
             expect(FunctionValidation.matchesBuiltInValidator(matrix, 'numericOrLogical')).toBe(true);
+            expect(FunctionValidation.matchesBuiltInValidator(Complex.true(), 'numeric')).toBe(false);
+            expect(FunctionValidation.matchesBuiltInValidator(Complex.true(), 'numericOrLogical')).toBe(true);
             expect(FunctionValidation.matchesBuiltInValidator(new CharString('x'), 'numericOrLogical')).toBe(false);
             expect(FunctionValidation.matchesBuiltInValidator(new CharString('x'), 'textScalar')).toBe(true);
             expect(FunctionValidation.matchesBuiltInValidator(Complex.create(1), 'textScalar')).toBe(false);
+            expect(FunctionValidation.matchesBuiltInValidator(new CharString('abc'), 'scalar')).toBe(false);
+            expect(FunctionValidation.matchesBuiltInValidator(new CharString('abc'), 'vector')).toBe(true);
+            expect(FunctionValidation.matchesBuiltInValidator(new CharString('ab'), 'twoElement')).toBe(true);
             expect(FunctionValidation.matchesBuiltInValidator(row, 'matrix2d')).toBe(true);
             expect(FunctionValidation.matchesBuiltInValidator(matrix, 'squareMatrix')).toBe(true);
             expect(FunctionValidation.matchesBuiltInValidator(row, 'squareMatrix')).toBe(false);
@@ -72,12 +86,16 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(FunctionValidation.isDimensionValue(Complex.create(0), false)).toBe(true);
             expect(FunctionValidation.isDimensionValue(Complex.create(2), false)).toBe(true);
             expect(FunctionValidation.isDimensionValue(Complex.create(-1), false)).toBe(false);
+            expect(FunctionValidation.isDimensionValue(new CharString(''), true)).toBe(true);
+            expect(FunctionValidation.isDimensionVector(Complex.create(2), false)).toBe(true);
             expect(FunctionValidation.isDimensionVector(new MultiArray([1, 2], [[Complex.create(2), Complex.create(3)]]), false)).toBe(true);
             expect(FunctionValidation.isDimensionVector(new MultiArray([1, 2], [[Complex.create(2), Complex.create(-3)]]), false)).toBe(false);
         });
 
         it('Should match parameters with classes, string sets and identifier constraints.', () => {
             expect(FunctionValidation.matchesParameter(Complex.create(1), { classes: ['double'], validators: ['scalar', 'real'] })).toBe(true);
+            expect(FunctionValidation.matchesParameter(Complex.true(), { classes: ['double'] })).toBe(false);
+            expect(FunctionValidation.matchesParameter(Complex.true(), { classes: ['logical'] })).toBe(true);
             expect(FunctionValidation.matchesParameter(new CharString('omitnan'), { classes: ['char'], allowedStrings: ['omitnan', 'includenan'] })).toBe(true);
             expect(FunctionValidation.matchesParameter(new CharString('bad-name'), { classes: ['char'], identifier: true })).toBe(false);
             expect(FunctionValidation.matchesParameter(new CharString('good_name'), { classes: ['char'], identifier: true })).toBe(true);

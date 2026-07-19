@@ -1,8 +1,11 @@
 /// <reference types="jest" />
 import path from 'node:path';
 import type { NodeBuiltInFunction, NodeFunctionDefinition } from './AST';
-import { AST, CharString, Complex } from './AST';
-import type { ComplexType } from './Complex';
+import { AST } from './AST';
+import { CharString } from './CharString';
+import { Complex } from './Complex';
+import { MultiArray } from './MultiArray';
+import { Structure } from './Structure';
 import { FunctionHandle } from './FunctionHandle';
 import { FunctionLookup } from './FunctionLookup';
 
@@ -59,6 +62,16 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(FunctionLookup.existCode('ExternalPoint', 'class', undefined, undefined, true)).toBe(8);
             expect(FunctionLookup.existCode('sum', 'builtin', undefined, builtInFunction('sum'))).toBe(5);
             expect(FunctionLookup.existCode('x', 'function', { node: Complex.create(1) }, undefined)).toBe(0);
+            expect(FunctionLookup.existCodeFromResolution('x', undefined, { kind: 'variable', name: 'x', resolvedName: 'x', source: 'local', entry: { node: Complex.create(1) } })).toBe(1);
+            expect(
+                FunctionLookup.existCodeFromResolution('f', 'file', {
+                    kind: 'function',
+                    name: 'f',
+                    resolvedName: 'pkg.f',
+                    source: 'import',
+                    functionDefinition: functionDefinition('pkg.f'),
+                }),
+            ).toBe(2);
         });
 
         it('Should format which results.', () => {
@@ -72,6 +85,14 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(FunctionLookup.whichResult('ExternalPoint', undefined, undefined, undefined, () => '', true)).toEqual(new CharString('ExternalPoint is a class'));
             expect(FunctionLookup.whichResult('@(x)x', undefined, undefined, anonymous, () => '@(x) x')).toEqual(new CharString('@(x) x is an anonymous function'));
             expect(FunctionLookup.whichResult('missing', undefined, undefined, undefined, () => '')).toEqual(new CharString('missing not found'));
+            expect(
+                FunctionLookup.whichResultFromResolution(
+                    'f',
+                    { kind: 'function', name: 'f', resolvedName: 'pkg.f', source: 'import', functionDefinition: functionDefinition('pkg.f') },
+                    undefined,
+                    () => '',
+                ),
+            ).toEqual(new CharString('f is a user-defined function'));
         });
 
         it('Should convert function handles to and from strings.', () => {
@@ -127,6 +148,11 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                 (name) => name,
                 () => undefined,
                 () => 'unused',
+                () => {
+                    const workspace = MultiArray.scalarToMultiArray(new Structure({ captured: Complex.create(7) }));
+                    workspace.isCell = true;
+                    return workspace;
+                },
             );
             const anonymousInfo = FunctionLookup.functionsInfo(
                 anonymous,
@@ -137,8 +163,11 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
             expect((simpleInfo.field.function as CharString).str).toBe('f');
             expect((simpleInfo.field.type as CharString).str).toBe('simple');
+            expect((simpleInfo.field.file as CharString).str).toBe('');
+            expect((simpleInfo.field.workspace as MultiArray).isCell).toBe(true);
+            expect(MultiArray.isEmpty(simpleInfo.field.workspace)).toBe(true);
             expect((nestedInfo.field.type as CharString).str).toBe('nested');
-            expect(Complex.realToNumber(nestedInfo.field.workspace as ComplexType)).toBe(1);
+            expect((nestedInfo.field.workspace as MultiArray).isCell).toBe(true);
             expect((anonymousInfo.field.function as CharString).str).toBe('@(x) x');
             expect((anonymousInfo.field.type as CharString).str).toBe('anonymous');
         });

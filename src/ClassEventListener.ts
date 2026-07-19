@@ -1,6 +1,18 @@
 import type { FunctionHandle } from './FunctionHandle';
-import type { ClassInstance } from './ClassInstance';
-import type { Interpreter } from './Interpreter';
+import type { RuntimeDisplay } from './RuntimeDisplay';
+
+/**
+ * Minimal source-object contract stored by event listeners.
+ *
+ * The concrete runtime object is a `ClassInstance`, but listeners only need the
+ * defining class name for display and the original object identity for callback
+ * dispatch. Keeping this structural avoids a module cycle with `ClassInstance`.
+ */
+type ClassEventSource = {
+    classDefinition: {
+        name: string;
+    };
+};
 
 /**
  * Runtime listener object returned by event subscription APIs.
@@ -11,9 +23,9 @@ class ClassEventListener {
     /** Runtime type tag stored on listener objects. */
     public readonly type = ClassEventListener.CLASS_EVENT_LISTENER;
     /** Optional AST-style parent pointer used by generic value handling. */
-    public parent: any;
+    public parent?: unknown;
     /** Source object that owns the event. */
-    public readonly source: ClassInstance;
+    public readonly source: ClassEventSource;
     /** Event name observed by this listener. */
     public readonly eventName: string;
     /** Function handle called when the event is raised. */
@@ -38,7 +50,7 @@ class ClassEventListener {
      * @param eventName Event name.
      * @param callback Callback function handle.
      */
-    constructor(source: ClassInstance, eventName: string, callback: FunctionHandle) {
+    constructor(source: ClassEventSource, eventName: string, callback: FunctionHandle) {
         this.source = source;
         this.eventName = eventName;
         this.callback = callback;
@@ -52,7 +64,7 @@ class ClassEventListener {
      * @param callback Callback function handle.
      * @returns Runtime listener object.
      */
-    public static readonly create = (source: ClassInstance, eventName: string, callback: FunctionHandle): ClassEventListener => new ClassEventListener(source, eventName, callback);
+    public static readonly create = (source: ClassEventSource, eventName: string, callback: FunctionHandle): ClassEventListener => new ClassEventListener(source, eventName, callback);
 
     /**
      * Test whether a listener has not been deleted.
@@ -79,7 +91,7 @@ class ClassEventListener {
      * @param _interpreter Interpreter requesting unparse.
      * @returns Human-readable listener summary.
      */
-    public static readonly unparse = (listener: ClassEventListener, _interpreter: Interpreter): string => {
+    public static readonly unparse = (listener: ClassEventListener, _interpreter: RuntimeDisplay): string => {
         return `event.listener ${listener.source.classDefinition.name}.${listener.eventName}`;
     };
 
@@ -96,4 +108,5 @@ class ClassEventListener {
 }
 
 export { ClassEventListener };
+export type { ClassEventSource };
 export default { ClassEventListener };

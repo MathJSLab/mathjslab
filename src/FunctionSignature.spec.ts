@@ -1,7 +1,8 @@
 /// <reference types="jest" />
 import path from 'node:path';
 import type { BuiltInFunctionInputSignature, NodeBuiltInFunction } from './AST';
-import { CharString, Complex } from './AST';
+import { CharString } from './CharString';
+import { Complex } from './Complex';
 import { FunctionSignature } from './FunctionSignature';
 
 const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.sep}]+)\\.spec\\.([cm]?[jt]s)\$`))!;

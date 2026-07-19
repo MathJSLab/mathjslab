@@ -1,18 +1,25 @@
 import type { TUnaryOperationLeftName, TBinaryOperationName } from './ComplexInterface';
 import { Complex, ComplexType } from './Complex';
 import { CharString } from './CharString';
-import { Structure } from './Structure';
-import { FunctionHandle } from './FunctionHandle';
-import { ClassDefinition } from './ClassDefinition';
-import { ClassInstance } from './ClassInstance';
-import { ClassBoundMethod } from './ClassBoundMethod';
-import { ClassStaticMethod } from './ClassStaticMethod';
-import { ClassEmptyMethod } from './ClassEmptyMethod';
-import { ClassEnumerationValue } from './ClassEnumerationValue';
-import type { ClassMetaObject } from './ClassMeta';
-import { AST, NodeReturnList, ReturnHandlerResult } from './AST';
-import { Interpreter } from './Interpreter';
-import { Scope } from './Scope';
+import type { RuntimeDisplay, RuntimeEvaluationContext } from './RuntimeDisplay';
+import { RuntimeValue } from './RuntimeValue';
+
+/**
+ * Object-like runtime values that may be stored directly inside a `MultiArray`.
+ *
+ * This structural type intentionally avoids importing concrete runtime classes
+ * such as function handles, class instances, class metadata, and bound methods.
+ * Array storage only needs the shared runtime value contract; behavior-specific
+ * dispatch remains in the corresponding runtime modules.
+ */
+type RuntimeObjectElement = object & {
+    type: number;
+    parent?: unknown;
+    copy?: () => unknown;
+};
+type RuntimeStructureElement = RuntimeObjectElement & {
+    field: Record<string, ElementType>;
+};
 
 /**
  * Scalar runtime values that may be stored directly inside a `MultiArray`.
@@ -21,18 +28,7 @@ import { Scope } from './Scope';
  * arrays can contain arrays as elements, while numeric arrays generally store
  * scalar `ComplexType` values.
  */
-type Elements =
-    | ComplexType
-    | CharString
-    | Structure
-    | FunctionHandle
-    | ClassDefinition
-    | ClassInstance
-    | ClassBoundMethod
-    | ClassStaticMethod
-    | ClassEmptyMethod
-    | ClassEnumerationValue
-    | ClassMetaObject;
+type Elements = ComplexType | CharString | RuntimeObjectElement;
 /**
  * Runtime value accepted in array slots and expression evaluation results.
  *
@@ -55,6 +51,49 @@ type ReduceInitialType = ReduceElementType;
 type ReduceReduceHandlerType = (M: ReduceElementType, DIM?: ReduceElementType) => ReduceElementType;
 type ReduceComparisonHandlerType<ELEMENT = Elements> = (...args: ElementType<ELEMENT>[]) => MultiArray<ELEMENT> | NodeReturnList | undefined;
 type ReduceHandlerType = ReduceReduceHandlerType | ReduceComparisonHandlerType;
+type ReturnHandlerResult = { length: number } & Record<string, ElementType | number | undefined>;
+type ReturnSelector = (evaluated: ReturnHandlerResult, index: number) => ElementType;
+type ReturnHandler = (length: number) => ReturnHandlerResult;
+type NodeReturnList = {
+    type: 'RETLIST';
+    selector: ReturnSelector;
+    handler?: ReturnHandler;
+    parent?: unknown;
+};
+type IndexAssignmentScope = {
+    resolveName(name: string): { node?: unknown } | undefined;
+    defineName(name: string, node: ElementType): { node?: unknown };
+};
+type IndexArgument = ComplexType | MultiArray;
+type NormalizedIndexingStructure = {
+    isLinear: boolean;
+    originalIndexCount: number;
+    args: ElementType[][];
+    argsLength: number[];
+    total: number;
+};
+type IndexingPlan = {
+    isLinear: boolean;
+    isColonOnly: boolean;
+    isRowSelection: boolean;
+    isColumnSelection: boolean;
+    requiresCollapse: boolean;
+    activeDimensions: number[];
+    isFullSlice: boolean[];
+    isScalarIndex: boolean[];
+};
+
+const nodeReturnList = (selector: ReturnSelector, handler?: ReturnHandler): NodeReturnList => ({ type: 'RETLIST', selector, handler });
+
+const throwErrorIfGreaterThanReturnList = (maxLength: number, currentLength: number): void | never => {
+    if (currentLength > maxLength) {
+        throw new EvalError(`element number ${currentLength} undefined in return list`);
+    }
+};
+
+const throwInvalidCallError = (name: string): never => {
+    throw new EvalError(`Invalid call to ${name}.`);
+};
 
 /**
  * MATLAB/Octave-like multidimensional array container.
@@ -109,9 +148,9 @@ class MultiArray<ELEMENT = Elements> {
     /** Runtime tag for string arrays. */
     public static readonly STRING = CharString.STRING;
     /** Runtime tag for structure arrays. */
-    public static readonly STRUCTURE = Structure.STRUCTURE;
+    public static readonly STRUCTURE = 4;
     /** Runtime tag for function-handle arrays. */
-    public static readonly FUNCTION_HANDLE = FunctionHandle.FUNCTION_HANDLE;
+    public static readonly FUNCTION_HANDLE = RuntimeValue.FUNCTION_HANDLE;
 
     /**
      * Whether this array uses cell-array semantics.
@@ -121,7 +160,8 @@ class MultiArray<ELEMENT = Elements> {
     /**
      * Optional AST-style parent pointer used by generic value handling.
      */
-    public parent: any;
+    public parent?: unknown;
+    private static readonly invalidStructureReferenceMessage = 'value cannot be indexed with .';
 
     /**
      * Create a multidimensional array.
@@ -145,19 +185,13 @@ class MultiArray<ELEMENT = Elements> {
                         Array.from({ length: shape[1] }, (_, j) => fill(...MultiArray.rowColumnToSubscript(shape, i, j))),
                     ) as ElementType<ELEMENT>[][];
                 } else if (Array.isArray(fill) && Array.isArray(fill[0])) {
-                    this.array = fill.map((row: ElementType[]) => row.map((elem: ElementType) => elem!.copy() as ElementType)) as any;
+                    this.array = fill.map((row: ElementType[]) => row.map((elem: ElementType) => RuntimeValue.copy(elem) as ElementType<ELEMENT>));
                 } else {
                     this.array = new Array(this.dimensionR.reduce((p, c) => p * c, 1));
-                    if (fill instanceof MultiArray || fill instanceof Structure || ClassInstance.isInstanceOf(fill)) {
-                        for (let i = 0; i < this.array.length; i++) {
-                            this.array[i] = new Array(this.dimension[1]);
-                            for (let j = 0; j < this.dimension[1]; j++) {
-                                this.array[i][j] = fill.copy() as ElementType<ELEMENT>;
-                            }
-                        }
-                    } else {
-                        for (let i = 0; i < this.array.length; i++) {
-                            this.array[i] = new Array(this.dimension[1]).fill(fill);
+                    for (let i = 0; i < this.array.length; i++) {
+                        this.array[i] = new Array(this.dimension[1]);
+                        for (let j = 0; j < this.dimension[1]; j++) {
+                            this.array[i][j] = RuntimeValue.copy(fill) as ElementType<ELEMENT>;
                         }
                     }
                     this.type = (fill as ElementType)!.type;
@@ -667,7 +701,7 @@ class MultiArray<ELEMENT = Elements> {
      * @param M MultiArray object.
      * @returns String of unparsed MultiArray.
      */
-    public static readonly unparse = (M: MultiArray, interpreter: Interpreter, parentPrecedence = 0): string => {
+    public static readonly unparse = (M: MultiArray, interpreter: RuntimeDisplay, parentPrecedence = 0): string => {
         const unparseRows = (row: ElementType[]) => row.map((value) => interpreter.Unparse(value)).join() + ';\n';
         let arraystr: string = '';
         if (M.dimension.reduce((p, c) => p * c, 1) === 0) {
@@ -704,7 +738,7 @@ class MultiArray<ELEMENT = Elements> {
      * @param M MultiArray object.
      * @returns String of unparsed MultiArray in MathML language.
      */
-    public static readonly unparseMathML = (M: MultiArray, interpreter: Interpreter, parentPrecedence = 0): string => {
+    public static readonly unparseMathML = (M: MultiArray, interpreter: RuntimeDisplay, parentPrecedence = 0): string => {
         const unparseRows = (row: ElementType[]) => `<mtr>${row.map((value) => `<mtd>${interpreter.UnparserMathML(value)}</mtd>`).join('')}</mtr>`;
         const buildMrow = (rows: string) =>
             `<mrow><mo fence="true" stretchy="true">${M.isCell ? '{' : '['}</mo><mtable>${rows}</mtable><mo fence="true" stretchy="true">${M.isCell ? '}' : ']'}</mo></mrow>`;
@@ -736,9 +770,9 @@ class MultiArray<ELEMENT = Elements> {
      * @returns MultiArray with character codes as integer.
      */
     public static readonly fromCharString = (text: CharString): MultiArray => {
-        if (text.str.length > 0) {
-            const result = new MultiArray([1, text.str.length]);
-            result.array = [text.str.split('').map((char) => Complex.create(char.charCodeAt(0)))];
+        if (text.length > 0) {
+            const result = new MultiArray(text.dimension);
+            result.array = [text.vector().map((char) => Complex.create(char.charCodeAt(0)))];
             result.type = Complex.REAL;
             return MultiArray.MultiArrayToScalar(result) as MultiArray;
         } else {
@@ -792,12 +826,107 @@ class MultiArray<ELEMENT = Elements> {
         return result;
     };
 
-    private static readonly blankValueForExpansion = (reference?: ElementType): ElementType => {
-        if (reference instanceof Structure) {
-            return Structure.cloneFields(reference);
+    private static readonly isStructureScalar = (value: unknown): value is RuntimeStructureElement =>
+        !!value &&
+        typeof value === 'object' &&
+        (value as { type?: unknown }).type === MultiArray.STRUCTURE &&
+        !!(value as { field?: unknown }).field &&
+        typeof (value as { field?: unknown }).field === 'object';
+
+    private static readonly structureElements = (value: ElementType): RuntimeStructureElement[] => {
+        if (MultiArray.isStructureScalar(value)) {
+            return [value];
         }
-        if (ClassInstance.isInstanceOf(reference)) {
-            return ClassInstance.copy(reference);
+        if (value instanceof MultiArray && !value.isCell) {
+            const elements = MultiArray.linearize(value);
+            return elements.length > 0 && elements.every(MultiArray.isStructureScalar) ? (elements as RuntimeStructureElement[]) : [];
+        }
+        return [];
+    };
+
+    private static readonly structureFieldNames = (value: ElementType): string[] => Object.keys(MultiArray.structureElements(value)[0]?.field ?? {}).sort();
+
+    private static readonly cloneStructureFields = (reference: RuntimeStructureElement): ElementType => {
+        const result = RuntimeValue.createStructure({}) as ElementType;
+        const fieldRecord = (result as RuntimeStructureElement).field;
+        Object.keys(reference.field).forEach((key) => {
+            fieldRecord[key] = MultiArray.emptyArray();
+        });
+        return result;
+    };
+
+    private static readonly structureHasField = (value: ElementType, field: string): boolean => {
+        const elements = MultiArray.structureElements(value);
+        return elements.length > 0 && elements.every((structure) => Object.prototype.hasOwnProperty.call(structure.field, field));
+    };
+
+    private static readonly structureCollectFieldPath = (value: ElementType, field: string[]): ElementType[] => {
+        if (field.length === 0) {
+            return [value];
+        }
+        const elements = MultiArray.structureElements(value);
+        if (elements.length > 0 && value instanceof MultiArray) {
+            return elements.flatMap((structure) => MultiArray.structureCollectFieldPath(structure, field));
+        }
+        if (MultiArray.isStructureScalar(value)) {
+            const nested = value.field[field[0]];
+            if (typeof nested === 'undefined') {
+                throw new EvalError(MultiArray.invalidStructureReferenceMessage);
+            }
+            return field.length === 1 ? [nested] : MultiArray.structureCollectFieldPath(nested, field.slice(1));
+        }
+        throw new EvalError(MultiArray.invalidStructureReferenceMessage);
+    };
+
+    private static readonly getStructureField = (value: ElementType, field: string[]): ElementType => {
+        const values = MultiArray.structureCollectFieldPath(value, field);
+        return values.length === 1 ? values[0] : MultiArray.toRowVector(values);
+    };
+
+    private static readonly structureAssignFieldPath = (target: ElementType, field: string[], value?: ElementType): void => {
+        if (target instanceof MultiArray) {
+            const elements = MultiArray.structureElements(target);
+            if (elements.length === 0) {
+                throw new EvalError(MultiArray.invalidStructureReferenceMessage);
+            }
+            elements.forEach((structure) => MultiArray.structureAssignFieldPath(structure, field, value));
+            return;
+        }
+        if (!MultiArray.isStructureScalar(target) || field.length === 0) {
+            throw new EvalError(MultiArray.invalidStructureReferenceMessage);
+        }
+        if (field.length === 1) {
+            target.field[field[0]] = value ?? MultiArray.emptyArray();
+            return;
+        }
+        const head = field[0];
+        const nested = target.field[head];
+        if (typeof nested === 'undefined' || MultiArray.isEmpty(nested)) {
+            target.field[head] = MultiArray.cloneStructureFields(target);
+        } else if (!MultiArray.isStructureScalar(nested) && MultiArray.structureElements(nested).length === 0) {
+            throw new EvalError(MultiArray.invalidStructureReferenceMessage);
+        }
+        MultiArray.structureAssignFieldPath(target.field[head], field.slice(1), value);
+    };
+
+    private static readonly setEmptyStructureField = (M: MultiArray, field: string): void => {
+        const elements = MultiArray.structureElements(M);
+        if (elements.length === 0) {
+            throw new EvalError(MultiArray.invalidStructureReferenceMessage);
+        }
+        if (!M.isCell && !MultiArray.structureHasField(M, field)) {
+            elements.forEach((structure) => {
+                structure.field[field] = MultiArray.emptyArray();
+            });
+        }
+    };
+
+    private static readonly blankValueForExpansion = (reference?: ElementType): ElementType => {
+        if (MultiArray.isStructureScalar(reference)) {
+            return MultiArray.cloneStructureFields(reference);
+        }
+        if (RuntimeValue.isClassInstance(reference)) {
+            return RuntimeValue.copy(reference) as ElementType;
         }
         return Complex.zero();
     };
@@ -882,7 +1011,7 @@ class MultiArray<ELEMENT = Elements> {
      */
     public static readonly copy = (M: MultiArray): MultiArray => {
         const result = new MultiArray(M.dimension, undefined, M.isCell);
-        result.array = M.array.map((row) => row.map((value) => value!.copy()));
+        result.array = M.array.map((row) => row.map((value) => RuntimeValue.copy(value) as ElementType));
         result.type = M.type;
         return result;
     };
@@ -891,20 +1020,27 @@ class MultiArray<ELEMENT = Elements> {
      * Copy method (for element's generics).
      * @returns
      */
-    public copy(): MultiArray {
-        const result = new MultiArray(this.dimension, undefined, this.isCell);
-        result.array = this.array.map((row) => row.map((value: ElementType<ELEMENT>) => (value as any).copy()));
+    public copy(): MultiArray<ELEMENT> {
+        const result = new MultiArray<ELEMENT>(this.dimension, undefined, this.isCell);
+        result.array = this.array.map((row) => row.map((value: ElementType<ELEMENT>) => RuntimeValue.copy(value) as ElementType<ELEMENT>));
         result.type = this.type;
         return result;
     }
 
     /**
-     * Convert MultiArray to logical value. It's true if all elements is
-     * non-null. Otherwise is false.
-     * @param M
-     * @returns
+     * Convert a `MultiArray` to the scalar truth value used by conditions.
+     *
+     * MATLAB/Octave conditions are true only when the array is non-empty and
+     * every element is logically true. Empty arrays therefore evaluate to
+     * false, not true by vacuity.
+     *
+     * @param M Array to test.
+     * @returns Logical scalar truth value.
      */
     public static readonly toLogical = (M: MultiArray): ComplexType => {
+        if (M.dimension.some((dim) => dim === 0)) {
+            return Complex.false();
+        }
         for (let i = 0; i < M.array.length; i++) {
             const row = M.array[i];
             for (let j = 0; j < M.dimension[1]; j++) {
@@ -919,10 +1055,14 @@ class MultiArray<ELEMENT = Elements> {
     };
 
     /**
-     * toLogical method (for element's generics).
-     * @returns
+     * Convert this array to the scalar truth value used by conditions.
+     *
+     * @returns Logical scalar truth value.
      */
     public toLogical(): ComplexType {
+        if (this.dimension.some((dim) => dim === 0)) {
+            return Complex.false();
+        }
         for (let i = 0; i < this.array.length; i++) {
             const row = this.array[i];
             for (let j = 0; j < this.dimension[1]; j++) {
@@ -1137,7 +1277,7 @@ class MultiArray<ELEMENT = Elements> {
      * @param input Input string to generate error messages (the id of array).
      * @returns linear index.
      */
-    public static readonly parseSubscript = (dimension: number[], subscript: ComplexType[], input?: string, interpreter?: Interpreter): number => {
+    public static readonly parseSubscript = (dimension: number[], subscript: ComplexType[], input?: string, interpreter?: RuntimeDisplay): number => {
         /* Converts Complex[] subscript parameter to number[]. */
         const index = subscript.map((i) => MultiArray.testIndex(i, `${input ? input : ''}${interpreter ? '(' + subscript.map((i) => interpreter.Unparse(i)).join() + ')' : ''}`));
         /**
@@ -1587,13 +1727,23 @@ class MultiArray<ELEMENT = Elements> {
      * @returns Concatenated arrays along `dimension` parameter.
      */
     public static readonly concatenate = (dimension: number, fname: string, ...ARRAY: MultiArray[]): MultiArray => {
-        let classDefinition: ClassDefinition | undefined;
+        let classDefinition: { name: string } | undefined;
+        let structureFields: string[] | undefined;
         for (const array of ARRAY) {
-            for (const instance of MultiArray.linearize(array).filter(ClassInstance.isInstanceOf)) {
+            for (const value of MultiArray.linearize(array)) {
+                const instanceClassDefinition = RuntimeValue.classDefinitionOfInstance(value);
                 if (!classDefinition) {
-                    classDefinition = instance.classDefinition;
-                } else if (instance.classDefinition !== classDefinition) {
+                    classDefinition = instanceClassDefinition;
+                } else if (instanceClassDefinition && instanceClassDefinition !== classDefinition) {
                     throw new Error(`${fname}: object arrays must contain objects of the same class.`);
+                }
+                if (MultiArray.isStructureScalar(value)) {
+                    const fields = MultiArray.structureFieldNames(value);
+                    if (!structureFields) {
+                        structureFields = fields;
+                    } else if (!MultiArray.arrayEquals(fields, structureFields)) {
+                        throw new Error(`${fname}: structure arrays must contain structures with the same fields.`);
+                    }
                 }
             }
         }
@@ -1652,21 +1802,37 @@ class MultiArray<ELEMENT = Elements> {
      * then then concatenates the elements row by row horizontally, then
      * concatenates the rows vertically.
      * @param M MultiArray object.
-     * @param interpreter Interpreter instance.
+     * @param interpreter Runtime evaluation context.
      * @param local Local context (function evaluation).
      * @param fname Function name (context).
      * @returns Evaluated MultiArray object.
      */
-    private static readonly evaluateRecursive = (M: MultiArray, interpreter: Interpreter | null | undefined, scope?: Scope): MultiArray => {
+    private static readonly evaluateRecursive = (M: MultiArray, interpreter: RuntimeEvaluationContext | null | undefined, scope?: unknown): MultiArray => {
+        const evaluateElementValues = (element: ElementType): ElementType[] => {
+            if (!interpreter) {
+                return [element];
+            }
+            interpreter.context.pushCommaListExpansion();
+            try {
+                return interpreter.context.expandCommaSeparatedList(interpreter.Evaluator(element, scope)) as ElementType[];
+            } finally {
+                interpreter.context.popCommaListExpansion();
+            }
+        };
         if (M.dimension.length > 2) {
-            return MultiArray.concatenate(M.dimension.length - 1, 'evaluate', ...MultiArray.splitLastDimension(M).map((S) => MultiArray.evaluate(S, interpreter, scope)));
+            return MultiArray.concatenate(M.dimension.length - 1, 'evaluate', ...MultiArray.splitLastDimension(M).map((S) => MultiArray.evaluateRecursive(S, interpreter, scope)));
         } else {
             return MultiArray.concatenate(
                 0,
                 'evaluate',
-                ...M.array.map((row) =>
-                    MultiArray.concatenate(1, 'evaluate', ...row.map((element) => MultiArray.scalarToMultiArray(interpreter ? interpreter.Evaluator(element, scope) : element))),
-                ),
+                ...M.array.map((row) => {
+                    const values = row.flatMap((element) => evaluateElementValues(element));
+                    if (values.length > 0 && values.every((value) => CharString.isInstanceOf(value))) {
+                        const quote = (values[0] as CharString).quote;
+                        return MultiArray.scalarToMultiArray(CharString.fromCharacterScalars(values as CharString[], quote));
+                    }
+                    return MultiArray.concatenate(1, 'evaluate', ...values.map((value) => MultiArray.scalarToMultiArray(value)));
+                }),
             );
         }
     };
@@ -1674,23 +1840,46 @@ class MultiArray<ELEMENT = Elements> {
     /**
      * Wrapper to not pass the null array to `MultiArray.interpreterRecursive`.
      * @param M MultiArray object.
-     * @param interpreter Interpreter instance.
+     * @param interpreter Runtime evaluation context.
      * @param local Local context (function evaluation).
      * @param fname Function name (context).
      * @returns Evaluated MultiArray object.
      */
-    public static readonly evaluate = (M: MultiArray, interpreter?: Interpreter | null | undefined, scope?: Scope): MultiArray => {
+    public static readonly evaluate = (M: MultiArray, interpreter?: RuntimeEvaluationContext | null | undefined, scope?: unknown): ElementType => {
         if (MultiArray.isEmpty(M)) {
             return M;
         } else if (M.isCell) {
-            const result = new MultiArray(M.dimension, undefined, true);
-            result.array = M.array.map((row) =>
-                row.map((element) => {
-                    const value = interpreter ? AST.reduceToFirstIfReturnList(interpreter.Evaluator(element, scope)) : element;
-                    if (value) {
-                        value.parent = result;
+            const rows = M.array.map((row) =>
+                row.flatMap((element) => {
+                    const values = (() => {
+                        if (!interpreter) {
+                            return [element];
+                        }
+                        interpreter.context.pushCommaListExpansion();
+                        try {
+                            return interpreter.context.expandCommaSeparatedList(interpreter.Evaluator(element, scope)) as ElementType[];
+                        } finally {
+                            interpreter.context.popCommaListExpansion();
+                        }
+                    })();
+                    return values.map((value) => {
+                        if (value) {
+                            value.parent = M;
+                        }
+                        return value as ElementType;
+                    });
+                }),
+            );
+            if (rows.length > 1 && rows.some((row) => row.length !== rows[0].length)) {
+                throw new EvalError('evaluate: dimension mismatch');
+            }
+            const result = new MultiArray([rows.length, rows[0]?.length ?? 0], undefined, true);
+            result.array = rows;
+            result.array.forEach((row) =>
+                row.forEach((element) => {
+                    if (element) {
+                        element.parent = result;
                     }
-                    return value as ElementType;
                 }),
             );
             return result;
@@ -1698,6 +1887,9 @@ class MultiArray<ELEMENT = Elements> {
             const result = MultiArray.evaluateRecursive(M, interpreter, scope);
             result.isCell = M.isCell;
             MultiArray.setType(result);
+            if (result.dimension.length === 2 && result.dimension[0] === 1 && result.dimension[1] === 1 && CharString.isInstanceOf(result.array[0][0])) {
+                return result.array[0][0];
+            }
             return result;
         }
     };
@@ -2165,16 +2357,7 @@ class MultiArray<ELEMENT = Elements> {
      *
      * @throws RangeError if indexList is empty
      */
-    private static readonly computeIndexingStructure = (
-        dimension: number[],
-        indexList: (ComplexType | MultiArray)[],
-    ): {
-        isLinear: boolean;
-        originalIndexCount: number;
-        args: ElementType[][];
-        argsLength: number[];
-        total: number;
-    } => {
+    private static readonly computeIndexingStructure = (dimension: number[], indexList: IndexArgument[]): NormalizedIndexingStructure => {
         if (indexList.length === 0) {
             throw new RangeError('invalid empty index list.');
         }
@@ -2242,15 +2425,11 @@ class MultiArray<ELEMENT = Elements> {
      * @param interpreter Optional interpreter (used for resolving expressions like `end`).
      */
     private static readonly iterateWithLinearIndex = (
-        idx: {
-            args: ElementType[][];
-            argsLength: number[];
-            total: number;
-        },
+        idx: NormalizedIndexingStructure,
         dimension: number[],
         callback: (subscriptArgs: ComplexType[], linearIndex: number, n: number) => void,
         input?: string,
-        interpreter?: Interpreter,
+        interpreter?: RuntimeDisplay,
     ): void => {
         for (let n = 0; n < idx.total; n++) {
             const subscript = MultiArray.linearIndexToSubscript(idx.argsLength, n);
@@ -2329,26 +2508,7 @@ class MultiArray<ELEMENT = Elements> {
      *
      * @returns Indexing plan describing structural semantics of the operation.
      */
-    private static readonly resolveIndexPlan = (
-        dimension: number[],
-        idx: {
-            isLinear: boolean;
-            originalIndexCount: number;
-            args: ElementType[][];
-            argsLength: number[];
-            total: number;
-        },
-    ): {
-        isLinear: boolean;
-        isColonOnly: boolean;
-        isRowSelection: boolean;
-        isColumnSelection: boolean;
-        requiresCollapse: boolean;
-        /* real structural semantics */
-        activeDimensions: number[];
-        isFullSlice: boolean[];
-        isScalarIndex: boolean[];
-    } => {
+    private static readonly resolveIndexPlan = (dimension: number[], idx: NormalizedIndexingStructure): IndexingPlan => {
         const nd = dimension.length;
         /* Linear case */
         if (idx.isLinear) {
@@ -2428,7 +2588,7 @@ class MultiArray<ELEMENT = Elements> {
      */
     private static readonly getElementByLinearIndex = (M: MultiArray, linearIndex: number, field: string[]): ElementType => {
         const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(M.dimension[0], M.dimension[1], linearIndex);
-        return field.length > 0 ? Structure.getField(M.array[i][j], field) : M.array[i][j];
+        return field.length > 0 ? MultiArray.getStructureField(M.array[i][j], field) : M.array[i][j];
     };
 
     /**
@@ -2454,7 +2614,7 @@ class MultiArray<ELEMENT = Elements> {
     private static readonly setElementByLinearIndex = (M: MultiArray, linearIndex: number, value: ElementType, field: string[]): void => {
         const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(M.dimension[0], M.dimension[1], linearIndex);
         if (field.length > 0) {
-            Structure.setField(M.array[i][j] as Structure, field, value);
+            MultiArray.structureAssignFieldPath(M.array[i][j], field, value);
         } else {
             M.array[i][j] = value;
         }
@@ -2506,25 +2666,7 @@ class MultiArray<ELEMENT = Elements> {
      *
      * @returns Final MultiArray with correct MATLAB-compatible shape.
      */
-    private static readonly collapseResult = (
-        resultFull: MultiArray,
-        originalDimension: number[],
-        idx: {
-            originalIndexCount: number;
-            argsLength: number[];
-        },
-        plan: {
-            isLinear: boolean;
-            isColonOnly: boolean;
-            isRowSelection: boolean;
-            isColumnSelection: boolean;
-            requiresCollapse: boolean;
-
-            activeDimensions: number[];
-            isFullSlice: boolean[];
-            isScalarIndex: boolean[];
-        },
-    ): MultiArray => {
+    private static readonly collapseResult = (resultFull: MultiArray, originalDimension: number[], idx: NormalizedIndexingStructure, plan: IndexingPlan): MultiArray => {
         /* No collapse */
         if (!plan.requiresCollapse) {
             return resultFull;
@@ -2656,7 +2798,7 @@ class MultiArray<ELEMENT = Elements> {
      * @param arg Index argument (scalar or MultiArray).
      * @returns True if the argument should be treated as logical indexing.
      */
-    private static isLogicalIndex(arg: any): boolean {
+    private static isLogicalIndex(arg: IndexArgument): boolean {
         return (MultiArray.isInstanceOf(arg) && arg.type === Complex.LOGICAL) || (Complex.isInstanceOf(arg) && arg.type === Complex.LOGICAL);
     }
 
@@ -2800,7 +2942,7 @@ class MultiArray<ELEMENT = Elements> {
      * - Shape/orientation semantics are handled separately (e.g., in getElements
      *   and collapseResult).
      */
-    private static resolveLinearIndices = (M: MultiArray, id: string, indexList: (ComplexType | MultiArray)[], interpreter?: Interpreter): number[] => {
+    public static resolveLinearIndices = (M: MultiArray, id: string, indexList: IndexArgument[], interpreter?: RuntimeDisplay): number[] => {
         /* Logical indexing */
         if (indexList.length === 1 && MultiArray.isLogicalIndex(indexList[0])) {
             let mask: MultiArray;
@@ -2855,7 +2997,7 @@ class MultiArray<ELEMENT = Elements> {
      * - Equivalent to manually accumulating results from iterateWithLinearIndex.
      * - Used to simplify and centralize index collection logic.
      */
-    private static collectLinearIndices = (idx: any, dimension: number[], input?: string, interpreter?: Interpreter): number[] => {
+    private static collectLinearIndices = (idx: NormalizedIndexingStructure, dimension: number[], input?: string, interpreter?: RuntimeDisplay): number[] => {
         const indices: number[] = [];
         MultiArray.iterateWithLinearIndex(
             idx,
@@ -2981,7 +3123,7 @@ class MultiArray<ELEMENT = Elements> {
      * - Internally, all indexing is reduced to linear index operations,
      *   ensuring a consistent and extensible implementation.
      */
-    public static readonly getElements = (M: MultiArray, id: string, field: string[], indexList: (ComplexType | MultiArray)[], interpreter?: Interpreter): ElementType => {
+    public static readonly getElements = (M: MultiArray, id: string, field: string[], indexList: IndexArgument[], interpreter?: RuntimeDisplay): ElementType => {
         if (indexList.length === 0) {
             return M;
         }
@@ -3086,32 +3228,33 @@ class MultiArray<ELEMENT = Elements> {
      * @throws EvalError If assignment dimensions are incompatible
      */
     private static readonly setElementsNumerical = (
-        scope: Scope,
+        scope: IndexAssignmentScope,
         id: string,
         field: string[],
-        indexList: (ComplexType | MultiArray)[],
+        indexList: IndexArgument[],
         right: MultiArray,
         input?: string,
-        interpreter?: Interpreter,
+        interpreter?: RuntimeDisplay,
     ): void => {
         const linearizedRight = MultiArray.linearize(right);
         /* Deletion (A(I) = []) */
         if (linearizedRight.length === 0) {
             const entry = scope.resolveName(id);
-            if (!entry) {
+            if (!entry || !(entry.node instanceof MultiArray)) {
                 throw new RangeError(`A(I) = []: index out of bounds: value ${MultiArray.firstElement(indexList[0])} out of bound 0`);
             }
+            const target = entry.node;
             let nonColon = 0;
             for (let i = 0; i < indexList.length; i++) {
                 const linearizedIndex = MultiArray.linearize(indexList[i]);
-                if (Complex.realToNumber(linearizedIndex[0] as ComplexType) !== 1 || linearizedIndex.length !== entry.node.dimension[i]) {
+                if (Complex.realToNumber(linearizedIndex[0] as ComplexType) !== 1 || linearizedIndex.length !== target.dimension[i]) {
                     nonColon++;
                 }
             }
             if (nonColon !== 1) {
                 throw new RangeError('a null assignment can only have one non-colon index');
             }
-            MultiArray.deleteElements(entry.node, indexList, input, interpreter);
+            MultiArray.deleteElements(target, indexList, input, interpreter);
             return;
         }
         /* Basic validation */
@@ -3119,7 +3262,8 @@ class MultiArray<ELEMENT = Elements> {
             throw new RangeError('invalid empty index list.');
         }
         const entryOriginal = scope.resolveName(id);
-        const idx = MultiArray.computeIndexingStructure(entryOriginal?.node?.dimension ?? [1], indexList);
+        const originalNode = entryOriginal?.node;
+        const idx = MultiArray.computeIndexingStructure(originalNode instanceof MultiArray ? originalNode.dimension : [1], indexList);
         /* RHS compliance */
         const isScalar = linearizedRight.length === 1;
         if (!isScalar && linearizedRight.length !== idx.total) {
@@ -3146,26 +3290,32 @@ class MultiArray<ELEMENT = Elements> {
                     MultiArray.expand(entry.node, argsMax);
                 }
             } else {
-                const value = entry.node;
+                const value = entry.node as ElementType;
                 const blankValue: ElementType = MultiArray.blankValueForExpansion(value);
                 if (idx.isLinear) {
                     entry = scope.defineName(id, new MultiArray([1, argsMax[0]], blankValue));
                 } else {
                     entry = scope.defineName(id, new MultiArray(argsMax, blankValue));
                 }
+                if (!(entry.node instanceof MultiArray)) {
+                    throw new TypeError('internal error: index assignment target is not an array.');
+                }
                 entry.node.array[0][0] = value;
             }
         } else {
-            const blankValue: ElementType = field.length > 0 ? new Structure(field) : MultiArray.blankValueForExpansion(linearizedRight[0]);
+            const blankValue: ElementType = field.length > 0 ? RuntimeValue.createStructure(field) : MultiArray.blankValueForExpansion(linearizedRight[0]);
             if (idx.isLinear) {
                 entry = scope.defineName(id, new MultiArray([1, argsMax[0]], blankValue));
             } else {
                 entry = scope.defineName(id, new MultiArray(argsMax, blankValue));
             }
         }
+        if (!(entry.node instanceof MultiArray)) {
+            throw new TypeError('internal error: index assignment target is not an array.');
+        }
         const M: MultiArray = entry.node;
         if (field.length > 0) {
-            Structure.setEmptyField(M, field[0]);
+            MultiArray.setEmptyStructureField(M, field[0]);
         }
         const dimension = M.dimension.slice();
         /* Collect linear indices (with `end` support) */
@@ -3222,13 +3372,13 @@ class MultiArray<ELEMENT = Elements> {
      * @param interpreter Optional interpreter for dynamic expressions (e.g., `end`)
      */
     public static readonly setElements = (
-        scope: Scope,
+        scope: IndexAssignmentScope,
         id: string,
         field: string[],
-        indexList: (ComplexType | MultiArray)[],
+        indexList: IndexArgument[],
         right: MultiArray,
         input?: string,
-        interpreter?: Interpreter,
+        interpreter?: RuntimeDisplay,
     ): void => {
         /* Logical indexing (single argument) */
         if (indexList.length === 1 && MultiArray.isLogicalIndex(indexList[0])) {
@@ -3319,7 +3469,7 @@ class MultiArray<ELEMENT = Elements> {
      * @param input Optional original input string (used for error context)
      * @param interpreter Optional interpreter (used to resolve expressions like "end")
      */
-    public static readonly deleteElements = (M: MultiArray, indexList: (ComplexType | MultiArray)[], input?: string, interpreter?: Interpreter): void => {
+    public static readonly deleteElements = (M: MultiArray, indexList: IndexArgument[], input?: string, interpreter?: RuntimeDisplay): void => {
         if (indexList.length === 0) {
             throw new RangeError('invalid empty index list.');
         }
@@ -3461,11 +3611,11 @@ class MultiArray<ELEMENT = Elements> {
                     });
                     MultiArray.setType(resultM);
                     MultiArray.setType(indexM);
-                    return AST.nodeReturnList(
+                    return nodeReturnList(
                         (evaluated: ReturnHandlerResult, index: number): ElementType => {
                             if (evaluated.length === 1) return MultiArray.MultiArrayToScalar(resultM);
                             if (evaluated.length === 2) return MultiArray.MultiArrayToScalar(index === 0 ? resultM : indexM);
-                            AST.throwErrorIfGreaterThanReturnList(2, evaluated.length);
+                            throwErrorIfGreaterThanReturnList(2, evaluated.length);
                         },
                         (length: number): ReturnHandlerResult => ({ length }),
                     );
@@ -3496,11 +3646,11 @@ class MultiArray<ELEMENT = Elements> {
                         }
                         MultiArray.setType(resultM);
                         MultiArray.setType(indexM);
-                        return AST.nodeReturnList(
+                        return nodeReturnList(
                             (evaluated: ReturnHandlerResult, index: number): ElementType => {
                                 if (evaluated.length === 1) return MultiArray.MultiArrayToScalar(resultM);
                                 if (evaluated.length === 2) return MultiArray.MultiArrayToScalar(index === 0 ? resultM : indexM);
-                                AST.throwErrorIfGreaterThanReturnList(2, evaluated.length);
+                                throwErrorIfGreaterThanReturnList(2, evaluated.length);
                             },
                             (length: number): ReturnHandlerResult => ({ length }),
                         );
@@ -3533,7 +3683,7 @@ class MultiArray<ELEMENT = Elements> {
                             return minMaxAlongDimension(M, dim);
                         }
                         default:
-                            AST.throwInvalidCallError(op);
+                            throwInvalidCallError(op);
                     }
                 };
             default:
