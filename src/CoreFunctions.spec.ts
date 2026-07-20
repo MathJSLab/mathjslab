@@ -1,7 +1,7 @@
 /// <reference types="jest" />
 import path from 'node:path';
 import { CharString } from './CharString';
-import { Complex } from './Complex';
+import { Complex, type ComplexType } from './Complex';
 import { CoreFunctions } from './CoreFunctions';
 import { MultiArray } from './MultiArray';
 import { Structure } from './Structure';
@@ -9,6 +9,13 @@ import { Structure } from './Structure';
 const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.sep}]+)\\.spec\\.([cm]?[jt]s)\$`))!;
 const unitName = __filenameMatch[1];
 const testExtension = __filenameMatch[2];
+
+const realNumber = (value: unknown): number => {
+    if (!Complex.isInstanceOf(value)) {
+        throw new Error('expected a Complex scalar.');
+    }
+    return Complex.realToNumber(value as ComplexType);
+};
 
 describe(`${unitName} unit test (.${testExtension} test file).`, () => {
     describe('Definition', () => {
@@ -61,11 +68,11 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             matrix.array[1][0] = Complex.create(3);
             matrix.array[1][1] = Complex.create(4);
 
-            expect(Complex.realToNumber(CoreFunctions.norm(vector, Complex.create(1)) as any)).toBe(6);
-            expect(Complex.realToNumber(CoreFunctions.norm(vector, Complex.inf_0()) as any)).toBe(3);
-            expect(Complex.realToNumber(CoreFunctions.norm(vector, Complex.create(-Infinity)) as any)).toBe(1);
-            expect(Complex.realToNumber(CoreFunctions.norm(matrix, Complex.create(1)) as any)).toBe(6);
-            expect(Complex.realToNumber(CoreFunctions.norm(matrix, Complex.inf_0()) as any)).toBe(7);
+            expect(realNumber(CoreFunctions.norm(vector, Complex.create(1)))).toBe(6);
+            expect(realNumber(CoreFunctions.norm(vector, Complex.inf_0()))).toBe(3);
+            expect(realNumber(CoreFunctions.norm(vector, Complex.create(-Infinity)))).toBe(1);
+            expect(realNumber(CoreFunctions.norm(matrix, Complex.create(1)))).toBe(6);
+            expect(realNumber(CoreFunctions.norm(matrix, Complex.inf_0()))).toBe(7);
             expect(() => CoreFunctions.norm(matrix, Complex.create(-Infinity))).toThrow('Invalid call to norm.');
         });
 
@@ -77,8 +84,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             matrix.array[1][1] = Complex.create(4);
             const expected = Math.sqrt((30 + Math.sqrt(884)) / 2);
 
-            expect(Complex.realToNumber(CoreFunctions.norm(matrix) as any)).toBeCloseTo(expected, 10);
-            expect(Complex.realToNumber(CoreFunctions.norm(matrix, Complex.create(2)) as any)).toBeCloseTo(expected, 10);
+            expect(realNumber(CoreFunctions.norm(matrix))).toBeCloseTo(expected, 10);
+            expect(realNumber(CoreFunctions.norm(matrix, Complex.create(2)))).toBeCloseTo(expected, 10);
             expect(() => CoreFunctions.norm(matrix, Complex.create(3))).toThrow('Invalid call to norm.');
         });
 
@@ -89,11 +96,11 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
             expect(CoreFunctions.functions.isfield.func).toBe(CoreFunctions.isfield);
             expect(CoreFunctions.functions.isfield.signature).toBe(CoreFunctions.isfieldSignature);
-            expect(Complex.realToNumber(CoreFunctions.isfield(structure, new CharString('alpha')) as any)).toBe(1);
-            expect(Complex.realToNumber(CoreFunctions.isfield(structure, new CharString('missing')) as any)).toBe(0);
+            expect(realNumber(CoreFunctions.isfield(structure, new CharString('alpha')))).toBe(1);
+            expect(realNumber(CoreFunctions.isfield(structure, new CharString('missing')))).toBe(0);
             expect(result).toBeInstanceOf(MultiArray);
             expect(result.dimension).toEqual([1, 2]);
-            expect(result.array[0].map((value) => Complex.realToNumber(value as any))).toEqual([1, 0]);
+            expect(result.array[0].map(realNumber)).toEqual([1, 0]);
         });
     });
 
@@ -101,6 +108,11 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         it('Should reject invalid arity for scalar predicates.', () => {
             expect(() => CoreFunctions.isempty(Complex.one(), Complex.two())).toThrow("Invalid call to isempty. Type 'help isempty' to see correct usage.");
             expect(() => CoreFunctions.isrow()).toThrow("Invalid call to isrow. Type 'help isrow' to see correct usage.");
+        });
+
+        it('Should report the correct built-in name for direct spacing helper arity errors.', () => {
+            expect(() => CoreFunctions.linspace(Complex.one())).toThrow("Invalid call to linspace. Type 'help linspace' to see correct usage.");
+            expect(() => CoreFunctions.logspace(Complex.one())).toThrow("Invalid call to logspace. Type 'help logspace' to see correct usage.");
         });
 
         it('Should reject cell arrays for functions that require numeric arrays.', () => {

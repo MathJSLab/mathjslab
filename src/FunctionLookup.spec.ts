@@ -60,6 +60,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(FunctionLookup.existCode('meta.class', 'class', undefined, undefined)).toBe(8);
             expect(FunctionLookup.existCode('ExternalPoint', undefined, undefined, undefined, true)).toBe(8);
             expect(FunctionLookup.existCode('ExternalPoint', 'class', undefined, undefined, true)).toBe(8);
+            expect(FunctionLookup.existCode('startup', undefined, undefined, undefined, false, true)).toBe(2);
+            expect(FunctionLookup.existCode('startup', 'file', undefined, undefined, false, true)).toBe(2);
+            expect(FunctionLookup.existCode('startup', 'function', undefined, undefined, false, true)).toBe(0);
             expect(FunctionLookup.existCode('sum', 'builtin', undefined, builtInFunction('sum'))).toBe(5);
             expect(FunctionLookup.existCode('x', 'function', { node: Complex.create(1) }, undefined)).toBe(0);
             expect(FunctionLookup.existCodeFromResolution('x', undefined, { kind: 'variable', name: 'x', resolvedName: 'x', source: 'local', entry: { node: Complex.create(1) } })).toBe(1);
@@ -72,6 +75,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                     functionDefinition: functionDefinition('pkg.f'),
                 }),
             ).toBe(2);
+            expect(FunctionLookup.existCodeFromResolution('startup', 'file', { kind: 'script', name: 'startup', resolvedName: 'startup', source: 'local' })).toBe(2);
         });
 
         it('Should format which results.', () => {
@@ -83,6 +87,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(FunctionLookup.whichResult('sum', undefined, builtInFunction('sum'), undefined, () => '')).toEqual(new CharString('sum is a built-in function'));
             expect(FunctionLookup.whichResult('meta.class', undefined, undefined, undefined, () => '')).toEqual(new CharString('meta.class is a class'));
             expect(FunctionLookup.whichResult('ExternalPoint', undefined, undefined, undefined, () => '', true)).toEqual(new CharString('ExternalPoint is a class'));
+            expect(FunctionLookup.whichResult('startup', undefined, undefined, undefined, () => '', false, true)).toEqual(new CharString('startup is a script'));
             expect(FunctionLookup.whichResult('@(x)x', undefined, undefined, anonymous, () => '@(x) x')).toEqual(new CharString('@(x) x is an anonymous function'));
             expect(FunctionLookup.whichResult('missing', undefined, undefined, undefined, () => '')).toEqual(new CharString('missing not found'));
             expect(
@@ -93,6 +98,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                     () => '',
                 ),
             ).toEqual(new CharString('f is a user-defined function'));
+            expect(FunctionLookup.whichResultFromResolution('startup', { kind: 'script', name: 'startup', resolvedName: 'startup', source: 'local' }, undefined, () => '')).toEqual(
+                new CharString('startup is a script'),
+            );
         });
 
         it('Should convert function handles to and from strings.', () => {
@@ -134,8 +142,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const simple = FunctionHandle.create('f');
             const nested = FunctionHandle.create('nested');
             nested.closure = {
+                nameTable: {},
                 resolveFunction: () => functionDefinition('nested', true),
-            } as any;
+            };
             const anonymous = FunctionHandle.create(undefined, [AST.nodeIdentifier('x')], AST.nodeIdentifier('x'));
             const simpleInfo = FunctionLookup.functionsInfo(
                 simple,

@@ -340,17 +340,19 @@ The engine implements a practical subset of
 [MATLAB&reg;](https://www.mathworks.com/products/matlab.html)/[Octave](https://www.gnu.org/software/octave/)
 syntax, including expressions, arrays, cell arrays, structures, control flow,
 loops, user functions, anonymous functions, function handles, `arguments`
-blocks, imports, command syntax, comma-separated lists, and substantial
-`classdef` support, including class metadata, properties, methods, events,
-enumerations, listeners, and common static/instance dispatch paths.
+blocks, imports, command syntax, comma-separated lists, browser-hosted `.m`
+sources, and substantial `classdef` support, including class metadata,
+properties, methods, events, enumerations, listeners, accessors, SetGet mixins,
+and common static/instance dispatch paths.
 
 The main remaining limitations are general external filesystem access,
-incomplete MATLAB/Octave library and toolbox coverage, and class semantics that
-still need focused compatibility work for less common edge cases. Browser-first
-host-provided source APIs are available for `.m` functions, scripts, and class
-sources. Numeric values use one complex numeric type; other implemented runtime
-types include logical values, character strings, structures, function handles,
-and class objects. Common arrays can hold any runtime value.
+incomplete MATLAB/Octave library and toolbox coverage, and less common class
+semantics that still need focused compatibility work. Browser-first
+host-provided source APIs cover `.m` functions, scripts, classes, and external
+class method files. Numeric values use one complex numeric type; other
+implemented runtime types include logical values, character strings,
+structures, function handles, and class objects. Common arrays can hold any
+runtime value.
 
 ## Trademark Notes
 

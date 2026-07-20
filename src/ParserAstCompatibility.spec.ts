@@ -1,47 +1,94 @@
 /// <reference types="jest" />
-import type { NodeArguments, NodeClassDef, NodeClassSection, NodeFor, NodeFunctionDefinition, NodeImport, NodeInput, NodeOperation, NodeSpmd } from './AST';
+import {
+    AST,
+    type BinaryOperation,
+    type NodeArguments,
+    type NodeClassDef,
+    type NodeClassSection,
+    type NodeFor,
+    type NodeFunctionDefinition,
+    type NodeIdentifier,
+    type NodeIndexExpr,
+    type NodeIndirectRef,
+    type NodeInput,
+    type NodeList,
+    type NodeOperation,
+    type NodeSpmd,
+} from './AST';
+import { Complex, type ComplexType } from './Complex';
 import { Interpreter } from './Interpreter';
+import { MultiArray } from './MultiArray';
 
-const parseClass = (source: string): NodeClassDef => (Interpreter.Create().Parse(source) as any).list[0] as NodeClassDef;
+const expectNode = <T extends NodeInput>(value: unknown, guard: (candidate: unknown) => candidate is T, name: string): T => {
+    const matches = guard(value);
+    expect(matches).toBe(true);
+    if (!matches) {
+        throw new Error(`Expected ${name} node.`);
+    }
+    return value as T;
+};
 
-const idsOf = (list: { list: NodeInput[] }): string[] => list.list.map((node: any) => node.id);
+const parseList = (source: string): NodeList => expectNode(Interpreter.Create().Parse(source), AST.isNodeList, 'list');
+
+const firstParsedNode = <T extends NodeInput>(source: string, guard: (candidate: unknown) => candidate is T, name: string): T => expectNode(parseList(source).list[0], guard, name);
+
+const parseClass = (source: string): NodeClassDef => firstParsedNode(source, AST.isNodeClassDef, 'classdef');
+
+const identifierNode = (node: unknown): NodeIdentifier => expectNode(node, AST.isNodeIdentifier, 'identifier');
+
+const operationNode = (node: unknown): NodeOperation => expectNode(node, AST.isNodeOperation, 'operation');
+
+const binaryOperationNode = (node: unknown): BinaryOperation => expectNode(node, AST.isNodeBinaryOperation, 'binary operation');
+
+const indexNode = (node: unknown): NodeIndexExpr => expectNode(node, AST.isNodeIndexExpr, 'index expression');
+
+const indirectRefNode = (node: unknown): NodeIndirectRef => expectNode(node, AST.isNodeIndirectRef, 'dot reference');
+
+const matrixNode = (node: unknown): MultiArray => {
+    expect(MultiArray.isInstanceOf(node)).toBe(true);
+    return node as MultiArray;
+};
+
+const numericValue = (node: unknown): number => {
+    expect(Complex.isInstanceOf(node)).toBe(true);
+    return Complex.realToNumber(node as ComplexType);
+};
+
+const idsOf = (list: { list: NodeInput[] }): string[] => list.list.map((node) => identifierNode(node).id);
 
 describe('Parser AST compatibility fixtures.', () => {
     it('Should preserve dynamic field access followed by vector indexing with end.', () => {
-        const tree = Interpreter.Create().Parse('dynamicPick = nested.inner.(dyn)([2,end]);') as any;
-        const assignment = tree.list[0];
-        const index = assignment.right;
-        const target = index.expr;
-        const vectorIndex = index.args[0];
+        const assignment = binaryOperationNode(parseList('dynamicPick = nested.inner.(dyn)([2,end]);').list[0]);
+        const index = indexNode(assignment.right);
+        const target = indirectRefNode(index.expr);
+        const vectorIndex = matrixNode(index.args[0]);
 
         expect(assignment.type).toBe('=');
         expect(index.type).toBe('IDX');
         expect(index.delim).toBe('()');
         expect(target.type).toBe('.');
-        expect(target.obj.id).toBe('nested');
+        expect(identifierNode(target.obj).id).toBe('nested');
         expect(target.field[0]).toBe('inner');
-        expect(target.field[1].type).toBe('IDENT');
-        expect(target.field[1].id).toBe('dyn');
+        expect(identifierNode(target.field[1]).id).toBe('dyn');
         expect(vectorIndex.dimension).toEqual([1, 2]);
-        expect(vectorIndex.array[0][1].type).toBe('ENDRANGE');
+        expect(expectNode(vectorIndex.array[0][1], AST.isNodeBase, 'end-range').type).toBe('ENDRANGE');
     });
 
     it('Should preserve keyword-like dot fields as literal field names.', () => {
-        const tree = Interpreter.Create().Parse('picked = s.properties.methods.events.enumeration.end;') as any;
-        const assignment = tree.list[0];
-        const access = assignment.right;
+        const assignment = binaryOperationNode(parseList('picked = s.properties.methods.events.enumeration.end;').list[0]);
+        const access = indirectRefNode(assignment.right);
 
         expect(assignment.type).toBe('=');
         expect(access.type).toBe('.');
-        expect(access.obj.id).toBe('s');
+        expect(identifierNode(access.obj).id).toBe('s');
         expect(access.field).toEqual(['properties', 'methods', 'events', 'enumeration', 'end']);
     });
 
     it('Should preserve matrix and cell dimensions with trailing row separators.', () => {
-        const tree = Interpreter.Create().Parse(['A = [1, 2;];', 'C = {A, [3, 4;', ']};'].join('\n')) as any;
-        const matrix = tree.list[0].right;
-        const cell = tree.list[1].right;
-        const nestedMatrix = cell.array[0][1];
+        const tree = parseList(['A = [1, 2;];', 'C = {A, [3, 4;', ']};'].join('\n'));
+        const matrix = matrixNode(binaryOperationNode(tree.list[0]).right);
+        const cell = matrixNode(binaryOperationNode(tree.list[1]).right);
+        const nestedMatrix = matrixNode(cell.array[0][1]);
 
         expect(matrix.dimension).toEqual([1, 2]);
         expect(matrix.isCell).toBe(false);
@@ -52,44 +99,45 @@ describe('Parser AST compatibility fixtures.', () => {
     });
 
     it('Should ignore empty matrix and cell rows structurally.', () => {
-        const tree = Interpreter.Create().Parse(['A = [; 1;; 2;];', 'C = {; A;;; 3;};', 'E = [;];'].join('\n')) as any;
-        const matrix = tree.list[0].right;
-        const cell = tree.list[1].right;
-        const empty = tree.list[2].right;
+        const tree = parseList(['A = [; 1;; 2;];', 'C = {; A;;; 3;};', 'E = [;];'].join('\n'));
+        const matrix = matrixNode(binaryOperationNode(tree.list[0]).right);
+        const cell = matrixNode(binaryOperationNode(tree.list[1]).right);
+        const empty = matrixNode(binaryOperationNode(tree.list[2]).right);
 
         expect(matrix.dimension).toEqual([2, 1]);
-        expect(matrix.array[0][0].re.toNumber()).toBe(1);
-        expect(matrix.array[1][0].re.toNumber()).toBe(2);
+        expect(numericValue(matrix.array[0][0])).toBe(1);
+        expect(numericValue(matrix.array[1][0])).toBe(2);
         expect(cell.dimension).toEqual([2, 1]);
         expect(cell.isCell).toBe(true);
-        expect(cell.array[0][0].id).toBe('A');
-        expect(cell.array[1][0].re.toNumber()).toBe(3);
+        expect(identifierNode(cell.array[0][0]).id).toBe('A');
+        expect(numericValue(cell.array[1][0])).toBe(3);
         expect(empty.dimension).toEqual([0, 0]);
     });
 
     it('Should expose assignment target lists with indexed, dynamic-field, and ignored targets.', () => {
-        const tree = Interpreter.Create().Parse('[A(1) S.(dyn) ~] = pair(10);') as any;
-        const assignment = tree.list[0];
-        const targets = assignment.left;
-        const indexed = targets.array[0][0];
-        const dynamicField = targets.array[0][1];
-        const ignored = targets.array[0][2];
+        const assignment = binaryOperationNode(parseList('[A(1) S.(dyn) ~] = pair(10);').list[0]);
+        const targets = matrixNode(assignment.left);
+        const indexed = indexNode(targets.array[0][0]);
+        const dynamicField = indirectRefNode(targets.array[0][1]);
+        const ignored = expectNode(targets.array[0][2], AST.isNodeIgnoredTarget, 'ignored target');
 
         expect(assignment.type).toBe('=');
         expect(targets.dimension).toEqual([1, 3]);
         expect(indexed.type).toBe('IDX');
-        expect(indexed.expr.id).toBe('A');
-        expect(indexed.args[0].re.toNumber()).toBe(1);
+        expect(identifierNode(indexed.expr).id).toBe('A');
+        expect(numericValue(indexed.args[0])).toBe(1);
         expect(dynamicField.type).toBe('.');
-        expect(dynamicField.obj.id).toBe('S');
-        expect(dynamicField.field[0].type).toBe('IDENT');
-        expect(dynamicField.field[0].id).toBe('dyn');
+        expect(identifierNode(dynamicField.obj).id).toBe('S');
+        expect(identifierNode(dynamicField.field[0]).id).toBe('dyn');
         expect(ignored.type).toBe('<~>');
     });
 
     it('Should expose empty arguments blocks as empty validation lists.', () => {
-        const tree = Interpreter.Create().Parse(['function y = emptyarguments(x)', '  arguments', '  end', '  arguments (Output)', '  end', '  y = x;', 'end'].join('\n')) as any;
-        const func = tree.list[0] as NodeFunctionDefinition;
+        const func = firstParsedNode(
+            ['function y = emptyarguments(x)', '  arguments', '  end', '  arguments (Output)', '  end', '  y = x;', 'end'].join('\n'),
+            AST.isNodeFunctionDefinition,
+            'function definition',
+        );
         const [inputArguments, outputArguments] = func.arguments.list as NodeArguments[];
 
         expect(func.type).toBe('FCNDEF');
@@ -103,14 +151,17 @@ describe('Parser AST compatibility fixtures.', () => {
     });
 
     it('Should expose endarguments blocks as ordinary arguments nodes.', () => {
-        const tree = Interpreter.Create().Parse(['function y = explicitendarguments(x)', '  arguments', '    x double', '  endarguments', '  y = x;', 'end'].join('\n')) as any;
-        const func = tree.list[0] as NodeFunctionDefinition;
+        const func = firstParsedNode(
+            ['function y = explicitendarguments(x)', '  arguments', '    x double', '  endarguments', '  y = x;', 'end'].join('\n'),
+            AST.isNodeFunctionDefinition,
+            'function definition',
+        );
         const args = func.arguments.list[0] as NodeArguments;
 
         expect(args.type).toBe('ARGS');
         expect(args.validation).toHaveLength(1);
-        expect((args.validation[0].name as any).id).toBe('x');
-        expect((args.validation[0].class as any).id).toBe('double');
+        expect(identifierNode(args.validation[0].name).id).toBe('x');
+        expect(identifierNode(args.validation[0].class).id).toBe('double');
         expect(args.parent).toBe(func);
         expect(args.validation[0].parent).toBe(args);
     });
@@ -144,8 +195,8 @@ describe('Parser AST compatibility fixtures.', () => {
         expect(properties.members.list[0].parent).toBe(properties);
         expect(methods.members.parent).toBe(methods);
 
-        expect((dependent.value as NodeOperation).type).toBe('~');
-        expect((hidden.value as NodeOperation).type).toBe('!');
+        expect(operationNode(dependent.value).type).toBe('~');
+        expect(operationNode(hidden.value).type).toBe('!');
         expect(dependent.value!.parent).toBe(dependent);
         expect(hidden.value!.parent).toBe(hidden);
         expect(abstract.parent).toBe(methods);
@@ -174,7 +225,7 @@ describe('Parser AST compatibility fixtures.', () => {
     it('Should expose classdef property validation declarations structurally.', () => {
         const classDef = parseClass(['classdef ValidatedProperties', '  properties', '    x (1,1) double {mustBePositive} = 1', '  end', 'end'].join('\n'));
         const properties = classDef.sections[0] as NodeClassSection;
-        const property = properties.members.list[0] as any;
+        const property = expectNode(properties.members.list[0], AST.isNodeClassProperty, 'class property');
 
         expect(property.type).toBe('CLASS_PROPERTY');
         expect(property.id).toBe('x');
@@ -185,13 +236,13 @@ describe('Parser AST compatibility fixtures.', () => {
         expect(property.validation.class).toBe(property.class);
         expect(property.validation.functions).toBe(property.functions);
         expect(property.validation.default).toBe(property.defaultValue);
-        expect(property.size.map((node: any) => node.re.toNumber())).toEqual([1, 1]);
-        expect(property.class.id).toBe('double');
+        expect(property.size.map(numericValue)).toEqual([1, 1]);
+        expect(identifierNode(property.class).id).toBe('double');
         expect(idsOf({ list: property.functions })).toEqual(['mustBePositive']);
-        expect(property.defaultValue.re.toNumber()).toBe(1);
+        expect(numericValue(property.defaultValue)).toBe(1);
         expect(property.validation.parent).toBe(property);
         expect(property.name.parent).toBe(property.validation);
-        expect(property.size.map((node: any) => node.parent)).toEqual([property.validation, property.validation]);
+        expect(property.size.map((node) => node.parent)).toEqual([property.validation, property.validation]);
         expect(property.class.parent).toBe(property.validation);
         expect(property.functions[0].parent).toBe(property.validation);
         expect(property.defaultValue.parent).toBe(property.validation);
@@ -201,15 +252,17 @@ describe('Parser AST compatibility fixtures.', () => {
         const classDef = parseClass(['classdef AdjacentClassMembers', '  events Started Finished', '  end', '  enumeration Red(1) Blue(2)', '  end', 'end'].join('\n'));
         const events = classDef.sections[0] as NodeClassSection;
         const enumeration = classDef.sections[1] as NodeClassSection;
+        const eventMembers = events.members.list.map((node) => expectNode(node, AST.isNodeClassEvent, 'class event'));
+        const enumerationMembers = enumeration.members.list.map((node) => expectNode(node, AST.isNodeClassEnumeration, 'class enumeration'));
 
         expect(events.kind).toBe('EVENTS');
-        expect(events.members.list.map((node: any) => node.id)).toEqual(['Started', 'Finished']);
-        expect(events.members.list.map((node: any) => node.parent)).toEqual([events, events]);
+        expect(eventMembers.map((node) => node.id)).toEqual(['Started', 'Finished']);
+        expect(eventMembers.map((node) => node.parent)).toEqual([events, events]);
         expect(enumeration.kind).toBe('ENUMERATION');
-        expect(enumeration.members.list.map((node: any) => node.id)).toEqual(['Red', 'Blue']);
-        expect(enumeration.members.list.map((node: any) => node.parent)).toEqual([enumeration, enumeration]);
-        expect((enumeration.members.list[0] as any).args[0].re.toNumber()).toBe(1);
-        expect((enumeration.members.list[1] as any).args[0].re.toNumber()).toBe(2);
+        expect(enumerationMembers.map((node) => node.id)).toEqual(['Red', 'Blue']);
+        expect(enumerationMembers.map((node) => node.parent)).toEqual([enumeration, enumeration]);
+        expect(numericValue(enumerationMembers[0].args[0])).toBe(1);
+        expect(numericValue(enumerationMembers[1].args[0])).toBe(2);
     });
 
     it('Should expose ampersand superclass lists structurally.', () => {
@@ -221,27 +274,25 @@ describe('Parser AST compatibility fixtures.', () => {
     });
 
     it('Should expose function parameter defaults structurally.', () => {
-        const tree = Interpreter.Create().Parse(['function y = defaultparams(x = 4, z = x + 1)', '  y = z;', 'end'].join('\n')) as any;
-        const func = tree.list[0] as NodeFunctionDefinition;
-        const xDefault = func.parameter.list[0] as any;
-        const zDefault = func.parameter.list[1] as any;
+        const func = firstParsedNode(['function y = defaultparams(x = 4, z = x + 1)', '  y = z;', 'end'].join('\n'), AST.isNodeFunctionDefinition, 'function definition');
+        const xDefault = binaryOperationNode(func.parameter.list[0]);
+        const zDefault = binaryOperationNode(func.parameter.list[1]);
 
         expect(xDefault.type).toBe('=');
-        expect(xDefault.left.id).toBe('x');
-        expect(xDefault.right.re.toNumber()).toBe(4);
+        expect(identifierNode(xDefault.left).id).toBe('x');
+        expect(numericValue(xDefault.right)).toBe(4);
         expect(zDefault.type).toBe('=');
-        expect(zDefault.left.id).toBe('z');
+        expect(identifierNode(zDefault.left).id).toBe('z');
         expect(zDefault.right.type).toBe('+');
         expect(xDefault.parent).toBe(func);
         expect(zDefault.parent).toBe(func);
     });
 
     it('Should expose space-separated function return lists structurally.', () => {
-        const tree = Interpreter.Create().Parse(['function [a b] = spacereturns(x)', '  a = x;', '  b = x + 1;', 'end'].join('\n')) as any;
-        const func = tree.list[0] as NodeFunctionDefinition;
+        const func = firstParsedNode(['function [a b] = spacereturns(x)', '  a = x;', '  b = x + 1;', 'end'].join('\n'), AST.isNodeFunctionDefinition, 'function definition');
 
-        expect(func.return.list.map((node: any) => node.id)).toEqual(['a', 'b']);
-        expect(func.return.list.map((node: any) => node.parent)).toEqual([func, func]);
+        expect(idsOf(func.return)).toEqual(['a', 'b']);
+        expect(func.return.list.map((node) => node.parent)).toEqual([func, func]);
     });
 
     it('Should expose space-separated class method return lists structurally.', () => {
@@ -250,13 +301,12 @@ describe('Parser AST compatibility fixtures.', () => {
         const method = methods.members.list[0] as NodeFunctionDefinition;
 
         expect(method.id).toBe('pair');
-        expect(method.return.list.map((node: any) => node.id)).toEqual(['a', 'b']);
-        expect(method.return.list.map((node: any) => node.parent)).toEqual([method, method]);
+        expect(idsOf(method.return)).toEqual(['a', 'b']);
+        expect(method.return.list.map((node) => node.parent)).toEqual([method, method]);
     });
 
     it('Should expose parenthesized parfor worker expressions structurally.', () => {
-        const tree = Interpreter.Create().Parse(['parfor (i = 1:4, workers + 1)', '  total = i;', 'end'].join('\n')) as any;
-        const loop = tree.list[0] as NodeFor;
+        const loop = firstParsedNode(['parfor (i = 1:4, workers + 1)', '  total = i;', 'end'].join('\n'), (node): node is NodeFor => AST.isNodeBase(node) && node.type === 'FOR', 'for loop');
 
         expect(loop.parallel).toBe(true);
         expect(loop.target.type).toBe('IDENT');
@@ -266,13 +316,16 @@ describe('Parser AST compatibility fixtures.', () => {
     });
 
     it('Should expose MATLAB-style spmd worker specifications structurally.', () => {
-        const tree = Interpreter.Create().Parse(['spmd (minWorkers, maxWorkers + 1)', '  value = 1;', 'end'].join('\n')) as any;
-        const block = tree.list[0] as NodeSpmd;
+        const block = firstParsedNode(
+            ['spmd (minWorkers, maxWorkers + 1)', '  value = 1;', 'end'].join('\n'),
+            (node): node is NodeSpmd => AST.isNodeBase(node) && node.type === 'SPMD',
+            'spmd block',
+        );
 
         expect(block.type).toBe('SPMD');
         expect(block.workers).not.toBeNull();
         expect(block.workers!.list).toHaveLength(2);
-        expect((block.workers!.list[0] as any).id).toBe('minWorkers');
+        expect(identifierNode(block.workers!.list[0]).id).toBe('minWorkers');
         expect(block.workers!.list[1].type).toBe('+');
         expect(block.workers!.parent).toBe(block);
         expect(block.workers!.list.map((node) => node.parent)).toEqual([block.workers, block.workers]);
@@ -280,20 +333,19 @@ describe('Parser AST compatibility fixtures.', () => {
     });
 
     it('Should expose declaration initializers structurally.', () => {
-        const tree = Interpreter.Create().Parse('global a, b = 2, c = a + b') as any;
-        const declaration = tree.list[0];
+        const declaration = firstParsedNode('global a, b = 2, c = a + b', AST.isNodeDeclaration, 'declaration');
         const first = declaration.list[0];
-        const second = declaration.list[1] as any;
-        const third = declaration.list[2] as any;
+        const second = binaryOperationNode(declaration.list[1]);
+        const third = binaryOperationNode(declaration.list[2]);
 
         expect(declaration.type).toBe('GLOBAL');
         expect(first.type).toBe('IDENT');
-        expect(first.id).toBe('a');
+        expect(identifierNode(first).id).toBe('a');
         expect(second.type).toBe('=');
-        expect(second.left.id).toBe('b');
-        expect(second.right.re.toNumber()).toBe(2);
+        expect(identifierNode(second.left).id).toBe('b');
+        expect(numericValue(second.right)).toBe(2);
         expect(third.type).toBe('=');
-        expect(third.left.id).toBe('c');
+        expect(identifierNode(third.left).id).toBe('c');
         expect(third.right.type).toBe('+');
         expect(first.parent).toBe(declaration);
         expect(second.parent).toBe(declaration);
@@ -301,8 +353,7 @@ describe('Parser AST compatibility fixtures.', () => {
     });
 
     it('Should expose MATLAB package imports structurally.', () => {
-        const tree = Interpreter.Create().Parse('import matlab.graphics.*, pkg.sub.ClassName') as any;
-        const declaration = tree.list[0] as NodeImport;
+        const declaration = firstParsedNode('import matlab.graphics.*, pkg.sub.ClassName', AST.isNodeImport, 'import declaration');
 
         expect(declaration.type).toBe('IMPORT');
         expect(declaration.imports.map((entry) => entry.id)).toEqual(['matlab.graphics.*', 'pkg.sub.ClassName']);

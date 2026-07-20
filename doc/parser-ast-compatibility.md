@@ -26,8 +26,12 @@ forms:
   registered command-word names;
 - MATLAB package/class `import` declarations, including wildcard imports, as
   first-class no-op declarations that participate in later name lookup;
+- browser-safe host-provided `.m` source lookup for functions, scripts, and
+  classes, including MATLAB path forms such as `+pkg/name.m`, `@Class/Class.m`,
+  and `@Class/method.m`;
 - user function definitions with return lists, parameter lists, ignored `~`
-  entries, nested statements, and `arguments` blocks;
+  entries, nested statements, script-local functions, private subfunctions, and
+  `arguments` blocks;
 - empty and non-empty `arguments` blocks, including input/output attributes and
   AST validation declarations;
 - control-flow blocks including `if`, `switch`, loops, `try`, and
@@ -61,6 +65,10 @@ The AST layer normalizes parse output into node contracts exported from
   parent/index links, including wildcard names such as `pkg.*`;
 - `NodeFor` preserves `parallel === true` for `parfor` and stores optional
   worker expressions separately from the loop target/range;
+- `NodeOperation` consumers should narrow through the AST binary, prefix, and
+  postfix guards before reading operands. Parser actions still produce one
+  operation family, while interpreter and unparser paths now enforce the
+  refined shapes they consume;
 - `NodeClassDef.sections` contains `NodeClassSection` entries with
   `attributeTable` indexes for duplicate-preserving attribute lookup;
 - method prototypes inside class `methods` sections are represented as
@@ -116,9 +124,9 @@ language implementation. Remaining boundaries include:
   contract until a general external-file layer is designed;
 - runtime class support covers metadata, construction, properties, methods,
   events, enumerations, listeners, accessors, inheritance, superclass calls,
-  `subsref`, `subsasgn`, and common static/instance dispatch paths, but less
-  common class edge cases should still grow through focused, test-backed
-  increments;
+  browser-hosted external method files, `subsref`, `subsasgn`, `SetGet` mixins,
+  and common static/instance dispatch paths, but less common class edge cases
+  should still grow through focused, test-backed increments;
 - class attributes are parsed and indexed broadly. Runtime enforcement exists
   for the attributes consumed by class metadata, access checks, construction,
   events, abstract/sealed behavior, and dispatch; remaining attributes should
@@ -128,6 +136,9 @@ language implementation. Remaining boundaries include:
 - syntax diagnostics are normalized and source-aware, but exact MATLAB/Octave
   diagnostic wording is not a parser contract unless a test fixture requires
   it;
+- built-in signatures are declarative and now validate alternatives and common
+  dimension forms before runtime helper code executes, but the native function
+  library still grows independently from parser/AST coverage;
 - Octave-specific grammar branches should continue to be imported in focused
   increments, with parser fixtures added before or alongside interpreter
   behavior.

@@ -49,7 +49,14 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const ref = AST.nodeIndirectRef(AST.nodeIdentifier('obj'), 'field');
             const ignored = AST.nodeIgnoredTarget();
             const defaulted = AST.nodeOperation('=', AST.nodeIdentifier('x'), Complex.one() as NodeExpr);
+            const prefix = AST.nodeOperation('~', AST.nodeIdentifier('flag'));
+            const postfix = AST.nodeOperation('_++', AST.nodeIdentifier('i'));
             const returnList = AST.nodeReturnList(() => Complex.one() as NodeExpr);
+            const declaration = AST.nodeDeclarationFirst('GLOBAL');
+            const importDeclaration = AST.nodeImportFirst(AST.nodeIdentifier('pkg.Name'));
+            const statement = AST.nodeIfBegin(AST.nodeIdentifier('condition'), AST.nodeListFirst(AST.nodeReturn()));
+            const classMember = AST.nodeClassEvent(AST.nodeIdentifier('Changed'));
+            const metaclass = AST.nodeMetaClass(AST.nodeIdentifier('Sample'));
 
             expect(AST.isNodeBase(identifier)).toBe(true);
             expect(AST.isNodeIdentifier(identifier)).toBe(true);
@@ -58,8 +65,21 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(AST.isNodeIndirectRef(ref)).toBe(true);
             expect(AST.isNodeReturnList(returnList)).toBe(true);
             expect(AST.isNodeIgnoredTarget(ignored)).toBe(true);
+            expect(AST.isNodeOperation(defaulted)).toBe(true);
+            expect(AST.isNodeBinaryOperation(defaulted)).toBe(true);
+            expect(AST.isNodePrefixOperation(prefix)).toBe(true);
+            expect(AST.isNodePostfixOperation(postfix)).toBe(true);
             expect(AST.isNodeFunctionReturn(ignored)).toBe(true);
             expect(AST.isNodeFunctionParameter(defaulted)).toBe(true);
+            expect(AST.isNodeDefaultedParameter(defaulted)).toBe(true);
+            expect(AST.isNodeAssignmentTarget(index)).toBe(true);
+            expect(AST.isNodeAssignmentTarget(MultiArray.emptyArray())).toBe(true);
+            expect(AST.isNodeDeclaration(declaration)).toBe(true);
+            expect(AST.isNodeImport(importDeclaration)).toBe(true);
+            expect(AST.isNodeStatement(statement)).toBe(true);
+            expect(AST.isNodeMetaClass(metaclass)).toBe(true);
+            expect(AST.isNodeClassEvent(classMember)).toBe(true);
+            expect(AST.isNodeClassMember(classMember)).toBe(true);
             expect(AST.isNodeDefaultedParameter({ type: '=', left: AST.nodeIdentifier('x') })).toBe(false);
             expect(AST.isNodeIdentifier(Complex.one())).toBe(false);
             expect(AST.isNodeBase(null)).toBe(false);

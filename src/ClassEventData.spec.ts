@@ -1,5 +1,4 @@
 /// <reference types="jest" />
-import type { NodeClassDef } from './AST';
 import { CharString } from './CharString';
 import { Complex } from './Complex';
 import { ClassDefinition } from './ClassDefinition';
@@ -7,7 +6,7 @@ import { ClassEventData } from './ClassEventData';
 import { ClassInstance } from './ClassInstance';
 import { Interpreter } from './Interpreter';
 
-const parseClass = (source: string): NodeClassDef => (Interpreter.Create().Parse(source) as any).list[0] as NodeClassDef;
+import { parseClassDefinition as parseClass } from './ParserTestUtils';
 
 describe('ClassEventData', () => {
     describe('Behavior', () => {

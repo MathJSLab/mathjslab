@@ -30,6 +30,9 @@ import type {
     NodeClassAttribute,
     NodeClassSection,
     NodeSwitchCase,
+    BinaryOperation,
+    PrefixUnaryOperation,
+    PostfixUnaryOperation,
     BuiltInFunctionInputSignature,
     BuiltInFunctionSignature,
     NameEntry,
@@ -384,6 +387,21 @@ class Interpreter implements InterpreterInterface {
      * Class names currently being loaded, used to avoid recursive loader loops.
      */
     private loadingClassNames = new Set<string>();
+
+    /**
+     * Class method names currently being loaded, used to avoid recursive loader loops.
+     */
+    private loadingClassMethodNames = new Set<string>();
+
+    /**
+     * Nesting level of host-provided script execution.
+     *
+     * A script is not a function frame, but MATLAB/Octave still allow `return`
+     * to stop the current script. Keeping that state in the interpreter lets
+     * interactive/top-level `return` remain invalid while scripts loaded
+     * through the browser-safe source APIs can exit early.
+     */
+    private scriptExecutionDepth = 0;
 
     /**
      * Interpreter exit status.
@@ -965,6 +983,10 @@ class Interpreter implements InterpreterInterface {
         }
     }
 
+    private isEvalCatchableError(error: unknown): boolean {
+        return !(error instanceof ReturnSignal || error instanceof BreakSignal || error instanceof ContinueSignal);
+    }
+
     /**
      * Extract top-level class definitions from a parsed source tree.
      *
@@ -975,10 +997,10 @@ class Interpreter implements InterpreterInterface {
      * @returns Top-level class definitions in source order.
      */
     private topLevelClassDefinitions(tree: NodeInput): NodeClassDef[] {
-        if (tree.type === 'CLASSDEF') {
+        if (AST.isNodeClassDef(tree)) {
             return [tree];
         }
-        if (tree.type !== 'LIST') {
+        if (!AST.isNodeList(tree)) {
             return [];
         }
         return tree.list.filter(AST.isNodeClassDef);
@@ -995,10 +1017,10 @@ class Interpreter implements InterpreterInterface {
      * @returns Top-level function definitions in source order.
      */
     private topLevelFunctionDefinitions(tree: NodeInput): NodeFunctionDefinition[] {
-        if (tree.type === 'FCNDEF') {
+        if (AST.isNodeFunctionDefinition(tree)) {
             return [tree];
         }
-        if (tree.type !== 'LIST') {
+        if (!AST.isNodeList(tree)) {
             return [];
         }
         return tree.list.filter(AST.isNodeFunctionDefinition);
@@ -1135,6 +1157,10 @@ class Interpreter implements InterpreterInterface {
         return this.sourceResolver.resolve('script', name);
     }
 
+    private hasScriptSource(name: string): boolean {
+        return typeof this.resolveScriptSource(name) !== 'undefined';
+    }
+
     /**
      * Execute a parsed script while temporarily exposing script-local functions.
      *
@@ -1150,9 +1176,16 @@ class Interpreter implements InterpreterInterface {
                 previousFunctions.set(func.id, scope.functionTable[func.id]);
             }
         }
+        this.scriptExecutionDepth++;
         try {
             return this.Evaluator(tree, scope);
+        } catch (e: unknown) {
+            if (e instanceof ReturnSignal) {
+                return AST.nodeVoid();
+            }
+            throw e;
         } finally {
+            this.scriptExecutionDepth--;
             for (const [name, previous] of previousFunctions) {
                 if (previous) {
                     scope.defineFunction(name, previous);
@@ -1205,14 +1238,81 @@ class Interpreter implements InterpreterInterface {
      * @returns Classdef AST node with canonical runtime name.
      */
     private parseClassSource(name: string, source: string): NodeClassDef {
+        const definition = this.tryParseClassSource(name, source);
+        if (!definition) {
+            const simpleName = name.split('.').pop() ?? name;
+            this.context.throwEvalError(`class '${name}' could not be loaded: source does not contain classdef ${simpleName}.`);
+        }
+        return definition;
+    }
+
+    /**
+     * Parse a class source if it contains the requested classdef.
+     *
+     * @param name Canonical class name requested by lookup.
+     * @param source Source text containing a possible classdef.
+     * @returns Matching classdef AST node, or `undefined` when the source is not a classdef file.
+     */
+    private tryParseClassSource(name: string, source: string): NodeClassDef | undefined {
         const simpleName = name.split('.').pop() ?? name;
-        const definitions = this.topLevelClassDefinitions(this.Parse(source));
+        const tree = this.Parse(source);
+        const definitions = this.topLevelClassDefinitions(tree);
         const definition = definitions.find((item) => item.id === simpleName);
         if (!definition) {
-            this.context.throwEvalError(`class '${name}' could not be loaded: source does not contain classdef ${simpleName}.`);
+            return undefined;
         }
         definition.id = name;
         return definition;
+    }
+
+    /**
+     * Test whether source text looks like a function/method file rather than a classdef file.
+     *
+     * Class lookup probes can reach sibling `@Class/method.m` files while
+     * resolving qualified member chains. Function-only sources should decline
+     * class loading quietly so the shorter class prefix can be selected.
+     *
+     * @param source Source text to inspect.
+     * @returns `true` when the source contains top-level functions and no classdef.
+     */
+    private isFunctionOnlySource(source: string): boolean {
+        const tree = this.Parse(source);
+        return this.topLevelClassDefinitions(tree).length === 0 && this.topLevelFunctionDefinitions(tree).length > 0;
+    }
+
+    /**
+     * Parse a host-provided class method source selected by a classdef prototype.
+     *
+     * MATLAB/Octave allow classdef files to declare method signatures while
+     * concrete bodies live in sibling `@Class/method.m` files. The primary
+     * function is stored under the prototype method name so class metadata and
+     * stack traces keep the source-level method spelling.
+     *
+     * @param className Canonical class name that owns the prototype.
+     * @param methodName Method name declared in the classdef prototype.
+     * @param sourceName Canonical source entry name resolved by the host.
+     * @param source Source text containing one method function and optional private subfunctions.
+     * @returns Primary method plus private subfunctions.
+     */
+    private parseClassMethodSource(className: string, methodName: string, sourceName: string, source: string): { primary: NodeFunctionDefinition; subfunctions: NodeFunctionDefinition[] } {
+        const acceptedNames = new Set([methodName, sourceName]);
+        if (!methodName.includes('.')) {
+            acceptedNames.add(sourceName.split('.').pop() ?? sourceName);
+        }
+        const definitions = this.topLevelFunctionDefinitions(this.Parse(source));
+        const primary = definitions.find((item) => acceptedNames.has(item.id));
+        if (!primary) {
+            this.context.throwEvalError(`method '${methodName}' for class ${className} could not be loaded: source does not contain primary function ${methodName}.`);
+        }
+        primary.id = methodName;
+        if (primary.attributes?.prototype) {
+            primary.attributes = { ...primary.attributes };
+            delete primary.attributes.prototype;
+        }
+        return {
+            primary,
+            subfunctions: definitions.filter((item) => item !== primary),
+        };
     }
 
     /**
@@ -1236,7 +1336,8 @@ class Interpreter implements InterpreterInterface {
      * @returns `true` when the configured resolver can provide class source.
      */
     private hasClassSource(name: string): boolean {
-        return typeof this.resolveClassSource(name) !== 'undefined';
+        const source = this.resolveClassSource(name);
+        return typeof source !== 'undefined' && typeof this.tryParseClassSource(source.name ?? name, source.source) !== 'undefined';
     }
 
     /**
@@ -1253,7 +1354,15 @@ class Interpreter implements InterpreterInterface {
         }
         this.loadingClassNames.add(name);
         try {
-            const definition = ClassDefinition.create(this.parseClassSource(source.name ?? name, source.source));
+            const classNode = this.tryParseClassSource(source.name ?? name, source.source);
+            if (!classNode) {
+                if (this.isFunctionOnlySource(source.source)) {
+                    return undefined;
+                }
+                this.parseClassSource(source.name ?? name, source.source);
+                return undefined;
+            }
+            const definition = ClassDefinition.create(classNode);
             definition.resolveSuperclasses(
                 (superclassName) => this.context.resolveClassDefinition(superclassName, scope),
                 (message) => this.context.throwEvalError(message),
@@ -1261,6 +1370,49 @@ class Interpreter implements InterpreterInterface {
             return definition;
         } finally {
             this.loadingClassNames.delete(name);
+        }
+    }
+
+    /**
+     * Resolve a concrete method body for a classdef prototype.
+     *
+     * The lookup key is `ClassName.methodName`, which maps naturally to
+     * browser-hosted paths such as `+pkg/@Class/method.m` through the shared
+     * class-source resolver.
+     *
+     * @param className Canonical class name.
+     * @param methodName Method prototype name.
+     * @param scope Scope used as parent for the method-file private scope.
+     * @returns Loaded method body, or `undefined` when no external method file exists.
+     */
+    public loadClassMethodDefinition(className: string, methodName: string, scope: Scope): NodeFunctionDefinition | undefined {
+        const sourceName = `${className}.${methodName}`;
+        const source = this.resolveClassSource(sourceName);
+        if (!source || this.loadingClassMethodNames.has(sourceName)) {
+            return undefined;
+        }
+        this.loadingClassMethodNames.add(sourceName);
+        try {
+            const parsed = this.parseClassMethodSource(className, methodName, source.name ?? sourceName, source.source);
+            const fileScope = Scope.create(this.context.globalScope ?? scope, false);
+            this.validateFunctionSignature(parsed.primary);
+            this.validateFunctionArgumentsBlocks(parsed.primary);
+            parsed.primary.definingScope = fileScope;
+            fileScope.defineFunction(parsed.primary.id, parsed.primary);
+            for (const subfunction of parsed.subfunctions) {
+                if (subfunction.id === parsed.primary.id || subfunction.id in fileScope.functionTable) {
+                    this.context.throwSyntaxError(`duplicate function '${subfunction.id}' in method file ${sourceName}.`);
+                }
+                this.validateFunctionSignature(subfunction);
+                this.validateFunctionArgumentsBlocks(subfunction);
+                subfunction.definingScope = fileScope;
+                subfunction.attributes = { ...(subfunction.attributes ?? {}), subfunction: true };
+                delete subfunction.attributes.nested;
+                fileScope.defineFunction(subfunction.id, subfunction);
+            }
+            return parsed.primary;
+        } finally {
+            this.loadingClassMethodNames.delete(sourceName);
         }
     }
 
@@ -1491,20 +1643,29 @@ class Interpreter implements InterpreterInterface {
         return undefined;
     }
 
+    private lookupScriptSourceResolution(name: string): SymbolResolution | undefined {
+        const canonical = this.context.aliasNameFunction(name);
+        if (this.hasScriptSource(canonical)) {
+            return { kind: 'script', name, resolvedName: canonical, source: 'local' };
+        }
+        return undefined;
+    }
+
     private resolveLookupSymbol(name: string, kind?: string): SymbolResolution | undefined {
         const normalizedKind = kind?.toLowerCase();
         const scope = this.context.currentScope;
         const classes = normalizedKind === 'class' || typeof normalizedKind === 'undefined';
+        const scripts = normalizedKind === 'file' || typeof normalizedKind === 'undefined';
         const resolved = this.resolveRuntimeSymbol(name, scope, {
             variables: normalizedKind !== 'class' && normalizedKind !== 'builtin' && normalizedKind !== 'file' && normalizedKind !== 'function',
             classes,
             loadClasses: false,
             functions: normalizedKind !== 'class' && normalizedKind !== 'var' && normalizedKind !== 'variable',
         });
-        if (resolved || !classes) {
+        if (resolved) {
             return resolved;
         }
-        return this.lookupClassSourceResolution(name, scope);
+        return (classes ? this.lookupClassSourceResolution(name, scope) : undefined) ?? (scripts ? this.lookupScriptSourceResolution(name) : undefined);
     }
 
     private existCode(name: string, kind?: string): number {
@@ -1700,6 +1861,319 @@ class Interpreter implements InterpreterInterface {
         listener.enabled = this.toBoolean(value);
     }
 
+    /**
+     * Resolve a property name passed to MATLAB's Set/Get mixin methods.
+     *
+     * Exact-name classes require an exact property name. Other SetGet classes
+     * accept full case-insensitive names before considering partial matches,
+     * where the lowest `PartialMatchPriority` value wins ambiguous prefixes.
+     */
+    private resolveSetGetProperty(instance: ClassInstance, name: string, functionName: 'get' | 'set'): ClassPropertyDefinition {
+        if (!instance.classDefinition.isSetGetClass()) {
+            this.context.throwEvalError(`${functionName}: first argument must be a matlab.mixin.SetGet object.`);
+        }
+        const properties = instance.classDefinition.allProperties();
+        const exactCaseMatches = properties.filter((property) => property.name === name);
+        if (exactCaseMatches.length === 1) {
+            return exactCaseMatches[0];
+        }
+        if (exactCaseMatches.length > 1) {
+            this.context.throwEvalError(`${functionName}: ambiguous property name '${name}' for class ${instance.classDefinition.name}.`);
+        }
+        if (instance.classDefinition.isSetGetExactNamesClass()) {
+            this.context.throwEvalError(`${functionName}: unknown property '${name}' for class ${instance.classDefinition.name}.`);
+        }
+        const lowerName = name.toLowerCase();
+        const exactMatches = properties.filter((property) => property.name.toLowerCase() === lowerName);
+        if (exactMatches.length === 1) {
+            return exactMatches[0];
+        }
+        if (exactMatches.length > 1) {
+            this.context.throwEvalError(`${functionName}: ambiguous property name '${name}' for class ${instance.classDefinition.name}.`);
+        }
+        const partialMatches = properties.filter((property) => property.name.toLowerCase().startsWith(lowerName));
+        if (partialMatches.length === 0) {
+            this.context.throwEvalError(`${functionName}: unknown property '${name}' for class ${instance.classDefinition.name}.`);
+        }
+        const bestPriority = Math.min(...partialMatches.map((property) => property.partialMatchPriority));
+        const bestMatches = partialMatches.filter((property) => property.partialMatchPriority === bestPriority);
+        if (bestMatches.length !== 1) {
+            this.context.throwEvalError(`${functionName}: ambiguous partial property name '${name}' for class ${instance.classDefinition.name}.`);
+        }
+        return bestMatches[0];
+    }
+
+    private isSetGetSettableProperty(property: ClassPropertyDefinition): boolean {
+        return (
+            !property.isConstant &&
+            property.setAccess === 'public' &&
+            (!property.isDependent || !!property.setMethodName || !!property.classDefinition.findMethod(`set.${property.name}`, (item) => !item.isStatic))
+        );
+    }
+
+    private assertSetGetSettableProperty(property: ClassPropertyDefinition, functionName: 'set'): void {
+        if (!this.isSetGetSettableProperty(property)) {
+            this.context.throwEvalError(`${functionName}: property '${property.name}' is not publicly settable for class ${property.classDefinition.name}.`);
+        }
+    }
+
+    private setGetObject(value: NodeInput, functionName: 'get' | 'set'): ClassInstance | MultiArray {
+        if (MultiArray.isInstanceOf(value) && this.hasClassInstanceElement(value)) {
+            this.setGetArrayRepresentative(value, functionName);
+            return value;
+        }
+        if (!ClassInstance.isInstanceOf(value)) {
+            this.context.throwEvalError(`${functionName}: first argument must be a matlab.mixin.SetGet object.`);
+        }
+        try {
+            ClassInstance.throwIfDeleted(value);
+        } catch (e: unknown) {
+            this.context.throwEvalError((e as Error).message);
+        }
+        if (!value.classDefinition.isSetGetClass()) {
+            this.context.throwEvalError(`${functionName}: first argument must be a matlab.mixin.SetGet object.`);
+        }
+        return value;
+    }
+
+    private setGetArrayRepresentative(value: MultiArray, functionName: 'get' | 'set'): ClassInstance {
+        const instances = MultiArray.linearize(value);
+        if (instances.length === 0) {
+            this.context.throwEvalError(`${functionName}: first argument must be a nonempty matlab.mixin.SetGet object array.`);
+        }
+        const first = instances[0];
+        if (!ClassInstance.isInstanceOf(first)) {
+            this.context.throwEvalError(`${functionName}: first argument must be a matlab.mixin.SetGet object.`);
+        }
+        for (const instance of instances) {
+            if (!ClassInstance.isInstanceOf(instance)) {
+                this.context.throwEvalError(`${functionName}: first argument must be a matlab.mixin.SetGet object.`);
+            }
+            try {
+                ClassInstance.throwIfDeleted(instance);
+            } catch (e: unknown) {
+                this.context.throwEvalError((e as Error).message);
+            }
+            if (!instance.classDefinition.isSetGetClass()) {
+                this.context.throwEvalError(`${functionName}: first argument must be a matlab.mixin.SetGet object.`);
+            }
+        }
+        return first;
+    }
+
+    private setGetStructure(instance: ClassInstance): Structure {
+        const result: Record<string, NodeInput> = {};
+        for (const property of instance.classDefinition.allProperties().filter((item) => !item.isHidden && item.getAccess === 'public')) {
+            result[property.name] = this.resolveClassInstanceField(instance, property.name, AST.nodeIdentifier('get'));
+        }
+        return new Structure(result);
+    }
+
+    private setGetStructureArray(array: MultiArray): MultiArray {
+        const result = new MultiArray([MultiArray.linearLength(array), 1]);
+        for (let n = 0; n < MultiArray.linearLength(array); n++) {
+            const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(array.dimension[0], array.dimension[1], n);
+            const instance = array.array[i][j];
+            if (!ClassInstance.isInstanceOf(instance)) {
+                this.context.throwEvalError('get: first argument must be a matlab.mixin.SetGet object.');
+            }
+            result.array[n][0] = this.setGetStructure(instance);
+        }
+        MultiArray.setType(result);
+        return result;
+    }
+
+    private setGetPropertyNames(value: NodeInput, functionName: 'get' | 'set'): string[] {
+        if (CharString.isInstanceOf(value)) {
+            return [value.str];
+        }
+        if (MultiArray.isInstanceOf(value) && value.isCell) {
+            const names = MultiArray.linearize(value);
+            if (names.every(CharString.isInstanceOf)) {
+                return (names as CharString[]).map((name) => name.str);
+            }
+        }
+        AST.throwInvalidCallError(functionName);
+        return [];
+    }
+
+    private getSetGetPropertyCell(target: ClassInstance | MultiArray, properties: ClassPropertyDefinition[]): MultiArray {
+        const instances = ClassInstance.isInstanceOf(target) ? [target] : MultiArray.linearize(target);
+        const result = new MultiArray([instances.length, properties.length], undefined, true);
+        instances.forEach((instance, row) => {
+            if (!ClassInstance.isInstanceOf(instance)) {
+                this.context.throwEvalError('get: first argument must be a matlab.mixin.SetGet object.');
+            }
+            properties.forEach((property, column) => {
+                result.array[row][column] = this.resolveClassInstanceField(instance, property.name, AST.nodeIdentifier('get'));
+            });
+        });
+        MultiArray.setType(result);
+        return result;
+    }
+
+    private setSetGetPropertyCell(target: ClassInstance | MultiArray, propertyNames: MultiArray, propertyValues: MultiArray): void {
+        if (!propertyNames.isCell || propertyNames.dimension[0] !== 1) {
+            this.context.throwEvalError('set: property name cell array must be 1-by-N.');
+        }
+        if (!propertyValues.isCell) {
+            AST.throwInvalidCallError('set');
+        }
+        const names = MultiArray.linearize(propertyNames);
+        if (!names.every(CharString.isInstanceOf)) {
+            AST.throwInvalidCallError('set');
+        }
+        const instances = ClassInstance.isInstanceOf(target) ? [target] : MultiArray.linearize(target);
+        const propertyCount = names.length;
+        if (propertyValues.dimension[0] !== instances.length || propertyValues.dimension[1] !== propertyCount) {
+            this.context.throwEvalError(`set: property value cell array must be ${instances.length}-by-${propertyCount}.`);
+        }
+        const representative = ClassInstance.isInstanceOf(target) ? target : this.setGetArrayRepresentative(target, 'set');
+        const properties = (names as CharString[]).map((name) => {
+            const property = this.resolveSetGetProperty(representative, name.str, 'set');
+            this.assertSetGetSettableProperty(property, 'set');
+            return property;
+        });
+        instances.forEach((instance, row) => {
+            if (!ClassInstance.isInstanceOf(instance)) {
+                this.context.throwEvalError('set: first argument must be a matlab.mixin.SetGet object.');
+            }
+            properties.forEach((property, column) => {
+                const updated = this.assignClassInstanceField(instance, property.name, propertyValues.array[row][column], AST.nodeIdentifier('set'), this.context.currentScope);
+                if (MultiArray.isInstanceOf(target)) {
+                    const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(target.dimension[0], target.dimension[1], row);
+                    target.array[i][j] = updated;
+                }
+            });
+        });
+        if (MultiArray.isInstanceOf(target)) {
+            MultiArray.setType(target);
+        }
+    }
+
+    private assignSetGetProperty(target: ClassInstance | MultiArray, name: string, value: NodeInput): void {
+        const instance = ClassInstance.isInstanceOf(target) ? target : this.setGetArrayRepresentative(target, 'set');
+        const property = this.resolveSetGetProperty(instance, name, 'set');
+        this.assertSetGetSettableProperty(property, 'set');
+        if (ClassInstance.isInstanceOf(target)) {
+            this.assignClassInstanceField(target, property.name, value, AST.nodeIdentifier('set'), this.context.currentScope);
+        } else {
+            this.assignClassArrayField(target, property.name, value, AST.nodeIdentifier('set'), this.context.currentScope);
+        }
+    }
+
+    private setGetSettableStructure(instance: ClassInstance): Structure {
+        const result: Record<string, NodeInput> = {};
+        for (const property of instance.classDefinition.allProperties().filter((item) => !item.isHidden && this.isSetGetSettableProperty(item))) {
+            result[property.name] = MultiArray.emptyArray(true);
+        }
+        return new Structure(result);
+    }
+
+    private getSetGetProperty(args: NodeInput[]): NodeInput {
+        const target = this.setGetObject(args[0], 'get');
+        if (args.length === 1) {
+            if (ClassInstance.isInstanceOf(target)) {
+                return this.setGetStructure(target);
+            }
+            return this.setGetStructureArray(target);
+        }
+        if (args.length !== 2 || !CharString.isInstanceOf(args[1])) {
+            if (args.length !== 2 || !(MultiArray.isInstanceOf(args[1]) && args[1].isCell)) {
+                AST.throwInvalidCallError('get');
+            }
+        }
+        const instance = ClassInstance.isInstanceOf(target) ? target : this.setGetArrayRepresentative(target, 'get');
+        const propertyNames = this.setGetPropertyNames(args[1], 'get');
+        const properties = propertyNames.map((name) => this.resolveSetGetProperty(instance, name, 'get'));
+        if (ClassInstance.isInstanceOf(target) && CharString.isInstanceOf(args[1])) {
+            return this.resolveClassInstanceField(target, properties[0].name, AST.nodeIdentifier('get'));
+        }
+        if (MultiArray.isInstanceOf(target) && CharString.isInstanceOf(args[1])) {
+            const result = new MultiArray(target.dimension, undefined, true);
+            for (let n = 0; n < MultiArray.linearLength(target); n++) {
+                const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(target.dimension[0], target.dimension[1], n);
+                const item = target.array[i][j];
+                if (!ClassInstance.isInstanceOf(item)) {
+                    this.context.throwEvalError('get: first argument must be a matlab.mixin.SetGet object.');
+                }
+                result.array[i][j] = this.resolveClassInstanceField(item, properties[0].name, AST.nodeIdentifier('get'));
+            }
+            MultiArray.setType(result);
+            return result;
+        }
+        return this.getSetGetPropertyCell(target, properties);
+    }
+
+    private setSetGetProperties(args: NodeInput[]): NodeInput {
+        const target = this.setGetObject(args[0], 'set');
+        if (args.length === 1) {
+            if (ClassInstance.isInstanceOf(target)) {
+                return this.setGetSettableStructure(target);
+            }
+            AST.throwInvalidCallError('set');
+        }
+        if (args.length === 2) {
+            if (CharString.isInstanceOf(args[1])) {
+                const instance = ClassInstance.isInstanceOf(target) ? target : this.setGetArrayRepresentative(target, 'set');
+                const property = this.resolveSetGetProperty(instance, args[1].str, 'set');
+                this.assertSetGetSettableProperty(property, 'set');
+                return MultiArray.emptyArray(true);
+            }
+            if (Structure.isInstanceOf(args[1])) {
+                for (const [name, value] of Object.entries(args[1].field)) {
+                    this.assignSetGetProperty(target, name, value);
+                }
+                return AST.nodeVoid();
+            }
+            AST.throwInvalidCallError('set');
+        }
+        if (Structure.isInstanceOf(args[1])) {
+            if ((args.length - 2) % 2 !== 0) {
+                AST.throwInvalidCallError('set');
+            }
+            for (const [name, value] of Object.entries(args[1].field)) {
+                this.assignSetGetProperty(target, name, value);
+            }
+            for (let index = 2; index < args.length; index += 2) {
+                const propertyName = args[index];
+                if (!CharString.isInstanceOf(propertyName)) {
+                    AST.throwInvalidCallError('set');
+                }
+                this.assignSetGetProperty(target, propertyName.str, args[index + 1]);
+            }
+            return AST.nodeVoid();
+        }
+        if (MultiArray.isInstanceOf(args[1]) && args[1].isCell) {
+            if (!MultiArray.isInstanceOf(args[2]) || !args[2].isCell) {
+                AST.throwInvalidCallError('set');
+            }
+            this.setSetGetPropertyCell(target, args[1], args[2]);
+            if ((args.length - 3) % 2 !== 0) {
+                AST.throwInvalidCallError('set');
+            }
+            for (let index = 3; index < args.length; index += 2) {
+                const propertyName = args[index];
+                if (!CharString.isInstanceOf(propertyName)) {
+                    AST.throwInvalidCallError('set');
+                }
+                this.assignSetGetProperty(target, propertyName.str, args[index + 1]);
+            }
+            return AST.nodeVoid();
+        }
+        if (args.length % 2 === 0) {
+            AST.throwInvalidCallError('set');
+        }
+        for (let index = 1; index < args.length; index += 2) {
+            const propertyName = args[index];
+            if (!CharString.isInstanceOf(propertyName)) {
+                AST.throwInvalidCallError('set');
+            }
+            this.assignSetGetProperty(target, propertyName.str, args[index + 1]);
+        }
+        return AST.nodeVoid();
+    }
+
     private readonly functions: Record<string, FunctionSignatureEntry> = {
         unparse: {
             func: (tree: NodeInput): CharString => new CharString(this.Unparse(tree)),
@@ -1771,6 +2245,27 @@ class Interpreter implements InterpreterInterface {
         notify: {
             func: (...args: NodeInput[]): NodeInput => this.notifyClassEvent(args[0], args[1]),
             signature: { inputs: { arity: 2, parameters: [{ name: 'source' }, { name: 'eventName', classes: ['char'] }] }, outputs: { arity: 0 } },
+        },
+        get: {
+            func: (...args: NodeInput[]): NodeInput => this.getSetGetProperty(args),
+            signature: {
+                inputs: [
+                    { arity: 1, parameters: [{ name: 'object' }] },
+                    { arity: 2, parameters: [{ name: 'object' }, { name: 'propertyName', classes: ['char', 'cell'] }] },
+                ],
+                outputs: { arity: 1 },
+            },
+        },
+        set: {
+            func: (...args: NodeInput[]): NodeInput => this.setSetGetProperties(args),
+            signature: {
+                inputs: [
+                    { arity: 1, parameters: [{ name: 'object' }] },
+                    { arity: 2, parameters: [{ name: 'object' }, { name: 'propertyNameOrStruct' }] },
+                    { arity: -1, min: 3, parameters: [{ name: 'object' }, { name: 'propertyName', classes: ['char', 'cell', 'struct'] }, { name: 'propertyValue', variadic: true }] },
+                ],
+                outputs: { arity: -1, min: 0, max: 1 },
+            },
         },
         mfilename: {
             func: (...args: NodeInput[]): CharString => {
@@ -2044,6 +2539,7 @@ class Interpreter implements InterpreterInterface {
                     (args[0] as CharString).str,
                     args.length === 2 ? (args[1] as CharString).str : undefined,
                     (source, scope) => this.evalStringInScope(source, scope as Scope),
+                    (error) => this.isEvalCatchableError(error),
                 );
             },
             signature: {
@@ -2062,8 +2558,12 @@ class Interpreter implements InterpreterInterface {
         evalin: {
             func: (...args: NodeInput[]): NodeInput => {
                 const scope = this.context.resolveWorkspace((args[0] as CharString).str);
-                return FunctionWorkspace.evaluateWithCatch(scope, (args[1] as CharString).str, args.length === 3 ? (args[2] as CharString).str : undefined, (source, itemScope) =>
-                    this.evalStringInScope(source, itemScope as Scope),
+                return FunctionWorkspace.evaluateWithCatch(
+                    scope,
+                    (args[1] as CharString).str,
+                    args.length === 3 ? (args[2] as CharString).str : undefined,
+                    (source, itemScope) => this.evalStringInScope(source, itemScope as Scope),
+                    (error) => this.isEvalCatchableError(error),
                 );
             },
             signature: {
@@ -2524,28 +3024,25 @@ class Interpreter implements InterpreterInterface {
         }
     }
 
-    private switchCaseMatches(switchValue: NodeExpr, caseValue: NodeExpr, scope: Scope): boolean {
+    private switchComparableValue(value: NodeInput): NodeInput {
+        if (MultiArray.isInstanceOf(value) && !value.isCell && value.dimension.length === 2 && value.dimension[0] === 1 && value.dimension[1] === 1) {
+            return value.array[0][0] as NodeInput;
+        }
+        return value;
+    }
+
+    private switchCaseMatches(switchValue: NodeInput, caseValue: NodeInput): boolean {
         const candidates = MultiArray.isInstanceOf(caseValue) && caseValue.isCell ? MultiArray.linearize(caseValue) : [caseValue];
         for (const candidate of candidates) {
-            if (this.switchCandidateMatches(switchValue, candidate as NodeExpr, scope)) {
+            if (this.switchCandidateMatches(switchValue, candidate as NodeInput)) {
                 return true;
             }
         }
         return false;
     }
 
-    private switchCandidateMatches(switchValue: NodeExpr, candidate: NodeExpr, scope: Scope): boolean {
-        try {
-            const matches = AST.reduceToFirstIfReturnList(
-                this.Evaluator(AST.nodeOperation('==', MathOperation.copy(switchValue as MathObject) as NodeExpr, MathOperation.copy(candidate as MathObject) as NodeExpr), scope),
-            );
-            return this.toBoolean(matches);
-        } catch (error: unknown) {
-            if (error instanceof Error && error.message.includes('nonconformant arguments')) {
-                return false;
-            }
-            throw error;
-        }
+    private switchCandidateMatches(switchValue: NodeInput, candidate: NodeInput): boolean {
+        return RuntimeEquality.valuesEqual(this.switchComparableValue(switchValue), this.switchComparableValue(candidate));
     }
 
     private classDefinitionForOperatorValue(value: NodeInput): ClassDefinition | undefined {
@@ -2657,7 +3154,28 @@ class Interpreter implements InterpreterInterface {
         return MultiArray.MultiArrayToScalar(result);
     }
 
-    private evaluateBinaryOperation(tree: NodeInput, scope: Scope): NodeInput {
+    private requireBinaryOperation(tree: NodeInput): BinaryOperation {
+        if (AST.isNodeBinaryOperation(tree)) {
+            return tree;
+        }
+        this.context.throwEvalError(`invalid binary operation AST node '${tree.type}'.`);
+    }
+
+    private requirePrefixOperation(tree: NodeInput): PrefixUnaryOperation {
+        if (AST.isNodePrefixOperation(tree)) {
+            return tree;
+        }
+        this.context.throwEvalError(`invalid prefix operation AST node '${tree.type}'.`);
+    }
+
+    private requirePostfixOperation(tree: NodeInput): PostfixUnaryOperation {
+        if (AST.isNodePostfixOperation(tree)) {
+            return tree;
+        }
+        this.context.throwEvalError(`invalid postfix operation AST node '${tree.type}'.`);
+    }
+
+    private evaluateBinaryOperation(tree: BinaryOperation, scope: Scope): NodeInput {
         const left = AST.reduceToFirstIfReturnList(this.Evaluator(tree.left, scope));
         const right = AST.reduceToFirstIfReturnList(this.Evaluator(tree.right, scope));
         const methodName = Interpreter.binaryOperatorMethodTable[tree.type];
@@ -2685,7 +3203,7 @@ class Interpreter implements InterpreterInterface {
      * @param scope Scope used while evaluating operands.
      * @returns Logical scalar result.
      */
-    private evaluateShortCircuitOperation(tree: NodeInput, scope: Scope): NodeInput {
+    private evaluateShortCircuitOperation(tree: BinaryOperation, scope: Scope): NodeInput {
         const left = AST.reduceToFirstIfReturnList(this.Evaluator(tree.left, scope));
         const leftValue = this.toBoolean(left);
         if (tree.type === '&&') {
@@ -2735,8 +3253,8 @@ class Interpreter implements InterpreterInterface {
         return MultiArray.MultiArrayToScalar(result);
     }
 
-    private evaluateUnaryOperation(tree: NodeInput, scope: Scope, operandSide: 'left' | 'right'): NodeInput {
-        const operand = operandSide === 'left' ? tree.left : tree.right;
+    private evaluateUnaryOperation(tree: PrefixUnaryOperation | PostfixUnaryOperation, scope: Scope): NodeInput {
+        const operand = AST.isNodePrefixOperation(tree) ? tree.right : tree.left;
         const value = AST.reduceToFirstIfReturnList(this.Evaluator(operand, scope));
         const methodName = Interpreter.unaryOperatorMethodTable[tree.type];
         if (methodName) {
@@ -3514,14 +4032,13 @@ class Interpreter implements InterpreterInterface {
             return;
         }
         for (const statement of list.list) {
-            if (statement.type !== 'FCNDEF') {
+            if (!AST.isNodeFunctionDefinition(statement)) {
                 continue;
             }
-            const func = statement as NodeFunctionDefinition;
-            if (scope.functionTable[func.id] === func) {
+            if (scope.functionTable[statement.id] === statement) {
                 continue;
             }
-            this.registerFunctionDefinition(func, scope, false);
+            this.registerFunctionDefinition(statement, scope, false);
         }
     }
 
@@ -3745,13 +4262,13 @@ class Interpreter implements InterpreterInterface {
 
     public registerNestedFunctions(func: NodeFunctionDefinition, scope: Scope): void {
         for (const statement of func.statements.list) {
-            if (statement.type !== 'FCNDEF') {
+            if (!AST.isNodeFunctionDefinition(statement)) {
                 continue;
             }
-            const nested = {
-                ...(statement as NodeFunctionDefinition),
-                attributes: { ...((statement as NodeFunctionDefinition).attributes ?? {}) },
-            } as NodeFunctionDefinition;
+            const nested: NodeFunctionDefinition = {
+                ...statement,
+                attributes: { ...(statement.attributes ?? {}) },
+            };
             this.validateFunctionSignature(nested);
             this.validateFunctionArgumentsBlocks(nested);
             nested.definingScope = scope;
@@ -3841,26 +4358,26 @@ class Interpreter implements InterpreterInterface {
                     case '~=':
                     case '&':
                     case '|':
-                        return this.evaluateBinaryOperation(tree, scope);
+                        return this.evaluateBinaryOperation(this.requireBinaryOperation(tree), scope);
                     case '&&':
                     case '||':
-                        return this.evaluateShortCircuitOperation(tree, scope);
+                        return this.evaluateShortCircuitOperation(this.requireBinaryOperation(tree), scope);
                     case '()':
-                        return AST.reduceToFirstIfReturnList(this.Evaluator(tree.right, scope));
+                        return AST.reduceToFirstIfReturnList(this.Evaluator(this.requirePrefixOperation(tree).right, scope));
                     case '!':
                     case '~':
                     case '+_':
                     case '-_':
-                        return this.evaluateUnaryOperation(tree, scope, 'right');
+                        return this.evaluateUnaryOperation(this.requirePrefixOperation(tree), scope);
                     case '++_':
                     case '--_':
-                        return (this.opTable[tree.type] as IncDecOperator)(tree.right);
+                        return (this.opTable[tree.type] as IncDecOperator)(this.requirePrefixOperation(tree).right as NodeIdentifier);
                     case ".'":
                     case "'":
-                        return this.evaluateUnaryOperation(tree, scope, 'left');
+                        return this.evaluateUnaryOperation(this.requirePostfixOperation(tree), scope);
                     case '_++':
                     case '_--':
-                        return (this.opTable[tree.type] as IncDecOperator)(tree.left);
+                        return (this.opTable[tree.type] as IncDecOperator)(this.requirePostfixOperation(tree).left as NodeIdentifier);
                     case '=':
                     case '+=':
                     case '-=':
@@ -3877,8 +4394,10 @@ class Interpreter implements InterpreterInterface {
                     case '&=':
                     case '|=': {
                         /* `tree` is an assignment */
-                        const assignment = this.validateAssignment(tree.left, true, scope);
-                        const op: OperatorType | '' = tree.type.substring(0, tree.type.length - 1);
+                        const assignmentTree = this.requireBinaryOperation(tree);
+                        const assignment = this.validateAssignment(assignmentTree.left, true, scope);
+                        const assignmentOperator = assignmentTree.type as OperatorType;
+                        const op: OperatorType | '' = assignmentOperator.substring(0, assignmentOperator.length - 1) as OperatorType | '';
                         if (assignment.length > 1 && op.length > 0) {
                             this.context.throwEvalError('computed multiple assignment not allowed.');
                         }
@@ -3888,7 +4407,7 @@ class Interpreter implements InterpreterInterface {
                         this.context.pushForwardReferenceTargets(assignment.map(({ id }) => id).filter((id) => id !== '~'));
                         this.context.pushRequestedOutputCount(assignment.length);
                         try {
-                            right = AST.isNodeReturnList(tree.right) ? tree.right : MathOperation.copy(this.Evaluator(tree.right, scope));
+                            right = AST.isNodeReturnList(assignmentTree.right) ? assignmentTree.right : MathOperation.copy(this.Evaluator(assignmentTree.right, scope));
                         } catch (e: unknown) {
                             if (!this.context.allowForwardReference) {
                                 throw e as Error;
@@ -3897,7 +4416,7 @@ class Interpreter implements InterpreterInterface {
                                 throw e as Error;
                             }
                             error = e as Error;
-                            right = MathOperation.copy(tree.right);
+                            right = MathOperation.copy(assignmentTree.right);
                             undefinedReference = e.identifier;
                         } finally {
                             this.context.popRequestedOutputCount();
@@ -4004,7 +4523,7 @@ class Interpreter implements InterpreterInterface {
                                             }
                                         }
                                         if (entry && MultiArray.isInstanceOf(entry.node) && field.length === 1 && this.hasClassInstanceElement(entry.node)) {
-                                            entry.node = this.assignClassArrayIndexedField(id, entry.node, index, field[0], rightValue, tree.left, scope);
+                                            entry.node = this.assignClassArrayIndexedField(id, entry.node, index, field[0], rightValue, assignmentTree.left, scope);
                                             AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), entry.node));
                                             continue;
                                         }
@@ -4020,7 +4539,7 @@ class Interpreter implements InterpreterInterface {
                                 } else {
                                     /* Name or structure-field assignment. */
                                     const rightN = selectRightValue(n);
-                                    rightN.parent = tree.right;
+                                    rightN.parent = assignmentTree.right;
                                     const expr = op.length
                                         ? typeof error !== 'undefined'
                                             ? AST.nodeOperation(op as OperatorType, AST.nodeIdentifier(id), rightN)
@@ -4093,8 +4612,8 @@ class Interpreter implements InterpreterInterface {
                     case 'IDENT':
                         return this.context.resolveIdentifier(tree, scope);
                     case 'RETURN':
-                        if (this.context.currentFrame?.func?.type !== 'FCNDEF') {
-                            this.context.throwEvalError('return is only valid inside a function.');
+                        if (!this.context.isInsideUserFunction() && this.scriptExecutionDepth === 0) {
+                            this.context.throwEvalError('return is only valid inside a function or script.');
                         }
                         throw new ReturnSignal();
                     case 'BREAK':
@@ -4102,7 +4621,7 @@ class Interpreter implements InterpreterInterface {
                     case 'CONTINUE':
                         throw new ContinueSignal();
                     case 'FCNDEF': {
-                        const func = tree as NodeFunctionDefinition;
+                        const func = AST.isNodeFunctionDefinition(tree) ? tree : this.context.throwEvalError(`invalid function definition AST node '${tree.type}'.`);
                         if (this.context.currentFrame?.func?.type === 'FCNDEF' && scope.hasLocalFunction(func.id)) {
                             return AST.nodeVoid();
                         }
@@ -4469,7 +4988,7 @@ class Interpreter implements InterpreterInterface {
                         const switchValue = AST.reduceToFirstIfReturnList(this.Evaluator(tree.expression, scope));
                         for (const switchCase of tree.cases) {
                             const caseValue = AST.reduceToFirstIfReturnList(this.Evaluator(switchCase.expression, scope));
-                            if (this.switchCaseMatches(switchValue, caseValue, scope)) {
+                            if (this.switchCaseMatches(switchValue, caseValue)) {
                                 return AST.reduceToFirstIfReturnList(this.Evaluator(switchCase.then, scope));
                             }
                         }
@@ -4703,12 +5222,12 @@ class Interpreter implements InterpreterInterface {
                 '\nENDFUNCTION'
             );
         };
-        const leftUnparse = (type: NodeType | number, tree: NodeInput) => {
+        const leftUnparse = (type: NodeType | number, tree: PostfixUnaryOperation) => {
             const precedence = this.nodePrecedence(tree);
             const leftUnparse = this.Unparse(tree.left, precedence);
-            return (this.nodePrecedence(tree.right) < precedence ? '(' + leftUnparse + ')' : leftUnparse) + type;
+            return (this.nodePrecedence(tree.left) < precedence ? '(' + leftUnparse + ')' : leftUnparse) + type;
         };
-        const rightUnparse = (type: NodeType | number, tree: NodeInput) => {
+        const rightUnparse = (type: NodeType | number, tree: PrefixUnaryOperation) => {
             const precedence = this.nodePrecedence(tree);
             const rightUnparse = this.Unparse(tree.right, precedence);
             return type + (this.nodePrecedence(tree.right) < precedence ? '(' + rightUnparse + ')' : rightUnparse);
@@ -4787,38 +5306,40 @@ class Interpreter implements InterpreterInterface {
                         case '.**=':
                         case '&=':
                         case '|=': {
+                            const operation = this.requireBinaryOperation(tree);
                             const precedence = this.nodePrecedence(tree);
-                            const leftUnparse = this.Unparse(tree.left, precedence);
-                            const rightUnparse = this.Unparse(tree.right, precedence);
+                            const leftUnparse = this.Unparse(operation.left, precedence);
+                            const rightUnparse = this.Unparse(operation.right, precedence);
                             return (
-                                (this.nodePrecedence(tree.left) < precedence ? '(' + leftUnparse + ')' : leftUnparse) +
+                                (this.nodePrecedence(operation.left) < precedence ? '(' + leftUnparse + ')' : leftUnparse) +
                                 tree.type +
-                                (this.nodePrecedence(tree.right) < precedence ? '(' + rightUnparse + ')' : rightUnparse)
+                                (this.nodePrecedence(operation.right) < precedence ? '(' + rightUnparse + ')' : rightUnparse)
                             );
                         }
                         case '()': {
-                            const precedence = this.nodePrecedence(tree.right);
-                            const rightUnparse = this.Unparse(tree.right, precedence);
+                            const operation = this.requirePrefixOperation(tree);
+                            const precedence = this.nodePrecedence(operation.right);
+                            const rightUnparse = this.Unparse(operation.right, precedence);
                             return precedence < parentPrecedence ? '(' + rightUnparse + ')' : rightUnparse;
                         }
                         case '!':
                         case '~':
-                            return rightUnparse(tree.type, tree);
+                            return rightUnparse(tree.type, this.requirePrefixOperation(tree));
                         case '+_':
-                            return rightUnparse('+', tree);
+                            return rightUnparse('+', this.requirePrefixOperation(tree));
                         case '-_':
-                            return rightUnparse('-', tree);
+                            return rightUnparse('-', this.requirePrefixOperation(tree));
                         case '++_':
-                            return rightUnparse('++' as NodeType, tree);
+                            return rightUnparse('++' as NodeType, this.requirePrefixOperation(tree));
                         case '--_':
-                            return rightUnparse('--' as NodeType, tree);
+                            return rightUnparse('--' as NodeType, this.requirePrefixOperation(tree));
                         case ".'":
                         case "'":
-                            return leftUnparse(tree.type, tree);
+                            return leftUnparse(tree.type, this.requirePostfixOperation(tree));
                         case '_++':
-                            return leftUnparse('++' as NodeType, tree);
+                            return leftUnparse('++' as NodeType, this.requirePostfixOperation(tree));
                         case '_--':
-                            return leftUnparse('--' as NodeType, tree);
+                            return leftUnparse('--' as NodeType, this.requirePostfixOperation(tree));
                         case 'IDENT':
                             return tree.id;
                         case '.':
@@ -5062,8 +5583,9 @@ class Interpreter implements InterpreterInterface {
                 } else {
                     switch (tree.type) {
                         case '()': {
-                            const precedence = this.nodePrecedence(tree.right);
-                            const rightUnparse = this.UnparserMathML(tree.right, precedence);
+                            const operation = this.requirePrefixOperation(tree);
+                            const precedence = this.nodePrecedence(operation.right);
+                            const rightUnparse = this.UnparserMathML(operation.right, precedence);
                             return precedence < parentPrecedence ? MathML.format['()']('(', rightUnparse, ')') : rightUnparse;
                         }
                         case '+':
@@ -5101,32 +5623,41 @@ class Interpreter implements InterpreterInterface {
                         case '>=':
                         case '!=':
                         case '~=': {
+                            const operation = this.requireBinaryOperation(tree);
                             const precedence = this.nodePrecedence(tree);
-                            const leftUnparse = this.UnparserMathML(tree.left, precedence);
-                            const rightUnparse = this.UnparserMathML(tree.right, precedence);
+                            const leftUnparse = this.UnparserMathML(operation.left, precedence);
+                            const rightUnparse = this.UnparserMathML(operation.right, precedence);
                             return MathML.formatDynamic(
                                 tree.type,
-                                this.nodePrecedence(tree.left) < precedence ? MathML.format['()']('(', leftUnparse, ')') : leftUnparse,
-                                this.nodePrecedence(tree.right) < precedence ? MathML.format['()']('(', rightUnparse, ')') : rightUnparse,
+                                this.nodePrecedence(operation.left) < precedence ? MathML.format['()']('(', leftUnparse, ')') : leftUnparse,
+                                this.nodePrecedence(operation.right) < precedence ? MathML.format['()']('(', rightUnparse, ')') : rightUnparse,
                             );
                         }
-                        case '/':
-                            return MathML.formatDynamic(tree.type, this.UnparserMathML(tree.left), this.UnparserMathML(tree.right));
+                        case '/': {
+                            const operation = this.requireBinaryOperation(tree);
+                            return MathML.formatDynamic(tree.type, this.UnparserMathML(operation.left), this.UnparserMathML(operation.right));
+                        }
                         case '**':
-                        case '^':
-                            return MathML.formatDynamic(tree.type, this.UnparserMathML(tree.left, this.precedenceTable['_' + tree.type]), this.UnparserMathML(tree.right));
+                        case '^': {
+                            const operation = this.requireBinaryOperation(tree);
+                            return MathML.formatDynamic(tree.type, this.UnparserMathML(operation.left, this.precedenceTable['_' + tree.type]), this.UnparserMathML(operation.right));
+                        }
                         case '!':
                         case '~':
                         case '+_':
                         case '-_':
                         case '++_':
-                        case '--_':
-                            return MathML.formatDynamic(tree.type, this.UnparserMathML(tree.right));
+                        case '--_': {
+                            const operation = this.requirePrefixOperation(tree);
+                            return MathML.formatDynamic(tree.type, this.UnparserMathML(operation.right));
+                        }
                         case '_++':
                         case '_--':
                         case ".'":
-                        case "'":
-                            return MathML.formatDynamic(tree.type, this.UnparserMathML(tree.left, this.precedenceTable['_' + tree.type]));
+                        case "'": {
+                            const operation = this.requirePostfixOperation(tree);
+                            return MathML.formatDynamic(tree.type, this.UnparserMathML(operation.left, this.precedenceTable['_' + tree.type]));
+                        }
                         case 'IDENT':
                             return MathML.format['IDENT'](substSymbol(tree.id));
                         case '.':

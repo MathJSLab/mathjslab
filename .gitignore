@@ -65,3 +65,4 @@ package-lock.json
 
 # OpenAI Codex Agent
 .agents/
+.codex/

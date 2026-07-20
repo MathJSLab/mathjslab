@@ -5,15 +5,13 @@ import { Complex } from './Complex';
 import { ClassDefinition } from './ClassDefinition';
 import { ClassInstance } from './ClassInstance';
 import { ClassMetaClass } from './ClassMeta';
-import type { NodeClassDef } from './AST';
-import { Interpreter } from './Interpreter';
 import { MultiArray } from './MultiArray';
 import { RuntimeValue } from './RuntimeValue';
 
 const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.sep}]+)\\.spec\\.([cm]?[jt]s)\$`))!;
 const unitName = __filenameMatch[1];
 const testExtension = __filenameMatch[2];
-const parseClass = (source: string): NodeClassDef => (Interpreter.Create().Parse(source) as any).list[0] as NodeClassDef;
+import { parseClassDefinition as parseClass } from './ParserTestUtils';
 
 describe(`${unitName} unit test (.${testExtension} test file).`, () => {
     describe('Runtime dimensions', () => {

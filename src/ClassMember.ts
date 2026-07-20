@@ -7,11 +7,11 @@ import type {
     NodeClassSection,
     NodeExpr,
     NodeFunctionDefinition,
-    NodeIdentifier,
     NodeInput,
     NodeMetaClass,
     NodeOperation,
 } from './AST';
+import { AST } from './AST';
 import { CharString } from './CharString';
 import type { ClassDefinition } from './ClassDefinition';
 import { MultiArray } from './MultiArray';
@@ -162,7 +162,7 @@ class ClassMember {
      * @param value Value to test.
      * @returns `true` when the value is a `?ClassName` AST node.
      */
-    private static readonly isMetaClassNode = (value: unknown): value is NodeMetaClass => typeof value === 'object' && value !== null && (value as NodeMetaClass).type === 'METACLASS';
+    private static readonly isMetaClassNode = (value: unknown): value is NodeMetaClass => AST.isNodeMetaClass(value);
 
     /**
      * Test whether a parsed attribute value is a negated attribute marker.
@@ -170,8 +170,7 @@ class ClassMember {
      * @param value Value to test.
      * @returns `true` for parser nodes produced by `~Attribute` or `!Attribute`.
      */
-    private static readonly isNegatedAttributeNode = (value: unknown): value is NodeOperation =>
-        typeof value === 'object' && value !== null && ((value as NodeOperation).type === '~' || (value as NodeOperation).type === '!');
+    private static readonly isNegatedAttributeNode = (value: unknown): value is NodeOperation => AST.isNodePrefixOperation(value) && (value.type === '~' || value.type === '!');
 
     /**
      * Convert a class-name-like AST value to a class name.
@@ -180,8 +179,8 @@ class ClassMember {
      * @returns Class name, if recognized.
      */
     private static readonly classNameValue = (value: unknown): string | null => {
-        if ((value as NodeIdentifier)?.type === 'IDENT') {
-            return (value as NodeIdentifier).id;
+        if (AST.isNodeIdentifier(value)) {
+            return value.id;
         }
         if (CharString.isInstanceOf(value)) {
             return value.str;
@@ -219,12 +218,11 @@ class ClassMember {
         if (this.isNegatedAttributeNode(value)) {
             return false;
         }
-        if ((value as NodeIdentifier).type === 'IDENT') {
-            const id = (value as NodeIdentifier).id;
-            if (id === 'true') {
+        if (AST.isNodeIdentifier(value)) {
+            if (value.id === 'true') {
                 return true;
             }
-            if (id === 'false') {
+            if (value.id === 'false') {
                 return false;
             }
         }
@@ -264,8 +262,8 @@ class ClassMember {
             return null;
         }
         const value = attribute.value;
-        if ((value as NodeIdentifier).type === 'IDENT') {
-            return (value as NodeIdentifier).id;
+        if (AST.isNodeIdentifier(value)) {
+            return value.id;
         }
         if (CharString.isInstanceOf(value)) {
             return value.toString();

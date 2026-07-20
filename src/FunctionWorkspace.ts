@@ -17,6 +17,7 @@ type WorkspaceScope = {
 type ThrowSyntaxError = (message: string) => never;
 type EvaluateInScope = (source: string, scope: WorkspaceScope) => NodeInput;
 type UnparseInputArgument = (arg: NodeExpr) => string;
+type IsCatchableError = (error: unknown) => boolean;
 
 /**
  * Workspace helpers shared by function calls and MATLAB/Octave workspace
@@ -121,12 +122,20 @@ class FunctionWorkspace {
      *
      * This models the two-argument `eval`/three-argument `evalin` form while
      * leaving parsing and execution to the callback supplied by the interpreter.
+     * The optional predicate lets the interpreter keep control-flow signals
+     * such as `return`, `break`, and `continue` out of the catch string path.
      */
-    public static evaluateWithCatch(scope: WorkspaceScope, source: string, catchSource: string | undefined, evaluate: EvaluateInScope): NodeInput {
+    public static evaluateWithCatch(
+        scope: WorkspaceScope,
+        source: string,
+        catchSource: string | undefined,
+        evaluate: EvaluateInScope,
+        isCatchableError: IsCatchableError = () => true,
+    ): NodeInput {
         try {
             return evaluate(source, scope);
         } catch (e: unknown) {
-            if (typeof catchSource === 'undefined') {
+            if (typeof catchSource === 'undefined' || !isCatchableError(e)) {
                 throw e;
             }
             return evaluate(catchSource, scope);

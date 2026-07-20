@@ -4,6 +4,7 @@ import { ComplexDecimal } from './ComplexDecimal';
 import { Interpreter } from './Interpreter';
 import { MultiArray } from './MultiArray';
 import { Complex } from './Complex';
+import { executeList } from './ParserTestUtils';
 
 let interpreter: Interpreter;
 
@@ -54,17 +55,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('The determinant must be correctly calculated', () => {
-            let tree: any;
-            let value: any;
-            tree = interpreter.Parse('det([1:3;4:6;7:9])');
-            value = interpreter.Evaluate(tree);
-            expect(value.list[0].re.toNumber()).toBe(-0);
-            tree = interpreter.Parse('det([2,1,-3; 3,2,4; 2,5,-2])');
-            value = interpreter.Evaluate(tree);
-            expect(value.list[0].re.toNumber()).toBe(-67);
-            tree = interpreter.Parse('det([-7,6,3,1; -9,1,6,4; -8,-4,3,6; -5,5,9,2])');
-            value = interpreter.Evaluate(tree);
-            expect(value.list[0].re.toNumber()).toBe(-444);
+            expect(executeList(interpreter, 'det([1:3;4:6;7:9])').list[0].re.toNumber()).toBe(-0);
+            expect(executeList(interpreter, 'det([2,1,-3; 3,2,4; 2,5,-2])').list[0].re.toNumber()).toBe(-67);
+            expect(executeList(interpreter, 'det([-7,6,3,1; -9,1,6,4; -8,-4,3,6; -5,5,9,2])').list[0].re.toNumber()).toBe(-444);
         }, 1000);
     });
 });

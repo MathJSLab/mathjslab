@@ -1,4 +1,4 @@
-import type { ClassAttributeTable, NodeClassDef, NodeClassSection, NodeFunctionDefinition, NodeIdentifier } from './AST';
+import { AST, type ClassAttributeTable, type NodeClassDef, type NodeClassSection, type NodeIdentifier } from './AST';
 import type { ClassEnumerationDefinition, ClassEventDefinition, ClassMethodDefinition, ClassPropertyDefinition } from './ClassMember';
 import { ClassMember } from './ClassMember';
 import type { RuntimeDisplay } from './RuntimeDisplay';
@@ -71,6 +71,25 @@ class ClassDefinition {
     private static readonly eventBooleanAttributes = new Set(['Hidden']);
     /** Enumeration-section attributes that must be boolean markers when present. */
     private static readonly enumerationBooleanAttributes = new Set(['Hidden']);
+    /** Built-in MATLAB mixin superclasses recognized without external source. */
+    private static readonly builtinSuperclassNames = new Set(['handle', 'matlab.mixin.SetGet', 'matlab.mixin.SetGetExactNames']);
+    /**
+     * Keep the first item for each key while preserving input order.
+     *
+     * Effective inherited member lists follow superclass lookup order; later
+     * duplicate names should not appear as separate public metadata entries.
+     */
+    private static readonly firstByKey = <T>(items: T[], keyOf: (item: T) => string): T[] => {
+        const seen = new Set<string>();
+        return items.filter((item) => {
+            const key = keyOf(item);
+            if (seen.has(key)) {
+                return false;
+            }
+            seen.add(key);
+            return true;
+        });
+    };
     /** Runtime type tag stored on each class definition instance. */
     public readonly type = ClassDefinition.CLASS_DEFINITION;
     /** Optional AST-style parent pointer used by generic copy/unparse paths. */
@@ -228,7 +247,7 @@ class ClassDefinition {
         this.validateDuplicateMembers(throwEvalError);
         this.superclassDefinitions.length = 0;
         for (const name of this.superclasses) {
-            if (name === 'handle') {
+            if (ClassDefinition.builtinSuperclassNames.has(name)) {
                 continue;
             }
             if (name === this.name) {
@@ -280,7 +299,37 @@ class ClassDefinition {
      * @returns `true` for `handle` or subclasses of `handle`.
      */
     public isHandleClass(): boolean {
-        return this.isBuiltinHandleClass || this.superclasses.includes('handle') || this.superclassDefinitions.some((superclass) => superclass.isHandleClass());
+        return (
+            this.isBuiltinHandleClass ||
+            this.superclasses.includes('handle') ||
+            this.superclasses.includes('matlab.mixin.SetGet') ||
+            this.superclasses.includes('matlab.mixin.SetGetExactNames') ||
+            this.superclassDefinitions.some((superclass) => superclass.isHandleClass())
+        );
+    }
+
+    /**
+     * Test whether the class inherits MATLAB's Set/Get mixin interface.
+     *
+     * @returns `true` for `matlab.mixin.SetGet`,
+     * `matlab.mixin.SetGetExactNames`, or subclasses of either.
+     */
+    public isSetGetClass(): boolean {
+        return (
+            this.superclasses.includes('matlab.mixin.SetGet') ||
+            this.superclasses.includes('matlab.mixin.SetGetExactNames') ||
+            this.superclassDefinitions.some((superclass) => superclass.isSetGetClass())
+        );
+    }
+
+    /**
+     * Test whether Set/Get property names must match exactly.
+     *
+     * @returns `true` for classes that inherit
+     * `matlab.mixin.SetGetExactNames`.
+     */
+    public isSetGetExactNamesClass(): boolean {
+        return this.superclasses.includes('matlab.mixin.SetGetExactNames') || this.superclassDefinitions.some((superclass) => superclass.isSetGetExactNamesClass());
     }
 
     /**
@@ -309,7 +358,10 @@ class ClassDefinition {
      * @returns Effective property list.
      */
     public allProperties(): ClassPropertyDefinition[] {
-        const inherited = this.superclassDefinitions.flatMap((superclass) => superclass.allProperties());
+        const inherited = ClassDefinition.firstByKey(
+            this.superclassDefinitions.flatMap((superclass) => superclass.allProperties()),
+            (property) => property.name,
+        );
         const ownNames = new Set(this.properties.map((property) => property.name));
         return [...inherited.filter((property) => !ownNames.has(property.name)), ...this.properties];
     }
@@ -321,9 +373,20 @@ class ClassDefinition {
      * @returns Effective method list.
      */
     public allMethods(): ClassMethodDefinition[] {
-        const inherited = this.superclassDefinitions.flatMap((superclass) => superclass.allMethods());
+        const inherited = ClassDefinition.firstByKey(this.inheritedMethods(), (method) => this.methodOverrideKey(method));
         const ownKeys = new Set(this.methods.map((method) => this.methodOverrideKey(method)));
         return [...inherited.filter((method) => !ownKeys.has(this.methodOverrideKey(method))), ...this.methods];
+    }
+
+    /**
+     * Return inherited methods in superclass lookup order without removing
+     * duplicate override keys.
+     *
+     * Public metadata lists deduplicate these entries, but validation rules
+     * such as sealed-method checks must still inspect every inherited method.
+     */
+    private inheritedMethods(): ClassMethodDefinition[] {
+        return this.superclassDefinitions.flatMap((superclass) => superclass.allMethods());
     }
 
     /**
@@ -333,7 +396,10 @@ class ClassDefinition {
      * @returns Effective event list.
      */
     public allEvents(): ClassEventDefinition[] {
-        const inherited = this.superclassDefinitions.flatMap((superclass) => superclass.allEvents());
+        const inherited = ClassDefinition.firstByKey(
+            this.superclassDefinitions.flatMap((superclass) => superclass.allEvents()),
+            (event) => event.name,
+        );
         const ownNames = new Set(this.events.map((event) => event.name));
         return [...inherited.filter((event) => !ownNames.has(event.name)), ...this.events];
     }
@@ -344,7 +410,10 @@ class ClassDefinition {
      * @returns Effective enumeration list.
      */
     public allEnumerations(): ClassEnumerationDefinition[] {
-        const inherited = this.superclassDefinitions.flatMap((superclass) => superclass.allEnumerations());
+        const inherited = ClassDefinition.firstByKey(
+            this.superclassDefinitions.flatMap((superclass) => superclass.allEnumerations()),
+            (enumeration) => enumeration.name,
+        );
         const ownNames = new Set(this.enumerations.map((enumeration) => enumeration.name));
         return [...inherited.filter((enumeration) => !ownNames.has(enumeration.name)), ...this.enumerations];
     }
@@ -373,6 +442,19 @@ class ClassDefinition {
     public findMethod(name: string, predicate: ClassMethodPredicate = () => true): ClassMethodDefinition | undefined {
         const ownMethod = this.methodTable[name]?.find(predicate);
         return ownMethod ?? this.superclassDefinitions.map((superclass) => superclass.findMethod(name, predicate)).find((method): method is ClassMethodDefinition => Boolean(method));
+    }
+
+    /**
+     * Find this class constructor by canonical or unqualified class name.
+     *
+     * MATLAB package classes declare constructors with the simple class name
+     * inside `+pkg/@Class/Class.m`, while the runtime stores the class under
+     * the canonical `pkg.Class` name.
+     *
+     * @returns Instance constructor metadata, if declared.
+     */
+    public findConstructor(): ClassMethodDefinition | undefined {
+        return this.methodTable[this.name]?.find((method) => !method.isStatic) ?? this.methodTable[this.simpleName]?.find((method) => !method.isStatic);
     }
 
     /**
@@ -525,11 +607,9 @@ class ClassDefinition {
      */
     private validateSealedMethodOverrides(throwEvalError: (message: string) => never): void {
         const inheritedSealed = new Map<string, ClassMethodDefinition>();
-        for (const superclass of this.superclassDefinitions) {
-            for (const method of superclass.allMethods()) {
-                if (method.isSealed) {
-                    inheritedSealed.set(this.methodOverrideKey(method), method);
-                }
+        for (const method of this.inheritedMethods()) {
+            if (method.isSealed) {
+                inheritedSealed.set(this.methodOverrideKey(method), method);
             }
         }
         for (const method of this.methods) {
@@ -840,13 +920,13 @@ class ClassDefinition {
             if (method.isAbstract && method.node.statements.list.length > 0) {
                 throwEvalError(`abstract method '${method.name}' in class ${this.name} cannot define a method body.`);
             }
-            if (method.name === this.name && method.isStatic) {
+            if (this.isConstructorMethodName(method.name) && method.isStatic) {
                 throwEvalError(`constructor for class ${this.name} cannot be static.`);
             }
-            if (method.name === this.name && method.isAbstract) {
+            if (this.isConstructorMethodName(method.name) && method.isAbstract) {
                 throwEvalError(`constructor for class ${this.name} cannot be abstract.`);
             }
-            if (method.name === this.name && (method.node.return.list.length !== 1 || method.node.return.list[0].type === '<~>')) {
+            if (this.isConstructorMethodName(method.name) && (method.node.return.list.length !== 1 || method.node.return.list[0].type === '<~>')) {
                 throwEvalError(`constructor for class ${this.name} must declare exactly one output.`);
             }
         }
@@ -905,7 +985,7 @@ class ClassDefinition {
             register(property.name, 'property');
         }
         for (const method of this.methods) {
-            if (method.name !== this.name && !method.name.startsWith('get.') && !method.name.startsWith('set.')) {
+            if (!this.isConstructorMethodName(method.name) && !method.name.startsWith('get.') && !method.name.startsWith('set.')) {
                 register(method.name, 'method');
             }
         }
@@ -915,6 +995,16 @@ class ClassDefinition {
         for (const enumeration of this.enumerations) {
             register(enumeration.name, 'enumeration member');
         }
+    }
+
+    /**
+     * Test whether a method name denotes this class constructor.
+     *
+     * @param name Method name to test.
+     * @returns `true` for canonical and package-local constructor spellings.
+     */
+    private isConstructorMethodName(name: string): boolean {
+        return name === this.name || name === this.simpleName;
     }
 
     /**
@@ -968,7 +1058,7 @@ class ClassDefinition {
         const isDependent = ClassMember.hasAttribute(section.attributeTable, 'Dependent');
         const isAbstract = ClassMember.hasAttribute(section.attributeTable, 'Abstract');
         for (const member of section.members.list) {
-            if (member.type !== 'CLASS_PROPERTY') {
+            if (!AST.isNodeClassProperty(member)) {
                 continue;
             }
             const property = {
@@ -1014,12 +1104,12 @@ class ClassDefinition {
         const isSealed = ClassMember.hasAttribute(section.attributeTable, 'Sealed');
         const isHidden = ClassMember.hasAttribute(section.attributeTable, 'Hidden');
         for (const member of section.members.list) {
-            if (member.type !== 'FCNDEF') {
+            if (!AST.isNodeFunctionDefinition(member)) {
                 continue;
             }
             const method = {
                 name: member.id,
-                node: member as NodeFunctionDefinition,
+                node: member,
                 section,
                 attributes: section.attributeTable,
                 access,
@@ -1049,7 +1139,7 @@ class ClassDefinition {
         const notifyAccess = ClassMember.accessFromAttributes(section.attributeTable, 'NotifyAccess', access);
         const isHidden = ClassMember.hasAttribute(section.attributeTable, 'Hidden');
         for (const member of section.members.list) {
-            if (member.type !== 'CLASS_EVENT') {
+            if (!AST.isNodeClassEvent(member)) {
                 continue;
             }
             this.events.push({
@@ -1074,7 +1164,7 @@ class ClassDefinition {
     private collectEnumerations(section: NodeClassSection): void {
         const isHidden = ClassMember.hasAttribute(section.attributeTable, 'Hidden');
         for (const member of section.members.list) {
-            if (member.type !== 'CLASS_ENUMERATION') {
+            if (!AST.isNodeClassEnumeration(member)) {
                 continue;
             }
             const enumeration = {

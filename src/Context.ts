@@ -70,6 +70,8 @@ interface ContextInterpreter {
     loadFunctionDefinition(name: string, scope: Scope): NodeFunctionDefinition | undefined;
     /** Resolve a class source through the configured class provider API. */
     loadClassDefinition(name: string, scope: Scope): ClassDefinition | undefined;
+    /** Resolve a class method source for a prototype declared in a classdef block. */
+    loadClassMethodDefinition(className: string, methodName: string, scope: Scope): NodeFunctionDefinition | undefined;
 }
 
 /** Structural node shape used when walking parent links for diagnostics. */
@@ -86,7 +88,7 @@ type IdentifierLikeNode = {
 /**
  * Kinds of MATLAB/Octave symbols that can be resolved from a name.
  */
-type SymbolResolutionKind = 'variable' | 'class' | 'function' | 'builtin';
+type SymbolResolutionKind = 'variable' | 'class' | 'function' | 'builtin' | 'script';
 
 /**
  * Source tier that produced a resolved symbol.
@@ -921,6 +923,40 @@ class Context {
     }
 
     /**
+     * Evaluate built-in arguments while preserving MATLAB SetGet `Name=Value`
+     * syntax for the public `set` function.
+     *
+     * General built-ins receive evaluated positional values. `set` is special:
+     * MATLAB treats top-level `Name=Value` arguments as property/value pairs,
+     * not as ordinary assignment expressions. Keeping the conversion here keeps
+     * the behavior local to the built-in dispatch path.
+     *
+     * @param node Built-in function node.
+     * @param args Raw call argument expressions.
+     * @param parent Call-site node used for diagnostics.
+     * @returns Evaluated argument values.
+     */
+    private evaluateBuiltInArgs(node: NodeBuiltInFunction, args: NodeExpr[], parent: NodeInput): NodeExpr[] {
+        if (node.id === 'feval' || node.id === 'builtin') {
+            return args.length > 0 ? [this.evaluateArgs([args[0]], parent, 'all')[0], ...args.slice(1)] : [];
+        }
+        const alias = this.aliasNameFunction(node.id);
+        if (alias !== 'set') {
+            return this.evaluateArgs(args, parent, node.ev);
+        }
+        const evaluated: NodeExpr[] = [];
+        args.forEach((arg, index) => {
+            if (index > 0 && AST.isNodeBinaryOperation(arg) && arg.type === '=' && AST.isNodeIdentifier(arg.left)) {
+                evaluated.push(new CharString(arg.left.id));
+                evaluated.push(...this.evaluateArgs([arg.right], parent, node.ev));
+                return;
+            }
+            evaluated.push(...this.evaluateArgs([arg], parent, node.ev));
+        });
+        return evaluated;
+    }
+
+    /**
      * Throw an evaluation error annotated with the current stack trace.
      *
      * @param message Error message.
@@ -967,6 +1003,17 @@ class Context {
 
     private getCurrentFunctionDefinition(): NodeFunctionDefinition | undefined {
         return FunctionStack.currentFunctionDefinition(this.callStack);
+    }
+
+    /**
+     * Return whether execution is currently inside a user-defined function.
+     *
+     * Built-in helper frames and temporary eval frames may sit on top of the
+     * stack, so this intentionally searches the stack instead of inspecting
+     * only the current top frame.
+     */
+    public isInsideUserFunction(): boolean {
+        return typeof this.getCurrentFunctionDefinition() !== 'undefined';
     }
 
     private getCurrentFunctionCountFrame(): CallFrame | undefined {
@@ -1295,7 +1342,7 @@ class Context {
     }
 
     private constructClassInstanceWithInstance(classDefinition: ClassDefinition, instance: ClassInstance, args: NodeExpr[], parent: NodeInput): ClassInstance {
-        const constructorMethod = classDefinition.methodTable[classDefinition.name]?.find((method) => !method.isStatic);
+        const constructorMethod = classDefinition.findConstructor();
         if (!constructorMethod) {
             if (args.length > 0) {
                 this.throwEvalError(`constructor for class ${classDefinition.name} accepts no input arguments.`);
@@ -1303,6 +1350,7 @@ class Context {
             return instance;
         }
 
+        this.ensureConcreteClassMethod(constructorMethod);
         const func = constructorMethod.node;
         const requestedOutputCount = 1;
         const { inputLayout, returnLayout, callArguments, inputDefaults } = FunctionCall.prepareFunctionCall(func, args, requestedOutputCount, {
@@ -1397,9 +1445,7 @@ class Context {
         if (method.isAbstract) {
             this.throwEvalError(`cannot call abstract method '${method.name}' for class ${method.classDefinition.name}.`);
         }
-        if (method.node.attributes?.prototype) {
-            this.throwEvalError(`method '${method.name}' for class ${method.classDefinition.name} is declared without a body.`);
-        }
+        this.ensureConcreteClassMethod(method);
         try {
             ClassInstance.throwIfDeleted(instance);
         } catch (e: unknown) {
@@ -1422,10 +1468,31 @@ class Context {
         if (method.isAbstract) {
             this.throwEvalError(`cannot call abstract method '${method.name}' for class ${method.classDefinition.name}.`);
         }
-        if (method.node.attributes?.prototype) {
+        this.ensureConcreteClassMethod(method);
+        return this.withClassAccess(method.classDefinition, () => this.callFunctionDefinition(Callables.functionDefinition(method.node), args, parent, this.requestedOutputCount));
+    }
+
+    /**
+     * Materialize a concrete class method body from an external method file.
+     *
+     * @param method Method metadata whose AST node may still be a classdef prototype.
+     */
+    private ensureConcreteClassMethod(method: ClassMethodDefinition): void {
+        if (!method.node.attributes?.prototype) {
+            return;
+        }
+        const loaded = this.interpreter?.loadClassMethodDefinition(method.classDefinition.name, method.name, this.currentScope);
+        if (!loaded) {
             this.throwEvalError(`method '${method.name}' for class ${method.classDefinition.name} is declared without a body.`);
         }
-        return this.withClassAccess(method.classDefinition, () => this.callFunctionDefinition(Callables.functionDefinition(method.node), args, parent, this.requestedOutputCount));
+        this.validateLoadedClassMethodSignature(method, loaded);
+        method.node = loaded;
+    }
+
+    private validateLoadedClassMethodSignature(method: ClassMethodDefinition, loaded: NodeFunctionDefinition): void {
+        if (loaded.parameter.list.length !== method.node.parameter.list.length || loaded.return.list.length !== method.node.return.list.length) {
+            this.throwEvalError(`method '${method.name}' for class ${method.classDefinition.name} external definition does not match its classdef prototype.`);
+        }
     }
 
     private callClassEmptyMethod(emptyMethod: ClassEmptyMethod, args: NodeExpr[], parent: NodeInput): MultiArray {
@@ -1630,10 +1697,7 @@ class Context {
             case 'BUILTIN': {
                 const node = callable.node;
                 const alias = this.aliasNameFunction(node.id);
-                const evaluatedArgs =
-                    (node.id === 'feval' || node.id === 'builtin') && args.length > 0
-                        ? [this.evaluateArgs([args[0]], parent, 'all')[0], ...args.slice(1)]
-                        : this.evaluateArgs(args, parent, node.ev);
+                const evaluatedArgs = this.evaluateBuiltInArgs(node, args, parent);
                 this.validateBuiltInInputArity(node, evaluatedArgs.length);
                 /* Push a frame before entering the built-in so errors can capture this call. */
                 this.pushCallStackFrame(new CallFrame(this.currentScope, callable, this.resolveCallSite(parent), node.id, evaluatedArgs.length, requestedOutputCount, args));

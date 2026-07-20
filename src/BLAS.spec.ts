@@ -68,6 +68,18 @@ function materializeUnitDiagonal(A: MultiArray): MultiArray {
     return R;
 }
 
+function executeScalar(source: string): ComplexType {
+    const value = interpreter.Execute(source).list[0];
+    if (!Complex.isInstanceOf(value)) {
+        throw new Error(`expected '${source}' to evaluate to a Complex scalar.`);
+    }
+    return value as ComplexType;
+}
+
+function columnVector(A: MultiArray): ComplexType[] {
+    return A.array.map((row) => row[0] as ComplexType);
+}
+
 describe(`${unitName} unit test (.${testExtension} test file).`, () => {
     beforeAll(() => {
         interpreter = Interpreter.Create();
@@ -182,8 +194,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             it('dotu — real vectors', () => {
                 const x = interpreter.Execute('[1; 2; 3]').list[0] as MultiArray;
                 const y = interpreter.Execute('[4; 5; 6]').list[0] as MultiArray;
-                const result = BLAS.dotu(x.array.map((r) => r[0]) as ComplexType[], y.array.map((r) => r[0]) as ComplexType[]);
-                const expected = interpreter.Execute('32').list[0] as any;
+                const result = BLAS.dotu(columnVector(x), columnVector(y));
+                const expected = executeScalar('32');
                 const diff = Complex.sub(result, expected);
                 expect(Math.abs(Complex.realToNumber(diff))).toBeLessThan(EXPECT_TOL);
                 expect(Math.abs(Complex.imagToNumber(diff))).toBeLessThan(EXPECT_TOL);
@@ -192,8 +204,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             it('dotc — real vectors (same as dotu)', () => {
                 const x = interpreter.Execute('[1; 2; 3]').list[0] as MultiArray;
                 const y = interpreter.Execute('[4; 5; 6]').list[0] as MultiArray;
-                const result = BLAS.dotc(x.array.map((r) => r[0]) as ComplexType[], y.array.map((r) => r[0]) as ComplexType[]);
-                const expected = interpreter.Execute('32').list[0] as any;
+                const result = BLAS.dotc(columnVector(x), columnVector(y));
+                const expected = executeScalar('32');
                 const diff = Complex.sub(result, expected);
                 expect(Math.abs(Complex.realToNumber(diff))).toBeLessThan(EXPECT_TOL);
                 expect(Math.abs(Complex.imagToNumber(diff))).toBeLessThan(EXPECT_TOL);
@@ -202,7 +214,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             it('dotu — complex vectors', () => {
                 const x = interpreter.Execute('[1+i; 2; 3-i]').list[0] as MultiArray;
                 const y = interpreter.Execute('[4; 5+i; 6]').list[0] as MultiArray;
-                const result = BLAS.dotu(x.array.map((r) => r[0]) as ComplexType[], y.array.map((r) => r[0]) as ComplexType[]);
+                const result = BLAS.dotu(columnVector(x), columnVector(y));
                 const expected = interpreter.Execute('32 + 0i').list[0] as ComplexType;
                 const diff = Complex.sub(result, expected);
                 expect(Math.abs(Complex.realToNumber(diff))).toBeLessThan(EXPECT_TOL);
@@ -212,7 +224,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             it('dotc — complex vectors (Hermitian dot product)', () => {
                 const x = interpreter.Execute('[1+i; 2; 3-i]').list[0] as MultiArray;
                 const y = interpreter.Execute('[4; 5+i; 6]').list[0] as MultiArray;
-                const result = BLAS.dotc(x.array.map((r) => r[0]) as ComplexType[], y.array.map((r) => r[0]) as ComplexType[]);
+                const result = BLAS.dotc(columnVector(x), columnVector(y));
                 const expected = interpreter.Execute('32 + 4i').list[0] as ComplexType;
                 const diff = Complex.sub(result, expected);
                 expect(Math.abs(Complex.realToNumber(diff))).toBeLessThan(EXPECT_TOL);
@@ -222,10 +234,10 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             it('dotu vs dotc — difference for complex vectors', () => {
                 const x = interpreter.Execute('[1+i; 2]').list[0] as MultiArray;
                 const y = interpreter.Execute('[3; 4+i]').list[0] as MultiArray;
-                const dotu = BLAS.dotu(x.array.map((r) => r[0]) as ComplexType[], y.array.map((r) => r[0]) as ComplexType[]);
-                const dotc = BLAS.dotc(x.array.map((r) => r[0]) as ComplexType[], y.array.map((r) => r[0]) as ComplexType[]);
-                const expectedDotu = interpreter.Execute('11 + 5i').list[0] as any;
-                const expectedDotc = interpreter.Execute('11 - i').list[0] as any;
+                const dotu = BLAS.dotu(columnVector(x), columnVector(y));
+                const dotc = BLAS.dotc(columnVector(x), columnVector(y));
+                const expectedDotu = executeScalar('11 + 5i');
+                const expectedDotc = executeScalar('11 - i');
                 const diffDotu = Complex.sub(dotu, expectedDotu);
                 expect(Math.abs(Complex.realToNumber(diffDotu))).toBeLessThan(EXPECT_TOL);
                 expect(Math.abs(Complex.imagToNumber(diffDotu))).toBeLessThan(EXPECT_TOL);
@@ -237,8 +249,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             it('dotu — zero vector', () => {
                 const x = interpreter.Execute('[0; 0; 0]').list[0] as MultiArray;
                 const y = interpreter.Execute('[1+i; 2; 3]').list[0] as MultiArray;
-                const result = BLAS.dotu(x.array.map((r) => r[0]) as ComplexType[], y.array.map((r) => r[0]) as ComplexType[]);
-                const expected = interpreter.Execute('0').list[0] as any;
+                const result = BLAS.dotu(columnVector(x), columnVector(y));
+                const expected = executeScalar('0');
                 const diff = Complex.sub(result, expected);
                 expect(Math.abs(Complex.realToNumber(diff))).toBeLessThan(EXPECT_TOL);
                 expect(Math.abs(Complex.imagToNumber(diff))).toBeLessThan(EXPECT_TOL);
@@ -247,8 +259,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             it('dotc — single element vectors', () => {
                 const x = interpreter.Execute('[1+i]').list[0] as MultiArray;
                 const y = interpreter.Execute('[2-i]').list[0] as MultiArray;
-                const result = BLAS.dotc(x.array.map((r) => r[0]) as ComplexType[], y.array.map((r) => r[0]) as ComplexType[]);
-                const expected = interpreter.Execute('1 - 3i').list[0] as any;
+                const result = BLAS.dotc(columnVector(x), columnVector(y));
+                const expected = executeScalar('1 - 3i');
                 const diff = Complex.sub(result, expected);
                 expect(Math.abs(Complex.realToNumber(diff))).toBeLessThan(EXPECT_TOL);
                 expect(Math.abs(Complex.imagToNumber(diff))).toBeLessThan(EXPECT_TOL);
@@ -485,7 +497,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             it('nrm2 — real vector', () => {
                 interpreter.Execute('R = [3; 4]');
                 const R = interpreter.Execute('R').list[0];
-                const n = BLAS.nrm2(R.array.map((row: any[]) => row[0]));
+                const n = BLAS.nrm2(columnVector(R));
                 expect(Complex.imagToNumber(n)).toBeCloseTo(0);
                 expect(Complex.realToNumber(n)).toBeCloseTo(5);
             });
@@ -493,7 +505,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             it('nrm2 — complex vector', () => {
                 interpreter.Execute('R = [1+i; 2-i]');
                 const R = interpreter.Execute('R').list[0];
-                const n = BLAS.nrm2(R.array.map((row: any[]) => row[0]));
+                const n = BLAS.nrm2(columnVector(R));
                 expect(Complex.imagToNumber(n)).toBeCloseTo(0);
                 expect(Complex.realToNumber(n)).toBeCloseTo(Math.sqrt(7));
             });
@@ -501,7 +513,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             it('nrm2 — zero vector', () => {
                 interpreter.Execute('R = [0; 0; 0]');
                 const R = interpreter.Execute('R').list[0];
-                const n = BLAS.nrm2(R.array.map((row: any[]) => row[0]));
+                const n = BLAS.nrm2(columnVector(R));
                 expect(Complex.imagToNumber(n)).toBeCloseTo(0);
                 expect(Complex.realToNumber(n)).toBeCloseTo(0);
             });
@@ -534,27 +546,27 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         describe('BLAS.nrm2 — scaled Euclidean norm (extended tests)', () => {
             it('nrm2 — vector with interleaved zeros', () => {
                 const R = interpreter.Execute('[0; 3; 0; 4]').list[0] as MultiArray;
-                const n = BLAS.nrm2(R.array.map((row: any[]) => row[0]));
+                const n = BLAS.nrm2(columnVector(R));
                 expect(Complex.realToNumber(n)).toBeCloseTo(5);
                 expect(Complex.imagToNumber(n)).toBeCloseTo(0);
             });
 
             it('nrm2 — purely imaginary vector', () => {
                 const R = interpreter.Execute('[2i; -3i]').list[0] as MultiArray;
-                const n = BLAS.nrm2(R.array.map((row: any[]) => row[0]));
+                const n = BLAS.nrm2(columnVector(R));
                 expect(Complex.realToNumber(n)).toBeCloseTo(Math.sqrt(13));
                 expect(Complex.imagToNumber(n)).toBeCloseTo(0);
             });
 
             it('nrm2 — mixed magnitude vector (scaling robustness)', () => {
                 const R = interpreter.Execute('[1e-20; 1e20]').list[0] as MultiArray;
-                const n = BLAS.nrm2(R.array.map((row: any[]) => row[0]));
+                const n = BLAS.nrm2(columnVector(R));
                 expect(Complex.realToNumber(n)).toBeCloseTo(1e20);
             });
 
             it('nrm2 — unit vector', () => {
                 const R = interpreter.Execute('[1; 0; 0]').list[0] as MultiArray;
-                const n = BLAS.nrm2(R.array.map((row: any[]) => row[0]));
+                const n = BLAS.nrm2(columnVector(R));
                 expect(Complex.realToNumber(n)).toBeCloseTo(1);
             });
         });
@@ -563,90 +575,66 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             it('trsv — lower unit N', () => {
                 const A = interpreter.Execute(matrixSample['trsm_lower_3x3_01']).list[0] as MultiArray;
                 const B = interpreter.Execute(matrixSample['trsm_rhs_3x2_01'] + '(:,1)').list[0] as MultiArray;
-                const x = BLAS.trsv(
-                    A.array as ComplexType[][],
-                    B.array.map((row: any[]) => row[0]),
-                    {
-                        uplo: 'lower',
-                        transA: 'N',
-                        unitDiagonal: true,
-                    },
-                );
+                const x = BLAS.trsv(A.array as ComplexType[][], columnVector(B), {
+                    uplo: 'lower',
+                    transA: 'N',
+                    unitDiagonal: true,
+                });
                 expectMatrixClose(MathOperation.mtimes(materializeUnitDiagonal(A), MultiArray.toColumnVector(x)) as MultiArray, B);
             });
 
             it('trsv — lower non-unit N', () => {
                 const A = interpreter.Execute(matrixSample['trsm_lower_3x3_01']).list[0] as MultiArray;
                 const B = interpreter.Execute(matrixSample['trsm_rhs_3x2_01'] + '(:,1)').list[0] as MultiArray;
-                const x = BLAS.trsv(
-                    A.array as ComplexType[][],
-                    B.array.map((row: any[]) => row[0]),
-                    {
-                        uplo: 'lower',
-                        transA: 'N',
-                        unitDiagonal: false,
-                    },
-                );
+                const x = BLAS.trsv(A.array as ComplexType[][], columnVector(B), {
+                    uplo: 'lower',
+                    transA: 'N',
+                    unitDiagonal: false,
+                });
                 expectMatrixClose(MathOperation.mtimes(A, MultiArray.toColumnVector(x)) as MultiArray, B);
             });
 
             it('trsv — lower unit T', () => {
                 const A = interpreter.Execute(matrixSample['trsm_lower_3x3_01']).list[0] as MultiArray;
                 const B = interpreter.Execute(matrixSample['trsm_rhs_3x2_01'] + '(:,1)').list[0] as MultiArray;
-                const x = BLAS.trsv(
-                    A.array as ComplexType[][],
-                    B.array.map((row: any[]) => row[0]),
-                    {
-                        uplo: 'lower',
-                        transA: 'T',
-                        unitDiagonal: true,
-                    },
-                );
+                const x = BLAS.trsv(A.array as ComplexType[][], columnVector(B), {
+                    uplo: 'lower',
+                    transA: 'T',
+                    unitDiagonal: true,
+                });
                 expectMatrixClose(MathOperation.mtimes(opA(materializeUnitDiagonal(A), 'T'), MultiArray.toColumnVector(x)) as MultiArray, B);
             });
 
             it('trsv — lower non-unit T', () => {
                 const A = interpreter.Execute(matrixSample['trsm_lower_3x3_01']).list[0] as MultiArray;
                 const B = interpreter.Execute(matrixSample['trsm_rhs_3x2_01'] + '(:,1)').list[0] as MultiArray;
-                const x = BLAS.trsv(
-                    A.array as ComplexType[][],
-                    B.array.map((row: any[]) => row[0]),
-                    {
-                        uplo: 'lower',
-                        transA: 'T',
-                        unitDiagonal: false,
-                    },
-                );
+                const x = BLAS.trsv(A.array as ComplexType[][], columnVector(B), {
+                    uplo: 'lower',
+                    transA: 'T',
+                    unitDiagonal: false,
+                });
                 expectMatrixClose(MathOperation.mtimes(opA(A, 'T'), MultiArray.toColumnVector(x)) as MultiArray, B);
             });
 
             it('trsv — upper unit N', () => {
                 const A = interpreter.Execute(matrixSample['trsm_upper_3x3_01']).list[0] as MultiArray;
                 const B = interpreter.Execute(matrixSample['trsm_rhs_3x2_01'] + '(:,1)').list[0] as MultiArray;
-                const x = BLAS.trsv(
-                    A.array as ComplexType[][],
-                    B.array.map((row: any[]) => row[0]),
-                    {
-                        uplo: 'upper',
-                        transA: 'N',
-                        unitDiagonal: true,
-                    },
-                );
+                const x = BLAS.trsv(A.array as ComplexType[][], columnVector(B), {
+                    uplo: 'upper',
+                    transA: 'N',
+                    unitDiagonal: true,
+                });
                 expectMatrixClose(MathOperation.mtimes(materializeUnitDiagonal(A), MultiArray.toColumnVector(x)) as MultiArray, B);
             });
 
             it('trsv — upper non-unit T', () => {
                 const A = interpreter.Execute(matrixSample['trsm_upper_3x3_01']).list[0] as MultiArray;
                 const B = interpreter.Execute(matrixSample['trsm_rhs_3x2_01'] + '(:,1)').list[0] as MultiArray;
-                const x = BLAS.trsv(
-                    A.array as ComplexType[][],
-                    B.array.map((row: any[]) => row[0]),
-                    {
-                        uplo: 'upper',
-                        transA: 'T',
-                        unitDiagonal: false,
-                    },
-                );
+                const x = BLAS.trsv(A.array as ComplexType[][], columnVector(B), {
+                    uplo: 'upper',
+                    transA: 'T',
+                    unitDiagonal: false,
+                });
                 expectMatrixClose(MathOperation.mtimes(opA(A, 'T'), MultiArray.toColumnVector(x)) as MultiArray, B);
             });
         });
@@ -656,8 +644,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                 const A = interpreter.Execute('[1,2; 3,4]').list[0] as MultiArray;
                 const x = interpreter.Execute('[1; 1]').list[0] as MultiArray;
                 const y = interpreter.Execute('[0; 0]').list[0] as MultiArray;
-                const xvec = x.array.map((row: any[]) => row[0]) as ComplexType[];
-                const yvec = y.array.map((row: any[]) => row[0]) as ComplexType[];
+                const xvec = columnVector(x);
+                const yvec = columnVector(y);
                 BLAS.gemv(A.array as ComplexType[][], 2, 2, 0, 0, xvec, 0, yvec, 0, Complex.one(), Complex.zero());
                 y.array[0][0] = yvec[0];
                 y.array[1][0] = yvec[1];
@@ -669,8 +657,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                 const A = interpreter.Execute('[1+i, 2; 3, 4-i]').list[0] as MultiArray;
                 const x = interpreter.Execute('[1; i]').list[0] as MultiArray;
                 const y = interpreter.Execute('[0; 0]').list[0] as MultiArray;
-                const xvec = x.array.map((row: any[]) => row[0]) as ComplexType[];
-                const yvec = y.array.map((row: any[]) => row[0]) as ComplexType[];
+                const xvec = columnVector(x);
+                const yvec = columnVector(y);
                 BLAS.gemv(A.array as ComplexType[][], 2, 2, 0, 0, xvec, 0, yvec, 0, Complex.one(), Complex.zero());
                 y.array[0][0] = yvec[0];
                 y.array[1][0] = yvec[1];
@@ -686,8 +674,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                 const A = interpreter.Execute('[1,0; 0,1]').list[0] as MultiArray;
                 const x = interpreter.Execute('[2; 3]').list[0] as MultiArray;
                 const y = interpreter.Execute('[5; 6]').list[0] as MultiArray;
-                const xvec = x.array.map((row: any[]) => row[0]) as ComplexType[];
-                const yvec = y.array.map((row: any[]) => row[0]) as ComplexType[];
+                const xvec = columnVector(x);
+                const yvec = columnVector(y);
                 BLAS.gemv(A.array as ComplexType[][], 2, 2, 0, 0, xvec, 0, yvec, 0, Complex.one(), Complex.zero());
                 y.array[0][0] = yvec[0];
                 y.array[1][0] = yvec[1];
@@ -699,8 +687,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                 const A = interpreter.Execute('[1,2,3; 4,5,6; 7,8,9]').list[0] as MultiArray;
                 const x = interpreter.Execute('[1; 1]').list[0] as MultiArray;
                 const y = interpreter.Execute('[0; 0]').list[0] as MultiArray;
-                const xvec = x.array.map((row: any[]) => row[0]) as ComplexType[];
-                const yvec = y.array.map((row: any[]) => row[0]) as ComplexType[];
+                const xvec = columnVector(x);
+                const yvec = columnVector(y);
                 BLAS.gemv(A.array as ComplexType[][], 2, 2, 1, 1, xvec, 0, yvec, 0, Complex.one(), Complex.zero());
                 y.array[0][0] = yvec[0];
                 y.array[1][0] = yvec[1];
@@ -712,19 +700,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                 const A = interpreter.Execute('[1,2; 3,4]').list[0] as MultiArray;
                 const x = interpreter.Execute('[1; 1]').list[0] as MultiArray;
                 const y = interpreter.Execute('[2; 3]').list[0] as MultiArray;
-                BLAS.gemv(
-                    A.array as ComplexType[][],
-                    2,
-                    2,
-                    0,
-                    0,
-                    x.array.map((row: any[]) => row[0]) as ComplexType[],
-                    0,
-                    y.array.map((row: any[]) => row[0]) as ComplexType[],
-                    0,
-                    Complex.zero(),
-                    Complex.one(),
-                );
+                BLAS.gemv(A.array as ComplexType[][], 2, 2, 0, 0, columnVector(x), 0, columnVector(y), 0, Complex.zero(), Complex.one());
                 expect(Complex.realToNumber(y.array[0][0] as ComplexType)).toBeCloseTo(2);
                 expect(Complex.realToNumber(y.array[1][0] as ComplexType)).toBeCloseTo(3);
             });
@@ -789,9 +765,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
         describe('BLAS.geru', () => {
             it('geru — real vectors', () => {
-                const C = interpreter.Execute('[1,2; 3,4]').list[0].array as ComplexType[][];
-                const x = interpreter.Execute('[1; 1]').list[0].array.map((row: any[]) => row[0]) as ComplexType[];
-                const y = interpreter.Execute('[2; 3]').list[0].array.map((row: any[]) => row[0]) as ComplexType[];
+                const C = (interpreter.Execute('[1,2; 3,4]').list[0] as MultiArray).array as ComplexType[][];
+                const x = columnVector(interpreter.Execute('[1; 1]').list[0] as MultiArray);
+                const y = columnVector(interpreter.Execute('[2; 3]').list[0] as MultiArray);
                 BLAS.geru(x, y, Complex.one(), C, 0, 0);
                 // C + x*yᵀ = [[1,2],[3,4]] + [[2,3],[2,3]]
                 expect(Complex.realToNumber(C[0][0])).toBeCloseTo(3);
@@ -801,9 +777,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             });
 
             it('geru — complex vectors (no conjugation)', () => {
-                const C = interpreter.Execute('[0,0; 0,0]').list[0].array as ComplexType[][];
-                const x = interpreter.Execute('[1+i; 2]').list[0].array.map((row: any[]) => row[0]) as ComplexType[];
-                const y = interpreter.Execute('[i; 1]').list[0].array.map((row: any[]) => row[0]) as ComplexType[];
+                const C = (interpreter.Execute('[0,0; 0,0]').list[0] as MultiArray).array as ComplexType[][];
+                const x = columnVector(interpreter.Execute('[1+i; 2]').list[0] as MultiArray);
+                const y = columnVector(interpreter.Execute('[i; 1]').list[0] as MultiArray);
                 BLAS.geru(x, y, Complex.one(), C, 0, 0);
                 // C[0,0] = (1+i)*i = -1 + i
                 const c00 = C[0][0];

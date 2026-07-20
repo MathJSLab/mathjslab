@@ -25,9 +25,10 @@ type WorkspaceInfo = (handle: FunctionHandle) => NodeInput;
  * Implements function/handle lookup and introspection helpers.
  *
  * Browser-hosted MathJSLab cannot fully mirror MATLAB/Octave file-system
- * lookup, so this module deliberately focuses on in-memory entities registered
- * in scopes: variables, user-defined functions, built-ins, function handles,
- * and the small runtime class-name set.
+ * lookup, so this module focuses on symbols the runtime can know
+ * synchronously: variables, user-defined functions, built-ins, function
+ * handles, runtime class names, and host-provided script/class sources exposed
+ * through the virtual `.m` resolver.
  */
 class FunctionLookup {
     private static readonly runtimeClassNames = new Set([
@@ -46,6 +47,8 @@ class FunctionLookup {
         'meta.method',
         'meta.event',
         'meta.EnumerationMember',
+        'matlab.mixin.SetGet',
+        'matlab.mixin.SetGetExactNames',
     ]);
 
     /**
@@ -56,22 +59,25 @@ class FunctionLookup {
      * @param variable Resolved variable entry, when present.
      * @param func Resolved function entry, when present.
      * @param classDefined Whether an external/source-provider class with this name is known.
+     * @param scriptDefined Whether a host-provided script source with this name is known.
      * @returns MATLAB-like `exist` code for in-memory symbols supported by the runtime.
      */
-    public static existCode(name: string, kind: string | undefined, variable: NameEntry | undefined, func: LookupFunction | undefined, classDefined = false): number {
+    public static existCode(name: string, kind: string | undefined, variable: NameEntry | undefined, func: LookupFunction | undefined, classDefined = false, scriptDefined = false): number {
         const normalizedKind = kind?.toLowerCase();
         const variableCode = variable && typeof variable.node !== 'undefined' && !ClassDefinition.isInstanceOf(variable.node) ? 1 : 0;
         const functionCode = func?.type === 'FCNDEF' ? 2 : func?.type === 'BUILTIN' ? 5 : 0;
         const classCode = classDefined || (variable && ClassDefinition.isInstanceOf(variable.node)) || this.isRuntimeClassName(name) ? 8 : 0;
+        const scriptCode = scriptDefined ? 2 : 0;
         switch (normalizedKind) {
             case undefined:
-                return variableCode || functionCode || classCode;
+                return variableCode || functionCode || classCode || scriptCode;
             case 'var':
             case 'variable':
                 return variableCode;
             case 'builtin':
                 return functionCode === 5 ? 5 : 0;
             case 'file':
+                return functionCode === 2 ? 2 : functionCode === 5 ? 5 : scriptCode;
             case 'function':
                 return functionCode === 2 ? 2 : functionCode === 5 ? 5 : 0;
             case 'class':
@@ -93,7 +99,8 @@ class FunctionLookup {
         const variable = resolved?.kind === 'variable' ? resolved.entry : undefined;
         const func = resolved?.kind === 'function' || resolved?.kind === 'builtin' ? resolved.functionDefinition : undefined;
         const classDefined = resolved?.kind === 'class';
-        return this.existCode(name, kind, variable, func, classDefined);
+        const scriptDefined = resolved?.kind === 'script';
+        return this.existCode(name, kind, variable, func, classDefined, scriptDefined);
     }
 
     /**
@@ -105,6 +112,7 @@ class FunctionLookup {
      * @param handle Resolved function-handle variable, when present.
      * @param unparseHandle Callback used to render anonymous handles.
      * @param classDefined Whether an external/source-provider class with this name is known.
+     * @param scriptDefined Whether a host-provided script source with this name is known.
      * @returns Text value describing what the name resolves to.
      */
     public static whichResult(
@@ -114,6 +122,7 @@ class FunctionLookup {
         handle: FunctionHandle | undefined,
         unparseHandle: UnparseHandle,
         classDefined = false,
+        scriptDefined = false,
     ): CharString {
         if (handle && !handle.id) {
             return new CharString(`${unparseHandle(handle).trim()} is an anonymous function`);
@@ -130,6 +139,9 @@ class FunctionLookup {
         if (classDefined || (variable && ClassDefinition.isInstanceOf(variable.node)) || this.isRuntimeClassName(name)) {
             return new CharString(`${name} is a class`);
         }
+        if (scriptDefined) {
+            return new CharString(`${name} is a script`);
+        }
         return new CharString(`${name} not found`);
     }
 
@@ -145,7 +157,7 @@ class FunctionLookup {
     public static whichResultFromResolution(name: string, resolved: SymbolResolution | undefined, handle: FunctionHandle | undefined, unparseHandle: UnparseHandle): CharString {
         const variable = resolved?.kind === 'variable' ? resolved.entry : undefined;
         const func = resolved?.kind === 'function' || resolved?.kind === 'builtin' ? resolved.functionDefinition : undefined;
-        return this.whichResult(name, variable, func, handle, unparseHandle, resolved?.kind === 'class');
+        return this.whichResult(name, variable, func, handle, unparseHandle, resolved?.kind === 'class', resolved?.kind === 'script');
     }
 
     /**

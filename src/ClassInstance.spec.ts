@@ -1,12 +1,17 @@
 /// <reference types="jest" />
-import type { NodeClassDef } from './AST';
-import { Complex } from './Complex';
+import { Complex, type ComplexType } from './Complex';
 import { FunctionHandle } from './FunctionHandle';
 import { ClassDefinition } from './ClassDefinition';
 import { ClassInstance } from './ClassInstance';
-import { Interpreter } from './Interpreter';
 
-const parseClass = (source: string): NodeClassDef => (Interpreter.Create().Parse(source) as any).list[0] as NodeClassDef;
+import { parseClassDefinition as parseClass } from './ParserTestUtils';
+
+const realNumber = (value: unknown): number => {
+    if (!Complex.isInstanceOf(value)) {
+        throw new Error('expected a Complex scalar.');
+    }
+    return Complex.realToNumber(value as ComplexType);
+};
 
 describe('ClassInstance', () => {
     describe('Behavior', () => {
@@ -28,7 +33,7 @@ describe('ClassInstance', () => {
 
             ClassInstance.setProperty(instance, 'x', Complex.create(10));
 
-            expect(Number((ClassInstance.getProperty(instance, 'x') as any).re)).toBe(10);
+            expect(realNumber(ClassInstance.getProperty(instance, 'x'))).toBe(10);
             expect(() => ClassInstance.setProperty(instance, 'missing', Complex.create(1))).toThrow("unknown property 'missing' for class MutableSpec.");
         });
 
@@ -40,8 +45,8 @@ describe('ClassInstance', () => {
             ClassInstance.setProperty(copy, 'x', Complex.create(5));
 
             expect(copy).not.toBe(instance);
-            expect(Number((ClassInstance.getProperty(instance, 'x') as any).re)).toBe(0);
-            expect(Number((ClassInstance.getProperty(copy, 'x') as any).re)).toBe(5);
+            expect(realNumber(ClassInstance.getProperty(instance, 'x'))).toBe(0);
+            expect(realNumber(ClassInstance.getProperty(copy, 'x'))).toBe(5);
         });
 
         it('Should pass handle class instances by reference to methods.', () => {

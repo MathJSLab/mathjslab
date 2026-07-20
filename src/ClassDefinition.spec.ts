@@ -1,9 +1,7 @@
 /// <reference types="jest" />
-import type { NodeClassDef } from './AST';
 import { ClassDefinition } from './ClassDefinition';
-import { Interpreter } from './Interpreter';
 
-const parseClass = (source: string): NodeClassDef => (Interpreter.Create().Parse(source) as any).list[0] as NodeClassDef;
+import { parseClassDefinition as parseClass } from './ParserTestUtils';
 
 describe('ClassDefinition', () => {
     describe('Behavior', () => {
@@ -318,12 +316,16 @@ describe('ClassDefinition', () => {
             const abstractConstructor = ClassDefinition.create(
                 parseClass(['classdef AbstractConstructorSpec', '  methods (Abstract)', '    function obj = AbstractConstructorSpec()', '    end', '  end', 'end'].join('\n')),
             );
+            const packageStaticConstructor = ClassDefinition.create(
+                parseClass(['classdef pkg.StaticConstructorSpec', '  methods (Static)', '    function obj = StaticConstructorSpec()', '    end', '  end', 'end'].join('\n')),
+            );
             const raise = (message: string): never => {
                 throw new Error(message);
             };
 
             expect(() => staticConstructor.resolveSuperclasses(() => undefined, raise)).toThrow('constructor for class StaticConstructorSpec cannot be static.');
             expect(() => abstractConstructor.resolveSuperclasses(() => undefined, raise)).toThrow('constructor for class AbstractConstructorSpec cannot be abstract.');
+            expect(() => packageStaticConstructor.resolveSuperclasses(() => undefined, raise)).toThrow('constructor for class pkg.StaticConstructorSpec cannot be static.');
         });
 
         it('Should reject constructors without exactly one output.', () => {
@@ -336,6 +338,9 @@ describe('ClassDefinition', () => {
             const ignoredOutputConstructor = ClassDefinition.create(
                 parseClass(['classdef IgnoredOutputConstructorSpec', '  methods', '    function ~ = IgnoredOutputConstructorSpec()', '    end', '  end', 'end'].join('\n')),
             );
+            const packageNoOutputConstructor = ClassDefinition.create(
+                parseClass(['classdef pkg.NoOutputConstructorSpec', '  methods', '    function NoOutputConstructorSpec()', '    end', '  end', 'end'].join('\n')),
+            );
             const raise = (message: string): never => {
                 throw new Error(message);
             };
@@ -343,6 +348,9 @@ describe('ClassDefinition', () => {
             expect(() => noOutputConstructor.resolveSuperclasses(() => undefined, raise)).toThrow('constructor for class NoOutputConstructorSpec must declare exactly one output.');
             expect(() => multiOutputConstructor.resolveSuperclasses(() => undefined, raise)).toThrow('constructor for class MultiOutputConstructorSpec must declare exactly one output.');
             expect(() => ignoredOutputConstructor.resolveSuperclasses(() => undefined, raise)).toThrow('constructor for class IgnoredOutputConstructorSpec must declare exactly one output.');
+            expect(() => packageNoOutputConstructor.resolveSuperclasses(() => undefined, raise)).toThrow(
+                'constructor for class pkg.NoOutputConstructorSpec must declare exactly one output.',
+            );
         });
 
         it('Should reject invalid property accessor methods.', () => {
@@ -561,6 +569,62 @@ describe('ClassDefinition', () => {
             expect(child.findMethod('own')?.classDefinition).toBe(child);
         });
 
+        it('Should deduplicate effective inherited member lists by superclass precedence.', () => {
+            const left = ClassDefinition.create(
+                parseClass(
+                    [
+                        'classdef LeftDuplicateSpec',
+                        '  properties',
+                        '    Value = 1;',
+                        '  end',
+                        '  methods',
+                        '    function y = value(obj)',
+                        '      y = 1;',
+                        '    end',
+                        '  end',
+                        '  events',
+                        '    Changed',
+                        '  end',
+                        'end',
+                    ].join('\n'),
+                ),
+            );
+            const right = ClassDefinition.create(
+                parseClass(
+                    [
+                        'classdef RightDuplicateSpec',
+                        '  properties',
+                        '    Value = 2;',
+                        '  end',
+                        '  methods',
+                        '    function y = value(obj)',
+                        '      y = 2;',
+                        '    end',
+                        '  end',
+                        '  events',
+                        '    Changed',
+                        '  end',
+                        'end',
+                    ].join('\n'),
+                ),
+            );
+            const child = ClassDefinition.create(parseClass(['classdef DuplicateChildSpec < LeftDuplicateSpec & RightDuplicateSpec', 'end'].join('\n')));
+
+            child.resolveSuperclasses(
+                (name) => ({ LeftDuplicateSpec: left, RightDuplicateSpec: right })[name],
+                (message) => {
+                    throw new Error(message);
+                },
+            );
+
+            expect(child.findProperty('Value')?.classDefinition).toBe(left);
+            expect(child.findMethod('value')?.classDefinition).toBe(left);
+            expect(child.findEvent('Changed')?.classDefinition).toBe(left);
+            expect(child.allProperties().filter((property) => property.name === 'Value')).toHaveLength(1);
+            expect(child.allMethods().filter((method) => method.name === 'value')).toHaveLength(1);
+            expect(child.allEvents().filter((event) => event.name === 'Changed')).toHaveLength(1);
+        });
+
         it('Should reject sealed superclasses.', () => {
             const sealed = ClassDefinition.create(parseClass(['classdef (Sealed) SealedSpec', 'end'].join('\n')));
             const child = ClassDefinition.create(parseClass(['classdef IllegalSpec < SealedSpec', 'end'].join('\n')));
@@ -625,6 +689,12 @@ describe('ClassDefinition', () => {
                     ].join('\n'),
                 ),
             );
+            const leftBase = ClassDefinition.create(
+                parseClass(['classdef LeftNonsealedMethodBaseSpec', '  methods', '    function y = value(obj)', '      y = 1;', '    end', '  end', 'end'].join('\n')),
+            );
+            const rightBase = ClassDefinition.create(
+                parseClass(['classdef RightSealedMethodBaseSpec', '  methods (Sealed)', '    function y = value(obj)', '      y = 2;', '    end', '  end', 'end'].join('\n')),
+            );
             const instanceOverride = ClassDefinition.create(
                 parseClass(['classdef IllegalInstanceOverrideSpec < SealedMethodBaseSpec', '  methods', '    function y = value(obj)', '      y = 3;', '    end', '  end', 'end'].join('\n')),
             );
@@ -633,7 +703,20 @@ describe('ClassDefinition', () => {
                     ['classdef IllegalStaticOverrideSpec < SealedMethodBaseSpec', '  methods (Static)', '    function y = make()', '      y = 4;', '    end', '  end', 'end'].join('\n'),
                 ),
             );
-            const resolve = (name: string) => (name === 'SealedMethodBaseSpec' ? base : undefined);
+            const laterSealedOverride = ClassDefinition.create(
+                parseClass(
+                    [
+                        'classdef IllegalLaterSealedOverrideSpec < LeftNonsealedMethodBaseSpec & RightSealedMethodBaseSpec',
+                        '  methods',
+                        '    function y = value(obj)',
+                        '      y = 3;',
+                        '    end',
+                        '  end',
+                        'end',
+                    ].join('\n'),
+                ),
+            );
+            const resolve = (name: string) => ({ SealedMethodBaseSpec: base, LeftNonsealedMethodBaseSpec: leftBase, RightSealedMethodBaseSpec: rightBase })[name];
             const raise = (message: string): never => {
                 throw new Error(message);
             };
@@ -643,6 +726,9 @@ describe('ClassDefinition', () => {
             );
             expect(() => staticOverride.resolveSuperclasses(resolve, raise)).toThrow(
                 "method 'make' in class IllegalStaticOverrideSpec cannot override sealed method from class SealedMethodBaseSpec.",
+            );
+            expect(() => laterSealedOverride.resolveSuperclasses(resolve, raise)).toThrow(
+                "method 'value' in class IllegalLaterSealedOverrideSpec cannot override sealed method from class RightSealedMethodBaseSpec.",
             );
         });
 
@@ -658,6 +744,24 @@ describe('ClassDefinition', () => {
 
             expect(definition.isSubclassOfName('handle')).toBe(true);
             expect(definition.isHandleClass()).toBe(true);
+        });
+
+        it('Should treat MATLAB SetGet mixins as built-in handle superclasses.', () => {
+            const setGet = ClassDefinition.create(parseClass(['classdef SetGetSpec < matlab.mixin.SetGet', 'end'].join('\n')));
+            const exactNames = ClassDefinition.create(parseClass(['classdef ExactSetGetSpec < matlab.mixin.SetGetExactNames', 'end'].join('\n')));
+            const raise = (message: string): never => {
+                throw new Error(message);
+            };
+
+            setGet.resolveSuperclasses(() => undefined, raise);
+            exactNames.resolveSuperclasses(() => undefined, raise);
+
+            expect(setGet.isHandleClass()).toBe(true);
+            expect(setGet.isSetGetClass()).toBe(true);
+            expect(setGet.isSetGetExactNamesClass()).toBe(false);
+            expect(exactNames.isHandleClass()).toBe(true);
+            expect(exactNames.isSetGetClass()).toBe(true);
+            expect(exactNames.isSetGetExactNamesClass()).toBe(true);
         });
 
         it('Should track inherited abstract methods until compatible methods implement them.', () => {

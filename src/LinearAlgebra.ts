@@ -86,10 +86,8 @@ abstract class LinearAlgebra {
                     {
                         name: 'dimensions',
                         classes: ['double'],
-                        alternatives: [
-                            { name: 'dimension', validators: ['dimension'] },
-                            { name: 'dimensions', validators: ['dimensionVector', 'oneOrTwoElement'] },
-                        ],
+                        validators: ['dimension'],
+                        alternatives: [{ name: 'dimensions', validators: ['dimensionVector', 'oneOrTwoElement'] }],
                     },
                 ],
             },

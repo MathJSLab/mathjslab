@@ -1,10 +1,18 @@
 /// <reference types="jest" />
 import path from 'node:path';
 import { CharString } from './CharString';
+import { Complex, type ComplexType } from './Complex';
 
 const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.sep}]+)\\.spec\\.([cm]?[jt]s)\$`))!;
 const unitName = __filenameMatch[1];
 const testExtension = __filenameMatch[2];
+
+const realNumber = (value: unknown): number => {
+    if (!Complex.isInstanceOf(value)) {
+        throw new Error('expected a Complex scalar.');
+    }
+    return Complex.realToNumber(value as ComplexType);
+};
 
 describe(`${unitName} unit test (.${testExtension} test file).`, () => {
     describe('Definition', () => {
@@ -79,9 +87,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('Should convert empty and non-empty strings to logical complex scalars.', () => {
-            expect((CharString.logical(new CharString('')) as any).re.toString()).toBe('0');
-            expect((CharString.logical(new CharString('x')) as any).re.toString()).toBe('1');
-            expect((new CharString('x').toLogical() as any).re.toString()).toBe('1');
+            expect(realNumber(CharString.logical(new CharString('')))).toBe(0);
+            expect(realNumber(CharString.logical(new CharString('x')))).toBe(1);
+            expect(realNumber(new CharString('x').toLogical())).toBe(1);
         });
     });
 });

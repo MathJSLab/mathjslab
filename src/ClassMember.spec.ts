@@ -11,7 +11,8 @@ describe('ClassMember', () => {
                 AST.nodeClassAttribute(AST.nodeIdentifier('Access'), AST.nodeIdentifier('private')),
                 AST.nodeClassAttribute(AST.nodeIdentifier('Name'), new CharString('value')),
             ];
-            const table = (AST as any).nodeClassAttributeTable(attributes);
+            const section = AST.nodeClassSection('METHODS', AST.nodeListFirst(), AST.nodeList(attributes));
+            const table = section.attributeTable;
 
             expect(ClassMember.hasAttribute(table, 'Static')).toBe(true);
             expect(ClassMember.hasAttribute(table, 'Constant')).toBe(false);
@@ -20,7 +21,7 @@ describe('ClassMember', () => {
         });
 
         it('Should default access to public.', () => {
-            const table = (AST as any).nodeClassAttributeTable([]);
+            const table = AST.nodeClassSection('METHODS', AST.nodeListFirst()).attributeTable;
 
             expect(ClassMember.accessFromAttributes(table)).toBe('public');
         });

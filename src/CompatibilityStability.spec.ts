@@ -391,16 +391,29 @@ describe('MATLAB/Octave compatibility stability fixtures.', () => {
 
     it('Should execute browser-manifest sources through the unified source resolver.', async () => {
         const responses: Record<string, string> = {
-            '/m-files/+pkg/math/increment.m': ['function y = increment(x)', '  y = x + 1;', 'end'].join('\n'),
-            '/m-files/+pkg/ManifestBox.m': ['classdef ManifestBox', '  properties', '    Value = 4;', '  end', 'end'].join('\n'),
-            '/m-files/startup.m': 'manifestValue = pkg.math.increment(2);',
+            '/m-files/+pkg/+math/increment.m': ['function y = increment(x)', '  y = x + 1;', 'end'].join('\n'),
+            '/m-files/+pkg/+math/twice.m': ['function y = twice(x)', '  y = x * 2;', 'end'].join('\n'),
+            '/m-files/+pkg/+web/@ManifestBox/ManifestBox.m': ['classdef ManifestBox', '  properties', '    Value = 4;', '  end', '  methods', '    y = read(obj, x)', '  end', 'end'].join(
+                '\n',
+            ),
+            '/m-files/+pkg/+web/@ManifestBox/read.m': [
+                'function y = read(obj, x)',
+                '  y = obj.Value + localManifestOffset(x);',
+                'end',
+                'function z = localManifestOffset(x)',
+                '  z = x + 1;',
+                'end',
+            ].join('\n'),
+            '/m-files/startup.m': ['import pkg.math.increment', 'manifestValue = increment(2);'].join('\n'),
         };
         const sourceResolver = await ManifestSourceResolver.fromManifest(
             {
                 baseUrl: '/m-files',
                 files: [
-                    { path: '+pkg/math/increment.m', kind: 'function' },
-                    { path: '+pkg/ManifestBox.m', kind: 'class' },
+                    { path: '+pkg/+math/increment.m', kind: 'function' },
+                    { path: '+pkg/+math/twice.m', kind: 'function' },
+                    { path: '+pkg/+web/@ManifestBox/ManifestBox.m', kind: 'class' },
+                    { path: '+pkg/+web/@ManifestBox/read.m', kind: 'class' },
                     { path: 'startup.m', kind: 'script' },
                 ],
             },
@@ -412,8 +425,24 @@ describe('MATLAB/Octave compatibility stability fixtures.', () => {
         const interpreter = Interpreter.Create({ sourceResolver });
 
         interpreter.RunScriptFile('startup.m');
-        interpreter.Execute('box = pkg.ManifestBox(); result = manifestValue + box.Value;');
+        interpreter.Execute(
+            [
+                'import pkg.math.*',
+                'import pkg.web.ManifestBox',
+                'box = ManifestBox();',
+                'f = @twice;',
+                'g = str2func("increment");',
+                'value = f(box.Value) + g(4) + box.read(2);',
+                'qualified = pkg.math.twice(3);',
+                'codes = [exist("twice", "function"), exist("ManifestBox", "class")];',
+                'whichTwice = which("twice");',
+                'whichBox = which("ManifestBox");',
+                'result = [manifestValue, value, qualified, codes];',
+            ].join('\n'),
+        );
 
-        expect(interpreter.Unparse(interpreter.Execute('result'))).toBe('7\n');
+        expect(interpreter.Unparse(interpreter.Execute('result; whichTwice; whichBox; exist("localManifestOffset", "function")'))).toBe(
+            '[3,20,6,2,8]\ntwice is a user-defined function\nManifestBox is a class\n0\n',
+        );
     });
 });

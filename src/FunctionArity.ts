@@ -1,4 +1,5 @@
-import type { NodeIdentifier, NodeIgnoredTarget, NodeInput } from './AST';
+import type { NodeFunctionParameter, NodeFunctionReturn, NodeInput } from './AST';
+import { AST } from './AST';
 import { Complex } from './Complex';
 import { MultiArray } from './MultiArray';
 import type { Callable as ArityCallable } from './Callable';
@@ -8,8 +9,8 @@ type ArityCheckName = 'narginchk' | 'nargoutchk';
 
 /** Error callback used by arity helpers. */
 type ThrowError = (message: string) => never;
-/** Identifier-like node used by `nargin`/`nargout` arity extraction. */
-type ArityName = NodeIdentifier | NodeIgnoredTarget;
+/** Header node used by `nargin`/`nargout` arity extraction. */
+type ArityName = NodeFunctionParameter | NodeFunctionReturn;
 
 /**
  * Implements arity introspection and arity-check helper built-ins.
@@ -28,11 +29,11 @@ class FunctionArity {
     public static inputArity(callable: ArityCallable): number {
         switch (callable.type) {
             case 'LAMBDA': {
-                const params = callable.node.parameter as ArityName[];
+                const params = callable.node.parameter.filter(AST.isNodeFunctionParameter);
                 return this.identifierListArity(params, 'varargin');
             }
             case 'FCNDEF': {
-                const params = callable.node.parameter.list as ArityName[];
+                const params = callable.node.parameter.list.filter(AST.isNodeFunctionParameter);
                 return this.identifierListArity(params, 'varargin');
             }
             case 'BUILTIN':
@@ -51,7 +52,7 @@ class FunctionArity {
             case 'LAMBDA':
                 return 1;
             case 'FCNDEF': {
-                const returnNames = callable.node.return.list as ArityName[];
+                const returnNames = callable.node.return.list.filter(AST.isNodeFunctionReturn);
                 return this.identifierListArity(returnNames, 'varargout');
             }
             case 'BUILTIN':
@@ -110,7 +111,7 @@ class FunctionArity {
      */
     private static identifierListArity(items: ArityName[], variadicName: 'varargin' | 'varargout'): number {
         const last = items[items.length - 1];
-        return items.length > 0 && last.type === 'IDENT' && last.id === variadicName ? -items.length : items.length;
+        return items.length > 0 && AST.isNodeIdentifier(last) && last.id === variadicName ? -items.length : items.length;
     }
 }
 

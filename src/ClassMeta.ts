@@ -4,7 +4,7 @@ import { CharString } from './CharString';
 import { Complex } from './Complex';
 import { MultiArray } from './MultiArray';
 import { Structure } from './Structure';
-import type { ClassAttributeTable, NodeArgumentValidation, NodeExpr, NodeIdentifier, NodeInput } from './AST';
+import { AST, type ClassAttributeTable, type NodeArgumentValidation, type NodeExpr, type NodeInput } from './AST';
 import type { RuntimeDisplay } from './RuntimeDisplay';
 
 /** Member metadata variants that can be exposed as MATLAB-like meta objects. */
@@ -73,10 +73,10 @@ const attributeNames = (table: ClassAttributeTable): MultiArray => stringArray(O
  * @returns Identifier or dotted name, if recognized.
  */
 const nodeName = (node: NodeInput): string | undefined => {
-    if ((node as NodeIdentifier).type === 'IDENT') {
-        return (node as NodeIdentifier).id;
+    if (AST.isNodeIdentifier(node)) {
+        return node.id;
     }
-    if (node.type === '.') {
+    if (AST.isNodeIndirectRef(node)) {
         return `${nodeName(node.obj)}.${String(node.field[0])}`;
     }
     return undefined;
@@ -99,11 +99,11 @@ const expressionText = (node: NodeInput): string => {
     if (Complex.isInstanceOf(node)) {
         return node.toString();
     }
-    if (node.type === 'LIST') {
+    if (AST.isNodeList(node)) {
         return node.list.map((item: NodeInput) => expressionText(item)).join(',');
     }
-    if (node.type === 'IDX') {
-        return `${expressionText(node.expr)}(${node.args.map((item: NodeExpr) => expressionText(item)).join(',')})`;
+    if (AST.isNodeIndexExpr(node)) {
+        return `${expressionText(node.expr)}(${node.args.map((item) => expressionText(item)).join(',')})`;
     }
     return '';
 };
@@ -127,9 +127,9 @@ const validationStruct = (validation: ValidationMetadata): Structure => {
     const defaultValue = validation.default ?? validation.defaultValue ?? null;
     return new Structure({
         Name: CharString.create(nodeName(validation.name) ?? ''),
-        Size: stringArray(validation.size.map((item) => expressionText(item as NodeExpr))),
-        Class: validation.class ? CharString.create(expressionText(validation.class as NodeExpr)) : emptyString(),
-        Validators: stringArray(validation.functions.map((item) => expressionText(item as NodeExpr))),
+        Size: stringArray(validation.size.map((item) => expressionText(item))),
+        Class: validation.class ? CharString.create(expressionText(validation.class)) : emptyString(),
+        Validators: stringArray(validation.functions.map((item) => expressionText(item))),
         HasDefault: bool(Boolean(defaultValue)),
         DefaultValue: defaultValue ?? MultiArray.emptyArray(),
     });
@@ -163,7 +163,7 @@ const functionArgumentValidations = (method: ClassMethodDefinition, attribute: s
  * @param nodes AST nodes to inspect.
  * @returns Identifier names in source order.
  */
-const identifierNames = (nodes: NodeInput[]): string[] => nodes.filter((node): node is NodeIdentifier => node.type === 'IDENT').map((node) => node.id);
+const identifierNames = (nodes: NodeInput[]): string[] => nodes.filter(AST.isNodeIdentifier).map((node) => node.id);
 
 /**
  * Base class for MATLAB-like class meta objects.

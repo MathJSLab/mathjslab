@@ -2,8 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /**
- * Recursively creates the directories.
- * @param dirPath
+ * Create a directory recursively when it does not already exist.
+ *
+ * @param dirPath Path segments passed to `path.resolve`.
  */
 export default (...dirPath: string[]): void => {
     const directory = path.resolve(...dirPath);

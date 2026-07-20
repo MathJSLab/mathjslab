@@ -4,8 +4,12 @@ import type { BuiltInFunctionInputSignature, BuiltInFunctionParameter, BuiltInFu
 import { Configuration } from './Configuration';
 import { CoreFunctions } from './CoreFunctions';
 import { FunctionSignature } from './FunctionSignature';
+import { FunctionValidation } from './FunctionValidation';
 import { Interpreter } from './Interpreter';
 import { LinearAlgebra } from './LinearAlgebra';
+import { CharString } from './CharString';
+import { Complex } from './Complex';
+import { MultiArray } from './MultiArray';
 
 const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.sep}]+)\\.spec\\.([cm]?[jt]s)\$`))!;
 const unitName = __filenameMatch[1];
@@ -136,6 +140,32 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             );
 
             expect(failures).toEqual([]);
+        });
+
+        it('Should accept built-in parameter alternatives when the primary shape does not match.', () => {
+            const textOrCell: BuiltInFunctionParameter = {
+                name: 'value',
+                classes: ['char'],
+                alternatives: [{ name: 'valueCell', classes: ['cell'] }],
+            };
+            const scalarOrVector: BuiltInFunctionParameter = {
+                name: 'size',
+                validators: ['scalar'],
+                alternatives: [{ name: 'sizeVector', validators: ['dimensionVector'] }],
+            };
+            const alternativesOnly: BuiltInFunctionParameter = {
+                name: 'value',
+                alternatives: [{ name: 'text', classes: ['char'] }],
+            };
+
+            expect(FunctionValidation.matchesBuiltInParameter(new CharString('name'), textOrCell)).toBe(true);
+            expect(FunctionValidation.matchesBuiltInParameter(MultiArray.emptyArray(true), textOrCell)).toBe(true);
+            expect(FunctionValidation.matchesBuiltInParameter(Complex.one(), textOrCell)).toBe(false);
+            expect(FunctionValidation.matchesBuiltInParameter(Complex.create(3), scalarOrVector)).toBe(true);
+            expect(FunctionValidation.matchesBuiltInParameter(MultiArray.firstRow([Complex.create(2), Complex.create(3)]), scalarOrVector)).toBe(true);
+            expect(FunctionValidation.matchesBuiltInParameter(new CharString('bad'), scalarOrVector)).toBe(false);
+            expect(FunctionValidation.matchesBuiltInParameter(new CharString('ok'), alternativesOnly)).toBe(true);
+            expect(FunctionValidation.matchesBuiltInParameter(Complex.one(), alternativesOnly)).toBe(false);
         });
 
         it('Should install signatures for every registered interpreter built-in.', () => {

@@ -1,10 +1,9 @@
 /// <reference types="jest" />
-import type { NodeClassDef } from './AST';
 import { ClassDefinition } from './ClassDefinition';
 import { ClassEmptyMethod } from './ClassEmptyMethod';
 import { Interpreter } from './Interpreter';
 
-const parseClass = (source: string): NodeClassDef => (Interpreter.Create().Parse(source) as any).list[0] as NodeClassDef;
+import { parseClassDefinition as parseClass } from './ParserTestUtils';
 
 describe('ClassEmptyMethod', () => {
     describe('Behavior', () => {

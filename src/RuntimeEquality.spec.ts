@@ -1,16 +1,14 @@
 /// <reference types="jest" />
 import path from 'node:path';
-import type { NodeClassDef } from './AST';
 import { CharString } from './CharString';
 import { ClassDefinition } from './ClassDefinition';
 import { ClassInstance } from './ClassInstance';
 import { Complex } from './Complex';
-import { Interpreter } from './Interpreter';
 import { MultiArray } from './MultiArray';
 import { RuntimeEquality } from './RuntimeEquality';
 import { Structure } from './Structure';
 
-const parseClass = (source: string): NodeClassDef => (Interpreter.Create().Parse(source) as any).list[0] as NodeClassDef;
+import { parseClassDefinition as parseClass } from './ParserTestUtils';
 const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.sep}]+)\\.spec\\.([cm]?[jt]s)\$`))!;
 const unitName = __filenameMatch[1];
 const testExtension = __filenameMatch[2];

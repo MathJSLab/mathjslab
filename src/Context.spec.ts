@@ -8,11 +8,10 @@ import { ClassDefinition } from './ClassDefinition';
 import { ClassInstance } from './ClassInstance';
 import { Context } from './Context';
 import { EvalError, ReferenceError, SyntaxError, UndefinedReferenceError, CircularReferenceError } from './InterpreterError';
-import { Interpreter } from './Interpreter';
 import { FunctionHandle } from './FunctionHandle';
 import { Scope } from './Scope';
 
-const parseClass = (source: string): NodeClassDef => (Interpreter.Create().Parse(source) as any).list[0] as NodeClassDef;
+import { parseClassDefinition as parseClass } from './ParserTestUtils';
 
 describe('Context', () => {
     describe('Construction', () => {
@@ -132,7 +131,7 @@ describe('Context', () => {
 
             expect(context.resolveCallDispatch(FunctionHandle.create('sin'), parent).kind).toBe('callable');
             expect(context.resolveCallDispatch(classDefinition, parent).kind).toBe('constructor');
-            expect(context.resolveCallDispatch(AST.nodeIdentifier('read'), parent, [receiver as any]).kind).toBe('functional-class-method');
+            expect(context.resolveCallDispatch(AST.nodeIdentifier('read'), parent, [receiver]).kind).toBe('functional-class-method');
             expect(context.resolveCallDispatch(AST.nodeIdentifier('missing'), parent, [Complex.create(1)]).kind).toBe('undefined-function');
             expect(context.resolveCallDispatch(Complex.create(1), parent).kind).toBe('indexing');
         });

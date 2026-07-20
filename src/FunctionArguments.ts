@@ -1,4 +1,14 @@
-import type { NodeArgumentValidation, NodeArguments, NodeExpr, NodeFunctionDefinition, NodeFunctionParameter, NodeFunctionReturn, NodeIdentifier, NodeInput, NodeOperation } from './AST';
+import type {
+    NodeArgumentValidation,
+    NodeArguments,
+    NodeDefaultedParameter,
+    NodeExpr,
+    NodeFunctionDefinition,
+    NodeFunctionParameter,
+    NodeFunctionReturn,
+    NodeIdentifier,
+    NodeInput,
+} from './AST';
 import { AST } from './AST';
 import { CharString } from './CharString';
 import { Complex, type ComplexType } from './Complex';
@@ -55,7 +65,7 @@ class FunctionArguments {
         return AST.isNodeIdentifier(node);
     }
 
-    private static isDefaultedIdentifier(node: NodeFunctionParameter): node is NodeOperation & { type: '='; left: NodeIdentifier; right: NodeExpr } {
+    private static isDefaultedIdentifier(node: NodeFunctionParameter): node is NodeDefaultedParameter {
         return AST.isNodeDefaultedParameter(node);
     }
 

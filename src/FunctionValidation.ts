@@ -292,18 +292,22 @@ class FunctionValidation {
     /**
      * Match a built-in parameter, including alternative parameter shapes.
      *
+     * A parameter with `alternatives` describes a union: the primary shape is
+     * tried first when it declares its own constraints, then each alternative
+     * is tried independently. This keeps declarations such as `char | cell`
+     * from requiring the `char` branch to match before the `cell` branch is
+     * considered, while an alternatives-only wrapper does not accidentally
+     * accept every runtime value.
+     *
      * @param value Evaluated argument value.
      * @param parameter Built-in parameter declaration.
      * @returns `true` when the primary shape or any alternative accepts the value.
      */
     public static matchesBuiltInParameter(value: NodeInput, parameter: BuiltInFunctionParameter): boolean {
-        if (!this.matchesBuiltInParameterBase(value, parameter)) {
-            return false;
-        }
-        if (parameter.alternatives && parameter.alternatives.length > 0) {
-            return parameter.alternatives.some((alternative) => this.matchesBuiltInParameter(value, alternative));
-        }
-        return true;
+        const alternatives = parameter.alternatives ?? [];
+        const hasPrimaryConstraint = Boolean(parameter.classes?.length || parameter.validators?.length || parameter.allowedStrings?.length || parameter.identifier);
+        const primaryMatches = (hasPrimaryConstraint || alternatives.length === 0) && this.matchesBuiltInParameterBase(value, parameter);
+        return primaryMatches || alternatives.some((alternative) => this.matchesBuiltInParameter(value, alternative));
     }
 
     /**

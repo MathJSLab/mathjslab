@@ -153,6 +153,20 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => FunctionWorkspace.evaluateWithCatch(scope, 'bad', undefined, evaluate)).toThrow('bad source');
         });
 
+        it('Should let non-catchable eval signals propagate past catch source.', () => {
+            const scope = new TestScope();
+            const signal = new Error('control signal');
+            const evaluated: string[] = [];
+            const evaluate = (source: string, _scope: TestScope) => {
+                evaluated.push(source);
+                throw source === 'signal' ? signal : new Error('ordinary error');
+            };
+
+            expect((FunctionWorkspace.evaluateWithCatch(scope, 'bad', 'fallback', () => new CharString('fallback')) as CharString).str).toBe('fallback');
+            expect(() => FunctionWorkspace.evaluateWithCatch(scope, 'signal', 'fallback', evaluate, (error) => error !== signal)).toThrow(signal);
+            expect(evaluated).toEqual(['signal']);
+        });
+
         it('Should assign copied values into a workspace.', () => {
             const scope = new TestScope();
             const value = Complex.create(9);
@@ -184,7 +198,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const localScope = new TestScope(globalScope);
             const nestedScope = new TestScope(localScope);
             const func = functionDefinition();
-            func.definingScope = nestedScope as any;
+            func.definingScope = nestedScope;
             localScope.functionTable.f = func;
 
             FunctionWorkspace.declareGlobal('g', Complex.create(7), globalNames, globalScope.nameTable, localScope.nameTable);

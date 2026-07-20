@@ -109,22 +109,81 @@ const normalizeEntry = (name: string, entry: string | SourceEntry | undefined): 
 const normalizeScriptName = (name: string): string => name.replace(/\\/g, '/').split('/').pop()?.replace(/\.m$/i, '') ?? name;
 
 /**
- * Normalize package folder syntax such as `+pkg/foo.m` to `pkg.foo`.
+ * Normalize MATLAB package/class folder syntax to canonical dotted names.
+ *
+ * Ordinary folders are path containers and are ignored. Only `+pkg` package
+ * folders and `@Class` class folders contribute namespace parts, followed by
+ * the final function/method filename when it is not the class constructor file.
  */
 const canonicalNameFromPath = (path: string): string => {
     const normalized = path.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\.m$/i, '');
     const parts = normalized.split('/').filter(Boolean);
     const canonical: string[] = [];
-    for (const part of parts) {
+    for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
         if (part.startsWith('+')) {
             canonical.push(part.slice(1));
         } else if (part.startsWith('@')) {
-            canonical.push(part.slice(1));
-        } else {
+            const className = part.slice(1);
+            canonical.push(className);
+            if (i === parts.length - 2 && parts[i + 1] === className) {
+                i++;
+            }
+        } else if (i === parts.length - 1) {
             canonical.push(part);
         }
     }
     return canonical.join('.');
+};
+
+/**
+ * Candidate table/provider keys for function and class sources.
+ */
+const canonicalSourceNameCandidates = (name: string): string[] => {
+    const canonical = canonicalNameFromPath(name);
+    return [...new Set([name, canonical])];
+};
+
+/**
+ * Candidate table/provider keys for script sources.
+ */
+const scriptSourceNameCandidates = (name: string): string[] => {
+    const canonical = canonicalNameFromPath(name);
+    return [...new Set([name, normalizeScriptName(name), canonical, normalizeScriptName(canonical)])];
+};
+
+/**
+ * Resolve a source entry from a table/provider using normalized candidates.
+ */
+const resolveFromCandidates = (candidates: string[], table?: SourceTable, provider?: SourceProvider): SourceEntry | undefined => {
+    for (const candidate of candidates) {
+        const entry = table?.[candidate] ?? provider?.(candidate);
+        if (typeof entry !== 'undefined') {
+            return normalizeEntry(candidate, entry);
+        }
+    }
+    return undefined;
+};
+
+/**
+ * Resolve a table entry whose key normalizes to one of the requested names.
+ */
+const resolveNormalizedTableEntry = (
+    candidates: string[],
+    table: SourceTable | undefined,
+    normalize: (name: string) => string,
+    entryName: (key: string) => string = (key) => key,
+): SourceEntry | undefined => {
+    if (!table) {
+        return undefined;
+    }
+    const normalizedCandidates = new Set(candidates.map(normalize));
+    for (const [key, entry] of Object.entries(table)) {
+        if (normalizedCandidates.has(normalize(key))) {
+            return normalizeEntry(entryName(key), entry);
+        }
+    }
+    return undefined;
 };
 
 /**
@@ -166,20 +225,25 @@ class TableSourceResolver implements SourceResolver {
      */
     public resolve(kind: SourceKind, name: string): SourceEntry | undefined {
         switch (kind) {
-            case 'function':
-                return normalizeEntry(name, this.config.functionSourceTable?.[name] ?? this.config.functionSourceProvider?.(name));
-            case 'script': {
-                const normalized = normalizeScriptName(name);
-                return normalizeEntry(
-                    normalized,
-                    this.config.scriptSourceTable?.[name] ??
-                        this.config.scriptSourceTable?.[normalized] ??
-                        this.config.scriptSourceProvider?.(name) ??
-                        this.config.scriptSourceProvider?.(normalized),
+            case 'function': {
+                const candidates = canonicalSourceNameCandidates(name);
+                return (
+                    resolveFromCandidates(candidates, this.config.functionSourceTable, this.config.functionSourceProvider) ??
+                    resolveNormalizedTableEntry(candidates, this.config.functionSourceTable, canonicalNameFromPath, canonicalNameFromPath)
                 );
             }
-            case 'class':
-                return normalizeEntry(name, this.config.classSourceTable?.[name] ?? this.config.classSourceProvider?.(name));
+            case 'script':
+                return (
+                    resolveFromCandidates(scriptSourceNameCandidates(name), this.config.scriptSourceTable, this.config.scriptSourceProvider) ??
+                    resolveNormalizedTableEntry(scriptSourceNameCandidates(name), this.config.scriptSourceTable, normalizeScriptName)
+                );
+            case 'class': {
+                const candidates = canonicalSourceNameCandidates(name);
+                return (
+                    resolveFromCandidates(candidates, this.config.classSourceTable, this.config.classSourceProvider) ??
+                    resolveNormalizedTableEntry(candidates, this.config.classSourceTable, canonicalNameFromPath, canonicalNameFromPath)
+                );
+            }
         }
     }
 }
@@ -208,10 +272,13 @@ class ManifestSourceResolver implements SourceResolver {
     public static readonly fromTable = (entries: SourceTable): ManifestSourceResolver => {
         const sources: Record<SourceKind, SourceTable> = { function: Object.create(null), script: Object.create(null), class: Object.create(null) };
         for (const [name, entry] of Object.entries(entries)) {
-            sources.function[name] = entry;
-            sources.script[name] = entry;
-            sources.script[normalizeScriptName(name)] = entry;
-            sources.class[name] = entry;
+            for (const candidate of canonicalSourceNameCandidates(name)) {
+                sources.function[candidate] = entry;
+                sources.class[candidate] = entry;
+            }
+            for (const candidate of scriptSourceNameCandidates(name)) {
+                sources.script[candidate] = entry;
+            }
         }
         return new ManifestSourceResolver(sources);
     };
@@ -242,7 +309,13 @@ class ManifestSourceResolver implements SourceResolver {
             const sourceEntry: SourceEntry = { name: canonicalName, source: await response.text() };
             const kinds: SourceKind[] = entry.kind ? [entry.kind] : ['function', 'script', 'class'];
             for (const kind of kinds) {
-                sources[kind][canonicalName] = sourceEntry;
+                const candidates =
+                    kind === 'script'
+                        ? [...scriptSourceNameCandidates(entry.path), ...scriptSourceNameCandidates(canonicalName)]
+                        : [...canonicalSourceNameCandidates(entry.path), ...canonicalSourceNameCandidates(canonicalName)];
+                for (const candidate of candidates) {
+                    sources[kind][candidate] = sourceEntry;
+                }
                 if (kind === 'script') {
                     sources.script[normalizeScriptName(canonicalName)] = sourceEntry;
                 }

@@ -833,6 +833,13 @@ Variable binding table keyed by identifier.
 
 One declaration inside an `arguments` block.
 
+## NodeAssignmentTarget
+
+- Kind: `type`
+- Source: `src/AST.ts`
+
+Left-hand-side expression forms accepted by assignment validation.
+
 ## NodeBase
 
 - Kind: `interface`
@@ -887,6 +894,13 @@ Enumeration declaration inside an `enumeration` section.
 
 Event declaration inside an `events` section.
 
+## NodeClassMember
+
+- Kind: `type`
+- Source: `src/AST.ts`
+
+Class-body nodes that are parsed as members or section metadata.
+
 ## NodeClassProperty
 
 - Kind: `interface`
@@ -928,6 +942,13 @@ Colon token node used by ranges and indexing.
 - Source: `src/AST.ts`
 
 Declaration node for `global` and `persistent`.
+
+## NodeDefaultedParameter
+
+- Kind: `type`
+- Source: `src/AST.ts`
+
+Defaulted parameter form accepted in MATLAB/Octave function headers.
 
 ## NodeDoUntil
 
@@ -1089,6 +1110,13 @@ Metaclass literal, e.g. `?ClassName`.
 
 Operation node.
 
+## NodeProgramElement
+
+- Kind: `type`
+- Source: `src/AST.ts`
+
+Root forms that can appear as direct interpreter input.
+
 ## NodeRange
 
 - Kind: `interface`
@@ -1123,6 +1151,13 @@ Return list node
 - Source: `src/AST.ts`
 
 `spmd` statement node.
+
+## NodeStatement
+
+- Kind: `type`
+- Source: `src/AST.ts`
+
+Executable statement nodes recognized by the interpreter.
 
 ## NodeSuperclassConstructor
 
@@ -1201,6 +1236,20 @@ Operators accepted by the normalized expression AST.
 
 Suffix/prefix encodings such as `+_`, `_++`, and `.'` disambiguate source
 syntax that shares a token but has different precedence or operand position.
+
+## PostfixUnaryOperation
+
+- Kind: `type`
+- Source: `src/AST.ts`
+
+Postfix unary operation with its operand stored on `left`.
+
+## PrefixUnaryOperation
+
+- Kind: `type`
+- Source: `src/AST.ts`
+
+Prefix unary operation with its operand stored on `right`.
 
 ## RealType
 

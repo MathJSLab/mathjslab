@@ -696,10 +696,8 @@ abstract class CoreFunctions {
                 {
                     name: 'dimensions',
                     classes: ['double'],
-                    alternatives: [
-                        { name: 'dimension', validators: ['dimension'] },
-                        { name: 'dimensions', validators: ['dimensionVector'] },
-                    ],
+                    validators: ['dimension'],
+                    alternatives: [{ name: 'dimensions', validators: ['dimensionVector'] }],
                 },
                 { name: 'index', classes: ['double'], validators: ['numeric', 'real', 'finite', 'integer', 'positive'] },
             ],
@@ -748,10 +746,8 @@ abstract class CoreFunctions {
                 {
                     name: 'dimensions',
                     classes: ['double'],
-                    alternatives: [
-                        { name: 'dimension', validators: ['dimension'] },
-                        { name: 'dimensions', validators: ['dimensionVector'] },
-                    ],
+                    validators: ['dimension'],
+                    alternatives: [{ name: 'dimensions', validators: ['dimensionVector'] }],
                 },
                 { name: 'subscript', classes: ['double'], validators: ['numeric', 'real', 'finite', 'integer', 'positive'], variadic: true },
             ],
@@ -886,9 +882,14 @@ abstract class CoreFunctions {
         outputs: { arity: 1 },
     };
     /**
-     * Return a row vector with linearly spaced elements.
-     * @param args
-     * @returns
+     * Return linearly spaced samples between start and end values.
+     *
+     * Accepted forms mirror MATLAB/Octave `linspace(START, END)` and
+     * `linspace(START, END, N)`. Vector starts and ends are accepted when they
+     * have the same number of elements, producing one row per pair.
+     *
+     * @param args Start, end, and optional sample-count arguments.
+     * @returns Row vector or matrix of linearly spaced samples.
      */
     public static readonly linspace = (...args: ElementType[]): ElementType => {
         let start: ComplexType[] = [];
@@ -959,9 +960,14 @@ abstract class CoreFunctions {
         outputs: { arity: 1 },
     };
     /**
-     * Return a row vector with elements logarithmically spaced.
-     * @param args
-     * @returns
+     * Return logarithmically spaced samples between powers of ten.
+     *
+     * Accepted forms mirror MATLAB/Octave `logspace(START, END)` and
+     * `logspace(START, END, N)`, including the special `END == pi` handling
+     * traditionally provided by Octave/MATLAB.
+     *
+     * @param args Start exponent, end exponent, and optional sample count.
+     * @returns Row vector or matrix of logarithmically spaced samples.
      */
     public static readonly logspace = (...args: ElementType[]): ElementType => {
         let start: ComplexType[] = [];
@@ -996,7 +1002,7 @@ abstract class CoreFunctions {
                 throw new Error('logspace: N must be a scalar.');
             }
         } else {
-            AST.throwInvalidCallError('linspace');
+            AST.throwInvalidCallError('logspace');
         }
         if (start.length !== end.length) {
             throw new Error('logspace: vectors must be of equal length');
@@ -1128,10 +1134,8 @@ abstract class CoreFunctions {
                     {
                         name: 'dimensions',
                         classes: ['double'],
-                        alternatives: [
-                            { name: 'dimension', validators: ['dimension'] },
-                            { name: 'dimensions', validators: ['dimensionVector'] },
-                        ],
+                        validators: ['dimension'],
+                        alternatives: [{ name: 'dimensions', validators: ['dimensionVector'] }],
                     },
                 ],
             },
@@ -1181,10 +1185,8 @@ abstract class CoreFunctions {
                     {
                         name: 'dimensions',
                         classes: ['double'],
-                        alternatives: [
-                            { name: 'dimension', validators: ['reshapeDimension'] },
-                            { name: 'dimensions', validators: ['reshapeDimensionVector'] },
-                        ],
+                        validators: ['reshapeDimension'],
+                        alternatives: [{ name: 'dimensions', validators: ['reshapeDimensionVector'] }],
                     },
                 ],
             },
@@ -1315,10 +1317,8 @@ abstract class CoreFunctions {
                     {
                         name: 'dimension',
                         classes: ['double'],
-                        alternatives: [
-                            { name: 'dimension', validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
-                            { name: 'dimensions', validators: ['numeric', 'vector', 'real', 'finite', 'integer', 'nonnegative'] },
-                        ],
+                        validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'],
+                        alternatives: [{ name: 'dimensions', validators: ['numeric', 'vector', 'real', 'finite', 'integer', 'nonnegative'] }],
                     },
                 ],
             },
@@ -1348,10 +1348,8 @@ abstract class CoreFunctions {
                     {
                         name: 'dimension',
                         classes: ['double'],
-                        alternatives: [
-                            { name: 'dimension', validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
-                            { name: 'dimensions', validators: ['numeric', 'vector', 'real', 'finite', 'integer', 'nonnegative'] },
-                        ],
+                        validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'],
+                        alternatives: [{ name: 'dimensions', validators: ['numeric', 'vector', 'real', 'finite', 'integer', 'nonnegative'] }],
                     },
                 ],
             },
@@ -1381,10 +1379,8 @@ abstract class CoreFunctions {
                     {
                         name: 'dimension',
                         classes: ['double'],
-                        alternatives: [
-                            { name: 'dimension', validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
-                            { name: 'dimensions', validators: ['numeric', 'vector', 'real', 'finite', 'integer', 'nonnegative'] },
-                        ],
+                        validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'],
+                        alternatives: [{ name: 'dimensions', validators: ['numeric', 'vector', 'real', 'finite', 'integer', 'nonnegative'] }],
                     },
                 ],
             },
@@ -1433,10 +1429,8 @@ abstract class CoreFunctions {
                     {
                         name: 'dimension',
                         classes: ['double'],
-                        alternatives: [
-                            { name: 'dimension', validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
-                            { name: 'dimensions', validators: ['numeric', 'vector', 'real', 'finite', 'integer', 'nonnegative'] },
-                        ],
+                        validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'],
+                        alternatives: [{ name: 'dimensions', validators: ['numeric', 'vector', 'real', 'finite', 'integer', 'nonnegative'] }],
                     },
                 ],
             },
@@ -1663,10 +1657,8 @@ abstract class CoreFunctions {
                     {
                         name: 'flagOrDimension',
                         classes: ['double'],
-                        alternatives: [
-                            { name: 'flag', validators: ['numeric', 'scalar', 'real', 'finite', 'zeroOrOne'] },
-                            { name: 'dimension', validators: ['dimensionGreaterThanOne'] },
-                        ],
+                        validators: ['numeric', 'scalar', 'real', 'finite', 'zeroOrOne'],
+                        alternatives: [{ name: 'dimension', validators: ['dimensionGreaterThanOne'] }],
                     },
                 ],
             },
@@ -1784,10 +1776,8 @@ abstract class CoreFunctions {
                     {
                         name: 'flagOrDimension',
                         classes: ['double'],
-                        alternatives: [
-                            { name: 'flag', validators: ['numeric', 'scalar', 'real', 'finite', 'zeroOrOne'] },
-                            { name: 'dimension', validators: ['dimensionGreaterThanOne'] },
-                        ],
+                        validators: ['numeric', 'scalar', 'real', 'finite', 'zeroOrOne'],
+                        alternatives: [{ name: 'dimension', validators: ['dimensionGreaterThanOne'] }],
                     },
                 ],
             },

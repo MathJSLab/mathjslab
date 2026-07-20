@@ -3,6 +3,151 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 2.1.4
+
+- Started the AST typing pass by introducing explicit `NodeStatement`,
+  `NodeClassMember`, `NodeProgramElement`, and `NodeAssignmentTarget` contracts
+  with matching AST guards. Function arity introspection now consumes the
+  shared function parameter and return-target contracts instead of local
+  structural aliases.
+- Added narrower AST guards for operation and class member nodes, and migrated
+  parser compatibility fixtures away from untyped AST navigation helpers.
+- Split operation narrowing into binary, prefix, postfix, defaulted-parameter,
+  and metaclass guards, then reused those contracts in function argument and
+  class member metadata helpers.
+- Routed interpreter operator evaluation through the shared operation guards so
+  binary, short-circuit, prefix, postfix, and assignment dispatch validate
+  their AST shape before reading operands.
+- Routed source and MathML unparsing of operation nodes through the same
+  guards, including explicit coverage for prefix, postfix, and transpose
+  operation rendering.
+- Reused AST identifier guards while resolving class member attribute values,
+  removing remaining manual identifier shape checks from that metadata path.
+- Added shared typed parser helpers for classdef fixtures and migrated class
+  runtime specs away from repeated untyped `Parse(...).list[0]` casts.
+- Reused AST guards in class meta-object rendering for identifiers, lists,
+  index expressions, and dot references instead of local structural casts.
+- Reused AST class-member guards while collecting runtime class property,
+  method, event, and enumeration metadata.
+- Reused AST function-definition guards in interpreter function discovery,
+  script-local pre-registration, nested-function registration, and function
+  definition evaluation paths.
+- Replaced remaining private AST-helper and untyped scalar reads in focused
+  class metadata, class instance, class member, and character string specs with
+  typed public factories and runtime guards.
+- Extended parser test utilities with typed execution-list validation and
+  reused them in interpreter specs for classdef parsing, class metadata tables,
+  function-handle copying, runtime class definition lookup, and qualified
+  `arguments` validation fixtures.
+- Replaced additional untyped scalar/result handling in core function,
+  multi-array, context dispatch, and function lookup specs with typed guards,
+  complete closure fixtures, and shared execution-list helpers.
+- Added typed BLAS spec helpers for scalar execution and column-vector
+  extraction, removing repeated untyped result and row casts from dot, norm,
+  triangular-solve, gemv, and ger fixtures.
+- Removed the remaining untyped casts from active function workspace and
+  interpreter signature specs by using the existing `definingScope` contract,
+  typed built-in callback arguments, and explicit built-in signature metadata.
+- Updated `switch/case` matching to use MATLAB/Octave-like value equality
+  instead of elementwise `==` truth reduction, including scalar 1x1 array
+  normalization and coverage for empty arrays, matrix mismatches, cell
+  alternatives, and function handles.
+- Allowed `return` to terminate host-provided script execution while keeping
+  interactive/top-level `return` invalid outside a function or script context.
+- Aligned `eval`/`evalin` catch-string handling with control-flow semantics so
+  `return`, `break`, and `continue` propagate instead of being treated as
+  catchable errors; `eval('return')` now exits the active user function.
+- Exposed host-provided script sources through lookup introspection:
+  `exist(name)`/`exist(name, 'file')` now report browser-resolved scripts as
+  `.m` files and `which(name)` identifies them as scripts without making them
+  callable as functions.
+- Normalized table/provider source lookup for browser-hosted `.m` files so
+  function, script, and class sources can be keyed by canonical names or
+  path-like forms such as `+pkg/name.m` and `folder/script.m`.
+- Corrected virtual `.m` path canonicalization for `@Class/Class.m` class
+  folders so class files resolve to `Class`/`pkg.Class`, while method files
+  such as `@Class/method.m` still resolve to dotted member names.
+- Added interpreter-level coverage for virtual source tables keyed by MATLAB
+  package/class paths, including package functions, class folders, and script
+  paths resolved through the browser-safe `.m` source APIs.
+- Aligned fetch-backed manifest source resolution with table/provider lookup so
+  manifest entries are indexed by both canonical names and MATLAB/Octave path
+  forms, including `@Class/Class.m` class folders, and added end-to-end
+  manifest coverage for imports, wildcard imports, function handles, `which`,
+  `exist`, scripts, package functions, and package classes.
+- Added lazy loading for external class method files declared by concrete
+  classdef method prototypes, including browser-hosted `@Class/method.m` paths,
+  private subfunctions in method files, signature validation against the
+  classdef prototype, and lookup/introspection guards so method files are not
+  reported as class sources.
+- Extended fetch-backed manifest coverage so `@Class/method.m` entries are
+  indexed as class method sources and execute through the same browser-safe
+  resolver path as classdef files, scripts, imports, and function handles.
+- Extended external class method coverage to indirect dispatch paths, including
+  dependent-property get accessors, operator overloads, `subsref`, `subsasgn`,
+  and `numArgumentsFromSubscript` methods loaded from `@Class/method.m` files.
+- Added stability coverage for command-form option words, quoted arguments, and
+  continued command lines, plus inherited external class methods loaded from
+  the declaring superclass source.
+- Recognized package class constructors declared with the simple class name,
+  including browser-hosted `+pkg/@Class/Class.m` sources.
+- Added coverage for explicit `GetMethod`/`SetMethod` property accessors loaded
+  from browser-hosted `@Class/method.m` files.
+- Aligned virtual `.m` source path normalization with MATLAB/Octave path
+  semantics by ignoring ordinary directories and using only `+pkg`, `@Class`,
+  and file names for canonical function/class lookup.
+- Centralized external class method prototype materialization and added
+  coverage for inherited static methods loaded from the declaring superclass
+  `@Class/method.m` source.
+- Reused the same prototype-body materialization guard for class constructors
+  so concrete constructor declarations without executable bodies no longer
+  instantiate default objects silently.
+- Deduplicated effective inherited class member lists by superclass precedence
+  so class introspection metadata no longer reports duplicate inherited
+  properties, methods, events, or enumeration members.
+- Kept sealed-method override validation independent from public metadata
+  deduplication so subclasses still reject overrides of any sealed inherited
+  method, including methods hidden behind an earlier superclass duplicate.
+- Recognized MATLAB `matlab.mixin.SetGet` and `matlab.mixin.SetGetExactNames`
+  as built-in handle mixin superclasses, and added `get`/`set` support for
+  class instances with exact, case-insensitive, and
+  `PartialMatchPriority`-aware property-name resolution.
+- Extended the inherited `get`/`set` mixin behavior to homogeneous object
+  arrays, including element-wise property reads, scalar value expansion, and
+  per-element value assignment checks.
+- Added `get(objArray)` support for `matlab.mixin.SetGet` object arrays,
+  returning a structure array with the public visible properties of each
+  object.
+- Aligned `matlab.mixin.SetGet` property reads for object arrays with MATLAB:
+  `get(objArray, propname)` now returns a cell array,
+  `get(objArray, {prop1, prop2})` returns an object-by-property cell matrix,
+  and `get(objArray)` returns a `numel(objArray)`-by-1 structure array.
+- Added additional `matlab.mixin.SetGet` `set` forms: `set(obj)` returns a
+  structure of publicly settable properties, `set(obj, propname)` returns the
+  finite-value cell placeholder, and `set(obj, struct)` assigns properties from
+  structure fields.
+- Added the documented `set(objArray, propertyNames, propertyValues)` cell
+  array form for `matlab.mixin.SetGet`, including `1`-by-`N` property-name
+  validation and `numel(objArray)`-by-`N` value-cell validation.
+- Allowed documented `matlab.mixin.SetGet` `set` combinations where a leading
+  structure or property-name/value cell form is followed by additional
+  property/value pairs.
+- Added `matlab.mixin.SetGet` `set(obj, Name=Value)` support by preserving
+  top-level name-value arguments for the `set` built-in instead of evaluating
+  them as ordinary assignments.
+- Corrected built-in signature validation so declared parameter alternatives
+  are accepted when the primary parameter shape does not match, improving
+  coverage for built-ins that accept multiple argument classes or shapes.
+- Tightened scalar-or-vector dimension signatures for indexing, array
+  construction, reshaping, repetition, identity matrices, and variance/std
+  option parsing so invalid calls are rejected consistently by the declarative
+  built-in signature validator.
+- Corrected the direct `logspace` invalid-arity diagnostic so it reports
+  `logspace` instead of `linspace`.
+- Refreshed release-facing parser/AST compatibility documentation, README
+  language-subset notes, and focused JSDoc comments for typed parser helpers,
+  built-in parameter alternatives, and spacing helper contracts.
+
 ## 2.1.3
 
 - Advanced MATLAB/Octave parser and AST compatibility across several grammar

@@ -70,6 +70,103 @@ type OperatorType =
     | '_++'
     | '_--';
 
+const operatorTypes: readonly OperatorType[] = [
+    '+',
+    '-',
+    '.*',
+    '*',
+    './',
+    '/',
+    '.\\',
+    '\\',
+    '.^',
+    '^',
+    '.**',
+    '**',
+    '<',
+    '<=',
+    '==',
+    '>=',
+    '>',
+    '!=',
+    '~=',
+    '&',
+    '|',
+    '&&',
+    '||',
+    '=',
+    '+=',
+    '-=',
+    '*=',
+    '/=',
+    '\\=',
+    '^=',
+    '**=',
+    '.*=',
+    './=',
+    '.\\=',
+    '.^=',
+    '.**=',
+    '&=',
+    '|=',
+    '()',
+    '!',
+    '~',
+    '+_',
+    '-_',
+    '++_',
+    '--_',
+    ".'",
+    "'",
+    '_++',
+    '_--',
+];
+
+const binaryOperatorTypes: readonly OperatorType[] = [
+    '+',
+    '-',
+    '.*',
+    '*',
+    './',
+    '/',
+    '.\\',
+    '\\',
+    '.^',
+    '^',
+    '.**',
+    '**',
+    '<',
+    '<=',
+    '==',
+    '>=',
+    '>',
+    '!=',
+    '~=',
+    '&',
+    '|',
+    '&&',
+    '||',
+    '=',
+    '+=',
+    '-=',
+    '*=',
+    '/=',
+    '\\=',
+    '^=',
+    '**=',
+    '.*=',
+    './=',
+    '.\\=',
+    '.^=',
+    '.**=',
+    '&=',
+    '|=',
+];
+
+const prefixOperatorTypes: readonly OperatorType[] = ['()', '!', '~', '+_', '-_', '++_', '--_'];
+
+const postfixOperatorTypes: readonly OperatorType[] = [".'", "'", '_++', '_--'];
+
 /**
  * Delimiter used by an index expression.
  *
@@ -169,11 +266,9 @@ interface NodeVoid extends NodeBase {
 }
 
 /**
- * Any AST node that can be used as an executable/evaluable input.
+ * Executable statement nodes recognized by the interpreter.
  */
-type NodeInput =
-    | NodeExpr
-    | NodeList
+type NodeStatement =
     | NodeDeclaration
     | NodeImport
     | NodeReturn
@@ -187,12 +282,23 @@ type NodeInput =
     | NodeSpmd
     | NodeTry
     | NodeUnwindProtect
-    | NodeClassDef
-    | NodeClassSection
-    | NodeClassProperty
-    | NodeClassEvent
-    | NodeClassEnumeration
-    | NodeClassAttribute;
+    | NodeFunctionDefinition
+    | NodeClassDef;
+
+/**
+ * Class-body nodes that are parsed as members or section metadata.
+ */
+type NodeClassMember = NodeClassSection | NodeClassProperty | NodeClassEvent | NodeClassEnumeration | NodeClassAttribute;
+
+/**
+ * Root forms that can appear as direct interpreter input.
+ */
+type NodeProgramElement = NodeExpr | NodeStatement | NodeClassMember;
+
+/**
+ * Any AST node that can be used as an executable/evaluable input.
+ */
+type NodeInput = NodeProgramElement | NodeList;
 
 /**
  * AST node that can appear in expression position.
@@ -335,6 +441,16 @@ type NodeOperation = UnaryOperation | BinaryOperation;
 type UnaryOperation = UnaryOperationL | UnaryOperationR;
 
 /**
+ * Prefix unary operation with its operand stored on `right`.
+ */
+type PrefixUnaryOperation = UnaryOperationR;
+
+/**
+ * Postfix unary operation with its operand stored on `left`.
+ */
+type PostfixUnaryOperation = UnaryOperationL;
+
+/**
  * Right unary operation node.
  */
 interface UnaryOperationR extends NodeBase {
@@ -372,6 +488,16 @@ type NodeFunctionReturn = NodeIdentifier | NodeIgnoredTarget;
  * Parameter-list entry accepted by MATLAB/Octave function definitions.
  */
 type NodeFunctionParameter = NodeIdentifier | NodeIgnoredTarget | NodeOperation;
+
+/**
+ * Defaulted parameter form accepted in MATLAB/Octave function headers.
+ */
+type NodeDefaultedParameter = BinaryOperation & { type: '='; left: NodeIdentifier; right: NodeExpr };
+
+/**
+ * Left-hand-side expression forms accepted by assignment validation.
+ */
+type NodeAssignmentTarget = NodeIdentifier | NodeIgnoredTarget | NodeIndexExpr | NodeIndirectRef | MultiArray;
 
 /**
  * List node
@@ -1028,6 +1154,29 @@ abstract class AST {
     public static readonly isNodeIgnoredTarget = (value: unknown): value is NodeIgnoredTarget => AST.isNodeBase(value) && value.type === '<~>';
 
     /**
+     * Test whether an unknown value is an operator expression node.
+     */
+    public static readonly isNodeOperation = (value: unknown): value is NodeOperation => AST.isNodeBase(value) && operatorTypes.includes(value.type as OperatorType);
+
+    /**
+     * Test whether an unknown value is a binary operator expression.
+     */
+    public static readonly isNodeBinaryOperation = (value: unknown): value is BinaryOperation =>
+        AST.isNodeOperation(value) && binaryOperatorTypes.includes(value.type as OperatorType) && 'left' in value && 'right' in value;
+
+    /**
+     * Test whether an unknown value is a prefix unary operator expression.
+     */
+    public static readonly isNodePrefixOperation = (value: unknown): value is PrefixUnaryOperation =>
+        AST.isNodeOperation(value) && prefixOperatorTypes.includes(value.type as OperatorType) && 'right' in value;
+
+    /**
+     * Test whether an unknown value is a postfix unary operator expression.
+     */
+    public static readonly isNodePostfixOperation = (value: unknown): value is PostfixUnaryOperation =>
+        AST.isNodeOperation(value) && postfixOperatorTypes.includes(value.type as OperatorType) && 'left' in value;
+
+    /**
      * Test whether an unknown value is a function return-list entry.
      */
     public static readonly isNodeFunctionReturn = (value: unknown): value is NodeFunctionReturn => AST.isNodeIdentifier(value) || AST.isNodeIgnoredTarget(value);
@@ -1035,14 +1184,57 @@ abstract class AST {
     /**
      * Test whether an unknown value is a defaulted function parameter.
      */
-    public static readonly isNodeDefaultedParameter = (value: unknown): value is NodeOperation & { type: '='; left: NodeIdentifier; right: NodeExpr } =>
-        AST.isNodeBase(value) && value.type === '=' && AST.isNodeIdentifier((value as NodeOperation & { left?: unknown }).left) && 'right' in value;
+    public static readonly isNodeDefaultedParameter = (value: unknown): value is NodeDefaultedParameter =>
+        AST.isNodeBinaryOperation(value) && value.type === '=' && AST.isNodeIdentifier(value.left);
 
     /**
      * Test whether an unknown value is a function parameter-list entry.
      */
     public static readonly isNodeFunctionParameter = (value: unknown): value is NodeFunctionParameter =>
         AST.isNodeIdentifier(value) || AST.isNodeIgnoredTarget(value) || AST.isNodeDefaultedParameter(value);
+
+    /**
+     * Test whether an unknown value is an assignment target expression.
+     */
+    public static readonly isNodeAssignmentTarget = (value: unknown): value is NodeAssignmentTarget =>
+        AST.isNodeIdentifier(value) || AST.isNodeIgnoredTarget(value) || AST.isNodeIndexExpr(value) || AST.isNodeIndirectRef(value) || MultiArray.isInstanceOf(value);
+
+    /**
+     * Test whether an unknown value is a declaration statement.
+     */
+    public static readonly isNodeDeclaration = (value: unknown): value is NodeDeclaration => AST.isNodeBase(value) && (value.type === 'GLOBAL' || value.type === 'PERSIST');
+
+    /**
+     * Test whether an unknown value is an import declaration.
+     */
+    public static readonly isNodeImport = (value: unknown): value is NodeImport => AST.isNodeBase(value) && value.type === 'IMPORT' && Array.isArray((value as NodeImport).imports);
+
+    /**
+     * Test whether an unknown value is a control-flow or block statement.
+     */
+    public static readonly isNodeStatement = (value: unknown): value is NodeStatement =>
+        AST.isNodeDeclaration(value) ||
+        AST.isNodeImport(value) ||
+        (AST.isNodeBase(value) &&
+            (value.type === 'RETURN' ||
+                value.type === 'BREAK' ||
+                value.type === 'CONTINUE' ||
+                value.type === 'IF' ||
+                value.type === 'SWITCH' ||
+                value.type === 'WHILE' ||
+                value.type === 'DO_UNTIL' ||
+                value.type === 'FOR' ||
+                value.type === 'SPMD' ||
+                value.type === 'TRY' ||
+                value.type === 'UNWIND_PROTECT')) ||
+        AST.isNodeFunctionDefinition(value) ||
+        AST.isNodeClassDef(value);
+
+    /**
+     * Test whether an unknown value is a parsed class body member.
+     */
+    public static readonly isNodeClassMember = (value: unknown): value is NodeClassMember =>
+        AST.isNodeClassSection(value) || AST.isNodeClassAttribute(value) || AST.isNodeClassProperty(value) || AST.isNodeClassEvent(value) || AST.isNodeClassEnumeration(value);
 
     /**
      * Test whether an unknown value is a function definition node.
@@ -1053,6 +1245,12 @@ abstract class AST {
      * Test whether an unknown value is a class definition node.
      */
     public static readonly isNodeClassDef = (value: unknown): value is NodeClassDef => AST.isNodeBase(value) && value.type === 'CLASSDEF';
+
+    /**
+     * Test whether an unknown value is a metaclass literal node.
+     */
+    public static readonly isNodeMetaClass = (value: unknown): value is NodeMetaClass =>
+        AST.isNodeBase(value) && value.type === 'METACLASS' && AST.isNodeIdentifier((value as NodeMetaClass).className);
 
     /**
      * Test whether an unknown value is an `arguments` block node.
@@ -1079,6 +1277,16 @@ abstract class AST {
      * Test whether an unknown value is a class attribute node.
      */
     public static readonly isNodeClassAttribute = (value: unknown): value is NodeClassAttribute => AST.isNodeBase(value) && value.type === 'CLASS_ATTRIBUTE';
+
+    /**
+     * Test whether an unknown value is a class property member node.
+     */
+    public static readonly isNodeClassProperty = (value: unknown): value is NodeClassProperty => AST.isNodeBase(value) && value.type === 'CLASS_PROPERTY';
+
+    /**
+     * Test whether an unknown value is a class event member node.
+     */
+    public static readonly isNodeClassEvent = (value: unknown): value is NodeClassEvent => AST.isNodeBase(value) && value.type === 'CLASS_EVENT';
 
     /**
      * Test whether an unknown value is a class enumeration member node.
@@ -1121,10 +1329,15 @@ abstract class AST {
     };
 
     /**
-     * Create command word list node.
-     * @param nodename
-     * @param nodelist
-     * @returns
+     * Create a command-form call node.
+     *
+     * Word-list commands pass their arguments as literal character strings,
+     * preserving the command-line spelling rather than evaluating them as
+     * expressions.
+     *
+     * @param nodename Registered command name.
+     * @param nodelist Raw command argument words.
+     * @returns Command-form AST node.
      */
     public static readonly nodeCmdWList = (nodename: NodeIdentifier, nodelist: NodeList): NodeCmdWList => {
         const result: NodeCmdWList = {
@@ -2076,6 +2289,9 @@ export type {
     AliasNameTable,
     NodeBase,
     NodeInput,
+    NodeProgramElement,
+    NodeStatement,
+    NodeClassMember,
     NodeListElement,
     StrictNodeExpr,
     NodeExpr,
@@ -2091,12 +2307,16 @@ export type {
     NodeEndRange,
     NodeOperation,
     UnaryOperation,
+    PrefixUnaryOperation,
+    PostfixUnaryOperation,
     UnaryOperationR,
     UnaryOperationL,
     BinaryOperation,
     NodeIgnoredTarget,
     NodeFunctionReturn,
     NodeFunctionParameter,
+    NodeDefaultedParameter,
+    NodeAssignmentTarget,
     NodeList,
     NodeIndirectRef,
     ReturnHandlerResult,

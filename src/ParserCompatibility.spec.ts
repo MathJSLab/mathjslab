@@ -207,6 +207,20 @@ describe('Parser compatibility fixtures.', () => {
         expect(interpreter.Unparse(interpreter.Execute('cmdprobe alpha, cmdprobe beta'))).toBe('alpha\nbeta\n');
     });
 
+    it('Should preserve command-form option words across continuations and comments.', () => {
+        const interpreter = Interpreter.Create({
+            externalCmdWListTable: {
+                cmdprobe: {
+                    func: (...args: string[]): CharString => new CharString(args.join('|')),
+                },
+            },
+        });
+
+        expect(interpreter.Unparse(interpreter.Execute('cmdprobe -flag name=value ./path/file.m'))).toBe('-flag|name=value|./path/file.m\n');
+        expect(interpreter.Unparse(interpreter.Execute(['cmdprobe alpha ...', '  beta ... # continued comment', '  gamma'].join('\n')))).toBe('alpha|beta|gamma\n');
+        expect(interpreter.Unparse(interpreter.Execute('cmdprobe "two words" \'single words\' bare'))).toBe('two words|single words|bare\n');
+    });
+
     it('Should parse classdef method prototypes and negated attributes.', () => {
         const interpreter = Interpreter.Create();
         const source = [
