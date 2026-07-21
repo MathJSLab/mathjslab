@@ -74,31 +74,43 @@ class FunctionArguments {
     }
 
     /**
-     * Return only syntactically valid function parameters from the AST list.
+     * Validate a typed AST child list produced by AST factories.
+     */
+    private static checkedList<NODE>(items: unknown[], guard: (value: unknown) => value is NODE, role: string): NODE[] {
+        return items.map((item, index) => {
+            if (!guard(item)) {
+                throw new TypeError(`internal AST error: ${role} ${index + 1} has invalid node type.`);
+            }
+            return item;
+        });
+    }
+
+    /**
+     * Return syntactically valid function parameters from the AST list.
      */
     private static functionParameters(func: NodeFunctionDefinition): NodeFunctionParameter[] {
-        return func.parameter.list.filter(AST.isNodeFunctionParameter);
+        return this.checkedList(func.parameter.list, AST.isNodeFunctionParameter, 'function parameter');
     }
 
     /**
-     * Return only syntactically valid function return targets from the AST list.
+     * Return syntactically valid function return targets from the AST list.
      */
     private static functionReturns(func: NodeFunctionDefinition): NodeFunctionReturn[] {
-        return func.return.list.filter(AST.isNodeFunctionReturn);
+        return this.checkedList(func.return.list, AST.isNodeFunctionReturn, 'function return');
     }
 
     /**
-     * Return only well-formed `arguments` blocks from a function definition.
+     * Return well-formed `arguments` blocks from a function definition.
      */
     private static argumentBlocks(func: NodeFunctionDefinition): NodeArguments[] {
-        return func.arguments.list.filter(AST.isNodeArguments);
+        return this.checkedList(func.arguments.list, AST.isNodeArguments, 'function arguments block');
     }
 
     /**
-     * Return only well-formed declarations from one `arguments` block.
+     * Return well-formed declarations from one `arguments` block.
      */
     private static argumentValidations(block: NodeArguments): NodeArgumentValidation[] {
-        return block.validation.filter(AST.isNodeArgumentValidation);
+        return this.checkedList(block.validation, AST.isNodeArgumentValidation, 'arguments validation');
     }
 
     /**
@@ -475,7 +487,10 @@ class FunctionArguments {
                 continue;
             }
             if (validator.custom === 'implicit') {
-                callbacks.evaluate(AST.nodeIndexExpr(AST.nodeIdentifier(validator.name), AST.nodeList([entry.node as NodeExpr])));
+                if (!AST.isStrictNodeExpr(entry.node)) {
+                    callbacks.throwEvalError(`${validationContext} validation failed for '${displayName}': validator input is not an expression.`);
+                }
+                callbacks.evaluate(AST.nodeIndexExpr(AST.nodeIdentifier(validator.name), AST.nodeList([entry.node])));
                 continue;
             }
             const value = validator.value ? callbacks.evaluate(validator.value) : entry.node;

@@ -1,7 +1,30 @@
-import { AST, type ClassAttributeTable, type NodeClassDef, type NodeClassSection, type NodeIdentifier } from './AST';
-import type { ClassEnumerationDefinition, ClassEventDefinition, ClassMethodDefinition, ClassPropertyDefinition } from './ClassMember';
+import {
+    AST,
+    type ClassAttributeTable,
+    type NodeClassDef,
+    type NodeClassEnumeration,
+    type NodeClassEvent,
+    type NodeClassProperty,
+    type NodeClassSection,
+    type NodeFunctionDefinition,
+    type NodeFunctionParameter,
+    type NodeFunctionReturn,
+    type NodeIdentifier,
+    type NodeListElement,
+} from './AST';
+import type {
+    ClassEnumerationDefinition as ClassEnumerationDefinitionBase,
+    ClassEventDefinition as ClassEventDefinitionBase,
+    ClassMethodDefinition as ClassMethodDefinitionBase,
+    ClassPropertyDefinition as ClassPropertyDefinitionBase,
+} from './ClassMember';
 import { ClassMember } from './ClassMember';
 import type { RuntimeDisplay } from './RuntimeDisplay';
+
+type ClassPropertyDefinition = ClassPropertyDefinitionBase<ClassDefinition>;
+type ClassMethodDefinition = ClassMethodDefinitionBase<ClassDefinition>;
+type ClassEventDefinition = ClassEventDefinitionBase<ClassDefinition>;
+type ClassEnumerationDefinition = ClassEnumerationDefinitionBase<ClassDefinition>;
 
 /** Method lookup table keyed by method name. */
 type ClassMethodTable = Record<string, ClassMethodDefinition[]>;
@@ -849,12 +872,13 @@ class ClassDefinition {
             if (!method) {
                 throwEvalError(`${attributeName} method '${methodName}' for property '${property.name}' in class ${this.name} is not defined.`);
             }
-            const inputCount = method.node.parameter.list.length;
-            const outputCount = method.node.return.list.length;
-            if (attributeName === 'GetMethod' && (inputCount !== 1 || outputCount !== 1 || method.node.return.list[0].type === '<~>')) {
+            const inputCount = this.methodParameters(method).length;
+            const returns = this.methodReturns(method);
+            const outputCount = returns.length;
+            if (attributeName === 'GetMethod' && (inputCount !== 1 || outputCount !== 1 || AST.isNodeIgnoredTarget(returns[0]))) {
                 throwEvalError(`${attributeName} method '${methodName}' for property '${property.name}' in class ${this.name} must declare one input and one output.`);
             }
-            if (attributeName === 'SetMethod' && (inputCount !== 2 || outputCount !== 1 || method.node.return.list[0].type === '<~>')) {
+            if (attributeName === 'SetMethod' && (inputCount !== 2 || outputCount !== 1 || AST.isNodeIgnoredTarget(returns[0]))) {
                 throwEvalError(`${attributeName} method '${methodName}' for property '${property.name}' in class ${this.name} must declare two inputs and one output.`);
             }
         };
@@ -874,12 +898,13 @@ class ClassDefinition {
             if (method.isStatic) {
                 throwEvalError(`${kind} accessor '${method.name}' in class ${this.name} cannot be static.`);
             }
-            const inputCount = method.node.parameter.list.length;
-            const outputCount = method.node.return.list.length;
-            if (kind === 'get' && (inputCount !== 1 || outputCount !== 1 || method.node.return.list[0].type === '<~>')) {
+            const inputCount = this.methodParameters(method).length;
+            const returns = this.methodReturns(method);
+            const outputCount = returns.length;
+            if (kind === 'get' && (inputCount !== 1 || outputCount !== 1 || AST.isNodeIgnoredTarget(returns[0]))) {
                 throwEvalError(`get accessor '${method.name}' in class ${this.name} must declare one input and one output.`);
             }
-            if (kind === 'set' && (inputCount !== 2 || outputCount !== 1 || method.node.return.list[0].type === '<~>')) {
+            if (kind === 'set' && (inputCount !== 2 || outputCount !== 1 || AST.isNodeIgnoredTarget(returns[0]))) {
                 throwEvalError(`set accessor '${method.name}' in class ${this.name} must declare two inputs and one output.`);
             }
         }
@@ -926,7 +951,8 @@ class ClassDefinition {
             if (this.isConstructorMethodName(method.name) && method.isAbstract) {
                 throwEvalError(`constructor for class ${this.name} cannot be abstract.`);
             }
-            if (this.isConstructorMethodName(method.name) && (method.node.return.list.length !== 1 || method.node.return.list[0].type === '<~>')) {
+            const returns = this.methodReturns(method);
+            if (this.isConstructorMethodName(method.name) && (returns.length !== 1 || AST.isNodeIgnoredTarget(returns[0]))) {
                 throwEvalError(`constructor for class ${this.name} must declare exactly one output.`);
             }
         }
@@ -1048,6 +1074,44 @@ class ClassDefinition {
     }
 
     /**
+     * Validate and return members collected from one concrete class section.
+     */
+    private classSectionMembers<NODE extends NodeListElement>(section: NodeClassSection, guard: (value: unknown) => value is NODE): NODE[] {
+        return section.members.list.map((member, index) => {
+            if (!guard(member)) {
+                throw new TypeError(`internal AST error: ${section.kind.toLowerCase()} member ${index + 1} has invalid node type.`);
+            }
+            return member;
+        });
+    }
+
+    /**
+     * Validate one method-header list before using it for class-special method rules.
+     */
+    private checkedMethodHeaderList<NODE>(items: unknown[], guard: (value: unknown) => value is NODE, methodName: string, role: string): NODE[] {
+        return items.map((item, index) => {
+            if (!guard(item)) {
+                throw new TypeError(`internal AST error: method '${methodName}' ${role} ${index + 1} has invalid node type.`);
+            }
+            return item;
+        });
+    }
+
+    /**
+     * Return validated method parameters.
+     */
+    private methodParameters(method: ClassMethodDefinition): NodeFunctionParameter[] {
+        return this.checkedMethodHeaderList(method.node.parameter.list, AST.isNodeFunctionParameter, method.name, 'parameter');
+    }
+
+    /**
+     * Return validated method returns.
+     */
+    private methodReturns(method: ClassMethodDefinition): NodeFunctionReturn[] {
+        return this.checkedMethodHeaderList(method.node.return.list, AST.isNodeFunctionReturn, method.name, 'return');
+    }
+
+    /**
      * Collect property metadata from one `properties` section.
      *
      * @param section Section to index.
@@ -1057,10 +1121,7 @@ class ClassDefinition {
         const isConstant = ClassMember.hasAttribute(section.attributeTable, 'Constant');
         const isDependent = ClassMember.hasAttribute(section.attributeTable, 'Dependent');
         const isAbstract = ClassMember.hasAttribute(section.attributeTable, 'Abstract');
-        for (const member of section.members.list) {
-            if (!AST.isNodeClassProperty(member)) {
-                continue;
-            }
+        for (const member of this.classSectionMembers<NodeClassProperty>(section, AST.isNodeClassProperty)) {
             const property = {
                 name: member.id,
                 node: member,
@@ -1103,10 +1164,7 @@ class ClassDefinition {
         const isAbstract = ClassMember.hasAttribute(section.attributeTable, 'Abstract');
         const isSealed = ClassMember.hasAttribute(section.attributeTable, 'Sealed');
         const isHidden = ClassMember.hasAttribute(section.attributeTable, 'Hidden');
-        for (const member of section.members.list) {
-            if (!AST.isNodeFunctionDefinition(member)) {
-                continue;
-            }
+        for (const member of this.classSectionMembers<NodeFunctionDefinition>(section, AST.isNodeFunctionDefinition)) {
             const method = {
                 name: member.id,
                 node: member,
@@ -1138,10 +1196,7 @@ class ClassDefinition {
         const listenAccess = ClassMember.accessFromAttributes(section.attributeTable, 'ListenAccess', access);
         const notifyAccess = ClassMember.accessFromAttributes(section.attributeTable, 'NotifyAccess', access);
         const isHidden = ClassMember.hasAttribute(section.attributeTable, 'Hidden');
-        for (const member of section.members.list) {
-            if (!AST.isNodeClassEvent(member)) {
-                continue;
-            }
+        for (const member of this.classSectionMembers<NodeClassEvent>(section, AST.isNodeClassEvent)) {
             this.events.push({
                 name: member.id,
                 node: member,
@@ -1163,10 +1218,7 @@ class ClassDefinition {
      */
     private collectEnumerations(section: NodeClassSection): void {
         const isHidden = ClassMember.hasAttribute(section.attributeTable, 'Hidden');
-        for (const member of section.members.list) {
-            if (!AST.isNodeClassEnumeration(member)) {
-                continue;
-            }
+        for (const member of this.classSectionMembers<NodeClassEnumeration>(section, AST.isNodeClassEnumeration)) {
             const enumeration = {
                 name: member.id,
                 node: member,

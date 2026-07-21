@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 import path from 'node:path';
-import { AST, type NodeExpr, type NodeIdentifier, type NodeInput, type NodeList } from './AST';
+import { AST, type NodeExpr, type NodeIdentifier, type NodeInput, type StrictNodeExpr } from './AST';
 import { CharString } from './CharString';
 import { Complex } from './Complex';
 import { FunctionHandle } from './FunctionHandle';
@@ -57,11 +57,33 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const statement = AST.nodeIfBegin(AST.nodeIdentifier('condition'), AST.nodeListFirst(AST.nodeReturn()));
             const classMember = AST.nodeClassEvent(AST.nodeIdentifier('Changed'));
             const metaclass = AST.nodeMetaClass(AST.nodeIdentifier('Sample'));
+            const range = AST.nodeRange(AST.nodeNumber('1') as NodeExpr, AST.nodeNumber('2') as NodeExpr);
+            const ctor = AST.nodeSuperclassConstructor(AST.nodeIdentifier('obj'), AST.nodeIdentifier('Base'));
+            const commandWordList = AST.nodeCmdWList(AST.nodeIdentifier('help'), AST.nodeListFirst(AST.nodeString('plot') as unknown as NodeInput));
+            const strictExpressions: StrictNodeExpr[] = [
+                Complex.one(),
+                AST.nodeString('text'),
+                identifier,
+                commandWordList,
+                index,
+                ref,
+                ignored,
+                defaulted,
+                returnList,
+                metaclass,
+                range,
+                ctor,
+            ];
 
             expect(AST.isNodeBase(identifier)).toBe(true);
             expect(AST.isNodeIdentifier(identifier)).toBe(true);
             expect(AST.isNodeList(list)).toBe(true);
+            expect(AST.isNodeCmdWList(commandWordList)).toBe(true);
             expect(AST.isNodeIndexExpr(index)).toBe(true);
+            expect(AST.isNodeSuperclassConstructor(ctor)).toBe(true);
+            expect(AST.isNodeRange(range)).toBe(true);
+            expect(AST.isNodeColon(AST.nodeColon())).toBe(true);
+            expect(AST.isNodeEndRange(AST.nodeEndRange())).toBe(true);
             expect(AST.isNodeIndirectRef(ref)).toBe(true);
             expect(AST.isNodeReturnList(returnList)).toBe(true);
             expect(AST.isNodeIgnoredTarget(ignored)).toBe(true);
@@ -78,6 +100,11 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(AST.isNodeImport(importDeclaration)).toBe(true);
             expect(AST.isNodeStatement(statement)).toBe(true);
             expect(AST.isNodeMetaClass(metaclass)).toBe(true);
+            expect(AST.isRuntimeExpressionValue(Complex.one())).toBe(true);
+            expect(AST.isRuntimeExpressionValue(AST.nodeString('text'))).toBe(true);
+            expect(strictExpressions.every((node) => AST.isStrictNodeExpr(node))).toBe(true);
+            expect(AST.isStrictNodeExpr(list)).toBe(false);
+            expect(AST.isStrictNodeExpr(statement)).toBe(false);
             expect(AST.isNodeClassEvent(classMember)).toBe(true);
             expect(AST.isNodeClassMember(classMember)).toBe(true);
             expect(AST.isNodeDefaultedParameter({ type: '=', left: AST.nodeIdentifier('x') })).toBe(false);
@@ -112,6 +139,10 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(node.omitAnswer).toBe(true);
             expect(node.omitOutput).toBe(false);
         });
+
+        it('Should reject non-string command word list arguments.', () => {
+            expect(() => AST.nodeCmdWList(AST.nodeIdentifier('disp'), AST.nodeListFirst(AST.nodeReturn()))).toThrow('command argument 1 is not a command word.');
+        });
     });
 
     describe('Expression node factories', () => {
@@ -131,6 +162,15 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(j.parent).toBe(index);
             expect(i.index).toBe(0);
             expect(j.index).toBe(1);
+        });
+
+        it('Should reject non-expression values in expression factories.', () => {
+            expect(() => AST.nodeIndexExpr(AST.nodeReturn() as NodeExpr)).toThrow('indexed expression is not an expression node.');
+            expect(() => AST.nodeIndexExpr(AST.nodeIdentifier('A'), AST.nodeListFirst(AST.nodeReturn()))).toThrow('index argument 1 is not an expression node.');
+            expect(() => AST.nodeSuperclassConstructor(AST.nodeReturn() as NodeExpr, AST.nodeIdentifier('Base'))).toThrow('superclass constructor instance is not an expression node.');
+            expect(() => AST.nodeSuperclassConstructor(AST.nodeIdentifier('obj'), AST.nodeIdentifier('Base'), AST.nodeListFirst(AST.nodeReturn()))).toThrow(
+                'superclass constructor argument 1 is not an expression node.',
+            );
         });
 
         it('Should create range, colon, end-range, and superclass constructor nodes.', () => {
@@ -166,6 +206,23 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const metaclass = AST.nodeMetaClass(className);
             expect(metaclass.className).toBe(className);
             expect(className.parent).toBe(metaclass);
+        });
+
+        it('Should reject non-expression values in range and operation factories.', () => {
+            expect(() => AST.nodeRange(AST.nodeReturn() as NodeExpr, AST.nodeNumber('2') as NodeExpr)).toThrow('range start is not an expression node.');
+            expect(() => AST.nodeRange(AST.nodeNumber('1') as NodeExpr, AST.nodeReturn() as NodeExpr)).toThrow('range stop is not an expression node.');
+            expect(() => AST.nodeRange(AST.nodeNumber('1') as NodeExpr, AST.nodeNumber('2') as NodeExpr, AST.nodeReturn() as NodeExpr)).toThrow('range stride is not an expression node.');
+            expect(() => AST.nodeOperation('+', AST.nodeReturn() as NodeExpr, AST.nodeIdentifier('x'))).toThrow('left operand for + is not an expression node.');
+            expect(() => AST.nodeOperation('+', AST.nodeIdentifier('x'), AST.nodeReturn() as NodeExpr)).toThrow('right operand for + is not an expression node.');
+            expect(() => AST.nodeOperation('+_', AST.nodeReturn() as NodeExpr)).toThrow('operand for +_ is not an expression node.');
+            expect(() => AST.nodeOperation('_++', AST.nodeReturn() as NodeExpr)).toThrow('operand for _++ is not an expression node.');
+            expect(() => AST.nodeOperation('+', AST.nodeIdentifier('x'))).toThrow('right operand for + is missing.');
+            expect(() => AST.nodeOperation('+', AST.nodeIdentifier('x'), AST.nodeListFirst(AST.nodeIdentifier('y')) as unknown as NodeExpr)).toThrow(
+                'right operand for + is not an expression node.',
+            );
+            const assignmentCarrier = AST.nodeOperation('=', AST.nodeIdentifier('x'), AST.nodeListFirst(AST.nodeIdentifier('y')) as unknown as NodeExpr);
+            expect(AST.isNodeBinaryOperation(assignmentCarrier)).toBe(true);
+            expect(AST.isNodeBinaryOperation(assignmentCarrier) ? assignmentCarrier.right.type : '').toBe('LIST');
         });
 
         it('Should build unary, binary, postfix, and assignment operation nodes.', () => {
@@ -206,6 +263,11 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect((second.field[1] as NodeIdentifier).id).toBe('dynamic');
             expect(dynamic.parent).toBe(first);
         });
+
+        it('Should reject non-expression values in indirect reference factories.', () => {
+            expect(() => AST.nodeIndirectRef(AST.nodeReturn() as NodeExpr, 'field')).toThrow('indirect reference object is not an expression node.');
+            expect(() => AST.nodeIndirectRef(AST.nodeIdentifier('obj'), AST.nodeReturn() as NodeExpr)).toThrow('indirect reference field is not an expression node.');
+        });
     });
 
     describe('Function and control-flow node factories', () => {
@@ -229,16 +291,24 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         it('Should create declarations and basic jump nodes.', () => {
             const declaration = AST.nodeDeclarationFirst('GLOBAL');
             const x = AST.nodeIdentifier('x');
+            const persistent = AST.nodeDeclarationFirst('PERSIST');
+            const defaulted = AST.nodeOperation('=', AST.nodeIdentifier('cached'), AST.nodeNumber('1') as NodeExpr);
 
             AST.nodeAppendDeclaration(declaration, x);
+            AST.nodeAppendDeclaration(persistent, defaulted);
 
             expect(declaration).toMatchObject({ type: 'GLOBAL', list: [x], omitAnswer: true, omitOutput: true });
+            expect(persistent.list).toEqual([defaulted]);
             expect(AST.getDeclarationNode({ node: x })).toBe(x);
             expect(AST.getDeclarationNode(x)).toBe(x);
             expect(AST.nodeIgnoredTarget()).toMatchObject({ type: '<~>', omitAnswer: true, omitOutput: false });
             expect(AST.nodeReturn()).toMatchObject({ type: 'RETURN', omitAnswer: true, omitOutput: true });
             expect(AST.nodeBreak()).toMatchObject({ type: 'BREAK', omitAnswer: true, omitOutput: true });
             expect(AST.nodeContinue()).toMatchObject({ type: 'CONTINUE', omitAnswer: true, omitOutput: true });
+        });
+
+        it('Should reject invalid declaration entries.', () => {
+            expect(() => AST.nodeAppendDeclaration(AST.nodeDeclarationFirst('GLOBAL'), AST.nodeReturn() as NodeExpr)).toThrow('declaration entry has invalid node type.');
         });
 
         it('Should create function handles and function definitions with parent pointers.', () => {
@@ -259,9 +329,33 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(definition.type).toBe('FCNDEF');
             expect(definition.id).toBe('g');
             expect(definition.mapper).toBe(true);
+            expect(definition.return.parent).toBe(definition);
+            expect(definition.parameter.parent).toBe(definition);
+            expect(definition.arguments.parent).toBe(definition);
+            expect(definition.statements.parent).toBe(definition);
             expect(definition.return.list[0].parent).toBe(definition);
             expect(definition.parameter.list[0].parent).toBe(definition);
             expect(definition.statements.list[0].parent).toBe(definition);
+        });
+
+        it('Should reject non-expression values in function handle factories.', () => {
+            expect(() => AST.nodeFunctionHandle(null, AST.nodeListFirst(AST.nodeReturn()), null)).toThrow('function handle parameter 1 has invalid node type.');
+            expect(() => AST.nodeFunctionHandle(null, AST.nodeListFirst(), AST.nodeReturn() as NodeExpr)).toThrow('function handle expression is not an expression node.');
+        });
+
+        it('Should reject invalid node types in function definition lists.', () => {
+            const id = AST.nodeIdentifier('f');
+            const returns = AST.nodeListFirst(AST.nodeIdentifier('y'));
+            const parameters = AST.nodeListFirst(AST.nodeIdentifier('x'));
+            const args = AST.nodeListFirst();
+            const body = AST.nodeListFirst(AST.nodeReturn());
+
+            expect(() => AST.nodeFunctionDefinition(id, AST.nodeListFirst(AST.nodeNumber('1') as NodeInput), parameters, args, body)).toThrow('function return 1 has invalid node type.');
+            expect(() => AST.nodeFunctionDefinition(id, returns, AST.nodeListFirst(AST.nodeReturn()), args, body)).toThrow('function parameter 1 has invalid node type.');
+            expect(() => AST.nodeFunctionDefinition(id, returns, parameters, AST.nodeListFirst(AST.nodeReturn()), body)).toThrow('function arguments block 1 has invalid node type.');
+            expect(() => AST.nodeFunctionDefinition(id, returns, parameters, args, AST.nodeListFirst(AST.nodeArguments(null, AST.nodeListFirst())))).toThrow(
+                'function statement 1 has invalid node type.',
+            );
         });
 
         it('Should create argument validation blocks with parent pointers.', () => {
@@ -283,6 +377,25 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(args.type).toBe('ARGS');
             expect(attribute.parent).toBe(args);
             expect(validation.parent).toBe(args);
+        });
+
+        it('Should reject non-expression values in argument validation factories.', () => {
+            expect(() => AST.nodeArgumentValidation(AST.nodeIdentifier('x'), AST.nodeListFirst(AST.nodeReturn()), null, AST.nodeListFirst())).toThrow(
+                'argument validation size 1 is not an expression node.',
+            );
+            expect(() => AST.nodeArgumentValidation(AST.nodeIdentifier('x'), AST.nodeListFirst(), AST.nodeReturn(), AST.nodeListFirst())).toThrow(
+                'argument validation class has invalid node type.',
+            );
+            expect(() => AST.nodeArgumentValidation(AST.nodeIdentifier('x'), AST.nodeListFirst(), null, AST.nodeListFirst(AST.nodeReturn()))).toThrow(
+                'argument validation function 1 is not an expression node.',
+            );
+            expect(() => AST.nodeArgumentValidation(AST.nodeReturn() as NodeExpr, AST.nodeListFirst(), null, AST.nodeListFirst())).toThrow(
+                'argument validation name is not an expression node.',
+            );
+            expect(() => AST.nodeArgumentValidation(AST.nodeIdentifier('x'), AST.nodeListFirst(), null, AST.nodeListFirst(), AST.nodeReturn() as NodeExpr)).toThrow(
+                'argument validation default is not an expression node.',
+            );
+            expect(() => AST.nodeArguments(null, AST.nodeListFirst(AST.nodeReturn()))).toThrow('arguments validation 1 has invalid node type.');
         });
 
         it('Should create branch and loop nodes with parent pointers.', () => {
@@ -323,6 +436,41 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(forNode.expression.parent).toBe(forNode);
             expect(forNode.body.parent).toBe(forNode);
         });
+
+        it('Should reject non-expression values in branch and loop factories.', () => {
+            expect(() => AST.nodeIfBegin(AST.nodeReturn() as NodeExpr, AST.nodeListFirst())).toThrow('if condition is not an expression node.');
+            expect(() => AST.nodeIfBegin(AST.nodeIdentifier('ok'), AST.nodeListFirst(AST.nodeArguments(null, AST.nodeListFirst())))).toThrow('if body 1 has invalid node type.');
+            expect(() => AST.nodeElseIf(AST.nodeReturn() as NodeExpr, AST.nodeListFirst())).toThrow('elseif condition is not an expression node.');
+            expect(() => AST.nodeElseIf(AST.nodeIdentifier('ok'), AST.nodeListFirst(AST.nodeArguments(null, AST.nodeListFirst())))).toThrow('elseif body 1 has invalid node type.');
+            expect(() => AST.nodeElse(AST.nodeListFirst(AST.nodeArguments(null, AST.nodeListFirst())))).toThrow('else body 1 has invalid node type.');
+            expect(() => AST.nodeSwitch(AST.nodeReturn() as NodeExpr, AST.nodeListFirst())).toThrow('switch expression is not an expression node.');
+            expect(() => AST.nodeSwitchCase(AST.nodeReturn() as NodeExpr, AST.nodeListFirst())).toThrow('case expression is not an expression node.');
+            expect(() => AST.nodeSwitchCase(AST.nodeIdentifier('one'), AST.nodeListFirst(AST.nodeArguments(null, AST.nodeListFirst())))).toThrow('case body 1 has invalid node type.');
+            expect(() => AST.nodeSwitch(AST.nodeIdentifier('x'), AST.nodeListFirst(AST.nodeReturn()))).toThrow('switch case 1 has invalid node type.');
+            expect(() => AST.nodeSwitch(AST.nodeIdentifier('x'), AST.nodeListFirst(), AST.nodeListFirst(AST.nodeArguments(null, AST.nodeListFirst())))).toThrow(
+                'otherwise body 1 has invalid node type.',
+            );
+            expect(() => AST.nodeWhile(AST.nodeReturn() as NodeExpr, AST.nodeListFirst())).toThrow('while condition is not an expression node.');
+            expect(() => AST.nodeWhile(AST.nodeIdentifier('ok'), AST.nodeListFirst(AST.nodeArguments(null, AST.nodeListFirst())))).toThrow('while body 1 has invalid node type.');
+            expect(() => AST.nodeDoUntil(AST.nodeListFirst(), AST.nodeReturn() as NodeExpr)).toThrow('until condition is not an expression node.');
+            expect(() => AST.nodeDoUntil(AST.nodeListFirst(AST.nodeArguments(null, AST.nodeListFirst())), AST.nodeIdentifier('done'))).toThrow('do body 1 has invalid node type.');
+            expect(() => AST.nodeFor(AST.nodeReturn() as NodeExpr, AST.nodeIdentifier('values'), AST.nodeListFirst())).toThrow('for target is not an expression node.');
+            expect(() => AST.nodeFor(AST.nodeIdentifier('k'), AST.nodeReturn() as NodeExpr, AST.nodeListFirst())).toThrow('for expression is not an expression node.');
+            expect(() => AST.nodeFor(AST.nodeIdentifier('k'), AST.nodeIdentifier('values'), AST.nodeListFirst(AST.nodeArguments(null, AST.nodeListFirst())))).toThrow(
+                'for body 1 has invalid node type.',
+            );
+            expect(() => AST.nodeFor(AST.nodeIdentifier('k'), AST.nodeIdentifier('values'), AST.nodeListFirst(), true, AST.nodeReturn() as NodeExpr)).toThrow(
+                'for workers is not an expression node.',
+            );
+            expect(() => AST.nodeSpmd(AST.nodeListFirst(AST.nodeArguments(null, AST.nodeListFirst())))).toThrow('spmd body 1 has invalid node type.');
+            expect(() => AST.nodeSpmd(AST.nodeListFirst(), AST.nodeListFirst(AST.nodeReturn()))).toThrow('spmd worker 1 is not an expression node.');
+            expect(() => AST.nodeTry(AST.nodeListFirst(AST.nodeArguments(null, AST.nodeListFirst())))).toThrow('try body 1 has invalid node type.');
+            expect(() => AST.nodeTry(AST.nodeListFirst(), AST.nodeListFirst(AST.nodeArguments(null, AST.nodeListFirst())))).toThrow('catch body 1 has invalid node type.');
+            expect(() => AST.nodeUnwindProtect(AST.nodeListFirst(AST.nodeArguments(null, AST.nodeListFirst())), AST.nodeListFirst())).toThrow('unwind_protect body 1 has invalid node type.');
+            expect(() => AST.nodeUnwindProtect(AST.nodeListFirst(), AST.nodeListFirst(AST.nodeArguments(null, AST.nodeListFirst())))).toThrow(
+                'unwind_protect cleanup 1 has invalid node type.',
+            );
+        });
     });
 
     describe('Class node factories and external factories', () => {
@@ -332,7 +480,17 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const property = AST.nodeClassProperty(AST.nodeIdentifier('value'), AST.nodeNumber('1') as NodeExpr);
             const event = AST.nodeClassEvent(AST.nodeIdentifier('Changed'));
             const enumeration = AST.nodeClassEnumeration(AST.nodeIdentifier('On'), AST.nodeListFirst(AST.nodeNumber('1') as NodeInput));
-            const section = AST.nodeClassSection('PROPERTIES', AST.nodeList([property, event, enumeration] as unknown as NodeInput[]), AST.nodeListFirst(methodAttr));
+            const method = AST.nodeFunctionDefinition(
+                AST.nodeIdentifier('step'),
+                AST.nodeListFirst(),
+                AST.nodeListFirst(AST.nodeIdentifier('obj')),
+                AST.nodeListFirst(),
+                AST.nodeListFirst(),
+            );
+            const section = AST.nodeClassSection('PROPERTIES', AST.nodeListFirst(property), AST.nodeListFirst(methodAttr));
+            const methods = AST.nodeClassSection('METHODS', AST.nodeListFirst(method));
+            const events = AST.nodeClassSection('EVENTS', AST.nodeListFirst(event));
+            const enumerations = AST.nodeClassSection('ENUMERATION', AST.nodeListFirst(enumeration));
             const classDef = AST.nodeClassDef(AST.nodeIdentifier('Sample'), AST.nodeListFirst(section), AST.nodeListFirst(classAttr), AST.nodeListFirst(AST.nodeIdentifier('Base')));
 
             expect(section.attributeTable.Static).toEqual([methodAttr]);
@@ -345,7 +503,39 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(property.validation.parent).toBe(property);
             expect(property.validation.default).toBe(property.defaultValue);
             expect(property.defaultValue!.parent).toBe(property.validation);
+            expect(method.parent).toBe(methods);
+            expect(event.parent).toBe(events);
+            expect(enumeration.parent).toBe(enumerations);
             expect(enumeration.args[0].parent).toBe(enumeration);
+        });
+
+        it('Should reject non-expression values in class member expression slots.', () => {
+            expect(() => AST.nodeClassAttribute(AST.nodeIdentifier('Access'), AST.nodeReturn() as NodeExpr)).toThrow('class attribute value is not an expression node.');
+            expect(() => AST.nodeClassEnumeration(AST.nodeIdentifier('On'), AST.nodeListFirst(AST.nodeReturn()))).toThrow('enumeration argument 1 is not an expression node.');
+            expect(() => AST.nodeClassProperty(AST.nodeIdentifier('value'), AST.nodeReturn() as NodeExpr)).toThrow('argument validation default is not an expression node.');
+        });
+
+        it('Should reject invalid node types in classdef structural lists.', () => {
+            const section = AST.nodeClassSection('PROPERTIES', AST.nodeListFirst());
+            const attribute = AST.nodeClassAttribute(AST.nodeIdentifier('Sealed'));
+
+            expect(() => AST.nodeClassDef(AST.nodeIdentifier('Sample'), AST.nodeListFirst(AST.nodeReturn()), AST.nodeListFirst(), AST.nodeListFirst())).toThrow(
+                'class section 1 has invalid node type.',
+            );
+            expect(() => AST.nodeClassDef(AST.nodeIdentifier('Sample'), AST.nodeListFirst(section), AST.nodeListFirst(AST.nodeReturn()), AST.nodeListFirst())).toThrow(
+                'class attribute 1 has invalid node type.',
+            );
+            expect(() => AST.nodeClassDef(AST.nodeIdentifier('Sample'), AST.nodeListFirst(section), AST.nodeListFirst(), AST.nodeListFirst(AST.nodeReturn()))).toThrow(
+                'superclass 1 has invalid node type.',
+            );
+            expect(() => AST.nodeClassSection('PROPERTIES', AST.nodeListFirst(), AST.nodeListFirst(AST.nodeReturn()))).toThrow('class section attribute 1 has invalid node type.');
+            expect(() => AST.nodeClassSection('PROPERTIES', AST.nodeListFirst(AST.nodeClassEvent(AST.nodeIdentifier('Changed'))))).toThrow('properties member 1 has invalid node type.');
+            expect(() => AST.nodeClassSection('METHODS', AST.nodeListFirst(AST.nodeClassProperty(AST.nodeIdentifier('value'))))).toThrow('methods member 1 has invalid node type.');
+            expect(() => AST.nodeClassSection('EVENTS', AST.nodeListFirst(AST.nodeClassEnumeration(AST.nodeIdentifier('On'))))).toThrow('events member 1 has invalid node type.');
+            expect(() => AST.nodeClassSection('ENUMERATION', AST.nodeListFirst(AST.nodeClassEvent(AST.nodeIdentifier('Changed'))))).toThrow('enumeration member 1 has invalid node type.');
+            expect(
+                AST.nodeClassDef(AST.nodeIdentifier('SampleOk'), AST.nodeListFirst(section), AST.nodeListFirst(attribute), AST.nodeListFirst(AST.nodeIdentifier('Base'))).sections,
+            ).toEqual([section]);
         });
 
         it('Should delegate string, number, and row factories after reload.', () => {
@@ -364,6 +554,13 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(matrix).toBeInstanceOf(MultiArray);
             expect(appended.dimension[0]).toBe(2);
             expect(empty).toBeInstanceOf(MultiArray);
+            expect(AST.nodeFirstRow(AST.nodeListFirst(AST.nodeString('cell') as unknown as NodeInput), true).isCell).toBe(true);
+        });
+
+        it('Should reject non-expression values in matrix and cell row factories.', () => {
+            expect(() => AST.nodeFirstRow(AST.nodeListFirst(AST.nodeReturn()))).toThrow('array element 1 is not an expression node.');
+            expect(() => AST.nodeAppendRow(AST.nodeFirstRow(), AST.nodeListFirst(AST.nodeReturn()))).toThrow('array element 1 is not an expression node.');
+            expect(() => AST.nodeFirstRow(AST.nodeListFirst(AST.nodeReturn()), true)).toThrow('array element 1 is not an expression node.');
         });
     });
 });

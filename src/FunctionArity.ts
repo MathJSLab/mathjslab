@@ -21,6 +21,18 @@ type ArityName = NodeFunctionParameter | NodeFunctionReturn;
  */
 class FunctionArity {
     /**
+     * Validate arity metadata that should already be guaranteed by AST factories.
+     */
+    private static checkedList<NODE>(items: unknown[], guard: (value: unknown) => value is NODE, role: string): NODE[] {
+        return items.map((item, index) => {
+            if (!guard(item)) {
+                throw new TypeError(`internal AST error: ${role} ${index + 1} has invalid node type.`);
+            }
+            return item;
+        });
+    }
+
+    /**
      * Compute the number of accepted input arguments for a callable.
      *
      * @param callable Callable to inspect.
@@ -29,11 +41,11 @@ class FunctionArity {
     public static inputArity(callable: ArityCallable): number {
         switch (callable.type) {
             case 'LAMBDA': {
-                const params = callable.node.parameter.filter(AST.isNodeFunctionParameter);
+                const params = this.checkedList(callable.node.parameter, AST.isNodeFunctionParameter, 'function handle parameter');
                 return this.identifierListArity(params, 'varargin');
             }
             case 'FCNDEF': {
-                const params = callable.node.parameter.list.filter(AST.isNodeFunctionParameter);
+                const params = this.checkedList(callable.node.parameter.list, AST.isNodeFunctionParameter, 'function parameter');
                 return this.identifierListArity(params, 'varargin');
             }
             case 'BUILTIN':
@@ -52,7 +64,7 @@ class FunctionArity {
             case 'LAMBDA':
                 return 1;
             case 'FCNDEF': {
-                const returnNames = callable.node.return.list.filter(AST.isNodeFunctionReturn);
+                const returnNames = this.checkedList(callable.node.return.list, AST.isNodeFunctionReturn, 'function return');
                 return this.identifierListArity(returnNames, 'varargout');
             }
             case 'BUILTIN':

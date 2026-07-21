@@ -225,9 +225,10 @@ class MultiArray<ELEMENT = Elements> {
     public static readonly isRowVector = (obj: unknown): boolean => obj instanceof MultiArray && obj.dimension.length === 2 && obj.dimension[0] === 1;
 
     /**
-     * Converts a vector of type `ElementType[]` into a row matrix of type `MultiArray`.
-     * @param vector
-     * @returns
+     * Convert a flat value list into a 1-by-N row vector.
+     *
+     * @param vector Values to store in row order.
+     * @returns Row-vector `MultiArray`.
      */
     public static readonly toRowVector = (vector: ElementType[]): MultiArray => {
         const result = new MultiArray([1, vector.length]);
@@ -236,9 +237,10 @@ class MultiArray<ELEMENT = Elements> {
     };
 
     /**
+     * Return the first row of a row-vector array.
      *
-     * @param vector
-     * @returns
+     * @param vector Row-vector `MultiArray`.
+     * @returns Backing first row.
      */
     public static readonly fromRowVector = (vector: MultiArray): ElementType[] => vector.array[0];
 
@@ -250,9 +252,10 @@ class MultiArray<ELEMENT = Elements> {
     public static readonly isColumnVector = (obj: unknown): boolean => obj instanceof MultiArray && obj.dimension.length === 2 && obj.dimension[1] === 1;
 
     /**
-     * Converts a vector of type `ElementType[]` into a column matrix of type `MultiArray`.
-     * @param vector
-     * @returns
+     * Convert a flat value list into an N-by-1 column vector.
+     *
+     * @param vector Values to store in column order.
+     * @returns Column-vector `MultiArray`.
      */
     public static readonly toColumnVector = (vector: ElementType[]): MultiArray => {
         const result = new MultiArray([vector.length, 1]);
@@ -261,9 +264,10 @@ class MultiArray<ELEMENT = Elements> {
     };
 
     /**
+     * Return the first column of a column-vector array.
      *
-     * @param vector
-     * @returns
+     * @param vector Column-vector `MultiArray`.
+     * @returns Backing first column.
      */
     public static readonly fromColumnVector = (vector: MultiArray): ElementType[] => vector.array.map((row) => row[0]);
 
@@ -282,9 +286,10 @@ class MultiArray<ELEMENT = Elements> {
     public static readonly isVector = (obj: unknown): boolean => obj instanceof MultiArray && obj.dimension.length === 2 && (obj.dimension[0] === 1 || obj.dimension[1] === 1);
 
     /**
-     * * Converts a vector of type `ElementType[]` into a diagonal matrix of type `MultiArray`.
-     * @param vector
-     * @returns
+     * Convert a flat value list into a square diagonal matrix.
+     *
+     * @param vector Diagonal values.
+     * @returns Square matrix with `vector` on the main diagonal.
      */
     public static readonly toDiagonalMatrix = (vector: ElementType[]): MultiArray => {
         const result = new MultiArray([vector.length, vector.length]);
@@ -315,9 +320,10 @@ class MultiArray<ELEMENT = Elements> {
     public static readonly isCellArray = (obj: unknown): boolean => obj instanceof MultiArray && obj.isCell;
 
     /**
+     * Test whether any array element is a complex numeric value.
      *
-     * @param M
-     * @returns
+     * @param M Array to scan.
+     * @returns `true` when at least one element has a nonzero imaginary part.
      */
     public static readonly isComplexMultiArray = (M: MultiArray): boolean => {
         let result = false;
@@ -417,11 +423,12 @@ class MultiArray<ELEMENT = Elements> {
         Math.floor(i / dimension[0]) * dimension[0] * dimension[1] + j * dimension[0] + (i % dimension[0]);
 
     /**
-     * Converts MultiArray raw row and column to MultiArray subscript.
-     * @param dimension
-     * @param i
-     * @param j
-     * @returns
+     * Convert a physical storage row/column pair to MATLAB-style subscripts.
+     *
+     * @param dimension Logical array dimensions.
+     * @param i Physical row in the page-flattened backing storage.
+     * @param j Physical column in the backing storage.
+     * @returns One-based logical subscript list.
      */
     public static readonly rowColumnToSubscript = (dimension: number[], i: number, j: number): number[] => {
         const index = Math.floor(i / dimension[0]) * dimension[0] * dimension[1] + j * dimension[0] + (i % dimension[0]);
@@ -443,18 +450,20 @@ class MultiArray<ELEMENT = Elements> {
     };
 
     /**
+     * Return the internal page stride after a dimension.
      *
-     * @param M
-     * @param dim
-     * @returns
+     * @param M Source array.
+     * @param dim Zero-based dimension index.
+     * @returns Product of dimensions after `dim`.
      */
     public static readonly getStride = (M: MultiArray, dim: number): number => M.dimension.slice(dim + 1).reduce((p, c) => p * c, 1);
 
     /**
-     * Returns a 2D slice corresponding to page k (for 3D+ arrays).
-     * @param M
-     * @param pageIndex
-     * @returns
+     * Return a 2-D page slice from an N-D array.
+     *
+     * @param M Source array.
+     * @param pageIndex Zero-based page index.
+     * @returns 2-D numeric page data.
      */
     public static readonly pageSlice = (M: MultiArray, pageIndex: number): ComplexType[][] => {
         const dim = M.dimension;
@@ -482,10 +491,11 @@ class MultiArray<ELEMENT = Elements> {
     };
 
     /**
-     * Sets the 2D pageIndex page in an N-D (row-major) MultiArray.
-     * @param M
-     * @param pageIndex
-     * @param pageData
+     * Replace a 2-D page inside an N-D array.
+     *
+     * @param M Target array.
+     * @param pageIndex Zero-based page index.
+     * @param pageData Replacement page values.
      */
     public static readonly setPage = (M: MultiArray, pageIndex: number, pageData: ComplexType[][]): void => {
         const [rows, cols, ...tail] = M.dimension;
@@ -499,9 +509,10 @@ class MultiArray<ELEMENT = Elements> {
     };
 
     /**
-     * Returns content as 1D array (column-major linear order), length = product(dimension).
-     * @param arr
-     * @returns
+     * Flatten array content in MATLAB column-major logical order.
+     *
+     * @param arr Source array.
+     * @returns Linear element array with `prod(size(arr))` entries.
      */
     public static readonly toFlatArray = (arr: MultiArray): ComplexType[] => {
         const dims = arr.dimension;
@@ -520,9 +531,10 @@ class MultiArray<ELEMENT = Elements> {
     };
 
     /**
-     * Reconstructs arr.array (2D physical storage) from the column-major linear vector.
-     * @param arr
-     * @param flat
+     * Reconstruct backing storage from a MATLAB column-major linear vector.
+     *
+     * @param arr Target array whose dimensions define the output shape.
+     * @param flat Linear values to place into `arr`.
      */
     public static readonly fromFlatArray = (arr: MultiArray, flat: ComplexType[]): void => {
         const dims = arr.dimension;
@@ -555,9 +567,9 @@ class MultiArray<ELEMENT = Elements> {
      *
      * This matches the requirement of cross(A,B) where the operation dimension
      * must have length 3 while all other dimensions must match.
-     * @param A
-     * @param B
-     * @returns
+     * @param A Left array.
+     * @param B Right array.
+     * @returns `true` when shapes match or only a length-3 operation dimension differs.
      */
     public static readonly sameSizeExcept = (A: MultiArray, B: MultiArray): boolean => {
         const ad = A.dimension;
@@ -701,7 +713,7 @@ class MultiArray<ELEMENT = Elements> {
      * @param M MultiArray object.
      * @returns String of unparsed MultiArray.
      */
-    public static readonly unparse = (M: MultiArray, interpreter: RuntimeDisplay, parentPrecedence = 0): string => {
+    public static readonly unparse = (M: MultiArray, interpreter: RuntimeDisplay, _parentPrecedence = 0): string => {
         const unparseRows = (row: ElementType[]) => row.map((value) => interpreter.Unparse(value)).join() + ';\n';
         let arraystr: string = '';
         if (M.dimension.reduce((p, c) => p * c, 1) === 0) {
@@ -726,8 +738,9 @@ class MultiArray<ELEMENT = Elements> {
     };
 
     /**
-     * Create a string simple representation for a MultiArray (only dimensions).
-     * @returns
+     * Create a compact dimension-only string representation.
+     *
+     * @returns Human-readable array shape.
      */
     public toString(): string {
         return `array ${this.dimension.join('x')}`;
@@ -738,7 +751,7 @@ class MultiArray<ELEMENT = Elements> {
      * @param M MultiArray object.
      * @returns String of unparsed MultiArray in MathML language.
      */
-    public static readonly unparseMathML = (M: MultiArray, interpreter: RuntimeDisplay, parentPrecedence = 0): string => {
+    public static readonly unparseMathML = (M: MultiArray, interpreter: RuntimeDisplay, _parentPrecedence = 0): string => {
         const unparseRows = (row: ElementType[]) => `<mtr>${row.map((value) => `<mtd>${interpreter.UnparserMathML(value)}</mtd>`).join('')}</mtr>`;
         const buildMrow = (rows: string) =>
             `<mrow><mo fence="true" stretchy="true">${M.isCell ? '{' : '['}</mo><mtable>${rows}</mtable><mo fence="true" stretchy="true">${M.isCell ? '}' : ']'}</mo></mrow>`;
@@ -783,8 +796,8 @@ class MultiArray<ELEMENT = Elements> {
     /**
      * Linearize MultiArray in an array of ElementType using row-major
      * order.
-     * @param M
-     * @returns
+     * @param M Array to flatten.
+     * @returns Elements in column-major logical order.
      */
     public static readonly flatten = (M: MultiArray): ElementType[] => {
         const result: ElementType[] = [];
@@ -933,9 +946,9 @@ class MultiArray<ELEMENT = Elements> {
 
     /**
      * Convert scalar to MultiArray with aditional test if it is MultiArray.
-     * @param value
-     * @param test
-     * @returns
+     * @param value Scalar or array candidate.
+     * @param test Whether an existing `MultiArray` should be preserved.
+     * @returns Existing array or scalar wrapped in a 1-by-1 array.
      */
     private static readonly scalarToMultiArrayWithTest = (value: ElementType, test: boolean): MultiArray => {
         if (value instanceof MultiArray && test) {
@@ -980,8 +993,8 @@ class MultiArray<ELEMENT = Elements> {
     /**
      * If `value` parameter is a non empty MultiArray returns it's first element.
      * Otherwise returns `value` parameter.
-     * @param value
-     * @returns
+     * @param value Scalar or array candidate.
+     * @returns First element of a non-empty array, otherwise `value`.
      */
     public static readonly firstElement = (value: ElementType): ElementType => {
         return value instanceof MultiArray && value.dimension.reduce((p: number, c: number) => p * c, 1) > 0 ? value.array[0][0] : value;
@@ -989,8 +1002,8 @@ class MultiArray<ELEMENT = Elements> {
 
     /**
      * If M is a line vector then return the line of M else return first column of M.
-     * @param M
-     * @returns
+     * @param M Scalar or array candidate.
+     * @returns First row for row vectors, first column otherwise.
      */
     public static readonly firstVector = (M: ElementType): ElementType[] => {
         if (M instanceof MultiArray) {
@@ -1017,8 +1030,9 @@ class MultiArray<ELEMENT = Elements> {
     };
 
     /**
-     * Copy method (for element's generics).
-     * @returns
+     * Copy this array and its stored runtime values.
+     *
+     * @returns Copied array preserving generic element type.
      */
     public copy(): MultiArray<ELEMENT> {
         const result = new MultiArray<ELEMENT>(this.dimension, undefined, this.isCell);

@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 import path from 'node:path';
-import type { FunctionTable, NameEntry, NameTable, NodeFunctionDefinition, NodeInput } from './AST';
+import type { FunctionTable, NameEntry, NameTable, NodeExpr, NodeFunctionDefinition, NodeInput } from './AST';
 import { AST } from './AST';
 import { CharString } from './CharString';
 import { Complex } from './Complex';
@@ -81,6 +81,12 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
             expect(
                 FunctionWorkspace.inputName([AST.nodeIdentifier('x'), Complex.create(2)], Complex.create(2), (message) => {
+                    throw new Error(message);
+                }).str,
+            ).toBe('');
+
+            expect(
+                FunctionWorkspace.inputName([{ type: 'IDENT' } as NodeExpr], Complex.create(1), (message) => {
                     throw new Error(message);
                 }).str,
             ).toBe('');

@@ -49,5 +49,17 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(handle.closure).toBe(closure);
             expect(handle.toString()).toBe('@anonymous function handle');
         });
+
+        it('Should deep-copy anonymous handle AST nodes and relink parents.', () => {
+            const parameter = AST.nodeIdentifier('x');
+            const expression = AST.nodeOperation('+', AST.nodeIdentifier('x'), AST.nodeIdentifier('x'));
+            const handle = FunctionHandle.create(undefined, [parameter], expression, Scope.create());
+            const copy = handle.copy();
+
+            expect(copy.parameter[0]).not.toBe(handle.parameter[0]);
+            expect(copy.expression).not.toBe(handle.expression);
+            expect(copy.parameter[0].parent).toBe(copy);
+            expect(copy.expression?.parent).toBe(copy);
+        });
     });
 });

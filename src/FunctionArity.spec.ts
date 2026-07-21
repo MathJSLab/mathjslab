@@ -74,6 +74,20 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(FunctionArity.outputArity(Callables.builtin(builtinDefault))).toBe(1);
         });
 
+        it('Should reject structurally invalid arity metadata instead of ignoring it.', () => {
+            const invalidLambda = FunctionHandle.create(undefined, [AST.nodeIdentifier('x'), AST.nodeReturn()], AST.nodeIdentifier('x'));
+            const invalidParameter = functionDefinition(['x'], ['y']);
+            invalidParameter.parameter.list.push(AST.nodeReturn());
+            const invalidReturn = functionDefinition(['x'], ['y']);
+            invalidReturn.return.list.push(AST.nodeReturn());
+
+            expect(() => FunctionArity.inputArity(Callables.lambda(invalidLambda as FunctionHandle & { id: undefined }))).toThrow(
+                'internal AST error: function handle parameter 2 has invalid node type.',
+            );
+            expect(() => FunctionArity.inputArity(Callables.functionDefinition(invalidParameter))).toThrow('internal AST error: function parameter 2 has invalid node type.');
+            expect(() => FunctionArity.outputArity(Callables.functionDefinition(invalidReturn))).toThrow('internal AST error: function return 2 has invalid node type.');
+        });
+
         it('Should validate count bounds.', () => {
             const scalar = new MultiArray([1, 1], [[Complex.create(3)]]);
 

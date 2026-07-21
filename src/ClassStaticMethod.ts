@@ -1,6 +1,8 @@
-import type { ClassMethodDefinition } from './ClassMember';
+import type { ClassMethodDefinition as ClassMethodDefinitionBase } from './ClassMember';
 import type { ClassDefinition } from './ClassDefinition';
 import type { RuntimeDisplay } from './RuntimeDisplay';
+
+type ClassMethodDefinition = ClassMethodDefinitionBase<ClassDefinition>;
 
 /**
  * Runtime value representing a static class method selected from a class.

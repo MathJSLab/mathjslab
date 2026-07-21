@@ -1,6 +1,9 @@
-import type { ClassMethodDefinition } from './ClassMember';
+import type { ClassMethodDefinition as ClassMethodDefinitionBase } from './ClassMember';
 import type { ClassInstance } from './ClassInstance';
+import type { ClassDefinition } from './ClassDefinition';
 import type { RuntimeDisplay } from './RuntimeDisplay';
+
+type ClassMethodDefinition = ClassMethodDefinitionBase<ClassDefinition>;
 
 /**
  * Runtime value representing an instance method already bound to an object.

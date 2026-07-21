@@ -1,4 +1,5 @@
 /// <reference types="jest" />
+import { AST } from './AST';
 import { ClassDefinition } from './ClassDefinition';
 
 import { parseClassDefinition as parseClass } from './ParserTestUtils';
@@ -61,6 +62,22 @@ describe('ClassDefinition', () => {
             expect(definition.events[0].isHidden).toBe(true);
             expect(definition.abstractMethodNames().has('make')).toBe(true);
             expect(definition.findEnumeration('One')?.classDefinition).toBe(definition);
+        });
+
+        it('Should reject structurally invalid class section members instead of ignoring them.', () => {
+            const invalidProperty = parseClass(['classdef InvalidPropertyMemberSpec', '  properties', '    Value', '  end', 'end'].join('\n'));
+            invalidProperty.sections[0].members.list.push(AST.nodeReturn());
+            const invalidMethod = parseClass(['classdef InvalidMethodMemberSpec', '  methods', '    function y = value(obj)', '    end', '  end', 'end'].join('\n'));
+            invalidMethod.sections[0].members.list.push(AST.nodeReturn());
+            const invalidEvent = parseClass(['classdef InvalidEventMemberSpec', '  events', '    Changed', '  end', 'end'].join('\n'));
+            invalidEvent.sections[0].members.list.push(AST.nodeReturn());
+            const invalidEnumeration = parseClass(['classdef InvalidEnumerationMemberSpec', '  enumeration', '    One', '  end', 'end'].join('\n'));
+            invalidEnumeration.sections[0].members.list.push(AST.nodeReturn());
+
+            expect(() => ClassDefinition.create(invalidProperty)).toThrow('internal AST error: properties member 2 has invalid node type.');
+            expect(() => ClassDefinition.create(invalidMethod)).toThrow('internal AST error: methods member 2 has invalid node type.');
+            expect(() => ClassDefinition.create(invalidEvent)).toThrow('internal AST error: events member 2 has invalid node type.');
+            expect(() => ClassDefinition.create(invalidEnumeration)).toThrow('internal AST error: enumeration member 2 has invalid node type.');
         });
 
         it('Should collect negated and boolean class attributes as false.', () => {
@@ -341,6 +358,10 @@ describe('ClassDefinition', () => {
             const packageNoOutputConstructor = ClassDefinition.create(
                 parseClass(['classdef pkg.NoOutputConstructorSpec', '  methods', '    function NoOutputConstructorSpec()', '    end', '  end', 'end'].join('\n')),
             );
+            const invalidConstructorHeader = ClassDefinition.create(
+                parseClass(['classdef InvalidConstructorHeaderSpec', '  methods', '    function obj = InvalidConstructorHeaderSpec()', '    end', '  end', 'end'].join('\n')),
+            );
+            invalidConstructorHeader.methods[0].node.return.list.push(AST.nodeReturn());
             const raise = (message: string): never => {
                 throw new Error(message);
             };
@@ -350,6 +371,9 @@ describe('ClassDefinition', () => {
             expect(() => ignoredOutputConstructor.resolveSuperclasses(() => undefined, raise)).toThrow('constructor for class IgnoredOutputConstructorSpec must declare exactly one output.');
             expect(() => packageNoOutputConstructor.resolveSuperclasses(() => undefined, raise)).toThrow(
                 'constructor for class pkg.NoOutputConstructorSpec must declare exactly one output.',
+            );
+            expect(() => invalidConstructorHeader.resolveSuperclasses(() => undefined, raise)).toThrow(
+                "internal AST error: method 'InvalidConstructorHeaderSpec' return 2 has invalid node type.",
             );
         });
 
@@ -392,6 +416,23 @@ describe('ClassDefinition', () => {
             const badSetterSignature = ClassDefinition.create(
                 parseClass(['classdef BadSetterSignatureSpec', '  properties', '    Value', '  end', '  methods', '    function obj = set.Value(obj)', '    end', '  end', 'end'].join('\n')),
             );
+            const invalidGetterHeader = ClassDefinition.create(
+                parseClass(
+                    [
+                        'classdef InvalidGetterHeaderSpec',
+                        '  properties',
+                        '    Value',
+                        '  end',
+                        '  methods',
+                        '    function y = get.Value(obj)',
+                        '      y = 1;',
+                        '    end',
+                        '  end',
+                        'end',
+                    ].join('\n'),
+                ),
+            );
+            invalidGetterHeader.methods[0].node.parameter.list.push(AST.nodeReturn());
             const raise = (message: string): never => {
                 throw new Error(message);
             };
@@ -406,6 +447,7 @@ describe('ClassDefinition', () => {
             expect(() => badSetterSignature.resolveSuperclasses(() => undefined, raise)).toThrow(
                 "set accessor 'set.Value' in class BadSetterSignatureSpec must declare two inputs and one output.",
             );
+            expect(() => invalidGetterHeader.resolveSuperclasses(() => undefined, raise)).toThrow("internal AST error: method 'get.Value' parameter 2 has invalid node type.");
         });
 
         it('Should validate explicit property GetMethod and SetMethod attributes.', () => {

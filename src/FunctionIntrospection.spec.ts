@@ -31,8 +31,11 @@ const functionDefinition = (id: string): NodeFunctionDefinition =>
 class TestScope implements IntrospectionScope {
     public nameTable: NameTable = Object.create(null);
     public functionTable: FunctionTable = Object.create(null);
+    public parent?: IntrospectionScope;
 
-    public constructor(public parent?: IntrospectionScope) {}
+    public constructor(_parent?: IntrospectionScope) {
+        this.parent = _parent;
+    }
 
     public defineName(name: string, node: NodeInput): NameEntry {
         return (this.nameTable[name] = { node });

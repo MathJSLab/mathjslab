@@ -24,7 +24,6 @@ import type {
     NodeFunctionParameter,
     NodeFunctionReturn,
     NodeList,
-    NodeBuiltInFunction,
     NodeClassDef,
     NodeArgumentValidation,
     NodeClassAttribute,
@@ -33,7 +32,6 @@ import type {
     BinaryOperation,
     PrefixUnaryOperation,
     PostfixUnaryOperation,
-    BuiltInFunctionInputSignature,
     BuiltInFunctionSignature,
     NameEntry,
     AliasNameTable,
@@ -45,7 +43,7 @@ import type {
 import { AST } from './AST';
 import { CharString } from './CharString';
 import { Complex, type ComplexType } from './Complex';
-import { type ElementType, MultiArray } from './MultiArray';
+import { MultiArray } from './MultiArray';
 import { Structure } from './Structure';
 import { FunctionHandle } from './FunctionHandle';
 import { ClassDefinition } from './ClassDefinition';
@@ -68,20 +66,25 @@ import { MathML } from './MathML';
 import { FunctionValidation } from './FunctionValidation';
 import { FunctionArguments } from './FunctionArguments';
 import { FunctionArity } from './FunctionArity';
-import { FunctionCall } from './FunctionCall';
 import { FunctionWorkspace } from './FunctionWorkspace';
 import { FunctionIntrospection } from './FunctionIntrospection';
 import { FunctionLookup } from './FunctionLookup';
 import { RuntimeEquality } from './RuntimeEquality';
+import { RuntimeValue } from './RuntimeValue';
 import { Scope } from './Scope';
 import { CallFrame } from './CallFrame';
-import { Callables, type Callable, type FunctionDefinitionCallable } from './Callable';
-import type { ClassEventDefinition, ClassMethodDefinition, ClassPropertyDefinition } from './ClassMember';
+import { Callables, type Callable } from './Callable';
+import type {
+    ClassEventDefinition as ClassEventDefinitionBase,
+    ClassMethodDefinition as ClassMethodDefinitionBase,
+    ClassPropertyDefinition as ClassPropertyDefinitionBase,
+} from './ClassMember';
 import type { SourceEntry, SourceProvider, SourceResolver, SourceTable } from './SourceResolver';
 import { TableSourceResolver } from './SourceResolver';
 import { BreakSignal, Context, ContinueSignal, ReturnSignal } from './Context';
 import type { SymbolResolution, SymbolResolutionOptions } from './Context';
 import { CircularReferenceError, EvalError, InterpreterError, ReferenceError, SyntaxError, UndefinedReferenceError } from './InterpreterError';
+import { expressionValue } from './ExpressionValue';
 
 /**
  * Numeric exit status used by the public `exitStatus` property.
@@ -92,6 +95,9 @@ type ExitStatusValues = Record<string, ExitStatus>;
 
 /** Host-provided class source entry. */
 type ClassSource = SourceEntry;
+type ClassPropertyDefinition = ClassPropertyDefinitionBase<ClassDefinition>;
+type ClassMethodDefinition = ClassMethodDefinitionBase<ClassDefinition>;
+type ClassEventDefinition = ClassEventDefinitionBase<ClassDefinition>;
 
 /** Host-provided function-file source entry. */
 type FunctionSource = SourceEntry;
@@ -670,6 +676,14 @@ class Interpreter implements InterpreterInterface {
         return FunctionIntrospection.localFunctionHandles(this.context.currentFrame, this.context.currentScope);
     }
 
+    /**
+     * Copy and validate one captured workspace value before exposing it through
+     * the MATLAB/Octave `functions(handle).workspace` metadata struct.
+     */
+    private functionHandleWorkspaceValue(value: unknown, name: string): NodeInput {
+        return this.expressionValue(RuntimeValue.copy(value), `workspace ${name}`);
+    }
+
     private functionHandleWorkspaceInfo(handle: FunctionHandle): MultiArray {
         if (!handle.closure) {
             return MultiArray.emptyArray(true);
@@ -681,7 +695,7 @@ class Interpreter implements InterpreterInterface {
             if (!entry || entry.global || typeof entry.node === 'undefined' || ClassDefinition.isInstanceOf(entry.node)) {
                 continue;
             }
-            fields[name] = MathOperation.copy(entry.node as MathObject) as NodeInput;
+            fields[name] = this.functionHandleWorkspaceValue(entry.node, name);
         }
 
         const result = MultiArray.scalarToMultiArray(new Structure(fields));
@@ -834,6 +848,76 @@ class Interpreter implements InterpreterInterface {
     }
 
     /**
+     * Validate one evaluated value before exposing it as an ordinary expression.
+     */
+    private expressionValue(value: unknown, name: string): NodeExpr {
+        return expressionValue(value, name, 'Expression value', (message) => this.context.throwEvalError(message));
+    }
+
+    /**
+     * Validate evaluated variadic call arguments before forwarding them.
+     */
+    private callArgumentValues(values: NodeInput[], prefix: string): NodeExpr[] {
+        return values.map((value, index) => this.expressionValue(value, `${prefix}${index + 1}`));
+    }
+
+    /**
+     * Validate a built-in control argument that must be a character string.
+     */
+    private charControlArgument(value: unknown, name: string): CharString {
+        const expression = this.expressionValue(value, name);
+        if (!CharString.isInstanceOf(expression)) {
+            this.context.throwEvalError(`${name} must be a character string.`);
+        }
+        return expression;
+    }
+
+    /**
+     * Validate an optional boolean-like control argument.
+     */
+    private booleanControlArgument(value: unknown, name: string): boolean {
+        return this.toBoolean(this.expressionValue(value, name));
+    }
+
+    /**
+     * Validate runtime values before forwarding them to user-defined class methods.
+     */
+    private classMethodArgumentValues(values: NodeInput[], prefix: string): NodeExpr[] {
+        return values.map((value, index) => this.expressionValue(value, `${prefix}${index + 1}`));
+    }
+
+    /**
+     * Validate and linearize values before assigning them to object arrays.
+     */
+    private assignmentValues(value: unknown, prefix: string): NodeExpr[] {
+        return MultiArray.linearize(this.expressionValue(value, prefix)).map((item, index) => this.expressionValue(item, `${prefix}${index + 1}`));
+    }
+
+    /**
+     * Validate a sequence before storing it in an AST expression list.
+     */
+    private expressionList(values: unknown[], prefix: string): NodeExpr[] {
+        return values.map((value, index) => this.expressionValue(value, `${prefix}${index + 1}`));
+    }
+
+    /**
+     * Validate and linearize an expression value without crossing the generic
+     * `MathObject` operation surface.
+     */
+    private linearExpressionValues(value: unknown, prefix: string): NodeExpr[] {
+        const expression = this.expressionValue(value, prefix);
+        return MultiArray.isInstanceOf(expression) ? MultiArray.linearize(expression).map((item, index) => this.expressionValue(item, `${prefix}${index + 1}`)) : [expression];
+    }
+
+    /**
+     * Validate and copy one expression value through the runtime copy protocol.
+     */
+    private copyExpressionValue(value: unknown, name: string): NodeExpr {
+        const expression = this.expressionValue(value, name);
+        return this.expressionValue(RuntimeValue.copy(expression), name);
+    }
+
+    /**
      * Expand a `for` loop expression into the sequence assigned to the target.
      *
      * MATLAB/Octave `for` assignment iterates over columns. Numeric row vectors
@@ -847,22 +931,23 @@ class Interpreter implements InterpreterInterface {
      */
     private forLoopValues(value: NodeInput, target: NodeExpr): NodeExpr[] {
         if (Structure.isInstanceOf(value)) {
-            const targetWidth = MultiArray.isRowVector(target) ? MultiArray.linearize(target as MathObject).length : 1;
-            return Object.entries(value.field).map(([field, fieldValue]) =>
-                targetWidth > 1 ? (new MultiArray([1, 2], [[fieldValue, CharString.create(field)]]) as NodeExpr) : (fieldValue as NodeExpr),
-            );
+            const targetWidth = MultiArray.isRowVector(target) ? MultiArray.linearize(this.expressionValue(target, 'for target')).length : 1;
+            return Object.entries(value.field).map(([field, fieldValue]) => {
+                const valueExpression = this.expressionValue(fieldValue, field);
+                return targetWidth > 1 ? this.expressionValue(new MultiArray([1, 2], [[valueExpression, CharString.create(field)]]), field) : valueExpression;
+            });
         }
         if (CharString.isInstanceOf(value)) {
             return value.toCharacterScalars();
         }
         if (!MultiArray.isInstanceOf(value)) {
-            return [value as NodeExpr];
+            return [this.expressionValue(value, 'for')];
         }
         if (value.dimension[0] === 0 || value.dimension[1] === 0) {
             return [];
         }
         if (value.dimension[0] === 1 && !value.isCell) {
-            return value.array[0] as NodeExpr[];
+            return value.array[0].map((item, index) => this.expressionValue(item, `for${index + 1}`));
         }
         const result: NodeExpr[] = [];
         for (let column = 0; column < value.dimension[1]; column++) {
@@ -870,20 +955,32 @@ class Interpreter implements InterpreterInterface {
             for (let row = 0; row < value.dimension[0]; row++) {
                 columnValue.array[row][0] = value.array[row][column];
             }
-            result.push(columnValue as NodeExpr);
+            result.push(this.expressionValue(columnValue, `for${column + 1}`));
         }
         return result;
     }
 
+    /**
+     * Build the value assigned by one `for` iteration.
+     *
+     * Scalar targets receive a copied expression value. Row-vector targets use
+     * a lazy return list so multi-target loop assignments can request each
+     * element independently, matching the same comma-separated-list machinery
+     * used elsewhere in the interpreter.
+     *
+     * @param target Loop assignment target.
+     * @param value Iteration value to assign.
+     * @returns Scalar assignment value or lazy return-list carrier.
+     */
     private forLoopAssignmentValue(target: NodeExpr, value: NodeExpr): NodeExpr {
         if (!MultiArray.isRowVector(target)) {
-            return MathOperation.copy(value as MathObject) as NodeExpr;
+            return this.copyExpressionValue(value, 'for');
         }
-        const values = MultiArray.linearize(value as MathObject);
+        const values = this.linearExpressionValues(value, 'for');
         return AST.nodeReturnList(
             (_evaluated: ReturnHandlerResult, index: number) => {
                 if (index < values.length) {
-                    return MathOperation.copy(values[index] as MathObject) as NodeExpr;
+                    return this.copyExpressionValue(values[index], `for${index + 1}`);
                 }
                 AST.throwErrorIfGreaterThanReturnList(values.length, index + 1, (message) => this.context.throwEvalError(message));
             },
@@ -896,7 +993,18 @@ class Interpreter implements InterpreterInterface {
         );
     }
 
-    private cloneAssignmentTarget(target: NodeExpr): NodeExpr {
+    /**
+     * Clone an assignment target while preserving only expression-compatible shapes.
+     *
+     * Assignment lowering can duplicate identifiers, indexing chains, indirect
+     * references, and runtime values before the actual write occurs. Every
+     * cloned branch is routed back through the expression boundary so malformed
+     * statement/control-flow nodes cannot enter the assignment pipeline.
+     *
+     * @param target Assignment target or runtime value to clone.
+     * @returns Copied target constrained to expression position.
+     */
+    private cloneAssignmentTarget(target: unknown): NodeExpr {
         if (
             Complex.isInstanceOf(target) ||
             CharString.isInstanceOf(target) ||
@@ -910,7 +1018,7 @@ class Interpreter implements InterpreterInterface {
             ClassEnumerationValue.isInstanceOf(target) ||
             ClassMetaObject.isInstanceOf(target)
         ) {
-            return MathOperation.copy(target as MathObject) as NodeExpr;
+            return this.copyExpressionValue(target, 'assignment target');
         }
         if (AST.isNodeIdentifier(target)) {
             return AST.nodeIdentifier(target.id);
@@ -931,20 +1039,38 @@ class Interpreter implements InterpreterInterface {
             return result;
         }
         if (MultiArray.isInstanceOf(target)) {
-            const source = target as MultiArray;
+            const source = target;
             const result = new MultiArray(source.dimension, undefined, source.isCell);
             for (let row = 0; row < source.dimension[0]; row++) {
                 for (let column = 0; column < source.dimension[1]; column++) {
-                    result.array[row][column] = this.cloneAssignmentTarget(source.array[row][column] as NodeExpr) as ElementType;
+                    result.array[row][column] = this.cloneAssignmentTarget(source.array[row][column]);
                 }
             }
             MultiArray.setType(result);
-            return result as NodeExpr;
+            return this.expressionValue(result, 'assignment target');
         }
-        return AST.nodeCopy(target) as NodeExpr;
+        return this.expressionValue(AST.nodeCopy(this.expressionValue(target, 'assignment target')), 'assignment target');
     }
 
-    private valueReturnList(values: NodeInput[]): NodeReturnList {
+    /**
+     * Validate values before exposing them through an interpreter-owned comma
+     * separated return list.
+     */
+    private returnListValue(value: unknown, name: string): NodeExpr {
+        return expressionValue(value, name, 'Return value', (message) => this.context.throwEvalError(message));
+    }
+
+    /**
+     * Create a lazy comma-separated return list from already evaluated values.
+     *
+     * Values are validated only when selected so the return list can honor the
+     * caller-requested output count while still rejecting non-expression values
+     * before they cross an expression boundary.
+     *
+     * @param values Candidate output values.
+     * @returns Lazy comma-separated return list.
+     */
+    private valueReturnList(values: unknown[]): NodeReturnList {
         const result = AST.nodeReturnList(
             (evaluated: ReturnHandlerResult, index: number): NodeExpr => {
                 const value = evaluated[`out${index}`];
@@ -957,7 +1083,7 @@ class Interpreter implements InterpreterInterface {
                 AST.throwErrorIfGreaterThanReturnList(values.length, length, (message) => this.context.throwEvalError(message));
                 const out: ReturnHandlerResult = { length };
                 for (let index = 0; index < length; index++) {
-                    out[`out${index}`] = values[index] as NodeExpr;
+                    out[`out${index}`] = this.returnListValue(values[index], `out${index + 1}`);
                 }
                 return out;
             },
@@ -967,6 +1093,28 @@ class Interpreter implements InterpreterInterface {
         return result;
     }
 
+    /**
+     * Read the assigned value from an internal assignment-result list.
+     */
+    private nestedAssignmentValue(resultList: NodeList): NodeExpr {
+        const assignment = resultList.list[0];
+        if (!AST.isNodeBinaryOperation(assignment) || assignment.type !== '=') {
+            this.context.throwEvalError('invalid nested assignment result.');
+        }
+        return this.expressionValue(assignment.right, 'assignment result');
+    }
+
+    /**
+     * Parse and evaluate source text in a specific scope.
+     *
+     * This is shared by `eval`/`evalin` and deliberately creates a transient
+     * call-stack frame so introspection and argument helpers observe the scope
+     * in which the string is evaluated.
+     *
+     * @param source Source code to parse.
+     * @param scope Scope used for evaluation.
+     * @returns Evaluated result tree or runtime value.
+     */
     private evalStringInScope(source: string, scope: Scope): NodeInput {
         const tree = this.Parse(source);
         tree.parent = null;
@@ -983,6 +1131,15 @@ class Interpreter implements InterpreterInterface {
         }
     }
 
+    /**
+     * Determine whether an error can be handled by an `eval` catch string.
+     *
+     * MATLAB/Octave control-flow signals must propagate through `eval`; only
+     * ordinary runtime errors are catchable by the optional catch source.
+     *
+     * @param error Error or control-flow signal thrown by evaluation.
+     * @returns `true` when the catch string may handle the error.
+     */
     private isEvalCatchableError(error: unknown): boolean {
         return !(error instanceof ReturnSignal || error instanceof BreakSignal || error instanceof ContinueSignal);
     }
@@ -1823,7 +1980,7 @@ class Interpreter implements InterpreterInterface {
 
     private dispatchClassEvent(source: ClassInstance, eventName: string, data: ClassEventData = this.eventData(source, eventName)): void {
         for (const listener of ClassInstance.listenersFor(source, eventName)) {
-            this.context.apply(listener.callback as NodeExpr, [source as NodeExpr, data as NodeExpr], AST.nodeIdentifier('notify'));
+            this.context.apply(this.expressionValue(listener.callback, 'event callback'), this.classMethodArgumentValues([source, data], 'event'), AST.nodeIdentifier('notify'));
         }
     }
 
@@ -2408,13 +2565,13 @@ class Interpreter implements InterpreterInterface {
         },
         builtin: {
             func: (...args: NodeInput[]): NodeExpr => {
-                const source = (args[0] as CharString).str.trim();
+                const source = this.charControlArgument(args[0], 'builtin function').str.trim();
                 const canonical = this.context.aliasNameFunction(source);
                 const builtin = this.context.builtInFunctionTable[canonical];
                 if (!builtin) {
                     this.context.throwEvalError(`builtin: '${source}' is not a built-in function.`);
                 }
-                return this.context.callCallable(Callables.builtin(builtin), args.slice(1) as NodeExpr[], AST.nodeIdentifier('builtin'));
+                return this.context.callCallable(Callables.builtin(builtin), this.callArgumentValues(args.slice(1), 'builtin'), AST.nodeIdentifier('builtin'));
             },
             signature: {
                 inputs: {
@@ -2430,7 +2587,7 @@ class Interpreter implements InterpreterInterface {
         },
         feval: {
             func: (...args: NodeInput[]): NodeExpr => {
-                let target = args[0] as NodeExpr;
+                let target = this.expressionValue(args[0], 'feval target');
                 if (CharString.isInstanceOf(target)) {
                     const source = target.str.trim();
                     target = source.startsWith('@') ? (this.functions.str2func.func as (source: CharString) => FunctionHandle)(target) : this.createResolvedFunctionHandle(source);
@@ -2439,7 +2596,7 @@ class Interpreter implements InterpreterInterface {
                 if (!callable) {
                     this.context.throwEvalError('feval: first argument must be a function handle or function name.');
                 }
-                return this.context.callCallable(callable, args.slice(1) as NodeExpr[], AST.nodeIdentifier('feval'));
+                return this.context.callCallable(callable, this.callArgumentValues(args.slice(1), 'feval'), AST.nodeIdentifier('feval'));
             },
             signature: {
                 inputs: {
@@ -2466,7 +2623,7 @@ class Interpreter implements InterpreterInterface {
             signature: { inputs: { arity: 1, parameters: [{ name: 'functionHandle', classes: ['function_handle'] }] }, outputs: { arity: 1 } },
         },
         localfunctions: {
-            func: (...args: NodeInput[]): MultiArray => {
+            func: (..._args: NodeInput[]): MultiArray => {
                 return this.localFunctionHandles();
             },
             signature: { inputs: { arity: 0 }, outputs: { arity: 1 } },
@@ -2515,7 +2672,7 @@ class Interpreter implements InterpreterInterface {
         },
         inputname: {
             func: (...args: NodeInput[]): CharString => {
-                const onlyVariableNames = args.length === 2 ? this.toBoolean(args[1] as NodeExpr) : true;
+                const onlyVariableNames = args.length === 2 ? this.booleanControlArgument(args[1], 'inputname onlyVariableNames') : true;
                 return this.context.currentFunctionInputName(args[0], onlyVariableNames, (arg) => this.Unparse(arg));
             },
             signature: {
@@ -2938,7 +3095,7 @@ class Interpreter implements InterpreterInterface {
                     const evaluatedIndex = tree.args.map((arg: NodeExpr) => AST.reduceToFirstIfReturnList(this.Evaluator(arg, scope)));
                     return MultiArray.resolveLinearIndices(entry.node, tree.expr.id, evaluatedIndex).map((linearIndex) => ({
                         id: tree.expr.id,
-                        index: [Complex.create(linearIndex + 1) as NodeExpr],
+                        index: [this.expressionValue(Complex.create(linearIndex + 1), 'index')],
                         delimiter: tree.delim,
                         field: [],
                     }));
@@ -3026,15 +3183,15 @@ class Interpreter implements InterpreterInterface {
 
     private switchComparableValue(value: NodeInput): NodeInput {
         if (MultiArray.isInstanceOf(value) && !value.isCell && value.dimension.length === 2 && value.dimension[0] === 1 && value.dimension[1] === 1) {
-            return value.array[0][0] as NodeInput;
+            return this.expressionValue(value.array[0][0], 'switch value');
         }
         return value;
     }
 
     private switchCaseMatches(switchValue: NodeInput, caseValue: NodeInput): boolean {
-        const candidates = MultiArray.isInstanceOf(caseValue) && caseValue.isCell ? MultiArray.linearize(caseValue) : [caseValue];
+        const candidates = MultiArray.isInstanceOf(caseValue) && caseValue.isCell ? this.expressionList(MultiArray.linearize(caseValue), 'switch case') : [caseValue];
         for (const candidate of candidates) {
-            if (this.switchCandidateMatches(switchValue, candidate as NodeInput)) {
+            if (this.switchCandidateMatches(switchValue, candidate)) {
                 return true;
             }
         }
@@ -3079,7 +3236,7 @@ class Interpreter implements InterpreterInterface {
             if (!this.context.canAccessClassMember(method.classDefinition, method.access)) {
                 this.context.throwEvalError(`method '${methodName}' has ${method.access} access for class ${value.classDefinition.name}.`);
             }
-            return { receiver: value, method, args: value === left ? [right as NodeExpr] : [left as NodeExpr] };
+            return { receiver: value, method, args: this.classMethodArgumentValues([value === left ? right : left], 'operator') };
         };
         const leftDefinition = this.classDefinitionForOperatorValue(left);
         const rightDefinition = this.classDefinitionForOperatorValue(right);
@@ -3387,7 +3544,7 @@ class Interpreter implements InterpreterInterface {
                 }
                 this.context.throwEvalError(`cannot assign to dependent property '${field}' for class ${instance.classDefinition.name} without a set accessor.`);
             }
-            const updated = AST.reduceToFirstIfReturnList(this.context.callClassInstanceMethod(instance, setter, [value as NodeExpr], parent));
+            const updated = AST.reduceToFirstIfReturnList(this.context.callClassInstanceMethod(instance, setter, this.classMethodArgumentValues([value], `set.${field}`), parent));
             if (!ClassInstance.isInstanceOf(updated)) {
                 this.context.throwEvalError(`set accessor for property '${field}' must return an object of class ${instance.classDefinition.name}.`);
             }
@@ -3435,7 +3592,7 @@ class Interpreter implements InterpreterInterface {
 
     private assignClassArrayField(array: MultiArray, field: string, value: NodeInput, parent: NodeInput, scope: Scope): MultiArray {
         const result = MultiArray.copy(array);
-        const values = MultiArray.linearize(value as NodeExpr);
+        const values = this.assignmentValues(value, 'assignment');
         const targetLength = MultiArray.linearLength(result);
         if (values.length !== 1 && values.length !== targetLength) {
             this.context.throwEvalError(`assignment value count ${values.length} does not match object array length ${targetLength}.`);
@@ -3457,7 +3614,7 @@ class Interpreter implements InterpreterInterface {
             return this.assignClassArrayField(array, field[0], value, parent, scope);
         }
         const result = MultiArray.copy(array);
-        const values = MultiArray.linearize(value as NodeExpr);
+        const values = this.assignmentValues(value, 'assignment');
         const targetLength = MultiArray.linearLength(result);
         if (values.length !== 1 && values.length !== targetLength) {
             this.context.throwEvalError(`assignment value count ${values.length} does not match object array length ${targetLength}.`);
@@ -3477,12 +3634,12 @@ class Interpreter implements InterpreterInterface {
     private assignClassArrayIndexedField(id: string, array: MultiArray, index: NodeExpr[], field: string, value: NodeInput, parent: NodeInput, scope: Scope): MultiArray {
         const evaluatedIndex = index.map((arg: NodeExpr) => AST.reduceToFirstIfReturnList(this.Evaluator(arg, scope)));
         const selected = MultiArray.getElements(array, id, [], evaluatedIndex);
-        const selectedValues = MultiArray.linearize(selected as NodeExpr);
-        const values = MultiArray.linearize(value as NodeExpr);
+        const selectedValues = this.assignmentValues(selected, 'selection');
+        const values = this.assignmentValues(value, 'assignment');
         if (values.length !== 1 && values.length !== selectedValues.length) {
             this.context.throwEvalError(`assignment value count ${values.length} does not match selected object count ${selectedValues.length}.`);
         }
-        const selectedArray = MultiArray.isInstanceOf(selected) ? selected : MultiArray.scalarToMultiArray(selected as NodeExpr);
+        const selectedArray = MultiArray.isInstanceOf(selected) ? selected : MultiArray.scalarToMultiArray(this.expressionValue(selected, 'selection'));
         const updated = new MultiArray(selectedArray.dimension);
         for (let n = 0; n < selectedValues.length; n++) {
             const instance = selectedValues[n];
@@ -3510,7 +3667,7 @@ class Interpreter implements InterpreterInterface {
         MultiArray.setType(result);
         const values = MultiArray.linearize(result);
         if ((this.context.requestedOutputCount > 1 || this.context.commaListExpansionEnabled) && !values.every((value) => ClassBoundMethod.isInstanceOf(value))) {
-            return this.valueReturnList(values as NodeInput[]);
+            return this.valueReturnList(values);
         }
         return result;
     }
@@ -3518,7 +3675,7 @@ class Interpreter implements InterpreterInterface {
     private resolveStructureLikeField(value: NodeInput, field: string, isLastField: boolean): NodeInput {
         if (MultiArray.isInstanceOf(value) && Structure.isStructure(value)) {
             const fields = Structure.getFields(value, [field]);
-            return isLastField && fields.length > 1 ? AST.nodeList(fields as NodeExpr[]) : MultiArray.MultiArrayToScalar(MultiArray.toRowVector(fields));
+            return isLastField && fields.length > 1 ? AST.nodeList(this.expressionList(fields, field)) : MultiArray.MultiArrayToScalar(MultiArray.toRowVector(fields));
         }
         return Structure.getField(value, [field]);
     }
@@ -3542,7 +3699,7 @@ class Interpreter implements InterpreterInterface {
     }
 
     private createDotSubscriptDescriptor(field: string, parent: NodeInput, scope: Scope): Structure {
-        return this.createSubscriptDescriptor('.', [CharString.create(field) as NodeExpr], parent, scope);
+        return this.createSubscriptDescriptor('.', this.expressionList([CharString.create(field)], 'dot subscript'), parent, scope);
     }
 
     private createSubscriptDescriptorArray(descriptors: Structure[]): Structure | MultiArray {
@@ -3583,7 +3740,7 @@ class Interpreter implements InterpreterInterface {
             this.context.throwEvalError(`method 'numArgumentsFromSubscript' has ${method.access} access for class ${instance.classDefinition.name}.`);
         }
         const result = AST.reduceToFirstIfReturnList(
-            this.callClassInstanceMethodWithOutputCount(instance, method, [descriptor as NodeExpr, CharString.create('subsref') as NodeExpr], parent, 1),
+            this.callClassInstanceMethodWithOutputCount(instance, method, this.classMethodArgumentValues([descriptor, CharString.create('subsref')], 'numArgumentsFromSubscript'), parent, 1),
         );
         const count = this.numericScalarToNumber(result, `numArgumentsFromSubscript for class ${instance.classDefinition.name} must return a numeric scalar.`);
         if (!Number.isFinite(count) || !Number.isInteger(count) || count < 0) {
@@ -3595,7 +3752,7 @@ class Interpreter implements InterpreterInterface {
     private callClassSubsrefMethod(instance: ClassInstance, method: ClassMethodDefinition, descriptor: Structure | MultiArray, parent: NodeInput): NodeInput {
         const requestedOutputCount = this.context.requestedOutputCount;
         if (requestedOutputCount <= 1) {
-            return AST.reduceToFirstIfReturnList(this.context.callClassInstanceMethod(instance, method, [descriptor as NodeExpr], parent));
+            return AST.reduceToFirstIfReturnList(this.context.callClassInstanceMethod(instance, method, this.classMethodArgumentValues([descriptor], 'subsref'), parent));
         }
 
         const maxOutputCount = this.callClassNumArgumentsFromSubscript(instance, descriptor, parent) ?? requestedOutputCount;
@@ -3611,7 +3768,7 @@ class Interpreter implements InterpreterInterface {
             },
             (length: number): ReturnHandlerResult => {
                 AST.throwErrorIfGreaterThanReturnList(maxOutputCount, length, (message) => this.context.throwEvalError(message));
-                const result = this.callClassInstanceMethodWithOutputCount(instance, method, [descriptor as NodeExpr], parent, length);
+                const result = this.callClassInstanceMethodWithOutputCount(instance, method, this.classMethodArgumentValues([descriptor], 'subsref'), parent, length);
                 const out: ReturnHandlerResult = { length };
                 if (AST.isNodeReturnList(result)) {
                     const evaluated = result.handler(length);
@@ -3759,8 +3916,15 @@ class Interpreter implements InterpreterInterface {
         }
         return {
             type: type.str as IndexingDelimiterType | '.',
-            subs: MultiArray.linearize(subs) as NodeInput[],
+            subs: this.descriptorSubscripts(subs),
         };
+    }
+
+    /**
+     * Validate subscript descriptor payloads before native indexing consumes them.
+     */
+    private descriptorSubscripts(subs: MultiArray): NodeExpr[] {
+        return MultiArray.linearize(subs).map((subscript, index) => this.expressionValue(subscript, `subscript${index + 1}`));
     }
 
     private nativeDescriptorIndexList(descriptor: NativeSubscriptDescriptor, target: MultiArray): (ComplexType | MultiArray)[] {
@@ -3778,14 +3942,14 @@ class Interpreter implements InterpreterInterface {
             if (!CharString.isInstanceOf(field)) {
                 this.context.throwEvalError('invalid subsasgn descriptor.');
             }
-            return Structure.getField(target, [field.str]) as NodeInput;
+            return this.expressionValue(Structure.getField(target, [field.str]), `field ${field.str}`);
         }
         if (!MultiArray.isInstanceOf(target)) {
             this.context.throwEvalError(`matrix cannot be indexed with ${descriptor.type[0]}`);
         }
         const indices = this.nativeDescriptorIndexList(descriptor, target);
         const selected = MultiArray.getElements(target, '', [], indices, this);
-        return MultiArray.MultiArrayToScalar(selected) as NodeInput;
+        return this.expressionValue(MultiArray.MultiArrayToScalar(selected), 'indexed value');
     }
 
     private setNativeIndexedValue(target: MultiArray, descriptor: NativeSubscriptDescriptor, value: NodeInput): MultiArray {
@@ -3849,8 +4013,8 @@ class Interpreter implements InterpreterInterface {
                 const result = Structure.isInstanceOf(current) ? Structure.copy(current) : MultiArray.copy(current as MultiArray);
                 let currentField: NodeInput;
                 try {
-                    currentField = Structure.getField(result, [field.str]) as NodeInput;
-                } catch (error: unknown) {
+                    currentField = this.expressionValue(Structure.getField(result, [field.str]), `field ${field.str}`);
+                } catch {
                     currentField = this.blankNativeSubsasgnValue(nativeDescriptors[index + 1]);
                 }
                 const nested = index === descriptors.length - 1 ? value : assign(currentField, index + 1);
@@ -3886,7 +4050,7 @@ class Interpreter implements InterpreterInterface {
             this.context.throwEvalError(`method 'subsasgn' has ${method.access} access for class ${instance.classDefinition.name}.`);
         }
         const descriptor = this.createSubsasgnDescriptor(index, delimiter, parent, scope);
-        const updated = AST.reduceToFirstIfReturnList(this.context.callClassInstanceMethod(instance, method, [descriptor as NodeExpr, value as NodeExpr], parent));
+        const updated = AST.reduceToFirstIfReturnList(this.context.callClassInstanceMethod(instance, method, this.classMethodArgumentValues([descriptor, value], 'subsasgn'), parent));
         if (!ClassInstance.isInstanceOf(updated)) {
             this.context.throwEvalError(`subsasgn for class ${instance.classDefinition.name} must return an object of class ${instance.classDefinition.name}.`);
         }
@@ -3905,7 +4069,7 @@ class Interpreter implements InterpreterInterface {
             this.context.throwEvalError(`method 'subsasgn' has ${method.access} access for class ${instance.classDefinition.name}.`);
         }
         const descriptor = this.createSubscriptDescriptorArray(descriptors);
-        const updated = AST.reduceToFirstIfReturnList(this.context.callClassInstanceMethod(instance, method, [descriptor as NodeExpr, value as NodeExpr], parent));
+        const updated = AST.reduceToFirstIfReturnList(this.context.callClassInstanceMethod(instance, method, this.classMethodArgumentValues([descriptor, value], 'subsasgn'), parent));
         if (!ClassInstance.isInstanceOf(updated)) {
             this.context.throwEvalError(`subsasgn for class ${instance.classDefinition.name} must return an object of class ${instance.classDefinition.name}.`);
         }
@@ -3928,7 +4092,7 @@ class Interpreter implements InterpreterInterface {
             this.context.throwEvalError(`method 'subsasgn' has ${method.access} access for class ${instance.classDefinition.name}.`);
         }
         const descriptor = this.createDotSubscriptDescriptor(field, parent, scope);
-        const updated = AST.reduceToFirstIfReturnList(this.context.callClassInstanceMethod(instance, method, [descriptor as NodeExpr, value as NodeExpr], parent));
+        const updated = AST.reduceToFirstIfReturnList(this.context.callClassInstanceMethod(instance, method, this.classMethodArgumentValues([descriptor, value], 'subsasgn'), parent));
         if (!ClassInstance.isInstanceOf(updated)) {
             this.context.throwEvalError(`subsasgn for class ${instance.classDefinition.name} must return an object of class ${instance.classDefinition.name}.`);
         }
@@ -3947,7 +4111,7 @@ class Interpreter implements InterpreterInterface {
             this.context.throwEvalError(`method 'end' has ${method.access} access for class ${instance.classDefinition.name}.`);
         }
         return AST.reduceToFirstIfReturnList(
-            this.context.callClassInstanceMethod(instance, method, [Complex.create(indexPosition) as NodeExpr, Complex.create(indexCount) as NodeExpr], parent),
+            this.context.callClassInstanceMethod(instance, method, this.classMethodArgumentValues([Complex.create(indexPosition), Complex.create(indexCount)], 'end'), parent),
         );
     }
 
@@ -4606,7 +4770,7 @@ class Interpreter implements InterpreterInterface {
                             }
                         } else {
                             /* Nested assignment returns the assigned value. */
-                            return (resultList.list[0] as NodeExpr).right;
+                            return this.nestedAssignmentValue(resultList);
                         }
                     }
                     case 'IDENT':
@@ -4776,7 +4940,7 @@ class Interpreter implements InterpreterInterface {
                         if (result.length === 1) {
                             return result[0];
                         } else if (this.context.requestedOutputCount > 1 || this.context.commaListExpansionEnabled) {
-                            return this.valueReturnList(result as NodeInput[]);
+                            return this.valueReturnList(result);
                         } else {
                             return AST.nodeList(result);
                         }
@@ -5505,7 +5669,7 @@ class Interpreter implements InterpreterInterface {
             } else {
                 return '';
             }
-        } catch (e) {
+        } catch {
             return '<ERROR>';
         }
     }

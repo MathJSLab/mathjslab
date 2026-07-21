@@ -94,7 +94,7 @@ class FunctionWorkspace {
         if (!arg) {
             return new CharString('');
         }
-        if (arg.type === 'IDENT') {
+        if (AST.isNodeIdentifier(arg)) {
             return new CharString(arg.id);
         }
         return new CharString(!onlyVariableNames && unparse ? unparse(arg).trim() : '');

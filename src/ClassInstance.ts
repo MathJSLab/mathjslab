@@ -200,10 +200,10 @@ class ClassInstance {
      * Render a compact textual summary of an instance.
      *
      * @param instance Instance to render.
-     * @param interpreter Interpreter requesting unparse.
+     * @param _interpreter Interpreter requesting unparse.
      * @returns Human-readable object summary.
      */
-    public static readonly unparse = (instance: ClassInstance, interpreter: RuntimeDisplay): string => {
+    public static readonly unparse = (instance: ClassInstance, _interpreter: RuntimeDisplay): string => {
         const propertyNames = Object.keys(instance.properties);
         return `${instance.classDefinition.name} object${propertyNames.length > 0 ? ` with properties: ${propertyNames.join(',')}` : ''}`;
     };

@@ -1,7 +1,9 @@
 import type { NodeInput } from './AST';
-import type { ClassEnumerationDefinition } from './ClassMember';
+import type { ClassEnumerationDefinition as ClassEnumerationDefinitionBase } from './ClassMember';
 import type { ClassDefinition } from './ClassDefinition';
 import type { RuntimeDisplay } from './RuntimeDisplay';
+
+type ClassEnumerationDefinition = ClassEnumerationDefinitionBase<ClassDefinition>;
 
 /**
  * Runtime value representing one member of a MATLAB/Octave enumeration class.

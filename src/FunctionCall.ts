@@ -1,5 +1,6 @@
 import type { NodeExpr, NodeFunctionDefinition, NodeFunctionParameter, NodeFunctionReturn, NodeIdentifier, NodeInput, ReturnHandlerResult, NameTable } from './AST';
 import { AST } from './AST';
+import { expressionValue } from './ExpressionValue';
 import { MultiArray } from './MultiArray';
 
 /**
@@ -173,6 +174,29 @@ class FunctionCall {
     }
 
     /**
+     * Validate function header metadata that should already be guaranteed by AST factories.
+     */
+    private static checkedList<NODE>(items: unknown[], guard: (value: unknown) => value is NODE, role: string): NODE[] {
+        return items.map((item, index) => {
+            if (!guard(item)) {
+                throw new TypeError(`internal AST error: ${role} ${index + 1} has invalid node type.`);
+            }
+            return item;
+        });
+    }
+
+    /**
+     * Ensure a workspace value can be exposed through a lazy return list.
+     *
+     * `eval`/`evalin` can legitimately hand back a `NodeList` execution result,
+     * so the return channel accepts strict expression values plus that explicit
+     * carrier while still rejecting control-flow statements.
+     */
+    private static returnExpression(value: NodeInput, name: string, throwEvalError: ThrowEvalError): NodeExpr {
+        return expressionValue(value, name, 'Return variable', throwEvalError);
+    }
+
+    /**
      * Compute the input layout of a user-defined function.
      *
      * Name-value option structs declared through `arguments` are excluded from
@@ -180,7 +204,7 @@ class FunctionCall {
      * catch-all parameter.
      */
     public static inputLayout(func: NodeFunctionDefinition, nameValueParameters: Set<string>): FunctionInputLayout {
-        const params = func.parameter.list.filter(AST.isNodeFunctionParameter);
+        const params = this.checkedList(func.parameter.list, AST.isNodeFunctionParameter, 'function parameter');
         const hasVarargin = params.length > 0 && this.isNamed(params[params.length - 1], 'varargin');
         const fixedParamCount = hasVarargin ? params.length - 1 : params.length;
         const positionalParams = params.slice(0, fixedParamCount).filter((param) => {
@@ -208,7 +232,7 @@ class FunctionCall {
      * Compute the return layout, including `varargout`.
      */
     public static returnLayout(func: NodeFunctionDefinition): FunctionReturnLayout {
-        const returnNames = func.return.list.filter(AST.isNodeFunctionReturn);
+        const returnNames = this.checkedList(func.return.list, AST.isNodeFunctionReturn, 'function return');
         const names = returnNames.map((r) => (AST.isNodeIgnoredTarget(r) ? '~' : r.id));
         const hasVarargout = names.length > 0 && names[names.length - 1] === 'varargout';
         return {
@@ -311,7 +335,7 @@ class FunctionCall {
      * least one so the variable exists even when no extra output is requested.
      */
     public static emptyVarargoutCell(requestedOutputCount: number, fixedReturnCount: number): MultiArray {
-        return new MultiArray([1, Math.max(requestedOutputCount - fixedReturnCount, 1)], () => undefined as unknown as NodeExpr, true);
+        return new MultiArray([1, Math.max(requestedOutputCount - fixedReturnCount, 1)], () => undefined, true);
     }
 
     /**
@@ -485,7 +509,7 @@ class FunctionCall {
                         if (!entry || !entry.node) {
                             throwEvalError(`Undefined return variable '${name}'`);
                         }
-                        out[name] = entry.node as NodeExpr;
+                        out[name] = this.returnExpression(entry.node, name, throwEvalError);
                     }
                     const entry = nameTable['varargout'];
                     if (!entry || !(entry.node instanceof MultiArray) || !entry.node.isCell) {
@@ -497,7 +521,7 @@ class FunctionCall {
                         if (typeof value === 'undefined') {
                             AST.throwErrorIfGreaterThanReturnList(i, i + 1, throwEvalError);
                         }
-                        out[`varargout${i - fixedReturnCount}`] = value as NodeExpr;
+                        out[`varargout${i - fixedReturnCount}`] = this.returnExpression(value, `varargout{${i - fixedReturnCount + 1}}`, throwEvalError);
                     }
                     return out;
                 }
@@ -510,7 +534,7 @@ class FunctionCall {
                     if (!entry || !entry.node) {
                         throwEvalError(`Undefined return variable '${name}'`);
                     }
-                    out[name] = entry.node as NodeExpr;
+                    out[name] = this.returnExpression(entry.node, name, throwEvalError);
                 }
                 return out;
             },

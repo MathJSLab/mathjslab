@@ -5,11 +5,12 @@
 # [MathJSLab](https://mathjslab.com/) - [mathjslab.com](https://mathjslab.com/)
 
 [![NPM Version](https://img.shields.io/npm/v/mathjslab)](https://www.npmjs.com/package/mathjslab)
+[![NPM Last Update](https://img.shields.io/npm/last-update/mathjslab)](https://www.npmjs.com/package/mathjslab)
 [![Website](https://img.shields.io/website?url=https%3A%2F%2Fmathjslab.com%2F)](https://mathjslab.com/)
 [![CircleCI](https://dl.circleci.com/status-badge/img/gh/MathJSLab/mathjslab/tree/main.svg?style=svg)](https://dl.circleci.com/status-badge/redirect/gh/MathJSLab/mathjslab/tree/main)
 [![GitHub Created At](https://img.shields.io/github/created-at/MathJSLab/mathjslab)](https://github.com/MathJSLab/mathjslab)
 [![MIT License](https://img.shields.io/npm/l/mathjslab)](https://github.com/MathJSLab/mathjslab/blob/main/LICENSE)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.8396265.svg)](https://doi.org/10.5281/zenodo.8396265)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.8396265-blue?style=flat&link=https://doi.org/10.5281/zenodo.8396265)](https://doi.org/10.5281/zenodo.8396265)
 [![ISBN](https://img.shields.io/badge/ISBN-978--65--00--82338--7-green?style=flat&link=https://grp.isbn-international.org/search/piid_solr?keys=978-65-00-82338-7)](https://grp.isbn-international.org/search/piid_solr?keys=978-65-00-82338-7)
 [![OpenAIRE](https://img.shields.io/badge/OpenAIRE-blue?style=flat&link=https://explore.openaire.eu/search/advanced/research-outcomes?f0=q&fv0=MathJSLab)](https://explore.openaire.eu/search/advanced/research-outcomes?f0=q&fv0=MathJSLab)
 [![NPM Downloads](https://img.shields.io/npm/d18m/mathjslab)](https://www.npmjs.com/package/mathjslab)
@@ -343,7 +344,8 @@ loops, user functions, anonymous functions, function handles, `arguments`
 blocks, imports, command syntax, comma-separated lists, browser-hosted `.m`
 sources, and substantial `classdef` support, including class metadata,
 properties, methods, events, enumerations, listeners, accessors, SetGet mixins,
-and common static/instance dispatch paths.
+common static/instance dispatch paths, and stricter AST/runtime expression
+boundary validation.
 
 The main remaining limitations are general external filesystem access,
 incomplete MATLAB/Octave library and toolbox coverage, and less common class
@@ -352,7 +354,8 @@ host-provided source APIs cover `.m` functions, scripts, classes, and external
 class method files. Numeric values use one complex numeric type; other
 implemented runtime types include logical values, character strings,
 structures, function handles, and class objects. Common arrays can hold any
-runtime value.
+runtime value. The source tree is also kept free of circular module
+dependencies as a release gate.
 
 ## Trademark Notes
 

@@ -1,5 +1,5 @@
 /// <reference types="jest" />
-import type { NodeBuiltInFunction, NodeClassDef } from './AST';
+import type { NodeBuiltInFunction, NodeInput, NodeReturnList } from './AST';
 import { AST } from './AST';
 import { Complex } from './Complex';
 import { Callables } from './Callable';
@@ -9,9 +9,19 @@ import { ClassInstance } from './ClassInstance';
 import { Context } from './Context';
 import { EvalError, ReferenceError, SyntaxError, UndefinedReferenceError, CircularReferenceError } from './InterpreterError';
 import { FunctionHandle } from './FunctionHandle';
+import { MultiArray } from './MultiArray';
 import { Scope } from './Scope';
 
 import { parseClassDefinition as parseClass } from './ParserTestUtils';
+
+type ContextReturnListHarness = {
+    classMethodReceiverArgument(_instance: ClassInstance): NodeInput;
+    expressionValues(_values: NodeInput[], _namePrefix: string): NodeInput[];
+    returnExpressions(_values: unknown[], _namePrefix: string): NodeInput[];
+    scalarArrayReturnExpression(_value: MultiArray, _name: string): NodeInput;
+    unresolvedCallTargetExpression(_tree: unknown): NodeInput;
+    valueReturnList(_values: NodeInput[]): NodeReturnList;
+};
 
 describe('Context', () => {
     describe('Construction', () => {
@@ -166,6 +176,61 @@ describe('Context', () => {
             expect(context.currentFrame).toBe(callee);
             expect(context.popCallStackFrame()).toBe(callee);
             expect(context.currentFrame).toBe(caller);
+        });
+
+        it('Should reject non-expression values in lazy return lists.', () => {
+            const context = Context.create();
+            const returnList = (context as unknown as ContextReturnListHarness).valueReturnList([AST.nodeReturn()]);
+
+            expect(AST.isNodeReturnList(returnList)).toBe(true);
+            expect(() => returnList.handler(1)).toThrow("Return value 'out1' is not an expression.");
+        });
+
+        it('Should reject non-expression values in expanded return arrays.', () => {
+            const context = Context.create() as unknown as ContextReturnListHarness;
+
+            expect(() => context.returnExpressions([undefined], 'out')).toThrow("Return value 'out1' is not an expression.");
+        });
+
+        it('Should reject non-expression values when reducing scalar return arrays.', () => {
+            const context = Context.create() as unknown as ContextReturnListHarness;
+            const result = new MultiArray([1, 1]);
+            result.array[0][0] = AST.nodeReturn() as unknown as (typeof result.array)[0][0];
+
+            expect(() => context.scalarArrayReturnExpression(result, 'ans')).toThrow("Return value 'ans' is not an expression.");
+        });
+
+        it('Should reject non-expression values in expanded argument lists.', () => {
+            const context = Context.create() as unknown as ContextReturnListHarness;
+
+            expect(() => context.expressionValues([AST.nodeReturn()], 'arg')).toThrow("Argument value 'arg1' is not an expression.");
+        });
+
+        it('Should reject non-expression values resolved from identifiers.', () => {
+            const context = Context.create();
+            context.assignName('bad', AST.nodeReturn());
+
+            expect(() => context.resolveIdentifier(AST.nodeIdentifier('bad'), context.currentScope)).toThrow("Identifier value 'bad' is not an expression.");
+        });
+
+        it('Should preserve unresolved identifiers as call targets only.', () => {
+            const context = Context.create();
+            const harness = context as unknown as ContextReturnListHarness;
+            const callTarget = AST.nodeIdentifier('missingCallTarget');
+            const parent = AST.nodeIndexExpr(callTarget, AST.nodeListFirst(), '()');
+            callTarget.parent = parent;
+
+            expect(harness.unresolvedCallTargetExpression(callTarget)).toBe(callTarget);
+            expect(context.resolveIdentifier(callTarget, context.currentScope)).toBe(callTarget);
+            expect(() => harness.unresolvedCallTargetExpression(AST.nodeReturn())).toThrow('invalid unresolved call target.');
+        });
+
+        it('Should validate implicit class method receiver arguments.', () => {
+            const context = Context.create() as unknown as ContextReturnListHarness;
+            const definition = ClassDefinition.create(parseClass(['classdef ContextReceiverValue', 'end'].join('\n')));
+            const instance = new ClassInstance(definition);
+
+            expect(ClassInstance.isInstanceOf(context.classMethodReceiverArgument(instance))).toBe(true);
         });
 
         it('Should throw typed interpreter errors with stack snapshots.', () => {

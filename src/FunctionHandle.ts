@@ -191,7 +191,7 @@ class FunctionHandle {
      * @param parentPrecedence - Operator precedence (currently unused)
      * @returns String representation (MATLAB-like syntax)
      */
-    public static unparse = (fhandle: FunctionHandle, interpreter: RuntimeDisplay, parentPrecedence = 0): string => {
+    public static unparse = (fhandle: FunctionHandle, interpreter: RuntimeDisplay, _parentPrecedence = 0): string => {
         if (fhandle.id) {
             return '@' + fhandle.id;
         } else {
@@ -230,7 +230,7 @@ class FunctionHandle {
      * @param parentPrecedence - Operator precedence (unused)
      * @returns MathML string
      */
-    public static unparseMathML = (fhandle: FunctionHandle, interpreter: RuntimeDisplay, parentPrecedence = 0): string => {
+    public static unparseMathML = (fhandle: FunctionHandle, interpreter: RuntimeDisplay, _parentPrecedence = 0): string => {
         if (fhandle.id) {
             return `<mo>@</mo><mi>${fhandle.id}</mi>`;
         } else {
@@ -282,28 +282,39 @@ class FunctionHandle {
         return result;
     }
 
+    private static hasCopyMethod(node: FunctionHandleNode): node is FunctionHandleNode & { copy: () => FunctionHandleNode } {
+        return typeof node.copy === 'function';
+    }
+
+    private static copyNodeValue(value: unknown): unknown {
+        if (Array.isArray(value)) {
+            return value.map((item) => FunctionHandle.copyNodeValue(item));
+        }
+        if (value && typeof value === 'object') {
+            return FunctionHandle.copyNode(value as FunctionHandleNode);
+        }
+        return value;
+    }
+
     private static copyNode<T extends FunctionHandleExpression | undefined>(node: T): T {
         if (!node || typeof node !== 'object') {
             return node;
         }
-        const copyMethod = (node as unknown as { copy?: () => T }).copy;
-        if (typeof copyMethod === 'function') {
-            return copyMethod.call(node);
-        }
-        if (Array.isArray(node)) {
-            return node.map((item) => FunctionHandle.copyNode(item as FunctionHandleExpression)) as unknown as T;
+        if (FunctionHandle.hasCopyMethod(node)) {
+            return node.copy() as T;
         }
         const clone: Record<string, unknown> = {};
-        for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+        for (const [key, value] of Object.entries(node)) {
             if (key === 'parent') {
                 continue;
             }
-            clone[key] = value && typeof value === 'object' ? FunctionHandle.copyNode(value as FunctionHandleExpression) : value;
+            clone[key] = FunctionHandle.copyNodeValue(value);
         }
+        const clonedNode = clone as FunctionHandleNode;
         for (const value of Object.values(clone)) {
-            FunctionHandle.attachParent(value, clone as unknown as FunctionHandleNode);
+            FunctionHandle.attachParent(value, clonedNode);
         }
-        return clone as T;
+        return clonedNode as T;
     }
 
     private static attachParent(value: unknown, parent: FunctionHandleNode | FunctionHandle): void {
@@ -325,7 +336,7 @@ class FunctionHandle {
      * @param fhandle - Function handle
      * @returns Logical false
      */
-    public static toLogical = (fhandle: FunctionHandle): ComplexType => Complex.false();
+    public static toLogical = (_fhandle: FunctionHandle): ComplexType => Complex.false();
 
     /**
      * Instance version of {@link FunctionHandle.toLogical}.

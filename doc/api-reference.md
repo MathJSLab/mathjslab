@@ -915,6 +915,13 @@ Property declaration inside a `properties` section.
 
 Section inside a `classdef` block.
 
+## NodeClassSectionMember
+
+- Kind: `type`
+- Source: `src/AST.ts`
+
+Nodes accepted inside concrete classdef sections.
+
 ## NodeCmdWList
 
 - Kind: `interface`
@@ -942,6 +949,13 @@ Colon token node used by ranges and indexing.
 - Source: `src/AST.ts`
 
 Declaration node for `global` and `persistent`.
+
+## NodeDeclarationElement
+
+- Kind: `type`
+- Source: `src/AST.ts`
+
+Declaration entry accepted by `global` and `persistent` declarations.
 
 ## NodeDefaultedParameter
 
@@ -985,10 +999,10 @@ Defaulted parameter form accepted in MATLAB/Octave function headers.
 
 AST node that can appear in expression position.
 
-The `any` tail is retained for historical compatibility with generated
-parser actions and evaluator paths that still use expression nodes as a broad
-intermediate carrier. Prefer `StrictNodeExpr` in new hand-written code when a
-fully typed expression contract is practical.
+The strict branch documents the intended expression domain. The legacy
+carrier is a named migration boundary for generated parser actions and old
+evaluator paths that still carry broader AST shapes through expression
+slots.
 
 ## NodeFor
 

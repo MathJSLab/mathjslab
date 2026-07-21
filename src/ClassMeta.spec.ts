@@ -141,6 +141,7 @@ describe('ClassMeta', () => {
             expect((validation.field.Class as CharString).str).toBe('double');
             expect(MultiArray.linearize(validation.field.Validators as MultiArray).map((item) => (item as CharString).str)).toEqual(['mustBePositive']);
             expect(realNumber(validation.field.HasDefault)).toBe(1);
+            expect(realNumber(validation.field.DefaultValue)).toBe(1);
         });
 
         it('Should expose method, event, and enumeration metadata.', () => {
@@ -149,12 +150,12 @@ describe('ClassMeta', () => {
                     [
                         'classdef RichMetaSpec',
                         '  methods (Static, Sealed)',
-                        '    function [y,z] = make(x)',
+                        '    function [y,z] = make(x, scale = 2)',
                         '      arguments',
                         '        x (1,1) double = 1',
                         '      end',
                         '      y = x;',
-                        '      z = x;',
+                        '      z = scale;',
                         '    end',
                         '  end',
                         '  events (ListenAccess = private, NotifyAccess = protected)',
@@ -176,10 +177,11 @@ describe('ClassMeta', () => {
             expect(method.getProperty('Access')).toEqual(CharString.create('public'));
             expect(realNumber(method.getProperty('Static'))).toBe(1);
             expect(realNumber(method.getProperty('Sealed'))).toBe(1);
-            expect(MultiArray.linearize(method.getProperty('InputNames') as MultiArray).map((item) => (item as CharString).str)).toEqual(['x']);
+            expect(MultiArray.linearize(method.getProperty('InputNames') as MultiArray).map((item) => (item as CharString).str)).toEqual(['x', 'scale']);
             expect(MultiArray.linearize(method.getProperty('OutputNames') as MultiArray).map((item) => (item as CharString).str)).toEqual(['y', 'z']);
             expect((inputValidation.field.Name as CharString).str).toBe('x');
             expect(realNumber(inputValidation.field.HasDefault)).toBe(1);
+            expect(realNumber(inputValidation.field.DefaultValue)).toBe(1);
             expect(event.getProperty('ListenAccess')).toEqual(CharString.create('private'));
             expect(event.getProperty('NotifyAccess')).toEqual(CharString.create('protected'));
             expect(MultiArray.linearize(enumeration.getProperty('ConstructorArguments') as MultiArray).map((item) => (item as CharString).str)).toEqual(['1']);

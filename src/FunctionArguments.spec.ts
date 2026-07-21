@@ -169,6 +169,22 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => FunctionArguments.validateBlocks(bad, throwSyntaxError)).toThrow("arguments block declaration 'z' does not match a function parameter in function f.");
         });
 
+        it('Should reject structurally invalid function argument metadata instead of ignoring it.', () => {
+            const invalidParameter = functionDefinition(['x'], ['y'], [argValidation({ name: AST.nodeIdentifier('x') })]);
+            invalidParameter.parameter.list.push(AST.nodeReturn());
+            const invalidReturn = functionDefinition(['x'], ['y'], [argValidation({ name: AST.nodeIdentifier('x') })]);
+            invalidReturn.return.list.push(AST.nodeReturn());
+            const invalidBlock = functionDefinition(['x'], ['y'], []);
+            invalidBlock.arguments.list.push(AST.nodeReturn());
+            const invalidValidation = functionDefinition(['x'], ['y'], [argValidation({ name: AST.nodeIdentifier('x') })]);
+            invalidValidation.arguments.list[0].validation.push(AST.nodeReturn() as unknown as NodeArgumentValidation);
+
+            expect(() => FunctionArguments.validateBlocks(invalidParameter, throwSyntaxError)).toThrow('internal AST error: function parameter 2 has invalid node type.');
+            expect(() => FunctionArguments.validateBlocks(invalidReturn, throwSyntaxError)).toThrow('internal AST error: function return 2 has invalid node type.');
+            expect(() => FunctionArguments.validateBlocks(invalidBlock, throwSyntaxError)).toThrow('internal AST error: function arguments block 2 has invalid node type.');
+            expect(() => FunctionArguments.validateBlocks(invalidValidation, throwSyntaxError)).toThrow('internal AST error: arguments validation 2 has invalid node type.');
+        });
+
         it('Should validate alternative argument classes during block registration.', () => {
             const valid = functionDefinition(
                 ['x'],
@@ -247,6 +263,19 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => FunctionArguments.validateArgumentValidation(validation, new Map<string, number>(), callbacks(new CharString('green')))).toThrow(
                 "arguments block validation failed for 'x': mustBeMember.",
             );
+        });
+
+        it('Should reject implicit custom validator calls for non-expression values.', () => {
+            const validation = argValidation({ functions: [AST.nodeIdentifier('mustBeCustom')] });
+
+            expect(() =>
+                FunctionArguments.validateArgumentValidation(validation, new Map<string, number>(), {
+                    resolveEntry: () => ({ node: AST.nodeReturn() }),
+                    evaluate: (expr: NodeExpr): NodeInput => expr,
+                    throwEvalError,
+                    throwSyntaxError,
+                }),
+            ).toThrow("arguments block validation failed for 'x': validator input is not an expression.");
         });
 
         it('Should split positional and name-value call arguments.', () => {

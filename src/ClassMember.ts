@@ -13,7 +13,6 @@ import type {
 } from './AST';
 import { AST } from './AST';
 import { CharString } from './CharString';
-import type { ClassDefinition } from './ClassDefinition';
 import { MultiArray } from './MultiArray';
 
 /**
@@ -28,7 +27,7 @@ type ClassAccess = string;
 /**
  * Runtime metadata for a property declared in a `properties` block.
  */
-interface ClassPropertyDefinition {
+interface ClassPropertyDefinition<OWNER = unknown> {
     /** Property name as declared in the classdef block. */
     name: string;
     /** AST node that originated the property declaration. */
@@ -76,13 +75,13 @@ interface ClassPropertyDefinition {
     /** Relative priority for partial property-name matching. */
     partialMatchPriority: number;
     /** Class that owns the property metadata. */
-    classDefinition: ClassDefinition;
+    classDefinition: OWNER;
 }
 
 /**
  * Runtime metadata for a method declared in a `methods` block.
  */
-interface ClassMethodDefinition {
+interface ClassMethodDefinition<OWNER = unknown> {
     /** Method name, including qualified names preserved by the parser. */
     name: string;
     /** Function-definition AST node for the method body or prototype. */
@@ -102,13 +101,13 @@ interface ClassMethodDefinition {
     /** Whether the method was declared with `Hidden`. */
     isHidden: boolean;
     /** Class that owns the method metadata. */
-    classDefinition: ClassDefinition;
+    classDefinition: OWNER;
 }
 
 /**
  * Runtime metadata for an event declared in an `events` block.
  */
-interface ClassEventDefinition {
+interface ClassEventDefinition<OWNER = unknown> {
     /** Event name as declared in the classdef block. */
     name: string;
     /** AST node that originated the event declaration. */
@@ -126,13 +125,13 @@ interface ClassEventDefinition {
     /** Whether the event was declared with `Hidden`. */
     isHidden: boolean;
     /** Class that owns the event metadata. */
-    classDefinition: ClassDefinition;
+    classDefinition: OWNER;
 }
 
 /**
  * Runtime metadata for an enumeration member declared in an `enumeration` block.
  */
-interface ClassEnumerationDefinition {
+interface ClassEnumerationDefinition<OWNER = unknown> {
     /** Enumeration member name. */
     name: string;
     /** AST node that originated the enumeration member. */
@@ -146,7 +145,7 @@ interface ClassEnumerationDefinition {
     /** Whether the enumeration member was declared in a `Hidden` section. */
     isHidden: boolean;
     /** Class that owns the enumeration metadata. */
-    classDefinition: ClassDefinition;
+    classDefinition: OWNER;
 }
 
 /**

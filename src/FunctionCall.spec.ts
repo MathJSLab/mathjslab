@@ -3,7 +3,7 @@ import path from 'node:path';
 import { AST } from './AST';
 import { Complex } from './Complex';
 import { MultiArray } from './MultiArray';
-import type { NodeExpr, NodeFunctionDefinition } from './AST';
+import type { NameTable, NodeExpr, NodeFunctionDefinition } from './AST';
 import { FunctionCall } from './FunctionCall';
 
 const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.sep}]+)\\.spec\\.([cm]?[jt]s)\$`))!;
@@ -50,6 +50,16 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                 fixedReturnCount: 1,
                 names: ['a', 'varargout'],
             });
+        });
+
+        it('Should reject structurally invalid function call metadata instead of ignoring it.', () => {
+            const invalidParameter = functionDefinition(['x'], ['y']);
+            invalidParameter.parameter.list.push(AST.nodeReturn());
+            const invalidReturn = functionDefinition(['x'], ['y']);
+            invalidReturn.return.list.push(AST.nodeReturn());
+
+            expect(() => FunctionCall.inputLayout(invalidParameter, new Set())).toThrow('internal AST error: function parameter 2 has invalid node type.');
+            expect(() => FunctionCall.returnLayout(invalidReturn)).toThrow('internal AST error: function return 2 has invalid node type.');
         });
 
         it('Should validate variadic and fixed arity.', () => {
@@ -198,6 +208,16 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(args[0].index).toBe(0);
             expect(args[1].index).toBe(1);
             expect(args[2].index).toBe(2);
+        });
+
+        it('Should reject non-expression values while building return lists.', () => {
+            const returnLayout = FunctionCall.returnLayout(functionDefinition([], ['y']));
+            const returnList = FunctionCall.createReturnList(returnLayout, { y: { node: AST.nodeReturn() } } as NameTable, (message) => {
+                throw new Error(message);
+            });
+
+            expect(AST.isNodeReturnList(returnList)).toBe(true);
+            expect(() => returnList.handler(1)).toThrow("Return variable 'y' is not an expression.");
         });
     });
 });

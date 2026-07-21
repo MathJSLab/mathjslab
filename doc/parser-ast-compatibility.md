@@ -69,6 +69,17 @@ The AST layer normalizes parse output into node contracts exported from
   postfix guards before reading operands. Parser actions still produce one
   operation family, while interpreter and unparser paths now enforce the
   refined shapes they consume;
+- `StrictNodeExpr` is the documented expression contract for new hand-written
+  code. `LegacyNodeExprCarrier` names the remaining broad compatibility edge
+  while generated parser actions and older evaluator reducers are migrated;
+- evaluated values that cross expression-only boundaries should pass through
+  the shared `ExpressionValue` helpers, so return lists, comma-separated lists,
+  function-call arguments, assignment lowering, `for` iteration values,
+  indexing descriptors, and class dispatch reject control-flow nodes before
+  exposing ordinary values;
+- AST factory methods validate expression slots, function signatures,
+  `arguments` metadata, class sections, branch/loop bodies, and array elements
+  before storing child nodes;
 - `NodeClassDef.sections` contains `NodeClassSection` entries with
   `attributeTable` indexes for duplicate-preserving attribute lookup;
 - method prototypes inside class `methods` sections are represented as
@@ -99,6 +110,7 @@ When changing the grammar, regenerate the ANTLR output and run at least:
 ```sh
 npm run build:parser
 npm run build:types
+npm run test:circ
 npx jest --selectProjects unit-tests --runInBand --runTestsByPath src/AST.spec.ts src/ParserCompatibility.spec.ts src/ParserAstCompatibility.spec.ts src/IndexingCompatibility.spec.ts src/DispatchCompatibility.spec.ts src/CompatibilityStability.spec.ts src/SyntaxDiagnostic.spec.ts
 ```
 
@@ -108,6 +120,7 @@ because class parsing and function parsing share several AST contracts:
 ```sh
 npm run test:class
 npm run test:function-infrastructure
+npm run test:circ
 npm run build:types
 npm run test:unit
 ```
@@ -139,6 +152,8 @@ language implementation. Remaining boundaries include:
 - built-in signatures are declarative and now validate alternatives and common
   dimension forms before runtime helper code executes, but the native function
   library still grows independently from parser/AST coverage;
+- circular dependencies are treated as architectural failures and must remain
+  absent from `src/`;
 - Octave-specific grammar branches should continue to be imported in focused
   increments, with parser fixtures added before or alongside interpreter
   behavior.

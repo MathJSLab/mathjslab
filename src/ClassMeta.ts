@@ -1,12 +1,21 @@
-import type { ClassEnumerationDefinition, ClassEventDefinition, ClassMethodDefinition, ClassPropertyDefinition } from './ClassMember';
+import type {
+    ClassEnumerationDefinition as ClassEnumerationDefinitionBase,
+    ClassEventDefinition as ClassEventDefinitionBase,
+    ClassMethodDefinition as ClassMethodDefinitionBase,
+    ClassPropertyDefinition as ClassPropertyDefinitionBase,
+} from './ClassMember';
 import { ClassDefinition } from './ClassDefinition';
 import { CharString } from './CharString';
 import { Complex } from './Complex';
 import { MultiArray } from './MultiArray';
 import { Structure } from './Structure';
-import { AST, type ClassAttributeTable, type NodeArgumentValidation, type NodeExpr, type NodeInput } from './AST';
+import { AST, type ClassAttributeTable, type NodeArgumentValidation, type NodeFunctionParameter, type NodeFunctionReturn, type NodeInput } from './AST';
 import type { RuntimeDisplay } from './RuntimeDisplay';
 
+type ClassPropertyDefinition = ClassPropertyDefinitionBase<ClassDefinition>;
+type ClassMethodDefinition = ClassMethodDefinitionBase<ClassDefinition>;
+type ClassEventDefinition = ClassEventDefinitionBase<ClassDefinition>;
+type ClassEnumerationDefinition = ClassEnumerationDefinitionBase<ClassDefinition>;
 /** Member metadata variants that can be exposed as MATLAB-like meta objects. */
 type ClassMetaMemberDefinition = ClassPropertyDefinition | ClassMethodDefinition | ClassEventDefinition | ClassEnumerationDefinition;
 /** Supported meta-object kind names. */
@@ -17,8 +26,8 @@ type ClassMetaKind = 'meta.class' | 'meta.property' | 'meta.method' | 'meta.even
  */
 type ClassPropertyDefaultProvider = (property: ClassPropertyDefinition) => NodeInput | undefined;
 type ValidationMetadata = Pick<NodeArgumentValidation, 'name' | 'size' | 'class' | 'functions'> & {
-    default?: NodeExpr | null;
-    defaultValue?: NodeExpr | null;
+    default?: NodeInput | null;
+    defaultValue?: NodeInput | null;
 };
 
 /**
@@ -72,7 +81,7 @@ const attributeNames = (table: ClassAttributeTable): MultiArray => stringArray(O
  * @param node AST node to inspect.
  * @returns Identifier or dotted name, if recognized.
  */
-const nodeName = (node: NodeInput): string | undefined => {
+const nodeName = (node: unknown): string | undefined => {
     if (AST.isNodeIdentifier(node)) {
         return node.id;
     }
@@ -88,7 +97,13 @@ const nodeName = (node: NodeInput): string | undefined => {
  * @param node AST node to render.
  * @returns Textual representation.
  */
-const expressionText = (node: NodeInput): string => {
+const expressionText = (node: unknown): string => {
+    if (AST.isNodeList(node)) {
+        return node.list.map((item) => expressionText(item)).join(',');
+    }
+    if (!AST.isStrictNodeExpr(node)) {
+        return '';
+    }
     const name = nodeName(node);
     if (name) {
         return name;
@@ -99,23 +114,11 @@ const expressionText = (node: NodeInput): string => {
     if (Complex.isInstanceOf(node)) {
         return node.toString();
     }
-    if (AST.isNodeList(node)) {
-        return node.list.map((item: NodeInput) => expressionText(item)).join(',');
-    }
     if (AST.isNodeIndexExpr(node)) {
         return `${expressionText(node.expr)}(${node.args.map((item) => expressionText(item)).join(',')})`;
     }
     return '';
 };
-
-/**
- * Extract argument validation names into a cell column vector.
- *
- * @param validations Validation declarations.
- * @returns Cell column vector of validation names.
- */
-const argumentValidationNames = (validations: NodeArgumentValidation[]): MultiArray =>
-    stringArray(validations.map((validation) => nodeName(validation.name)).filter((name): name is string => Boolean(name)));
 
 /**
  * Convert one argument validation declaration to a structure.
@@ -158,12 +161,21 @@ const functionArgumentValidations = (method: ClassMethodDefinition, attribute: s
     method.node.arguments.list.flatMap((block) => ((block.attribute?.id ?? null) === attribute ? block.validation : []));
 
 /**
- * Extract identifier names from a list of AST nodes.
+ * Extract declared parameter names from a function header list.
  *
- * @param nodes AST nodes to inspect.
- * @returns Identifier names in source order.
+ * @param nodes Parameter nodes to inspect.
+ * @returns Parameter names in source order, excluding ignored targets.
  */
-const identifierNames = (nodes: NodeInput[]): string[] => nodes.filter(AST.isNodeIdentifier).map((node) => node.id);
+const parameterNames = (nodes: NodeFunctionParameter[]): string[] =>
+    nodes.flatMap((node) => (AST.isNodeIdentifier(node) ? [node.id] : AST.isNodeDefaultedParameter(node) ? [node.left.id] : []));
+
+/**
+ * Extract declared return names from a function header list.
+ *
+ * @param nodes Return nodes to inspect.
+ * @returns Return names in source order, excluding ignored targets.
+ */
+const returnNames = (nodes: NodeFunctionReturn[]): string[] => nodes.flatMap((node) => (AST.isNodeIdentifier(node) ? [node.id] : []));
 
 /**
  * Base class for MATLAB-like class meta objects.
@@ -547,9 +559,9 @@ class ClassMetaMethod extends ClassMetaMember {
             case 'Sealed':
                 return bool(this.method.isSealed);
             case 'InputNames':
-                return stringArray(identifierNames(this.method.node.parameter.list));
+                return stringArray(parameterNames(this.method.node.parameter.list));
             case 'OutputNames':
-                return stringArray(identifierNames(this.method.node.return.list));
+                return stringArray(returnNames(this.method.node.return.list));
             case 'InputValidation':
                 return validationList(functionArgumentValidations(this.method, null));
             case 'OutputValidation':

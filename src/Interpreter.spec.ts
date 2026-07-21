@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 import path from 'node:path';
-import { AST, type BuiltInFunctionSignature, type NodeInput } from './AST';
+import { AST, type BuiltInFunctionSignature, type NodeExpr, type NodeInput } from './AST';
 import { CircularReferenceError, EvalError, Interpreter, InterpreterError, ReferenceError, SyntaxError, UndefinedReferenceError } from './Interpreter';
 import { CharString } from './CharString';
 import { ClassDefinition } from './ClassDefinition';
@@ -8,8 +8,36 @@ import { Complex } from './Complex';
 import { FunctionHandle } from './FunctionHandle';
 import { MultiArray } from './MultiArray';
 import { Structure } from './Structure';
+import { Scope } from './Scope';
 import type { ComplexType } from './Complex';
 import { executeList, parseClassDefinition, parseList } from './ParserTestUtils';
+
+type InterpreterReturnListHarness = {
+    forLoopValues(_value: NodeInput, _target: NodeInput): NodeInput[];
+    forLoopAssignmentValue(_target: NodeInput, _value: NodeInput): NodeInput;
+    linearExpressionValues(_value: unknown, _prefix: string): NodeInput[];
+    nestedAssignmentValue(_resultList: ReturnType<typeof AST.nodeListFirst>): NodeInput;
+    valueReturnList(_values: unknown[]): ReturnType<typeof AST.nodeReturnList>;
+};
+type InterpreterBuiltInHarness = {
+    functions: {
+        builtin: { func: (..._args: NodeInput[]) => NodeInput };
+        feval: { func: (..._args: NodeInput[]) => NodeInput };
+    };
+    functionHandleWorkspaceInfo(_handle: FunctionHandle): MultiArray;
+    functionHandleWorkspaceValue(_value: unknown, _name: string): NodeInput;
+};
+type InterpreterClassMethodHarness = {
+    classMethodArgumentValues(_values: NodeInput[], _prefix: string): NodeInput[];
+    assignmentValues(_value: unknown, _prefix: string): NodeInput[];
+    booleanControlArgument(_value: unknown, _name: string): boolean;
+    cloneAssignmentTarget(_target: unknown): NodeInput;
+    descriptorSubscripts(_subs: MultiArray): NodeInput[];
+    expressionList(_values: unknown[], _prefix: string): NodeInput[];
+    nativeSubscriptScalar(_target: NodeInput, _descriptor: { type: '.' | '()' | '{}'; subs: NodeInput[] }): NodeInput;
+    switchCaseMatches(_switchValue: NodeInput, _caseValue: NodeInput): boolean;
+    switchComparableValue(_value: NodeInput): NodeInput;
+};
 
 const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.sep}]+)\\.spec\\.([cm]?[jt]s)\$`))!;
 const unitName = __filenameMatch[1];
@@ -107,6 +135,142 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => localInterpreter.Execute('[u, v, w] = S.x;')).toThrow('element number 3 undefined in return list');
         });
 
+        it('Should reject non-expression values in interpreter-owned comma-separated lists.', () => {
+            const localInterpreter = Interpreter.Create() as unknown as InterpreterReturnListHarness;
+            const returnList = localInterpreter.valueReturnList([AST.nodeReturn()]);
+            const unknownReturnList = localInterpreter.valueReturnList([undefined]);
+
+            expect(AST.isNodeReturnList(returnList)).toBe(true);
+            expect(() => returnList.handler(1)).toThrow("Return value 'out1' is not an expression.");
+            expect(() => unknownReturnList.handler(1)).toThrow("Return value 'out1' is not an expression.");
+        });
+
+        it('Should reject non-expression values in for-loop iteration values.', () => {
+            const localInterpreter = Interpreter.Create() as unknown as InterpreterReturnListHarness;
+            const target = AST.nodeIdentifier('k');
+            const wideTarget = new MultiArray([1, 2], [[Complex.one(), Complex.one()]]);
+            const row = new MultiArray([1, 1]);
+            row.array[0][0] = AST.nodeReturn() as unknown as (typeof row.array)[0][0];
+            const structure = new Structure({});
+            structure.field.bad = AST.nodeReturn() as unknown as (typeof structure.field)[string];
+
+            expect(() => localInterpreter.forLoopValues(AST.nodeReturn(), target)).toThrow("Expression value 'for' is not an expression.");
+            expect(() => localInterpreter.forLoopValues(row, target)).toThrow("Expression value 'for1' is not an expression.");
+            expect(() => localInterpreter.forLoopValues(structure, wideTarget)).toThrow("Expression value 'bad' is not an expression.");
+        });
+
+        it('Should reject non-expression values copied for for-loop assignments.', () => {
+            const localInterpreter = Interpreter.Create() as unknown as InterpreterReturnListHarness;
+            const target = new MultiArray([1, 1], [[Complex.one()]]);
+            const values = new MultiArray([1, 1]);
+            values.array[0][0] = AST.nodeReturn() as unknown as (typeof values.array)[0][0];
+
+            expect(() => localInterpreter.forLoopAssignmentValue(target, values)).toThrow("Expression value 'for1' is not an expression.");
+        });
+
+        it('Should validate values before linearizing expression sequences.', () => {
+            const localInterpreter = Interpreter.Create() as unknown as InterpreterReturnListHarness;
+            const values = new MultiArray([1, 2], [[Complex.one(), Complex.one()]]);
+            values.array[0][1] = AST.nodeReturn() as unknown as (typeof values.array)[0][0];
+
+            expect(localInterpreter.linearExpressionValues(Complex.one(), 'value')).toHaveLength(1);
+            expect(() => localInterpreter.linearExpressionValues(AST.nodeReturn(), 'value')).toThrow("Expression value 'value' is not an expression.");
+            expect(() => localInterpreter.linearExpressionValues(values, 'value')).toThrow("Expression value 'value2' is not an expression.");
+        });
+
+        it('Should reject malformed nested assignment result lists.', () => {
+            const localInterpreter = Interpreter.Create() as unknown as InterpreterReturnListHarness;
+            const malformed = AST.nodeListFirst(AST.nodeIdentifier('x'));
+            const invalidAssignment = AST.nodeOperation('=', AST.nodeIdentifier('x'), Complex.one());
+            if (!AST.isNodeBinaryOperation(invalidAssignment)) {
+                throw new Error('expected binary assignment fixture.');
+            }
+            invalidAssignment.right = AST.nodeReturn() as NodeExpr;
+            const invalidValue = AST.nodeListFirst(invalidAssignment);
+
+            expect(() => localInterpreter.nestedAssignmentValue(malformed)).toThrow('invalid nested assignment result.');
+            expect(() => localInterpreter.nestedAssignmentValue(invalidValue)).toThrow("Expression value 'assignment result' is not an expression.");
+        });
+
+        it('Should reject non-expression values forwarded by builtin and feval.', () => {
+            const localInterpreter = Interpreter.Create() as unknown as InterpreterBuiltInHarness;
+
+            expect(() => localInterpreter.functions.builtin.func(AST.nodeReturn())).toThrow("Expression value 'builtin function' is not an expression.");
+            expect(() => localInterpreter.functions.builtin.func(CharString.create('sin'), AST.nodeReturn())).toThrow("Expression value 'builtin1' is not an expression.");
+            expect(() => localInterpreter.functions.feval.func(AST.nodeReturn())).toThrow("Expression value 'feval target' is not an expression.");
+            expect(() => localInterpreter.functions.feval.func(FunctionHandle.create('sin') as unknown as NodeInput, AST.nodeReturn())).toThrow(
+                "Expression value 'feval1' is not an expression.",
+            );
+        });
+
+        it('Should reject non-expression values exposed through function handle workspace metadata.', () => {
+            const localInterpreter = Interpreter.Create() as unknown as InterpreterBuiltInHarness;
+            const closure = Scope.create();
+            closure.defineName('bad', AST.nodeReturn());
+            const handle = FunctionHandle.create('captured');
+            handle.closure = closure;
+
+            expect(() => localInterpreter.functionHandleWorkspaceValue(AST.nodeReturn(), 'bad')).toThrow("Expression value 'workspace bad' is not an expression.");
+            expect(() => localInterpreter.functionHandleWorkspaceInfo(handle)).toThrow("Expression value 'workspace bad' is not an expression.");
+        });
+
+        it('Should reject non-expression values forwarded to class methods.', () => {
+            const localInterpreter = Interpreter.Create() as unknown as InterpreterClassMethodHarness;
+
+            expect(() => localInterpreter.classMethodArgumentValues([AST.nodeReturn()], 'subsref')).toThrow("Expression value 'subsref1' is not an expression.");
+        });
+
+        it('Should reject non-expression values in object-array assignment values.', () => {
+            const localInterpreter = Interpreter.Create() as unknown as InterpreterClassMethodHarness;
+            const invalidArray = new MultiArray([1, 1]);
+            invalidArray.array[0][0] = undefined as unknown as (typeof invalidArray.array)[0][0];
+
+            expect(() => localInterpreter.assignmentValues(AST.nodeReturn(), 'assignment')).toThrow("Expression value 'assignment' is not an expression.");
+            expect(() => localInterpreter.assignmentValues(invalidArray, 'assignment')).toThrow("Expression value 'assignment1' is not an expression.");
+        });
+
+        it('Should reject non-expression values while cloning assignment targets.', () => {
+            const localInterpreter = Interpreter.Create() as unknown as InterpreterClassMethodHarness;
+            const invalidTarget = new MultiArray([1, 1]);
+            invalidTarget.array[0][0] = AST.nodeReturn() as unknown as (typeof invalidTarget.array)[0][0];
+
+            expect(() => localInterpreter.cloneAssignmentTarget(AST.nodeReturn())).toThrow("Expression value 'assignment target' is not an expression.");
+            expect(() => localInterpreter.cloneAssignmentTarget(invalidTarget)).toThrow("Expression value 'assignment target' is not an expression.");
+        });
+
+        it('Should reject non-expression values in native subscript descriptors.', () => {
+            const localInterpreter = Interpreter.Create() as unknown as InterpreterClassMethodHarness;
+            const subs = new MultiArray([1, 1], undefined, true);
+            subs.array[0][0] = undefined as unknown as (typeof subs.array)[0][0];
+
+            expect(() => localInterpreter.descriptorSubscripts(subs)).toThrow("Expression value 'subscript1' is not an expression.");
+        });
+
+        it('Should reject non-expression values selected by native subscripting.', () => {
+            const localInterpreter = Interpreter.Create() as unknown as InterpreterClassMethodHarness;
+            const structure = new Structure({});
+            structure.field.bad = AST.nodeReturn() as unknown as (typeof structure.field)[string];
+            const matrix = new MultiArray([1, 1]);
+            matrix.array[0][0] = AST.nodeReturn() as unknown as (typeof matrix.array)[0][0];
+
+            expect(() => localInterpreter.nativeSubscriptScalar(structure, { type: '.', subs: [CharString.create('bad')] })).toThrow("Expression value 'field bad' is not an expression.");
+            expect(() => localInterpreter.nativeSubscriptScalar(matrix, { type: '()', subs: [Complex.one()] })).toThrow("Expression value 'indexed value' is not an expression.");
+        });
+
+        it('Should reject non-expression values in interpreter-owned expression lists.', () => {
+            const localInterpreter = Interpreter.Create() as unknown as InterpreterClassMethodHarness;
+
+            expect(() => localInterpreter.expressionList([AST.nodeReturn()], 'field')).toThrow("Expression value 'field1' is not an expression.");
+        });
+
+        it('Should reject non-expression values in boolean control arguments.', () => {
+            const localInterpreter = Interpreter.Create() as unknown as InterpreterClassMethodHarness;
+
+            expect(() => localInterpreter.booleanControlArgument(AST.nodeReturn(), 'inputname onlyVariableNames')).toThrow(
+                "Expression value 'inputname onlyVariableNames' is not an expression.",
+            );
+        });
+
         it('Should expand cell content targets inside multiple assignment lists.', () => {
             const localInterpreter = Interpreter.Create();
 
@@ -197,6 +361,17 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
             localInterpreter.Execute(['x = @sin;', 'switch x', 'case @sin', '  y = 70;', 'otherwise', '  y = 80;', 'end'].join('\n'));
             expect(localInterpreter.Unparse(localInterpreter.Execute('y'))).toBe('70\n');
+        });
+
+        it('Should reject non-expression values while normalizing switch candidates.', () => {
+            const localInterpreter = Interpreter.Create() as unknown as InterpreterClassMethodHarness;
+            const scalar = new MultiArray([1, 1]);
+            scalar.array[0][0] = AST.nodeReturn() as unknown as (typeof scalar.array)[0][0];
+            const alternatives = new MultiArray([1, 1], undefined, true);
+            alternatives.array[0][0] = AST.nodeReturn() as unknown as (typeof alternatives.array)[0][0];
+
+            expect(() => localInterpreter.switchComparableValue(scalar)).toThrow("Expression value 'switch value' is not an expression.");
+            expect(() => localInterpreter.switchCaseMatches(Complex.one(), alternatives)).toThrow("Expression value 'switch case1' is not an expression.");
         });
 
         it('Should allow a switch without a matching case or otherwise.', () => {

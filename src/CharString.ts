@@ -222,14 +222,14 @@ class CharString {
     /**
      * Render the string as source text without adding quotes.
      *
-     * `parentPrecedence` is accepted for compatibility with other unparse
+     * `_parentPrecedence` is accepted for compatibility with other unparse
      * helpers; string rendering does not need precedence.
      *
      * @param value String value to render.
-     * @param parentPrecedence Parent operator precedence, unused.
+     * @param _parentPrecedence Parent operator precedence, unused.
      * @returns Raw string content.
      */
-    public static readonly unparse = (value: CharString, parentPrecedence = 0): string => value.str;
+    public static readonly unparse = (value: CharString, _parentPrecedence = 0): string => value.str;
 
     /**
      * Convert a `CharString` to its runtime string value.
@@ -269,14 +269,14 @@ class CharString {
     /**
      * Render the string as MathML.
      *
-     * `parentPrecedence` is accepted for compatibility with other MathML
+     * `_parentPrecedence` is accepted for compatibility with other MathML
      * helpers; string rendering does not need precedence.
      *
      * @param value String value to render.
-     * @param parentPrecedence Parent operator precedence, unused.
+     * @param _parentPrecedence Parent operator precedence, unused.
      * @returns MathML fragment.
      */
-    public static readonly unparseMathML = (value: CharString, parentPrecedence = 0): string => '<mi><pre>' + value.str + '</pre></mi>';
+    public static readonly unparseMathML = (value: CharString, _parentPrecedence = 0): string => '<mi><pre>' + value.str + '</pre></mi>';
 
     /**
      * Render the string as an escaped MathML literal.

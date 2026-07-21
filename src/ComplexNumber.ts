@@ -59,7 +59,7 @@ class ComplexNumber implements TypeOfComplex.ComplexInterface<number, number, un
      */
     public static readonly isInstanceOf: TypeOfComplex.IsInstanceOfComplexHandler<ComplexNumber> = (obj: unknown): obj is ComplexNumber => obj instanceof ComplexNumber;
 
-    public static readonly set = (config: Partial<TypeOfComplex.ComplexConfig>): void => {};
+    public static readonly set = (_config: Partial<TypeOfComplex.ComplexConfig>): void => {};
 
     public re: number;
     public im: number;

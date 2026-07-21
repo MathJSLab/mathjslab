@@ -3,6 +3,175 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 2.2.0
+
+- Aligned release metadata for version 2.1.5 and regenerated the API reference
+  after the parser/AST/runtime typing pass.
+- Documented the expression-boundary architecture in code and project docs,
+  including the shared `ExpressionValue` helper used by function returns,
+  comma-separated lists, `for` assignment lowering, indexing descriptors, and
+  class dispatch paths.
+- Cleaned release-adjacent JSDoc coverage in runtime expression, assignment,
+  class dispatch, and array helpers, while keeping larger numeric-kernel
+  documentation cleanup as separate future maintenance.
+- Named the remaining broad `NodeExpr` compatibility edge as
+  `LegacyNodeExprCarrier`, keeping `StrictNodeExpr` as the documented typed AST
+  expression contract while parser-generated and legacy evaluator paths are
+  migrated incrementally. Argument-validation defaults and function-handle
+  bodies now model omitted expressions with explicit `null` unions.
+- Added focused AST guards for command-form calls, superclass constructor
+  calls, range/colon/end nodes, runtime expression values, and the aggregate
+  `StrictNodeExpr` contract to support safer parser/evaluator migrations.
+- Tightened class metadata rendering around the strict expression guard so
+  validation displays only recognized expression/list forms, while evaluated
+  property defaults keep the broader `NodeInput` contract used by runtime meta
+  objects.
+- Removed the remaining class metadata circular dependency by making class
+  member definitions generic over their owning class type and specializing them
+  in the runtime modules that work directly with `ClassDefinition`.
+- Tightened the default owner type of generic class member metadata from `any`
+  to `unknown`, keeping runtime modules explicitly specialized with
+  `ClassDefinition`.
+- Made circular dependency checks a hard architectural gate: `test:circ` now
+  fails the build when `madge` detects cycles.
+- Reused AST guards in function workspace and argument validation paths:
+  `inputname` now recognizes identifiers through `AST.isNodeIdentifier`, and
+  implicit custom validators only build calls from strict expression values.
+- Guarded lazy function return-list construction so fixed returns and
+  `varargout` entries must be strict expression values or explicit `NodeList`
+  execution-result carriers before they are exposed to callers.
+- Reused the same return-expression boundary in context lazy return-list
+  helpers so class dispatch and direct value-return paths reject control-flow
+  statements before exposing outputs to callers.
+- Routed scalar class-dispatch result arrays through the same guarded return
+  boundary, removing the remaining unchecked `NodeExpr` casts from those paths.
+- Routed comma-list argument expansion through a shared expression-value guard
+  so evaluated positional arguments reject control-flow nodes before reaching
+  built-in, function, indexing, and class-dispatch helpers.
+- Guarded interpreter-owned comma-separated return lists so struct/cell field
+  expansion and built-in helper results cannot expose control-flow statements
+  as ordinary returned values.
+- Guarded scalar and row-vector `for` loop iteration values so evaluated loop
+  expressions cannot expose control-flow statements as ordinary assignments.
+- Centralized evaluated expression-boundary checks in a shared helper used by
+  function returns, context argument/return expansion, interpreter-owned
+  comma-separated lists, and `for` loop iteration values.
+- Added factory-time AST validation for command-word arguments, index
+  expression arguments, and superclass constructor arguments so parser-created
+  expression slots reject statement/block nodes before evaluation.
+- Extended factory-time AST validation to ranges, operator operands, and
+  indirect-reference fields so more expression composites reject invalid AST
+  shapes at construction time.
+- Added factory-time validation for `arguments` declarations and branch/loop
+  expressions so control-flow factories reject statement/block nodes in
+  condition, selector, target, default, and worker-count slots.
+- Added factory-time validation for function-handle bodies, class attribute
+  values, class property defaults, and enumeration constructor arguments.
+- Replaced silent filtering with explicit factory-time validation for
+  `arguments`, `switch`, classdef attribute/superclass/section lists, and class
+  section attribute lists.
+- Added factory-time validation for function-definition return, parameter,
+  `arguments` block, and body lists, plus anonymous function-handle parameter
+  lists, so invalid parser nodes are rejected before registration/evaluation.
+- Added section-kind-aware validation for classdef bodies: properties, methods,
+  events, and enumeration sections now reject members from the wrong section
+  before class metadata construction.
+- Added factory-time validation for declaration entries, control-flow body
+  lists, `try`/`catch`, `unwind_protect`, and `spmd` bodies/workers so block
+  factories reject misplaced parser nodes before evaluation.
+- Added matrix/cell row validation so array constructors reject statement and
+  block nodes before handing delayed expression elements to `MultiArray`.
+- Added factory-time validation for `arguments` and class-property size, class,
+  and validator-function declarations.
+- Tightened `FunctionArguments` consumers to reject invalid AST metadata
+  explicitly instead of silently filtering malformed parameter, return, block,
+  or validation entries.
+- Tightened function-call layout and arity introspection helpers to reject
+  malformed parameter/return metadata explicitly instead of silently ignoring
+  invalid entries.
+- Updated class method metadata so `meta.method.InputNames` includes defaulted
+  function-header parameters instead of reporting only bare identifier
+  parameters.
+- Tightened class member collection so `ClassDefinition` rejects structurally
+  invalid section members explicitly instead of silently skipping malformed
+  entries.
+- Routed constructor and property accessor signature checks through validated
+  method-header helpers so malformed class method parameters/returns are
+  rejected explicitly before special-method validation.
+- Validated variadic arguments forwarded by `builtin` and `feval` before
+  dispatch so internal non-expression values cannot cross those call
+  boundaries.
+- Routed class event callbacks and special method dispatch (`subsref`,
+  `subsasgn`, property setters, operator overloads, `end`, and
+  `numArgumentsFromSubscript`) through the same expression-boundary guard.
+- Guarded `Context.resolveIdentifier` so malformed symbol-table values cannot
+  be exposed as ordinary identifier expressions by unchecked casts.
+- Extended expression-boundary helpers to validate unknown values directly and
+  used them when expanding cell-indexing results into comma-separated return
+  lists.
+- Guarded object-array field assignment values before linearization so invalid
+  runtime elements cannot be distributed into class property assignments.
+- Relaxed interpreter-owned comma-separated return-list inputs to `unknown[]`
+  and validated them at selection time, removing unchecked casts from class and
+  structure field expansion paths.
+- Validated implicit class method receiver arguments and native `subsasgn`
+  descriptor subscripts before forwarding them into function-call and indexing
+  execution paths.
+- Added validated copy helpers for `for` assignment values and assignment
+  target cloning so malformed runtime/AST values cannot enter assignment
+  lowering through recursive copy paths.
+- Validated `builtin` and `feval` control arguments before resolving call
+  targets, so malformed internal values fail with expression-boundary
+  diagnostics instead of unchecked casts.
+- Added an interpreter-owned expression-list guard for structure-field list
+  expansion, dot subscript descriptors, and event callback dispatch.
+- Validated nested assignment result lists before returning assigned values
+  from embedded assignment expressions, and guarded linearized cell-assignment
+  indices without unchecked expression casts.
+- Validated boolean control arguments before converting them to runtime
+  booleans, starting with the optional `inputname` flag.
+- Tightened `for` loop value expansion so structure field values and generated
+  column/field iteration values pass through expression-boundary validation
+  instead of relying on casts.
+- Routed legacy class-property default expressions through the AST factory
+  expression guard before building the underlying `arguments` declaration.
+- Removed the unnecessary `NodeExpr` cast from empty `varargout` cell
+  initialization, relying on the `MultiArray` slot contract that already
+  permits `undefined` placeholders.
+- Named and validated the unresolved call-target placeholder path in
+  `Context.resolveIdentifier`, so only identifier nodes survive late call
+  dispatch as unresolved function targets.
+- Routed interpreter copy and assignment-target cloning results back through
+  the expression boundary, removing unchecked `NodeExpr` casts from those
+  central evaluator paths.
+- Guarded `switch` scalar normalization and cell-array case alternatives so
+  malformed non-expression values cannot reach MATLAB/Octave-style case
+  comparison.
+- Widened context return-expression validation to accept unknown scalar-array
+  contents directly, removing the remaining unchecked return-array cast from
+  that lazy class-dispatch result path.
+- Routed native subscript scalar results through the expression boundary, so
+  malformed structure fields or indexed array elements cannot cross chained
+  `subsasgn`/`subsref` helper paths as ordinary values.
+- Copied function-handle workspace metadata through the generic runtime copy
+  helper and expression boundary, preventing malformed captured values from
+  being exposed by `functions(handle).workspace`.
+- Added a validated expression linearization helper and used it for `for` loop
+  multi-target assignment lowering, avoiding the generic `MathObject` cast
+  while rejecting malformed sequence elements earlier.
+- Routed interpreter expression copying directly through `RuntimeValue.copy`,
+  removing the remaining `MathObject` cast from assignment and `for` lowering
+  copy helpers.
+- Removed the remaining unchecked runtime-value casts from `Interpreter`
+  assignment-target cloning after validating cloned `MultiArray` target
+  elements through the existing expression boundary.
+- Removed redundant `ElementType` casts from `Structure` construction and copy
+  paths, relying on the generic `RuntimeValue.copy` type contract and extending
+  coverage for copied constructor fields.
+- Refactored anonymous `FunctionHandle` AST-node copying into separate node and
+  nested-value helpers, removing broad `unknown` casts while preserving parent
+  relinking for copied lambda parameter/body nodes.
+
 ## 2.1.4
 
 - Started the AST typing pass by introducing explicit `NodeStatement`,

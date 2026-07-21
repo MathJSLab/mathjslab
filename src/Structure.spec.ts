@@ -82,8 +82,10 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
     describe('Copying and logical conversion', () => {
         it('Should deep-copy fields.', () => {
             const source = new Structure({ value: Complex.create(1) });
+            const constructed = new Structure({ value: source.field.value });
             const copy = source.copy();
 
+            expect(constructed.field.value).not.toBe(source.field.value);
             expect(copy).not.toBe(source);
             expect(copy.field.value).not.toBe(source.field.value);
             expect((source.field.value as ReturnType<typeof Complex.create>).re.toString()).toBe('1');

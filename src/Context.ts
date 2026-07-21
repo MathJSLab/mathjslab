@@ -5,13 +5,12 @@ import type {
     NameEntry,
     NodeBuiltInFunction,
     NodeExpr,
-    NodeIdentifier,
     NodeInput,
     NodeFunctionDefinition,
     NodeReturnList,
     ReturnHandlerResult,
 } from './AST';
-import type { ClassMethodDefinition } from './ClassMember';
+import type { ClassMethodDefinition as ClassMethodDefinitionBase } from './ClassMember';
 import { AST } from './AST';
 import { CharString } from './CharString';
 import { Complex, type ComplexType } from './Complex';
@@ -34,7 +33,13 @@ import { FunctionCall } from './FunctionCall';
 import { FunctionStack } from './FunctionStack';
 import { FunctionWorkspace } from './FunctionWorkspace';
 import { CircularReferenceError, EvalError, ReferenceError, SyntaxError, UndefinedReferenceError } from './InterpreterError';
+import { expressionValue, expressionValues } from './ExpressionValue';
 import { RuntimeValue } from './RuntimeValue';
+
+type ClassMethodDefinition = ClassMethodDefinitionBase<ClassDefinition>;
+
+/** Symbol-table entry with a materialized runtime/AST value. */
+type ResolvedNameEntry = NameEntry & { node: NodeInput };
 
 /**
  * Interpreter services used by `Context`.
@@ -524,6 +529,25 @@ class Context {
     }
 
     /**
+     * Validate a resolved variable value before exposing it as an identifier expression.
+     */
+    private resolvedIdentifierExpression(entry: ResolvedNameEntry, name: string, parent: NodeInput): NodeExpr {
+        const value = expressionValue(entry.node, name, 'Identifier value', (message) => this.throwEvalError(message));
+        value.parent = parent;
+        return value;
+    }
+
+    /**
+     * Keep an unresolved identifier as a call target placeholder.
+     */
+    private unresolvedCallTargetExpression(tree: unknown): NodeExpr {
+        if (!AST.isNodeIdentifier(tree)) {
+            this.throwEvalError('invalid unresolved call target.');
+        }
+        return tree;
+    }
+
+    /**
      * Define or replace a user function in the current scope.
      *
      * @param name Function name.
@@ -790,13 +814,12 @@ class Context {
         /* 1. Variable lookup. */
         const variable = this.resolveSymbol(name, scope, { classes: false, functions: false, imports: false });
         if (variable?.kind === 'variable') {
-            const entry = variable.entry!;
+            const entry = variable.entry! as ResolvedNameEntry;
             if (this.allowForwardReference && entry.undefinedReference) {
                 this.throwIfCircularReference(name, scope);
                 this.throwUndefinedReferenceError(entry.undefinedReference);
             }
-            entry.node!.parent = tree;
-            return entry.node as NodeExpr;
+            return this.resolvedIdentifierExpression(entry, name, tree);
         }
         /* 2. Function call-frame metadata. */
         if (name === 'nargin' && !AST.isNodeIndexExpr(tree.parent)) {
@@ -816,13 +839,12 @@ class Context {
         const resolved = this.resolveSymbol(name, scope, { variables: false });
         switch (resolved?.kind) {
             case 'variable': {
-                const entry = resolved.entry!;
+                const entry = resolved.entry! as ResolvedNameEntry;
                 if (this.allowForwardReference && entry.undefinedReference) {
                     this.throwIfCircularReference(name, scope);
                     this.throwUndefinedReferenceError(entry.undefinedReference);
                 }
-                entry.node!.parent = tree;
-                return entry.node as NodeExpr;
+                return this.resolvedIdentifierExpression(entry, name, tree);
             }
             case 'class':
                 resolved.classDefinition!.parent = tree;
@@ -840,7 +862,7 @@ class Context {
         }
         /* 4. Undefined identifier. */
         if (AST.isNodeIndexExpr(tree.parent)) {
-            return tree as NodeExpr;
+            return this.unresolvedCallTargetExpression(tree);
         }
         this.throwUndefinedReferenceError(name);
     }
@@ -892,7 +914,7 @@ class Context {
      * @returns Expanded argument values retyped as expressions for call helpers.
      */
     public expandCommaListArguments(args: NodeExpr[]): NodeExpr[] {
-        return args.flatMap((arg) => this.evaluateCommaListExpression(arg)) as NodeExpr[];
+        return args.flatMap((arg) => this.expressionValues(this.evaluateCommaListExpression(arg), 'arg'));
     }
 
     private evaluateArgs(args: NodeExpr[], parent: NodeInput, mode: 'all' | boolean[]): NodeExpr[] {
@@ -901,7 +923,7 @@ class Context {
                 this.pushRequestedOutputCount(1);
                 this.pushCommaListExpansion();
                 try {
-                    return this.expandCommaSeparatedList(this.interpreter!.Evaluator(arg, this.currentScope)) as NodeExpr[];
+                    return this.expressionValues(this.expandCommaSeparatedList(this.interpreter!.Evaluator(arg, this.currentScope)), 'arg');
                 } finally {
                     this.popCommaListExpansion();
                     this.popRequestedOutputCount();
@@ -914,7 +936,7 @@ class Context {
             this.pushRequestedOutputCount(1);
             this.pushCommaListExpansion();
             try {
-                return this.expandCommaSeparatedList(this.interpreter!.Evaluator(arg, this.currentScope)) as NodeExpr[];
+                return this.expressionValues(this.expandCommaSeparatedList(this.interpreter!.Evaluator(arg, this.currentScope)), 'arg');
             } finally {
                 this.popCommaListExpansion();
                 this.popRequestedOutputCount();
@@ -1452,8 +1474,15 @@ class Context {
             this.throwEvalError((e as Error).message);
         }
         return this.withClassAccess(method.classDefinition, () =>
-            this.callFunctionDefinition(Callables.functionDefinition(method.node), [ClassInstance.methodArgument(instance) as NodeExpr, ...args], parent, this.requestedOutputCount),
+            this.callFunctionDefinition(Callables.functionDefinition(method.node), [this.classMethodReceiverArgument(instance), ...args], parent, this.requestedOutputCount),
         );
+    }
+
+    /**
+     * Validate the implicit object argument passed to instance method bodies.
+     */
+    private classMethodReceiverArgument(instance: ClassInstance): NodeExpr {
+        return expressionValue(ClassInstance.methodArgument(instance), 'obj', 'Argument value', (message) => this.throwEvalError(message));
     }
 
     /**
@@ -1518,6 +1547,48 @@ class Context {
         return new MultiArray(dimensions);
     }
 
+    /**
+     * Validate expanded positional argument values.
+     */
+    private expressionValues(values: NodeInput[], namePrefix: string): NodeExpr[] {
+        return expressionValues(values, namePrefix, 'Argument value', (message) => this.throwEvalError(message));
+    }
+
+    /**
+     * Validate values that are exposed through lazy return-list helpers.
+     */
+    private returnExpression(value: unknown, name: string): NodeExpr {
+        return expressionValue(value, name, 'Return value', (message) => this.throwEvalError(message));
+    }
+
+    /**
+     * Validate several values before exposing them through lazy return lists.
+     */
+    private returnExpressions(values: unknown[], namePrefix: string): NodeExpr[] {
+        return expressionValues(values, namePrefix, 'Return value', (message) => this.throwEvalError(message));
+    }
+
+    /**
+     * Reduce a class-dispatch result array to its scalar/array return value and
+     * validate scalar 1x1 contents before exposing them as expression results.
+     */
+    private scalarArrayReturnExpression(value: MultiArray, name: string): NodeExpr {
+        return this.returnExpression(MultiArray.MultiArrayToScalar(value), name);
+    }
+
+    /**
+     * Invoke each bound method stored in an object array.
+     *
+     * MATLAB/Octave dot access can produce arrays of method handles. Calling
+     * that array evaluates each bound method with one requested output and then
+     * normalizes the scalar array result through the shared return-expression
+     * boundary before exposing it to the caller.
+     *
+     * @param expr Array containing bound method runtime values.
+     * @param args Call arguments.
+     * @param parent AST node that owns the call.
+     * @returns Scalar or array expression result.
+     */
     private callClassBoundMethodArray(expr: MultiArray, args: NodeExpr[], parent: NodeInput): NodeExpr {
         const result = new MultiArray(expr.dimension);
         for (let n = 0; n < MultiArray.linearLength(expr); n++) {
@@ -1545,13 +1616,13 @@ class Context {
                     AST.throwErrorIfGreaterThanReturnList(values.length, length, (message) => this.throwEvalError(message));
                     const out: ReturnHandlerResult = { length };
                     for (let index = 0; index < length; index++) {
-                        out[`out${index}`] = values[index] as NodeExpr;
+                        out[`out${index}`] = this.returnExpression(values[index], `out${index + 1}`);
                     }
                     return out;
                 },
             );
         }
-        return MultiArray.MultiArrayToScalar(result) as NodeExpr;
+        return this.scalarArrayReturnExpression(result, 'ans');
     }
 
     private callFunctionalClassMethodArray(name: string, receiver: MultiArray, args: NodeExpr[], parent: NodeInput): NodeExpr {
@@ -1595,13 +1666,13 @@ class Context {
                     AST.throwErrorIfGreaterThanReturnList(values.length, length, (message) => this.throwEvalError(message));
                     const out: ReturnHandlerResult = { length };
                     for (let index = 0; index < length; index++) {
-                        out[`out${index}`] = values[index] as NodeExpr;
+                        out[`out${index}`] = this.returnExpression(values[index], `out${index + 1}`);
                     }
                     return out;
                 },
             );
         }
-        return MultiArray.MultiArrayToScalar(result) as NodeExpr;
+        return this.scalarArrayReturnExpression(result, 'ans');
     }
 
     /**
@@ -1769,7 +1840,7 @@ class Context {
                 AST.throwErrorIfGreaterThanReturnList(values.length, length, (message) => this.throwEvalError(message));
                 const out: ReturnHandlerResult = { length };
                 for (let index = 0; index < length; index++) {
-                    out[`out${index}`] = values[index] as NodeExpr;
+                    out[`out${index}`] = this.returnExpression(values[index], `out${index + 1}`);
                 }
                 return out;
             },
@@ -1903,7 +1974,7 @@ class Context {
         if (array.isCell && parent.delim === '{}' && (this.requestedOutputCount > 1 || this.commaListExpansionEnabled)) {
             const values = MultiArray.linearize(result);
             if (values.length > 1) {
-                return this.valueReturnList(values as NodeInput[]);
+                return this.valueReturnList(this.returnExpressions(values, 'out'));
             }
         }
         return MultiArray.MultiArrayToScalar(result);

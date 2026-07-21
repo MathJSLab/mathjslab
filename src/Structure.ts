@@ -49,7 +49,7 @@ class Structure {
             struct.field[field[field.length - 1]] = MultiArray.emptyArray();
         } else {
             for (const f in field) {
-                this.field[f] = RuntimeValue.copy(field[f]) as ElementType;
+                this.field[f] = RuntimeValue.copy(field[f]);
             }
         }
     }
@@ -238,10 +238,10 @@ class Structure {
      *
      * @param S Structure to render.
      * @param interpreter Interpreter that owns the unparser.
-     * @param parentPrecedence Parent operator precedence, unused.
+     * @param _parentPrecedence Parent operator precedence, unused.
      * @returns Source-like structure representation.
      */
-    public static unparse = (S: Structure, interpreter: RuntimeDisplay, parentPrecedence = 0): string => {
+    public static unparse = (S: Structure, interpreter: RuntimeDisplay, _parentPrecedence = 0): string => {
         return `struct {\n${Object.entries(S.field)
             .map((entry) => `${entry[0]}: ${interpreter.Unparse(entry[1])}`)
             .join('\n')}\n}`;
@@ -252,10 +252,10 @@ class Structure {
      *
      * @param S Structure to render.
      * @param interpreter Interpreter that owns the MathML unparser.
-     * @param parentPrecedence Parent operator precedence, unused.
+     * @param _parentPrecedence Parent operator precedence, unused.
      * @returns MathML table fragment.
      */
-    public static unparseMathML = (S: Structure, interpreter: RuntimeDisplay, parentPrecedence = 0): string => {
+    public static unparseMathML = (S: Structure, interpreter: RuntimeDisplay, _parentPrecedence = 0): string => {
         let result = `<mtr><mtd columnspan="2"><mtext>struct {</mtext></mtd></mtr>`;
         result += Object.entries(S.field)
             .map((entry) => `<mtr><mtd><mi>${entry[0]}</mi><mo>:</mo></mtd><mtd>${interpreter.UnparserMathML(entry[1])}</mtd></mtr>`)
@@ -273,7 +273,7 @@ class Structure {
     public static copy = (S: Structure): Structure => {
         const result = new Structure({});
         for (const f in S.field) {
-            result.field[f] = RuntimeValue.copy(S.field[f]) as ElementType;
+            result.field[f] = RuntimeValue.copy(S.field[f]);
         }
         return result;
     };
