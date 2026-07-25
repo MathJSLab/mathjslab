@@ -349,9 +349,9 @@ type NodeListElement =
  * AST node that can appear in expression position.
  *
  * Generated ANTLR actions and a few evaluator reducers still route mixed AST
- * shapes through `NodeExpr`. Keeping the permissive edge behind this alias
- * makes that migration boundary explicit while stricter hand-written code uses
- * `StrictNodeExpr` and AST guards.
+ * shapes through `NodeExpr`. This carrier keeps that migration boundary
+ * explicit while stricter hand-written code uses `StrictNodeExpr`,
+ * `ExpressionBoundaryValue`, and AST guards.
  */
 type LegacyNodeExprCarrier = any;
 
@@ -364,6 +364,15 @@ type LegacyNodeExprCarrier = any;
  * slots.
  */
 type NodeExpr = StrictNodeExpr | LegacyNodeExprCarrier;
+
+/**
+ * Value accepted after an explicit expression-boundary validation.
+ *
+ * `NodeList` is included only as an execution-result carrier for paths such as
+ * `eval`/`evalin` and lazy return lists. New ordinary expression slots should
+ * prefer `StrictNodeExpr` when they do not need that carrier.
+ */
+type ExpressionBoundaryValue = StrictNodeExpr | NodeList;
 
 /**
  * Reserved node.
@@ -568,7 +577,7 @@ type ThrowError = (message: string) => never;
  * registry keeps only the common "callable" shape and lets the interpreter
  * perform the runtime dispatch.
  */
-type BuiltInFunctionImplementation = (...args: never[]) => unknown;
+type BuiltInFunctionImplementation = Function;
 
 /**
  * Return list node
@@ -589,7 +598,7 @@ interface NodeFunction extends NodeBase {
     id: string;
     mapper: boolean;
     ev: boolean[];
-    func: Function;
+    func: Function | null;
     definingScope?: DefiningScope;
     attributes?: {
         /**
@@ -744,6 +753,8 @@ interface FunctionSignatureEntry {
  */
 interface NodeBuiltInFunction extends NodeFunction {
     type: 'BUILTIN';
+    /** Concrete implementation for the registered built-in. */
+    func: BuiltInFunctionImplementation;
     /**
      * Optional declarative call signature used by the shared validator.
      */
@@ -1106,15 +1117,15 @@ abstract class AST {
     /**
      * External first-row matrix factory, rebound by `reload`.
      */
-    public static firstRow: (row: ElementType[], iscell?: boolean) => MultiArray;
+    public static firstRow: <ELEMENT>(row: ElementType<ELEMENT>[], iscell?: boolean) => MultiArray<ELEMENT>;
     /**
      * External row-append matrix factory, rebound by `reload`.
      */
-    public static appendRow: (M: MultiArray, row: ElementType[]) => MultiArray;
+    public static appendRow: <ELEMENT>(M: MultiArray<ELEMENT>, row: ElementType<ELEMENT>[]) => MultiArray<ELEMENT>;
     /**
      * External empty-array factory, rebound by `reload`.
      */
-    public static emptyArray: (iscell?: boolean | undefined) => MultiArray;
+    public static emptyArray: <ELEMENT>(iscell?: boolean | undefined) => MultiArray<ELEMENT>;
 
     /**
      * Reload external node factory methods.
@@ -1137,40 +1148,41 @@ abstract class AST {
     /**
      * Test whether an unknown value has the common AST/runtime node shape.
      */
-    public static readonly isNodeBase = (value: unknown): value is NodeBase =>
-        typeof value === 'object' && value !== null && 'type' in value && (typeof (value as NodeBase).type === 'string' || typeof (value as NodeBase).type === 'number');
+    public static readonly isNodeBase = (value: unknown): value is NodeBase => {
+        if (typeof value !== 'object' || value === null || !('type' in value)) {
+            return false;
+        }
+        const type = Reflect.get(value, 'type');
+        return typeof type === 'string' || typeof type === 'number';
+    };
 
     /**
      * Test whether an unknown value is an identifier node.
      */
-    public static readonly isNodeIdentifier = (value: unknown): value is NodeIdentifier =>
-        AST.isNodeBase(value) && value.type === 'IDENT' && typeof (value as NodeIdentifier).id === 'string';
+    public static readonly isNodeIdentifier = (value: unknown): value is NodeIdentifier => AST.isNodeBase(value) && value.type === 'IDENT' && typeof Reflect.get(value, 'id') === 'string';
 
     /**
      * Test whether an unknown value is a list node.
      */
-    public static readonly isNodeList = (value: unknown): value is NodeList => AST.isNodeBase(value) && value.type === 'LIST' && Array.isArray((value as NodeList).list);
+    public static readonly isNodeList = (value: unknown): value is NodeList => AST.isNodeBase(value) && value.type === 'LIST' && Array.isArray(Reflect.get(value, 'list'));
 
     /**
      * Test whether an unknown value is a command-form call node.
      */
     public static readonly isNodeCmdWList = (value: unknown): value is NodeCmdWList =>
-        AST.isNodeBase(value) && value.type === 'CMDWLIST' && typeof (value as NodeCmdWList).id === 'string' && Array.isArray((value as NodeCmdWList).args);
+        AST.isNodeBase(value) && value.type === 'CMDWLIST' && typeof Reflect.get(value, 'id') === 'string' && Array.isArray(Reflect.get(value, 'args'));
 
     /**
      * Test whether an unknown value is an index expression node.
      */
     public static readonly isNodeIndexExpr = (value: unknown): value is NodeIndexExpr =>
-        AST.isNodeBase(value) && value.type === 'IDX' && ((value as NodeIndexExpr).delim === '()' || (value as NodeIndexExpr).delim === '{}') && Array.isArray((value as NodeIndexExpr).args);
+        AST.isNodeBase(value) && value.type === 'IDX' && (Reflect.get(value, 'delim') === '()' || Reflect.get(value, 'delim') === '{}') && Array.isArray(Reflect.get(value, 'args'));
 
     /**
      * Test whether an unknown value is an explicit superclass constructor call.
      */
     public static readonly isNodeSuperclassConstructor = (value: unknown): value is NodeSuperclassConstructor =>
-        AST.isNodeBase(value) &&
-        value.type === 'SUPERCLASS_CTOR' &&
-        AST.isNodeIdentifier((value as NodeSuperclassConstructor).superclass) &&
-        Array.isArray((value as NodeSuperclassConstructor).args);
+        AST.isNodeBase(value) && value.type === 'SUPERCLASS_CTOR' && AST.isNodeIdentifier(Reflect.get(value, 'superclass')) && Array.isArray(Reflect.get(value, 'args'));
 
     /**
      * Test whether an unknown value is a range expression node.
@@ -1190,13 +1202,13 @@ abstract class AST {
     /**
      * Test whether an unknown value is a dot-reference node.
      */
-    public static readonly isNodeIndirectRef = (value: unknown): value is NodeIndirectRef => AST.isNodeBase(value) && value.type === '.' && Array.isArray((value as NodeIndirectRef).field);
+    public static readonly isNodeIndirectRef = (value: unknown): value is NodeIndirectRef => AST.isNodeBase(value) && value.type === '.' && Array.isArray(Reflect.get(value, 'field'));
 
     /**
      * Test whether an unknown value is a lazy return-list node.
      */
     public static readonly isNodeReturnList = (value: unknown): value is NodeReturnList =>
-        AST.isNodeBase(value) && value.type === 'RETLIST' && typeof (value as NodeReturnList).selector === 'function' && typeof (value as NodeReturnList).handler === 'function';
+        AST.isNodeBase(value) && value.type === 'RETLIST' && typeof Reflect.get(value, 'selector') === 'function' && typeof Reflect.get(value, 'handler') === 'function';
 
     /**
      * Test whether an unknown value is an ignored target (`~`) node.
@@ -1426,7 +1438,7 @@ abstract class AST {
      * guard keeps hand-written factories from preserving control-flow or block
      * nodes in expression-only fields.
      */
-    private static readonly factoryExpression = (value: NodeInput, role: string, allowNodeList = false): NodeExpr => {
+    private static readonly factoryExpression = (value: NodeInput, role: string, allowNodeList = false): ExpressionBoundaryValue => {
         if (!AST.isStrictNodeExpr(value) && !(allowNodeList && AST.isNodeList(value))) {
             throw new TypeError(`${role} is not an expression node.`);
         }
@@ -1436,7 +1448,7 @@ abstract class AST {
     /**
      * Validate a parser list before storing it as expression arguments.
      */
-    private static readonly factoryExpressionList = (list: NodeList | null, role: string): NodeExpr[] =>
+    private static readonly factoryExpressionList = (list: NodeList | null, role: string): ExpressionBoundaryValue[] =>
         list ? list.list.map((node, index) => AST.factoryExpression(node, `${role}${index + 1}`)) : [];
 
     /**
@@ -1471,7 +1483,7 @@ abstract class AST {
     /**
      * Validate matrix/cell row elements while preserving the existing delayed-evaluation carrier.
      */
-    private static readonly factoryArrayElementList = (list: NodeList, role: string): ElementType[] => AST.factoryExpressionList(list, role) as unknown as ElementType[];
+    private static readonly factoryArrayElementList = (list: NodeList, role: string): ElementType<ExpressionBoundaryValue>[] => AST.factoryExpressionList(list, role);
 
     /**
      * Validate an optional class declaration in `arguments` and class property syntax.
@@ -1715,6 +1727,26 @@ abstract class AST {
     };
 
     /**
+     * Create a defaulted declaration/parameter entry.
+     *
+     * MATLAB/Octave use the assignment token in function parameter lists and
+     * persistent declarations. This helper preserves the regular binary
+     * operation shape while exposing the narrower AST contract consumed by
+     * declaration and parameter-list factories.
+     *
+     * @param id Declared identifier.
+     * @param value Default expression.
+     * @returns Defaulted parameter/declaration node.
+     */
+    public static readonly nodeDefaultedParameter = (id: NodeIdentifier, value: NodeExpr): NodeDefaultedParameter => {
+        const result = AST.nodeOperation('=', id, value);
+        if (!AST.isNodeDefaultedParameter(result)) {
+            throw new TypeError('defaulted parameter has invalid node type.');
+        }
+        return result;
+    };
+
+    /**
      * Create an ignored return/assignment target node.
      */
     public static readonly nodeIgnoredTarget = (): NodeIgnoredTarget => ({
@@ -1774,8 +1806,8 @@ abstract class AST {
      * @param row
      * @returns
      */
-    public static readonly nodeFirstRow = (row: NodeList | null = null, iscell?: boolean): MultiArray =>
-        row ? AST.firstRow(AST.factoryArrayElementList(row, 'array element '), iscell) : AST.emptyArray(iscell);
+    public static readonly nodeFirstRow = (row: NodeList | null = null, iscell?: boolean): MultiArray<ExpressionBoundaryValue> =>
+        row ? AST.firstRow<ExpressionBoundaryValue>(AST.factoryArrayElementList(row, 'array element '), iscell) : AST.emptyArray<ExpressionBoundaryValue>(iscell);
 
     /**
      * Append row to MultiArray.
@@ -1783,7 +1815,8 @@ abstract class AST {
      * @param row
      * @returns
      */
-    public static readonly nodeAppendRow = (M: MultiArray, row: NodeList | null = null): MultiArray => (row ? AST.appendRow(M, AST.factoryArrayElementList(row, 'array element ')) : M);
+    public static readonly nodeAppendRow = (M: MultiArray<ExpressionBoundaryValue>, row: NodeList | null = null): MultiArray<ExpressionBoundaryValue> =>
+        row ? AST.appendRow<ExpressionBoundaryValue>(M, AST.factoryArrayElementList(row, 'array element ')) : M;
 
     /**
      *
@@ -1833,7 +1866,7 @@ abstract class AST {
     /**
      * Ensures that the node is of type `NodeReturnList`.
      * @param node A `NodeExpr`
-     * @returns `node` as NodeReturnList
+     * @returns A lazy return-list wrapper for `node`.
      */
     public static readonly ensureReturnList = (node: NodeExpr): NodeReturnList => {
         if (AST.isNodeReturnList(node)) {
@@ -1939,7 +1972,7 @@ abstract class AST {
             id: id.id,
             mapper: parameters.length === 1 && returns.length === 1,
             ev: new Array(parameters.length).fill(true),
-            func: null as unknown as Function,
+            func: null,
             return: return_list,
             parameter: parameter_list,
             arguments: arguments_list,
@@ -2450,7 +2483,7 @@ abstract class AST {
         defaultValue: NodeExpr | null = null,
     ): NodeClassProperty => {
         const legacyDefaultValue = sizeOrDefaultValue && sizeOrDefaultValue.type !== 'LIST' ? AST.factoryExpression(sizeOrDefaultValue, 'argument validation default') : null;
-        const size = sizeOrDefaultValue && sizeOrDefaultValue.type === 'LIST' ? (sizeOrDefaultValue as NodeList) : AST.nodeListFirst();
+        const size = AST.isNodeList(sizeOrDefaultValue) ? sizeOrDefaultValue : AST.nodeListFirst();
         const validation = AST.nodeArgumentValidation(id, size, cl, functions, legacyDefaultValue ?? defaultValue);
         const result = {
             type: 'CLASS_PROPERTY',
@@ -2524,6 +2557,7 @@ export type {
     NodeClassSectionMember,
     NodeListElement,
     StrictNodeExpr,
+    ExpressionBoundaryValue,
     NodeExpr,
     NodeReserved,
     NodeLiteral,

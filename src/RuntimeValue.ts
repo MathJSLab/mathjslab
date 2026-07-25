@@ -34,7 +34,7 @@ abstract class RuntimeValue {
      * @returns `true` when `value.copy()` can be used.
      */
     private static readonly hasCopy = <T>(value: T): value is T & { copy: () => T } =>
-        !!value && (typeof value === 'object' || typeof value === 'function') && typeof (value as { copy?: unknown }).copy === 'function';
+        !!value && (typeof value === 'object' || typeof value === 'function') && typeof Reflect.get(value, 'copy') === 'function';
 
     /**
      * Copy a runtime value through its own copy protocol.
@@ -83,13 +83,11 @@ abstract class RuntimeValue {
      * @returns `true` when `value` looks like a class instance.
      */
     public static readonly isClassInstance = (value: unknown): value is { type: number; classDefinition: { name: string }; properties: Map<string, unknown> | Record<string, unknown> } =>
-        !!value &&
         typeof value === 'object' &&
-        (value as { type?: unknown }).type === RuntimeValue.CLASS_INSTANCE &&
-        !!(value as { classDefinition?: unknown }).classDefinition &&
-        typeof (value as { classDefinition: { name?: unknown } }).classDefinition.name === 'string' &&
-        !!(value as { properties?: unknown }).properties &&
-        typeof (value as { properties?: unknown }).properties === 'object';
+        value !== null &&
+        Reflect.get(value, 'type') === RuntimeValue.CLASS_INSTANCE &&
+        RuntimeValue.isNamedClassDefinition(Reflect.get(value, 'classDefinition')) &&
+        RuntimeValue.isObjectRecord(Reflect.get(value, 'properties'));
 
     /**
      * Return the class-definition object associated with a runtime class instance.
@@ -108,10 +106,22 @@ abstract class RuntimeValue {
      * modules.
      */
     private static readonly hasDimensions = (value: unknown): value is { dimension: number[] } =>
-        !!value &&
-        typeof value === 'object' &&
-        Array.isArray((value as { dimension?: unknown }).dimension) &&
-        (value as { dimension: unknown[] }).dimension.every((dimension) => typeof dimension === 'number');
+        typeof value === 'object' && value !== null && RuntimeValue.isNumericDimensionVector(Reflect.get(value, 'dimension'));
+
+    /**
+     * Test whether a structural candidate is an object-like value.
+     */
+    private static readonly isObjectRecord = (value: unknown): value is object => typeof value === 'object' && value !== null;
+
+    /**
+     * Test whether a structural class-definition candidate exposes a name.
+     */
+    private static readonly isNamedClassDefinition = (value: unknown): value is { name: string } => RuntimeValue.isObjectRecord(value) && typeof Reflect.get(value, 'name') === 'string';
+
+    /**
+     * Test whether a structural dimension candidate is a numeric shape vector.
+     */
+    private static readonly isNumericDimensionVector = (value: unknown): value is number[] => Array.isArray(value) && value.every((dimension) => typeof dimension === 'number');
 
     /**
      * Return MATLAB/Octave-style dimensions for a runtime value.

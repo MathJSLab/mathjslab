@@ -4,6 +4,7 @@ import { ComplexDecimal } from './ComplexDecimal';
 import { Interpreter } from './Interpreter';
 import { MultiArray } from './MultiArray';
 import { Complex } from './Complex';
+import { CharString } from './CharString';
 import { executeList } from './ParserTestUtils';
 
 let interpreter: Interpreter;
@@ -11,6 +12,23 @@ let interpreter: Interpreter;
 const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.sep}]+)\\.spec\\.([cm]?[jt]s)\$`))!;
 const unitName = __filenameMatch[1];
 const testExtension = __filenameMatch[2];
+
+const realLine = (line: unknown): number[] => {
+    expect(Array.isArray(line)).toBe(true);
+    return (line as unknown[]).map((value) => {
+        if (!Complex.isInstanceOf(value)) {
+            throw new TypeError('Expected reduced line element to be a complex scalar.');
+        }
+        return Complex.realToNumber(value);
+    });
+};
+
+const realScalar = (value: unknown): number => {
+    if (!Complex.isInstanceOf(value)) {
+        throw new TypeError('Expected complex scalar.');
+    }
+    return Complex.realToNumber(value);
+};
 
 describe(`${unitName} unit test (.${testExtension} test file).`, () => {
     beforeEach(async () => {
@@ -29,6 +47,17 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         it('Empty arrays should be false in logical conditions.', () => {
             expect(Complex.realEquals(MultiArray.toLogical(MultiArray.emptyArray()), 0)).toBe(true);
             expect(Complex.realEquals(MultiArray.emptyArray().toLogical(), 0)).toBe(true);
+        });
+
+        it('Numeric array operations should reject malformed nonnumeric elements.', () => {
+            const malformed = new MultiArray([1, 1], CharString.create('x'));
+
+            expect(() => MultiArray.toLogical(malformed)).toThrow('toLogical: expected numeric array element.');
+            expect(() => malformed.toLogical()).toThrow('toLogical: expected numeric array element.');
+            expect(() => MultiArray.isComplexMultiArray(malformed)).toThrow('isComplexMultiArray: expected numeric array element.');
+            expect(() => MultiArray.haveAnyComplex(malformed)).toThrow('haveAnyComplex: expected numeric array element.');
+            expect(() => MultiArray.pageSlice(malformed, 0)).toThrow('pageSlice: expected numeric array element.');
+            expect(() => MultiArray.toFlatArray(malformed)).toThrow('toFlatArray: expected numeric array element.');
         });
 
         it('Array-local shape predicates should remain limited to MultiArray values.', () => {
@@ -52,6 +81,61 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                                               4,   5- i,     6;
                                               7,   8,    10+3i ]`).list[0] as MultiArray;
             expect(MultiArray.haveAnyComplex(B)).toBe(true);
+        });
+
+        it('reduceToArray should collect reduced dimension values without changing source elements.', () => {
+            const A = interpreter.Execute('[1, 2; 3, 4]').list[0] as MultiArray;
+            const byColumn = MultiArray.reduceToArray(0, A);
+            const byRow = MultiArray.reduceToArray(1, A);
+            const unchangedRank = MultiArray.reduceToArray(2, A);
+
+            expect(byColumn.dimension).toEqual([1, 2]);
+            expect(byColumn.array[0].map(realLine)).toEqual([
+                [1, 3],
+                [2, 4],
+            ]);
+            expect(byRow.dimension).toEqual([2, 1]);
+            expect(byRow.array.map((row) => realLine(row[0]))).toEqual([
+                [1, 2],
+                [3, 4],
+            ]);
+            expect(unchangedRank.dimension).toEqual([2, 2]);
+            expect(unchangedRank.array.map((row) => row.map(realLine))).toEqual([
+                [[1], [2]],
+                [[3], [4]],
+            ]);
+        });
+
+        it('logical indexing should reject malformed logical masks before selection.', () => {
+            const A = interpreter.Execute('[1, 2; 3, 4]').list[0] as MultiArray;
+            const mask = new MultiArray([1, 1]);
+            mask.type = Complex.LOGICAL;
+            mask.array[0][0] = undefined;
+
+            expect(() => MultiArray.getElements(A, 'A', [], [mask])).toThrow('A: invalid logical index.');
+        });
+
+        it('linearize should preserve column-major order across pages.', () => {
+            const array = new MultiArray([2, 2, 2], (row, column, page) => Complex.create(row * 100 + column * 10 + page));
+
+            expect(MultiArray.linearize(array).map(realScalar)).toEqual([111, 211, 121, 221, 112, 212, 122, 222]);
+        });
+
+        it('linearize should match the canonical physical row/column translator.', () => {
+            for (const dimension of [
+                [2, 3],
+                [2, 2, 2],
+                [2, 3, 2, 2],
+            ]) {
+                const array = new MultiArray(dimension, (...subscript) => Complex.create(MultiArray.subscriptToLinearIndex(dimension, subscript) + 1));
+
+                const expected = Array.from({ length: MultiArray.linearLength(array) }, (_, index) => {
+                    const [row, column] = MultiArray.linearIndexToMultiArrayRowColumn(dimension[0], dimension[1], index);
+                    return realScalar(array.array[row][column]);
+                });
+
+                expect(MultiArray.linearize(array).map(realScalar)).toEqual(expected);
+            }
         });
 
         it('The determinant must be correctly calculated', () => {

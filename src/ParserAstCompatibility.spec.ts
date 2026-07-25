@@ -295,6 +295,16 @@ describe('Parser AST compatibility fixtures.', () => {
         expect(func.return.list.map((node) => node.parent)).toEqual([func, func]);
     });
 
+    it('Should expose scalar and empty function return lists structurally.', () => {
+        const scalar = firstParsedNode(['function y = scalarreturn(x)', '  y = x;', 'end'].join('\n'), AST.isNodeFunctionDefinition, 'function definition');
+        const empty = firstParsedNode(['function [] = emptyreturn(x)', '  x = x + 1;', 'end'].join('\n'), AST.isNodeFunctionDefinition, 'function definition');
+
+        expect(idsOf(scalar.return)).toEqual(['y']);
+        expect(scalar.return.list[0].parent).toBe(scalar);
+        expect(empty.return.list).toEqual([]);
+        expect(empty.return.parent).toBe(empty);
+    });
+
     it('Should expose space-separated class method return lists structurally.', () => {
         const classDef = parseClass(['classdef ReturnListClass', '  methods', '    function [a b] = pair(obj, x)', '      a = x;', '      b = x + 1;', '    end', '  end', 'end'].join('\n'));
         const methods = classDef.sections[0] as NodeClassSection;

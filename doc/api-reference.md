@@ -11,6 +11,13 @@ This reference is generated from exported TypeScript declarations and their JSDo
 
 Table of symbolic aliases recognized by the lexer/parser layer.
 
+## AnonymousFunctionHandle
+
+- Kind: `type`
+- Source: `src/FunctionHandle.ts`
+
+No JSDoc documentation is available yet.
+
 ## AST
 
 - Kind: `class`
@@ -477,6 +484,17 @@ Runtime value accepted in array slots and expression evaluation results.
 slots while constructing MATLAB-like empty arrays, structure fields, and
 omitted values.
 
+## ExpressionBoundaryValue
+
+- Kind: `type`
+- Source: `src/AST.ts`
+
+Value accepted after an explicit expression-boundary validation.
+
+`NodeList` is included only as an execution-result carrier for paths such as
+`eval`/`evalin` and lazy return lists. New ordinary expression slots should
+prefer `StrictNodeExpr` when they do not need that carrier.
+
 ## format
 
 - Kind: `constant`
@@ -625,6 +643,16 @@ User-defined function table keyed by function name.
 - Source: `src/Interpreter.ts`
 
 Increment and decrement operator handler type.
+
+## IndexArgument
+
+- Kind: `type`
+- Source: `src/MultiArray.ts`
+
+Runtime values accepted by native MATLAB/Octave array indexing.
+
+Parser nodes, structures, class objects, and arbitrary expression results
+must be reduced or rejected before they enter the low-level indexing engine.
 
 ## IndexingDelimiterType
 

@@ -54,6 +54,7 @@ type ReduceHandlerType = ReduceReduceHandlerType | ReduceComparisonHandlerType;
 type ReturnHandlerResult = { length: number } & Record<string, ElementType | number | undefined>;
 type ReturnSelector = (evaluated: ReturnHandlerResult, index: number) => ElementType;
 type ReturnHandler = (length: number) => ReturnHandlerResult;
+type ReducedArrayLine = ElementType[];
 type NodeReturnList = {
     type: 'RETLIST';
     selector: ReturnSelector;
@@ -64,9 +65,17 @@ type IndexAssignmentScope = {
     resolveName(name: string): { node?: unknown } | undefined;
     defineName(name: string, node: ElementType): { node?: unknown };
 };
+/**
+ * Runtime values accepted by native MATLAB/Octave array indexing.
+ *
+ * Parser nodes, structures, class objects, and arbitrary expression results
+ * must be reduced or rejected before they enter the low-level indexing engine.
+ */
 type IndexArgument = ComplexType | MultiArray;
 type NormalizedIndexingStructure = {
     isLinear: boolean;
+    isLinearColonOnly: boolean;
+    linearIndexDimension?: number[];
     originalIndexCount: number;
     args: ElementType[][];
     argsLength: number[];
@@ -81,6 +90,9 @@ type IndexingPlan = {
     activeDimensions: number[];
     isFullSlice: boolean[];
     isScalarIndex: boolean[];
+};
+type ParentLinkedElement = {
+    parent?: unknown;
 };
 
 const nodeReturnList = (selector: ReturnSelector, handler?: ReturnHandler): NodeReturnList => ({ type: 'RETLIST', selector, handler });
@@ -138,6 +150,59 @@ class MultiArray<ELEMENT = Elements> {
      * @returns `true` when `obj` is a `MultiArray`.
      */
     public static readonly isInstanceOf = (obj: unknown): obj is MultiArray => obj instanceof MultiArray;
+
+    /**
+     * Test whether a runtime value can be consumed directly by native indexing.
+     *
+     * Valid subscripts are numeric/logical scalar values or numeric/logical
+     * arrays. Colon ranges are represented as numeric `MultiArray` instances
+     * before this boundary is reached.
+     *
+     * @param value Candidate subscript value.
+     * @returns True when `value` is a native array-index argument.
+     */
+    public static isIndexArgument(value: unknown): value is IndexArgument {
+        return Complex.isInstanceOf(value) || MultiArray.isInstanceOf(value);
+    }
+
+    /**
+     * Validate a list of values before passing them into the indexing engine.
+     *
+     * Keeping this check in `MultiArray` makes every caller share the same
+     * supported-subscript contract while preserving specialized error handlers
+     * at higher interpreter layers.
+     *
+     * @param values Candidate subscript values.
+     * @param role Diagnostic label used in thrown errors.
+     * @returns The same values narrowed to native index arguments.
+     * @throws EvalError When any value is not a valid native subscript.
+     */
+    public static indexArguments(values: unknown[], role: string = 'index'): IndexArgument[] {
+        return values.map((value, index) => {
+            if (!MultiArray.isIndexArgument(value)) {
+                throw new EvalError(`${role}${index + 1}: invalid subscript type.`);
+            }
+            return value;
+        });
+    }
+
+    /**
+     * Read an array element that must be a numeric scalar.
+     *
+     * Native numeric/logical array operations should only reach this helper for
+     * arrays whose storage is known to be numeric. The explicit guard keeps
+     * malformed runtime arrays from failing later through opaque method calls.
+     *
+     * @param value Candidate array element.
+     * @param role Diagnostic operation name.
+     * @returns Numeric scalar element.
+     */
+    private static readonly numericElement = (value: unknown, role: string): ComplexType => {
+        if (!Complex.isInstanceOf(value)) {
+            throw new TypeError(`${role}: expected numeric array element.`);
+        }
+        return value;
+    };
 
     /** Runtime tag for logical arrays. */
     public static readonly LOGICAL = Complex.LOGICAL;
@@ -310,7 +375,22 @@ class MultiArray<ELEMENT = Elements> {
      * @param obj Any object.
      * @returns `true` if object is an empty array.
      */
-    public static readonly isEmpty = (obj: unknown): boolean => obj instanceof MultiArray && (obj as MultiArray).dimension.reduce((p, c) => p * c, 1) === 0;
+    public static readonly isEmpty = (obj: unknown): boolean => obj instanceof MultiArray && obj.dimension.reduce((p, c) => p * c, 1) === 0;
+
+    /**
+     * Test whether a temporary reduced-array slot stores collected elements.
+     * @param value Slot value produced by `reduceToArray`.
+     * @returns `true` when the slot contains a reduced element line.
+     */
+    private static readonly isReducedArrayLine = (value: ElementType<ReducedArrayLine>): value is ReducedArrayLine => Array.isArray(value);
+
+    /**
+     * Test whether a reduced line contains numeric scalar values.
+     * @param value Reduced line produced by `reduceToArray`.
+     * @returns `true` when all collected values are complex scalars.
+     */
+    private static readonly isReducedComplexArrayLine = (value: ElementType<ReducedArrayLine>): value is ComplexType[] =>
+        MultiArray.isReducedArrayLine(value) && value.every(Complex.isInstanceOf);
 
     /**
      * Check if object is a MultiArray and it is a cell array.
@@ -329,7 +409,7 @@ class MultiArray<ELEMENT = Elements> {
         let result = false;
         for (let i = 0; i < M.dimensionR.reduce((a, b) => a * b, 1); i++) {
             for (let j = 0; j < M.dimension[1]; j++) {
-                if (Complex.isComplexValue(M.array[i][j] as ComplexType)) {
+                if (Complex.isComplexValue(MultiArray.numericElement(M.array[i][j], 'isComplexMultiArray'))) {
                     result = true;
                     break;
                 }
@@ -467,7 +547,7 @@ class MultiArray<ELEMENT = Elements> {
      */
     public static readonly pageSlice = (M: MultiArray, pageIndex: number): ComplexType[][] => {
         const dim = M.dimension;
-        if (dim.length <= 2) return M.array as ComplexType[][];
+        if (dim.length <= 2) return M.array.map((row) => row.map((value) => MultiArray.numericElement(value, 'pageSlice')));
 
         const [rows, cols] = dim.slice(-2);
         const totalPages = dim.slice(0, -2).reduce((a, b) => a * b, 1);
@@ -475,7 +555,7 @@ class MultiArray<ELEMENT = Elements> {
             throw new RangeError(`pageSlice: invalid page index ${pageIndex}/${totalPages}`);
         }
 
-        const flat = MultiArray.flatten(M) as ComplexType[];
+        const flat = MultiArray.flatten(M).map((value) => MultiArray.numericElement(value, 'pageSlice'));
         const offset = pageIndex * rows * cols;
 
         const page: ComplexType[][] = [];
@@ -525,7 +605,7 @@ class MultiArray<ELEMENT = Elements> {
             if (!arr.array[row] || typeof arr.array[row][col] === 'undefined') {
                 throw new Error(`toFlatArray: missing element at linear ${lin} -> array[${row}][${col}] is undefined.`);
             }
-            out[lin] = arr.array[row][col] as ComplexType;
+            out[lin] = MultiArray.numericElement(arr.array[row][col], 'toFlatArray');
         }
         return out;
     };
@@ -682,12 +762,16 @@ class MultiArray<ELEMENT = Elements> {
      * @param row Array of objects.
      * @returns MultiArray with `row` parameter as first line.
      */
-    public static readonly firstRow = (row: ElementType[], iscell?: boolean): MultiArray => {
-        const result = new MultiArray([1, row.length]);
+    private static readonly linkArrayElementParent = (element: unknown, parent: unknown): void => {
+        if (element && typeof element === 'object') {
+            (element as ParentLinkedElement).parent = parent;
+        }
+    };
+
+    public static readonly firstRow = <ELEMENT = Elements>(row: ElementType<ELEMENT>[], iscell?: boolean): MultiArray<ELEMENT> => {
+        const result = new MultiArray<ELEMENT>([1, row.length]);
         result.array[0] = row;
-        result.array[0].forEach((element: ElementType) => {
-            element!.parent = result;
-        });
+        result.array[0].forEach((element) => MultiArray.linkArrayElementParent(element, result));
         result.isCell = iscell ?? false;
         return result;
     };
@@ -699,10 +783,8 @@ class MultiArray<ELEMENT = Elements> {
      * @param row Array of objects to append as row of MultiArray.
      * @returns MultiArray with row appended.
      */
-    public static readonly appendRow = (M: MultiArray, row: ElementType[]): MultiArray => {
-        row.forEach((element: ElementType) => {
-            element!.parent = M;
-        });
+    public static readonly appendRow = <ELEMENT = Elements>(M: MultiArray<ELEMENT>, row: ElementType<ELEMENT>[]): MultiArray<ELEMENT> => {
+        row.forEach((element) => MultiArray.linkArrayElementParent(element, M));
         M.array.push(row);
         M.dimension[0]++;
         return M;
@@ -780,17 +862,48 @@ class MultiArray<ELEMENT = Elements> {
     /**
      * Converts CharString to MultiArray.
      * @param text CharString.
-     * @returns MultiArray with character codes as integer.
+     * @returns Numeric character-code scalar or row vector.
      */
-    public static readonly fromCharString = (text: CharString): MultiArray => {
+    public static readonly fromCharString = (text: CharString): ElementType => {
         if (text.length > 0) {
             const result = new MultiArray(text.dimension);
             result.array = [text.vector().map((char) => Complex.create(char.charCodeAt(0)))];
             result.type = Complex.REAL;
-            return MultiArray.MultiArrayToScalar(result) as MultiArray;
+            return MultiArray.MultiArrayToScalar(result);
         } else {
             return MultiArray.emptyArray();
         }
+    };
+
+    /**
+     * Converts a runtime character string to a row vector of character scalars.
+     *
+     * This preserves text contents for MATLAB/Octave-style string indexing,
+     * unlike `fromCharString`, which converts characters to numeric codes.
+     *
+     * @param text Character string value.
+     * @returns Row vector containing one scalar `CharString` per character.
+     */
+    public static readonly characterVectorFromCharString = (text: CharString): MultiArray => {
+        const result = new MultiArray(text.dimension);
+        result.array[0] = text.toCharacterScalars();
+        MultiArray.setType(result);
+        return result;
+    };
+
+    /**
+     * Rebuild a character string from character-scalar indexing results.
+     *
+     * @param value Scalar or array result produced from a character vector.
+     * @param quote Quote style to preserve.
+     * @returns Joined character string.
+     */
+    public static readonly charStringFromCharacterVectorResult = (value: ElementType, quote: CharString['quote']): CharString => {
+        const selected = MultiArray.isInstanceOf(value) ? MultiArray.linearize(value) : [value];
+        if (!MultiArray.isCharStringList(selected)) {
+            throw new EvalError('character string indexing produced a non-character value.');
+        }
+        return CharString.fromCharacterScalars(selected, quote);
     };
 
     /**
@@ -810,17 +923,28 @@ class MultiArray<ELEMENT = Elements> {
     };
 
     /**
-     * Linearize MultiArray in an array of ElementType using column-major
-     * order.
-     * @param M Multidimensional array.
-     * @returns `ElementType[]` of multidimensional array `M` linearized.
+     * Linearize a `MultiArray` in MATLAB/Octave column-major logical order.
+     *
+     * `MultiArray.array` stores the first two dimensions as a row/column grid
+     * and stacks later pages in the physical row dimension. This method walks
+     * that storage through the same mapping as
+     * `linearIndexToMultiArrayRowColumn`, preserving logical linear-index order
+     * without allocating one slice per page column.
+     *
+     * @param M Multidimensional array or scalar value.
+     * @returns Elements of `M` in logical linear-index order.
      */
     public static readonly linearize = (M: ElementType): ElementType[] => {
         if (M instanceof MultiArray) {
-            const result: ElementType[] = [];
-            for (let p = 0; p < M.array.length; p += M.dimension[0]) {
-                for (let j = 0; j < M.dimension[1]; j++) {
-                    result.push(...M.array.slice(p, p + M.dimension[0]).map((row: ElementType[]) => row[j]));
+            const rows = M.dimension[0];
+            const columns = M.dimension[1];
+            const result = new Array<ElementType>(MultiArray.linearLength(M));
+            let index = 0;
+            for (let pageRow = 0; pageRow < M.array.length; pageRow += rows) {
+                for (let column = 0; column < columns; column++) {
+                    for (let row = 0; row < rows; row++) {
+                        result[index++] = M.array[pageRow + row][column];
+                    }
                 }
             }
             return result;
@@ -833,37 +957,72 @@ class MultiArray<ELEMENT = Elements> {
      * Returns a empty array (0x0 matrix).
      * @returns Empty array (0x0 matrix).
      */
-    public static readonly emptyArray = (iscell?: boolean): MultiArray => {
-        const result = new MultiArray([0, 0]);
+    public static readonly emptyArray = <ELEMENT = Elements>(iscell?: boolean): MultiArray<ELEMENT> => {
+        const result = new MultiArray<ELEMENT>([0, 0]);
         result.isCell = iscell ?? false;
         return result;
     };
 
-    private static readonly isStructureScalar = (value: unknown): value is RuntimeStructureElement =>
-        !!value &&
-        typeof value === 'object' &&
-        (value as { type?: unknown }).type === MultiArray.STRUCTURE &&
-        !!(value as { field?: unknown }).field &&
-        typeof (value as { field?: unknown }).field === 'object';
+    /** Test whether a structural candidate can expose runtime fields. */
+    private static readonly isObjectRecord = (value: unknown): value is object => typeof value === 'object' && value !== null;
 
+    /** Test whether a structural field bag can store runtime array elements. */
+    private static readonly isElementRecord = (value: unknown): value is Record<string, ElementType> => MultiArray.isObjectRecord(value) && !Array.isArray(value);
+
+    /** Test whether a value is structurally a scalar MATLAB/Octave structure. */
+    private static readonly isStructureScalar = (value: unknown): value is RuntimeStructureElement =>
+        MultiArray.isObjectRecord(value) && Reflect.get(value, 'type') === MultiArray.STRUCTURE && MultiArray.isElementRecord(Reflect.get(value, 'field'));
+
+    /**
+     * Return structure elements from a scalar structure or structure array.
+     *
+     * @param value Candidate scalar or array.
+     * @returns Structure elements, or an empty list for non-structure values.
+     */
     private static readonly structureElements = (value: ElementType): RuntimeStructureElement[] => {
         if (MultiArray.isStructureScalar(value)) {
             return [value];
         }
         if (value instanceof MultiArray && !value.isCell) {
             const elements = MultiArray.linearize(value);
-            return elements.length > 0 && elements.every(MultiArray.isStructureScalar) ? (elements as RuntimeStructureElement[]) : [];
+            if (elements.length === 0 || !elements.every(MultiArray.isStructureScalar)) {
+                return [];
+            }
+            return elements;
         }
         return [];
     };
 
+    /** Return sorted field names for a structure scalar or array. */
     private static readonly structureFieldNames = (value: ElementType): string[] => Object.keys(MultiArray.structureElements(value)[0]?.field ?? {}).sort();
 
+    /**
+     * Create and validate a runtime structure through the decoupled factory.
+     *
+     * @param field Field map or nested field path.
+     * @returns Validated structure scalar.
+     */
+    private static readonly createStructureValue = (field: Record<string, ElementType> | string[]): RuntimeStructureElement => {
+        const result = RuntimeValue.createStructure(field);
+        if (!MultiArray.isStructureScalar(result)) {
+            throw new Error('runtime structure factory returned an invalid structure value.');
+        }
+        return result;
+    };
+
+    /** Test whether a linearized value list contains only character scalars. */
+    private static readonly isCharStringList = (values: ElementType[]): values is CharString[] => values.length > 0 && values.every((value) => CharString.isInstanceOf(value));
+
+    /**
+     * Create an empty structure value that mirrors a reference field schema.
+     *
+     * @param reference Structure whose field names should be copied.
+     * @returns New structure with each field initialized to `[]`.
+     */
     private static readonly cloneStructureFields = (reference: RuntimeStructureElement): ElementType => {
-        const result = RuntimeValue.createStructure({}) as ElementType;
-        const fieldRecord = (result as RuntimeStructureElement).field;
+        const result = MultiArray.createStructureValue({});
         Object.keys(reference.field).forEach((key) => {
-            fieldRecord[key] = MultiArray.emptyArray();
+            result.field[key] = MultiArray.emptyArray();
         });
         return result;
     };
@@ -939,7 +1098,10 @@ class MultiArray<ELEMENT = Elements> {
             return MultiArray.cloneStructureFields(reference);
         }
         if (RuntimeValue.isClassInstance(reference)) {
-            return RuntimeValue.copy(reference) as ElementType;
+            return RuntimeValue.copy(reference);
+        }
+        if (CharString.isInstanceOf(reference)) {
+            return CharString.create(' ', reference.quote);
         }
         return Complex.zero();
     };
@@ -967,7 +1129,7 @@ class MultiArray<ELEMENT = Elements> {
      * @param value MultiArray or scalar.
      * @returns MultiArray 1x1 if value is scalar.
      */
-    public static readonly scalarToMultiArray = (value: ElementType): MultiArray => MultiArray.scalarToMultiArrayWithTest(value, !(value as MultiArray).isCell);
+    public static readonly scalarToMultiArray = (value: ElementType): MultiArray => MultiArray.scalarToMultiArrayWithTest(value, !(MultiArray.isInstanceOf(value) && value.isCell));
 
     /**
      * If value is a scalar then convert to a 1x1 MultiArray. If is common
@@ -1024,7 +1186,7 @@ class MultiArray<ELEMENT = Elements> {
      */
     public static readonly copy = (M: MultiArray): MultiArray => {
         const result = new MultiArray(M.dimension, undefined, M.isCell);
-        result.array = M.array.map((row) => row.map((value) => RuntimeValue.copy(value) as ElementType));
+        result.array = M.array.map((row) => row.map((value) => RuntimeValue.copy(value)));
         result.type = M.type;
         return result;
     };
@@ -1036,7 +1198,7 @@ class MultiArray<ELEMENT = Elements> {
      */
     public copy(): MultiArray<ELEMENT> {
         const result = new MultiArray<ELEMENT>(this.dimension, undefined, this.isCell);
-        result.array = this.array.map((row) => row.map((value: ElementType<ELEMENT>) => RuntimeValue.copy(value) as ElementType<ELEMENT>));
+        result.array = this.array.map((row) => row.map((value: ElementType<ELEMENT>) => RuntimeValue.copy(value)));
         result.type = this.type;
         return result;
     }
@@ -1058,7 +1220,7 @@ class MultiArray<ELEMENT = Elements> {
         for (let i = 0; i < M.array.length; i++) {
             const row = M.array[i];
             for (let j = 0; j < M.dimension[1]; j++) {
-                const value = (row[j] as ComplexType).toLogical();
+                const value = MultiArray.numericElement(row[j], 'toLogical').toLogical();
                 if (Complex.realEquals(value, 0)) {
                     /* if (value.re.eq(0)) { */
                     return Complex.false();
@@ -1080,7 +1242,7 @@ class MultiArray<ELEMENT = Elements> {
         for (let i = 0; i < this.array.length; i++) {
             const row = this.array[i];
             for (let j = 0; j < this.dimension[1]; j++) {
-                const value = (row[j] as ComplexType).toLogical();
+                const value = MultiArray.numericElement(row[j], 'toLogical').toLogical();
                 if (Complex.realEquals(value, 0)) {
                     /* if (value.re.eq(0)) { */
                     return Complex.false();
@@ -1110,8 +1272,8 @@ class MultiArray<ELEMENT = Elements> {
         if (MultiArray.arrayEquals(dimM, resultDimension)) {
             return;
         }
-        const blankValue: ElementType = MultiArray.blankValueForExpansion(fill ?? M.array[0][0]);
-        const result = new MultiArray(resultDimension, blankValue);
+        const blankValue: ElementType = fill ? MultiArray.blankValueForExpansion(fill) : M.isCell ? MultiArray.emptyArray() : MultiArray.blankValueForExpansion(M.array[0]?.[0]);
+        const result = new MultiArray(resultDimension, blankValue, M.isCell);
         for (let n = 0; n < MultiArray.linearLength(M); n++) {
             const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(M.dimension[0], M.dimension[1], n);
             const subscriptM = MultiArray.linearIndexToSubscript(M.dimension, n);
@@ -1206,7 +1368,7 @@ class MultiArray<ELEMENT = Elements> {
     public static readonly haveAnyComplex = (M: MultiArray): boolean => {
         for (let i = 0; i < M.dimension[0]; i++) {
             for (let j = 0; j < M.dimension[1]; j++) {
-                if (!Complex.imagIsZero(M.array[i][j] as ComplexType)) return true;
+                if (!Complex.imagIsZero(MultiArray.numericElement(M.array[i][j], 'haveAnyComplex'))) return true;
             }
         }
         return false;
@@ -1641,17 +1803,20 @@ class MultiArray<ELEMENT = Elements> {
      * MultiArray class.
      * @param dimension Dimension to reduce to Array
      * @param M MultiArray to be reduced.
-     * @returns MultiArray reduced.
+     * @returns MultiArray whose slots contain collected element lines.
      */
-    public static readonly reduceToArray = (dimension: number, M: MultiArray): MultiArray => {
+    public static readonly reduceToArray = (dimension: number, M: MultiArray): MultiArray<ReducedArrayLine> => {
         /* TODO: check if subscriptC inside for can be removed and if forS can be inverted like in mapAlongDimension. */
         if (dimension >= M.dimension.length) {
             /* TODO: check if it is consistent */
-            return M;
+            const result = new MultiArray<ReducedArrayLine>(M.dimension);
+            result.array = M.array.map((row) => row.map((element) => [element]));
+            result.type = M.type;
+            return result;
         } else {
             const dimResult = M.dimension.slice();
             dimResult[dimension] = 1;
-            const result = new MultiArray(dimResult);
+            const result = new MultiArray<ReducedArrayLine>(dimResult);
             const subscriptC = M.dimension.slice();
             subscriptC[dimension] = 1;
             const length = subscriptC.reduce((p, c) => p * c, 1);
@@ -1666,9 +1831,13 @@ class MultiArray<ELEMENT = Elements> {
                     const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(M.dimension[0], M.dimension[1], linearM);
                     const [p, q] = MultiArray.linearIndexToMultiArrayRowColumn(result.dimension[0], result.dimension[1], n);
                     if (d === 1) {
-                        result.array[p][q] = [M.array[i][j]] as unknown as ElementType;
+                        result.array[p][q] = [M.array[i][j]];
                     } else {
-                        (result.array[p][q] as unknown as ElementType[]).push(M.array[i][j]);
+                        const line = result.array[p][q];
+                        if (!MultiArray.isReducedArrayLine(line)) {
+                            throw new Error('reduceToArray: invalid reduced slot.');
+                        }
+                        line.push(M.array[i][j]);
                     }
                 }
             }
@@ -1841,9 +2010,9 @@ class MultiArray<ELEMENT = Elements> {
                 'evaluate',
                 ...M.array.map((row) => {
                     const values = row.flatMap((element) => evaluateElementValues(element));
-                    if (values.length > 0 && values.every((value) => CharString.isInstanceOf(value))) {
-                        const quote = (values[0] as CharString).quote;
-                        return MultiArray.scalarToMultiArray(CharString.fromCharacterScalars(values as CharString[], quote));
+                    if (MultiArray.isCharStringList(values)) {
+                        const quote = values[0].quote;
+                        return MultiArray.scalarToMultiArray(CharString.fromCharacterScalars(values, quote));
                     }
                     return MultiArray.concatenate(1, 'evaluate', ...values.map((value) => MultiArray.scalarToMultiArray(value)));
                 }),
@@ -2379,9 +2548,18 @@ class MultiArray<ELEMENT = Elements> {
         const originalIndexCount = indexList.length;
         /* Linear case */
         if (indexList.length === 1) {
-            const arg = MultiArray.linearize(indexList[0]);
+            const linearIndex = indexList[0];
+            const arg = MultiArray.linearize(linearIndex);
+            const totalLength = dimension.reduce((p, c) => p * c, 1);
+            const isLinearColonOnly =
+                MultiArray.isInstanceOf(linearIndex) &&
+                MultiArray.isColumnVector(linearIndex) &&
+                arg.length === totalLength &&
+                arg.every((value, index) => Complex.isInstanceOf(value) && Complex.realToNumber(value) === index + 1);
             return {
                 isLinear: true,
+                isLinearColonOnly,
+                linearIndexDimension: MultiArray.isInstanceOf(linearIndex) ? linearIndex.dimension.slice() : [1, 1],
                 originalIndexCount,
                 args: [arg],
                 argsLength: [arg.length],
@@ -2399,6 +2577,7 @@ class MultiArray<ELEMENT = Elements> {
         const total = argsLength.reduce((p, c) => p * c, 1);
         return {
             isLinear: false,
+            isLinearColonOnly: false,
             originalIndexCount,
             args,
             argsLength,
@@ -2526,15 +2705,14 @@ class MultiArray<ELEMENT = Elements> {
         const nd = dimension.length;
         /* Linear case */
         if (idx.isLinear) {
-            const totalLength = dimension.reduce((p, c) => p * c, 1);
             return {
                 isLinear: true,
-                isColonOnly: idx.argsLength[0] === totalLength,
+                isColonOnly: idx.isLinearColonOnly,
                 isRowSelection: false,
                 isColumnSelection: false,
                 requiresCollapse: false,
                 activeDimensions: [0],
-                isFullSlice: [idx.argsLength[0] === totalLength],
+                isFullSlice: [idx.isLinearColonOnly],
                 isScalarIndex: [idx.argsLength[0] === 1],
             };
         }
@@ -2721,6 +2899,68 @@ class MultiArray<ELEMENT = Elements> {
     };
 
     /**
+     * Shape the result of linear indexing according to MATLAB/Octave rules.
+     *
+     * `A(:)` is always a column vector. For explicit `A(P)`, vector sources keep
+     * their own row/column orientation when `P` is also a vector; matrix-shaped
+     * sources or matrix-shaped `P` use the shape of `P`.
+     */
+    private static readonly linearIndexResult = (source: MultiArray, selected: ElementType[], idx: NormalizedIndexingStructure, plan: IndexingPlan): MultiArray => {
+        if (plan.isColonOnly) {
+            return MultiArray.toColumnVector(selected);
+        }
+        const indexDimension = idx.linearIndexDimension ?? [1, selected.length];
+        if (MultiArray.arrayIsVector(source) && indexDimension.length === 2 && (indexDimension[0] === 1 || indexDimension[1] === 1)) {
+            return MultiArray.isRowVector(source) ? MultiArray.toRowVector(selected) : MultiArray.toColumnVector(selected);
+        }
+        const result = new MultiArray(indexDimension);
+        for (let n = 0; n < selected.length; n++) {
+            const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(result.dimension[0], result.dimension[1], n);
+            result.array[i][j] = selected[n];
+        }
+        return result;
+    };
+
+    /**
+     * Shape the result of logical indexing as the equivalent linear indexing by
+     * `find(mask)`.
+     *
+     * For vector sources and vector masks, MATLAB/Octave preserve the source
+     * orientation. For matrix-shaped sources with vector masks, the result follows
+     * the mask orientation. Matrix-shaped logical masks produce a column vector.
+     */
+    private static readonly logicalIndexResult = (source: MultiArray, selected: ElementType[], mask: MultiArray): MultiArray => {
+        if (MultiArray.arrayIsVector(source) && MultiArray.arrayIsVector(mask)) {
+            return MultiArray.isRowVector(source) ? MultiArray.toRowVector(selected) : MultiArray.toColumnVector(selected);
+        }
+        if (MultiArray.arrayIsVector(mask)) {
+            return MultiArray.isRowVector(mask) ? MultiArray.toRowVector(selected) : MultiArray.toColumnVector(selected);
+        }
+        return MultiArray.toColumnVector(selected);
+    };
+
+    /**
+     * Normalize a scalar or array logical subscript to a `MultiArray` mask.
+     * @param arg Logical index argument.
+     * @returns Logical mask as a `MultiArray`.
+     */
+    private static readonly logicalMaskFromIndexArgument = (arg: IndexArgument): MultiArray => (Complex.isInstanceOf(arg) ? MultiArray.scalarToMultiArray(arg) : arg);
+
+    /**
+     * Linearize and validate a logical mask as numeric/logical complex values.
+     * @param items Logical mask.
+     * @param id Optional identifier for diagnostics.
+     * @returns Linearized logical mask values.
+     */
+    private static readonly linearizedLogicalMask = (items: MultiArray, id?: string): ComplexType[] => {
+        const mask = MultiArray.linearize(items);
+        if (!mask.every(Complex.isInstanceOf)) {
+            throw new EvalError(`${id ?? ''}: invalid logical index.`);
+        }
+        return mask;
+    };
+
+    /**
      * Convert a logical mask into a list of linear indices (0-based).
      *
      * MATLAB semantics:
@@ -2750,7 +2990,7 @@ class MultiArray<ELEMENT = Elements> {
      */
     private static readonly logicalToLinearIndices = (M: MultiArray, items: MultiArray, id?: string): number[] => {
         const linearM = MultiArray.linearize(M);
-        const mask = MultiArray.linearize(items) as ComplexType[];
+        const mask = MultiArray.linearizedLogicalMask(items, id);
         if (mask.length > linearM.length) {
             throw new EvalError(`${id ?? ''}(${mask.length}): out of bound ${linearM.length} (dimensions are ${M.dimension.join('x')})`);
         }
@@ -2959,13 +3199,7 @@ class MultiArray<ELEMENT = Elements> {
     public static resolveLinearIndices = (M: MultiArray, id: string, indexList: IndexArgument[], interpreter?: RuntimeDisplay): number[] => {
         /* Logical indexing */
         if (indexList.length === 1 && MultiArray.isLogicalIndex(indexList[0])) {
-            let mask: MultiArray;
-            const arg0 = indexList[0];
-            if (Complex.isInstanceOf(arg0)) {
-                mask = MultiArray.scalarToMultiArray(arg0);
-            } else {
-                mask = arg0 as MultiArray;
-            }
+            const mask = MultiArray.logicalMaskFromIndexArgument(indexList[0]);
             return MultiArray.logicalToLinearIndices(M, mask, id);
         }
         /* Numerical indexing */
@@ -3146,19 +3380,8 @@ class MultiArray<ELEMENT = Elements> {
         const selected = MultiArray.applyLinearSelection(M, indices, field);
         /* Logical case → special shape */
         if (indexList.length === 1 && MultiArray.isLogicalIndex(indexList[0])) {
-            let mask: MultiArray;
-            const arg0 = indexList[0];
-            if (Complex.isInstanceOf(arg0)) {
-                mask = MultiArray.scalarToMultiArray(arg0);
-            } else {
-                mask = arg0 as MultiArray;
-            }
-            let result: MultiArray;
-            if (MultiArray.arrayIsVector(mask)) {
-                result = MultiArray.isRowVector(mask) ? MultiArray.toRowVector(selected) : MultiArray.toColumnVector(selected);
-            } else {
-                result = MultiArray.toColumnVector(selected);
-            }
+            const mask = MultiArray.logicalMaskFromIndexArgument(indexList[0]);
+            const result = MultiArray.logicalIndexResult(M, selected, mask);
             MultiArray.setType(result);
             return result;
         }
@@ -3167,7 +3390,7 @@ class MultiArray<ELEMENT = Elements> {
         const plan = MultiArray.resolveIndexPlan(M.dimension, idx);
         /* Linear */
         if (idx.isLinear) {
-            const result = plan.isColonOnly ? MultiArray.toColumnVector(selected) : MultiArray.toRowVector(selected);
+            const result = MultiArray.linearIndexResult(M, selected, idx, plan);
             MultiArray.setType(result);
             return result;
         }
@@ -3290,7 +3513,11 @@ class MultiArray<ELEMENT = Elements> {
             if (entry.node instanceof MultiArray) {
                 if (idx.isLinear) {
                     if (argsMax[0] > MultiArray.linearLength(entry.node)) {
-                        if (MultiArray.arrayIsVector(entry.node)) {
+                        if (MultiArray.isEmpty(entry.node)) {
+                            const expansionFill =
+                                field.length > 0 ? MultiArray.createStructureValue(field) : entry.node.isCell ? undefined : MultiArray.blankValueForExpansion(linearizedRight[0]);
+                            MultiArray.expand(entry.node, [1, argsMax[0]], expansionFill);
+                        } else if (MultiArray.arrayIsVector(entry.node)) {
                             if (entry.node.dimension[0] === 1) {
                                 MultiArray.expand(entry.node, [1, argsMax[0]]);
                             } else {
@@ -3317,11 +3544,13 @@ class MultiArray<ELEMENT = Elements> {
                 entry.node.array[0][0] = value;
             }
         } else {
-            const blankValue: ElementType = field.length > 0 ? RuntimeValue.createStructure(field) : MultiArray.blankValueForExpansion(linearizedRight[0]);
+            const createCellArray = field.length === 0 && right.isCell;
+            const blankValue: ElementType =
+                field.length > 0 ? MultiArray.createStructureValue(field) : createCellArray ? MultiArray.emptyArray() : MultiArray.blankValueForExpansion(linearizedRight[0]);
             if (idx.isLinear) {
-                entry = scope.defineName(id, new MultiArray([1, argsMax[0]], blankValue));
+                entry = scope.defineName(id, new MultiArray([1, argsMax[0]], blankValue, createCellArray));
             } else {
-                entry = scope.defineName(id, new MultiArray(argsMax, blankValue));
+                entry = scope.defineName(id, new MultiArray(argsMax, blankValue, createCellArray));
             }
         }
         if (!(entry.node instanceof MultiArray)) {
@@ -3396,14 +3625,7 @@ class MultiArray<ELEMENT = Elements> {
     ): void => {
         /* Logical indexing (single argument) */
         if (indexList.length === 1 && MultiArray.isLogicalIndex(indexList[0])) {
-            let mask: MultiArray;
-            const arg0 = indexList[0];
-            /* logical scalar → turn into a MultiArray */
-            if (Complex.isInstanceOf(arg0)) {
-                mask = MultiArray.scalarToMultiArray(arg0);
-            } else {
-                mask = arg0 as MultiArray;
-            }
+            const mask = MultiArray.logicalMaskFromIndexArgument(indexList[0]);
             const entry = scope.resolveName(id);
             if (!entry || !(entry.node instanceof MultiArray)) {
                 throw new EvalError(`${id}(_): invalid matrix indexing.`);
@@ -3644,7 +3866,10 @@ class MultiArray<ELEMENT = Elements> {
                         const indexM = new MultiArray(reduced.dimension);
                         for (let i = 0; i < indexM.array.length; i++) {
                             for (let j = 0; j < indexM.array[i].length; j++) {
-                                const arrayLine = reduced.array[i][j] as unknown as ComplexType[];
+                                const arrayLine = reduced.array[i][j];
+                                if (!MultiArray.isReducedComplexArrayLine(arrayLine)) {
+                                    throw new Error(`${op}: invalid reduced array slot.`);
+                                }
                                 let best = arrayLine[0];
                                 let bestIndex = 1;
                                 for (let d = 1; d < arrayLine.length; d++) {
@@ -3706,5 +3931,5 @@ class MultiArray<ELEMENT = Elements> {
     };
 }
 
-export { type ElementType, MultiArray };
+export { type ElementType, type IndexArgument, MultiArray };
 export default { MultiArray };

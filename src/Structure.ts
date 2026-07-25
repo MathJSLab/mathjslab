@@ -41,10 +41,11 @@ class Structure {
     constructor(field: Record<string, ElementType> | string[]) {
         this.field = {};
         if (Array.isArray(field)) {
-            let struct = this as Structure;
+            let struct: Structure = this;
             for (let i = 0; i < field.length - 1; i++) {
-                struct.field[field[i]] = new Structure({});
-                struct = struct.field[field[i]] as Structure;
+                const nested = new Structure({});
+                struct.field[field[i]] = nested;
+                struct = nested;
             }
             struct.field[field[field.length - 1]] = MultiArray.emptyArray();
         } else {
@@ -68,7 +69,10 @@ class Structure {
         }
         if (obj instanceof MultiArray && !obj.isCell) {
             const elements = MultiArray.linearize(obj);
-            return elements.length > 0 && elements.every(Structure.isInstanceOf) ? (elements as Structure[]) : [];
+            if (elements.length === 0 || !elements.every(Structure.isInstanceOf)) {
+                return [];
+            }
+            return elements;
         }
         return [];
     };
@@ -124,8 +128,11 @@ class Structure {
         if (Structure.isMissingOrEmpty(value)) {
             return new Structure({});
         }
-        if (value instanceof Structure || Structure.isStructure(value)) {
-            return value as Structure | MultiArray;
+        if (value instanceof Structure) {
+            return value;
+        }
+        if (value instanceof MultiArray && Structure.isStructure(value)) {
+            return value;
         }
         throw new EvalError(Structure.invalidReferenceMessage);
     };

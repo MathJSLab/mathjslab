@@ -12,7 +12,7 @@ type FunctionHandleNode = {
     type?: string | number;
     id?: string;
     parent?: unknown;
-    copy?: () => FunctionHandleNode;
+    copy?: () => unknown;
 };
 type FunctionHandleExpression = FunctionHandleNode | null;
 
@@ -26,6 +26,7 @@ type FunctionHandleClosure = {
     nameTable: Record<string, { global?: boolean; node?: unknown } | undefined>;
     resolveFunction(name: string): unknown;
 };
+type AnonymousFunctionHandle = FunctionHandle & { id: undefined };
 
 /**
  * # FunctionHandle
@@ -150,6 +151,14 @@ class FunctionHandle {
      * @returns True if `obj` is a FunctionHandle
      */
     public static isInstanceOf = (obj: unknown): obj is FunctionHandle => obj instanceof FunctionHandle;
+
+    /**
+     * Type guard for anonymous function handles.
+     *
+     * @param obj - Value to test
+     * @returns True when `obj` is an anonymous function handle
+     */
+    public static isAnonymous = (obj: unknown): obj is AnonymousFunctionHandle => FunctionHandle.isInstanceOf(obj) && typeof obj.id === 'undefined';
 
     /**
      * Private constructor.
@@ -282,39 +291,53 @@ class FunctionHandle {
         return result;
     }
 
-    private static hasCopyMethod(node: FunctionHandleNode): node is FunctionHandleNode & { copy: () => FunctionHandleNode } {
+    private static hasCopyMethod(node: FunctionHandleNode): node is FunctionHandleNode & { copy: () => unknown } {
         return typeof node.copy === 'function';
+    }
+
+    private static isFunctionHandleNode(value: unknown): value is FunctionHandleNode {
+        return !!value && typeof value === 'object';
+    }
+
+    private static hasNodeType(value: unknown): value is FunctionHandleNode {
+        return FunctionHandle.isFunctionHandleNode(value) && 'type' in value;
     }
 
     private static copyNodeValue(value: unknown): unknown {
         if (Array.isArray(value)) {
             return value.map((item) => FunctionHandle.copyNodeValue(item));
         }
-        if (value && typeof value === 'object') {
-            return FunctionHandle.copyNode(value as FunctionHandleNode);
+        if (FunctionHandle.isFunctionHandleNode(value)) {
+            return FunctionHandle.copyNode(value);
         }
         return value;
     }
 
-    private static copyNode<T extends FunctionHandleExpression | undefined>(node: T): T {
+    private static copyNode(node: undefined): undefined;
+    private static copyNode(node: null): null;
+    private static copyNode(node: FunctionHandleNode): FunctionHandleNode;
+    private static copyNode(node: FunctionHandleExpression): FunctionHandleExpression;
+    private static copyNode(node: FunctionHandleExpression | undefined): FunctionHandleExpression | undefined {
         if (!node || typeof node !== 'object') {
             return node;
         }
         if (FunctionHandle.hasCopyMethod(node)) {
-            return node.copy() as T;
+            const copy = node.copy();
+            if (FunctionHandle.isFunctionHandleNode(copy) || copy === null || typeof copy === 'undefined') {
+                return copy;
+            }
         }
-        const clone: Record<string, unknown> = {};
+        const clone: FunctionHandleNode = {};
         for (const [key, value] of Object.entries(node)) {
             if (key === 'parent') {
                 continue;
             }
-            clone[key] = FunctionHandle.copyNodeValue(value);
+            Reflect.set(clone, key, FunctionHandle.copyNodeValue(value));
         }
-        const clonedNode = clone as FunctionHandleNode;
         for (const value of Object.values(clone)) {
-            FunctionHandle.attachParent(value, clonedNode);
+            FunctionHandle.attachParent(value, clone);
         }
-        return clonedNode as T;
+        return clone;
     }
 
     private static attachParent(value: unknown, parent: FunctionHandleNode | FunctionHandle): void {
@@ -322,8 +345,8 @@ class FunctionHandle {
             value.forEach((item) => FunctionHandle.attachParent(item, parent));
             return;
         }
-        if (value && typeof value === 'object' && 'type' in value) {
-            (value as FunctionHandleNode).parent = parent;
+        if (FunctionHandle.hasNodeType(value)) {
+            value.parent = parent;
         }
     }
 
@@ -348,5 +371,6 @@ class FunctionHandle {
     }
 }
 
+export type { AnonymousFunctionHandle };
 export { FunctionHandle };
 export default { FunctionHandle };

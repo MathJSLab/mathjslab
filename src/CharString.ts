@@ -182,6 +182,21 @@ class CharString {
         new CharString(values.map((value) => value.str).join(''), quote);
 
     /**
+     * Convert a numeric character code to a scalar `CharString`.
+     *
+     * MATLAB's `char` conversion truncates nonintegers toward zero and clamps
+     * values to the supported UTF-16 code-unit range.
+     *
+     * @param code Numeric Unicode code unit.
+     * @param quote Quote style for the resulting scalar.
+     * @returns Character scalar for the normalized code.
+     */
+    public static readonly fromNumericCode = (code: number, quote: StringQuoteCharacter = doubleQuoteCharacter): CharString => {
+        const normalized = Math.max(0, Math.min(65535, Math.trunc(code)));
+        return new CharString(String.fromCharCode(normalized), quote);
+    };
+
+    /**
      * Return the character at a zero-based position.
      *
      * @param index Zero-based character index.

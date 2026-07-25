@@ -2,7 +2,15 @@
 import type { NodeBuiltInFunction } from './AST';
 import { AST } from './AST';
 import { Callables } from './Callable';
-import { FunctionHandle } from './FunctionHandle';
+import { FunctionHandle, type AnonymousFunctionHandle } from './FunctionHandle';
+
+const anonymousHandle = (...args: Parameters<typeof FunctionHandle.create>): AnonymousFunctionHandle => {
+    const handle = FunctionHandle.create(...args);
+    if (!FunctionHandle.isAnonymous(handle)) {
+        throw new Error('expected anonymous function handle fixture.');
+    }
+    return handle;
+};
 
 describe('Callable', () => {
     describe('Behavior', () => {
@@ -18,7 +26,7 @@ describe('Callable', () => {
         });
 
         it('Should create and classify lambda callables.', () => {
-            const node = FunctionHandle.create(undefined, [AST.nodeIdentifier('x')], AST.nodeIdentifier('x')) as FunctionHandle & { id: undefined };
+            const node = anonymousHandle(undefined, [AST.nodeIdentifier('x')], AST.nodeIdentifier('x'));
             const callable = Callables.lambda(node);
 
             expect(callable.type).toBe('LAMBDA');

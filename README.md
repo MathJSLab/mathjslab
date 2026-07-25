@@ -341,11 +341,13 @@ The engine implements a practical subset of
 [MATLAB&reg;](https://www.mathworks.com/products/matlab.html)/[Octave](https://www.gnu.org/software/octave/)
 syntax, including expressions, arrays, cell arrays, structures, control flow,
 loops, user functions, anonymous functions, function handles, `arguments`
-blocks, imports, command syntax, comma-separated lists, browser-hosted `.m`
-sources, and substantial `classdef` support, including class metadata,
-properties, methods, events, enumerations, listeners, accessors, SetGet mixins,
-common static/instance dispatch paths, and stricter AST/runtime expression
-boundary validation.
+blocks, imports, command syntax, comma-separated lists, descriptor-based
+indexing with `substruct`/`subsref`/`subsasgn`, browser-hosted `.m` sources,
+and substantial `classdef` support, including class metadata, properties,
+methods, events, enumerations, listeners, accessors, SetGet mixins, common
+static/instance dispatch paths, and stricter AST/runtime expression boundary
+validation. Runtime array helpers preserve MATLAB/Octave column-major logical
+semantics over MathJSLab's page-stacked internal storage.
 
 The main remaining limitations are general external filesystem access,
 incomplete MATLAB/Octave library and toolbox coverage, and less common class

@@ -10,6 +10,9 @@ import type {
     NodeExpr,
     NodeIdentifier,
     NodeFunctionDefinition,
+    NodeFunctionParameter,
+    NodeFunctionReturn,
+    NodeDeclarationElement,
     NodeList,
     NodeArgumentValidation,
     NodeArguments,
@@ -530,12 +533,12 @@ declaration returns [node: NodeInput]
     })*
     ;
 
-declaration_element returns [node: NodeExpr]
+declaration_element returns [node: NodeDeclarationElement]
     : identifier {
         localctx.node = localctx.identifier().node;
     }
     | identifier '=' expression {
-        localctx.node = AST.nodeOperation('=', localctx.identifier().node, localctx.expression().node);
+        localctx.node = AST.nodeDefaultedParameter(localctx.identifier().node, localctx.expression().node);
     }
     ;
 
@@ -788,7 +791,7 @@ param_list returns [node: NodeList]
     })*)? RPAREN
     ;
 
-param_list_elt returns [node: NodeExpr]
+param_list_elt returns [node: NodeFunctionParameter]
     : declaration_element {
         localctx.node = localctx.declaration_element().node;
     }
@@ -801,7 +804,7 @@ param_list_elt returns [node: NodeExpr]
  * List of function return value names.
  */
 
-return_list_elt returns [node: NodeExpr]
+return_list_elt returns [node: NodeFunctionReturn]
     : identifier {
         localctx.node = localctx.identifier().node;
     }
@@ -810,7 +813,7 @@ return_list_elt returns [node: NodeExpr]
     }
     ;
 
-return_list returns [node: NodeExpr]
+return_list returns [node: NodeList]
     locals [i: number = 0]
     : return_list_elt {
         localctx.node = AST.nodeListFirst(localctx.return_list_elt(0).node);

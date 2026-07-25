@@ -292,13 +292,14 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const declaration = AST.nodeDeclarationFirst('GLOBAL');
             const x = AST.nodeIdentifier('x');
             const persistent = AST.nodeDeclarationFirst('PERSIST');
-            const defaulted = AST.nodeOperation('=', AST.nodeIdentifier('cached'), AST.nodeNumber('1') as NodeExpr);
+            const defaulted = AST.nodeDefaultedParameter(AST.nodeIdentifier('cached'), AST.nodeNumber('1') as NodeExpr);
 
             AST.nodeAppendDeclaration(declaration, x);
             AST.nodeAppendDeclaration(persistent, defaulted);
 
             expect(declaration).toMatchObject({ type: 'GLOBAL', list: [x], omitAnswer: true, omitOutput: true });
             expect(persistent.list).toEqual([defaulted]);
+            expect(AST.isNodeDefaultedParameter(defaulted)).toBe(true);
             expect(AST.getDeclarationNode({ node: x })).toBe(x);
             expect(AST.getDeclarationNode(x)).toBe(x);
             expect(AST.nodeIgnoredTarget()).toMatchObject({ type: '<~>', omitAnswer: true, omitOutput: false });
@@ -547,12 +548,18 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const matrix = AST.nodeFirstRow(row);
             const appended = AST.nodeAppendRow(matrix, AST.nodeListFirst(Complex.zero() as unknown as NodeInput));
             const empty = AST.nodeFirstRow();
+            const firstElement = matrix.array[0][0];
+            const appendedElement = appended.array[1][0];
 
             expect(text).toBeInstanceOf(CharString);
             expect(text.str).toBe('abc');
             expect(Complex.realToNumber(number)).toBe(2);
             expect(matrix).toBeInstanceOf(MultiArray);
+            expect(firstElement).toBeDefined();
+            expect(firstElement?.parent).toBe(matrix);
             expect(appended.dimension[0]).toBe(2);
+            expect(appendedElement).toBeDefined();
+            expect(appendedElement?.parent).toBe(appended);
             expect(empty).toBeInstanceOf(MultiArray);
             expect(AST.nodeFirstRow(AST.nodeListFirst(AST.nodeString('cell') as unknown as NodeInput), true).isCell).toBe(true);
         });

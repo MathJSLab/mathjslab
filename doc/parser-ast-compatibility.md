@@ -21,6 +21,9 @@ forms:
 - expression parsing for numeric, string, matrix, cell, range, indexing,
   dynamic field, function-call, anonymous-function, function-handle,
   metaclass-literal, and package/class-qualified name forms;
+- direct and descriptor-based indexing semantics for arrays, cells, character
+  vectors, structures, and class objects, including public `substruct`,
+  `subsref`, and `subsasgn` compatibility paths;
 - command syntax through word-list command nodes, including continuation lines
   and comments after ellipsis, while keeping command parsing restricted to
   registered command-word names;
@@ -72,11 +75,23 @@ The AST layer normalizes parse output into node contracts exported from
 - `StrictNodeExpr` is the documented expression contract for new hand-written
   code. `LegacyNodeExprCarrier` names the remaining broad compatibility edge
   while generated parser actions and older evaluator reducers are migrated;
+- `ExpressionBoundaryValue` is the result type for validated expression
+  boundary helpers. It accepts strict expression values plus explicit
+  `NodeList` execution-result carriers, and should be preferred when a helper
+  has already rejected statements/control-flow nodes;
 - evaluated values that cross expression-only boundaries should pass through
   the shared `ExpressionValue` helpers, so return lists, comma-separated lists,
   function-call arguments, assignment lowering, `for` iteration values,
   indexing descriptors, and class dispatch reject control-flow nodes before
   exposing ordinary values;
+- native array, cell, and character indexing should receive only validated
+  `IndexArgument` values (`ComplexType` or `MultiArray`). Use
+  `MultiArray.indexArguments` at interpreter/context boundaries rather than
+  forwarding raw AST subscript nodes or arbitrary evaluated runtime values;
+- `MultiArray.linearize` and related indexing helpers must preserve
+  MATLAB/Octave column-major logical order over the engine's page-stacked
+  physical storage. Optimizations should stay equivalent to
+  `linearIndexToMultiArrayRowColumn`;
 - AST factory methods validate expression slots, function signatures,
   `arguments` metadata, class sections, branch/loop bodies, and array elements
   before storing child nodes;

@@ -36,6 +36,16 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(ComplexNumber.realIsPositive(value)).toBe(false);
             expect(ComplexNumber.imagIsPositive(value)).toBe(false);
         });
+
+        it('Should preserve NaN values during construction.', () => {
+            const direct = ComplexNumber.create(Number.NaN);
+            const literal = ComplexNumber.NaN_0();
+
+            expect(ComplexNumber.realIsNaN(direct)).toBe(true);
+            expect(ComplexNumber.realIsNaN(literal)).toBe(true);
+            expect(ComplexNumber.imagIsZero(literal)).toBe(true);
+            expect(Number.isNaN(ComplexNumber.realToNumber(literal))).toBe(true);
+        });
     });
 
     describe('Arithmetic', () => {

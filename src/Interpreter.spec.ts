@@ -490,6 +490,21 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('s(2); s([1, 3]); s(2:3); s(end); s(end-1:end); s(:)'))).toBe('b\nac\nbc\nd\ncd\nabcd\n');
         });
 
+        it('Should assign character string contents as character vectors.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('s = "abcd"; s(2) = "X"; s'))).toBe('s=abcd\ns=aXcd\naXcd\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('s = "abcd"; s(2) = 88; s'))).toBe('s=abcd\ns=aXcd\naXcd\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('s = "abcd"; s([1, 4]) = "XY"; s'))).toBe('s=abcd\ns=XbcY\nXbcY\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('s = "abcd"; s([1, 4]) = [88, 89]; s'))).toBe('s=abcd\ns=XbcY\nXbcY\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('s = "abcd"; s(end+1) = "E"; s'))).toBe('s=abcd\ns=abcdE\nabcdE\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('s = "abcd"; s(6) = "F"; s'))).toBe('s=abcd\ns=abcd F\nabcd F\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('s = "abcd"; s([end, 1]) = "XY"; s'))).toBe('s=abcd\ns=YbcX\nYbcX\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('s = "abcd"; s(2:3) = []; s'))).toBe('s=abcd\ns=ad\nad\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('s = "abcd"; s(end-1:end) = []; s'))).toBe('s=abcd\ns=ab\nab\n');
+            expect(() => localInterpreter.Execute('s = "abcd"; s(2) = {"X"}')).toThrow('character string assignment requires character or numeric values.');
+        });
+
         it('Should report character string dimensions as row character vectors.', () => {
             const localInterpreter = Interpreter.Create();
 
@@ -498,6 +513,57 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('isempty(""); isscalar("abc"); isvector("abc"); isrow("abc"); iscolumn("abc"); ismatrix("abc")'))).toBe(
                 'true\nfalse\ntrue\ntrue\nfalse\ntrue\n',
             );
+        });
+
+        it('Should convert values with char.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('char(65); char([65, 66, 67]); char("abc"); char(65.9)'))).toBe('A\nABC\nabc\nA\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('text = char([65, 66, 67]); text(2)'))).toBe('text=ABC\nB\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('char("ab", "c")'))).toBe('[a,b;\nc, ]\n');
+            expect(() => localInterpreter.Execute('char({65})')).toThrow('char: invalid conversion input.');
+        });
+
+        it('Should convert values with double.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('double(true); double(1 + 2i); double("ABC")'))).toBe('1\n1+2i\n[65,66,67]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('codes = double(char("ab", "c")); codes'))).toBe('codes=[97,98;\n99,32]\n[97,98;\n99,32]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('text = char([65, 66, 67]); double(text(2))'))).toBe('text=ABC\n66\n');
+            expect(() => localInterpreter.Execute('double({"A"})')).toThrow('double: invalid conversion input.');
+        });
+
+        it('Should convert values with logical.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('logical(0); logical(-2); logical([0, 2; 3, true])'))).toBe('false\ntrue\n[false,true;\ntrue,true]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('logical(char([65, 0])); islogical(logical([1, 0])); nargin("logical")'))).toBe('[true,false]\ntrue\n1\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('logical("")'))).toBe('[ ](0x0)\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('NaN'))).toBe('NaN\n');
+            expect(() => localInterpreter.Execute('logical(1 + 2i)')).toThrow('logical: complex and NaN values cannot be converted to logical.');
+            expect(() => localInterpreter.Execute('logical(NaN)')).toThrow('logical: complex and NaN values cannot be converted to logical.');
+            expect(() => localInterpreter.Execute('logical({"A"})')).toThrow('logical: invalid conversion input.');
+        });
+
+        it('Should classify finite, infinite, and NaN values.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('isnan(NaN); isinf(Inf); isfinite(1 + 2i)'))).toBe('true\ntrue\ntrue\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('isnan([1, NaN, Inf]); isinf([1, NaN, Inf]); isfinite([1, NaN, Inf])'))).toBe(
+                '[false,true,false]\n[false,false,true]\n[true,false,false]\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('isfinite("abc"); nargin("isnan"); nargin("isinf"); nargin("isfinite")'))).toBe('[true,true,true]\n1\n1\n1\n');
+            expect(() => localInterpreter.Execute('isnan({"A"})')).toThrow('isnan: invalid conversion input.');
+            expect(() => localInterpreter.Execute('isinf({"A"})')).toThrow('isinf: invalid conversion input.');
+            expect(() => localInterpreter.Execute('isfinite({"A"})')).toThrow('isfinite: invalid conversion input.');
+        });
+
+        it('Should classify floating-point and integer storage classes.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('isfloat(2); isfloat(3+7i); isfloat(true); isfloat("abc")'))).toBe('true\ntrue\nfalse\nfalse\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('isinteger(2); isinteger([1, 2]); isinteger(true); isinteger("abc")'))).toBe('false\nfalse\nfalse\nfalse\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('nargin("isfloat"); nargin("isinteger")'))).toBe('1\n1\n');
         });
 
         it('Should evaluate for loops over matrix columns.', () => {
@@ -1711,6 +1777,56 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => localInterpreter.Execute('objs([1, 3]).x = [1, 2, 3]')).toThrow('assignment value count 3 does not match selected object count 2.');
         });
 
+        it('Should expand class instance array property targets for multiple assignment.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(['classdef CommaPropertyAssignmentChild', '  properties', '    x = 0;', '  end', 'end'].join('\n'));
+            localInterpreter.Execute(['classdef CommaPropertyAssignmentPoint', '  properties', '    x = 0;', '    child = CommaPropertyAssignmentChild();', '  end', 'end'].join('\n'));
+            localInterpreter.Execute('a = CommaPropertyAssignmentPoint()');
+            localInterpreter.Execute('b = CommaPropertyAssignmentPoint()');
+            localInterpreter.Execute('objs = [a, b]');
+
+            localInterpreter.Execute('[objs.x] = deal(7, 8)');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('objs.x'))).toBe('[7,8]\n');
+
+            localInterpreter.Execute('[objs(:).x] = deal(9)');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('objs.x'))).toBe('[9,9]\n');
+
+            localInterpreter.Execute('idx = [2, 1]; [objs(idx).x] = deal(20, 10)');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('objs.x'))).toBe('[10,20]\n');
+
+            localInterpreter.Execute('[objs.child.x] = deal(30, 40)');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('objs.child.x'))).toBe('[30,40]\n');
+
+            localInterpreter.Execute('objs(2).child.x = 50');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('objs.child.x'))).toBe('[30,50]\n');
+
+            localInterpreter.Execute('[objs(idx).child.x] = deal(70, 60)');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('objs.child.x'))).toBe('[60,70]\n');
+        });
+
+        it('Should assign indexed contents inside nested class properties.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(['classdef IndexedNestedPropertyLeaf', '  properties', '    values = [1, 2, 3];', '  end', 'end'].join('\n'));
+            localInterpreter.Execute(['classdef IndexedNestedPropertyHolder', '  properties', '    child = IndexedNestedPropertyLeaf();', '  end', 'end'].join('\n'));
+            localInterpreter.Execute('a = IndexedNestedPropertyHolder()');
+            localInterpreter.Execute('b = IndexedNestedPropertyHolder()');
+            localInterpreter.Execute('objs = [a, b]');
+
+            localInterpreter.Execute('a.child.values(2) = 9');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('a.child.values'))).toBe('[1,9,3]\n');
+
+            localInterpreter.Execute('objs(2).child.values(2) = 8');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('objs.child.values'))).toBe('[[1,2,3],[1,8,3]]\n');
+
+            localInterpreter.Execute('idx = [2, 1]; [objs(idx).child.values] = deal([4, 5, 6], [7, 8, 9])');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('objs.child.values'))).toBe('[[7,8,9],[4,5,6]]\n');
+
+            localInterpreter.Execute('objs(2).child.values([1, 3]) = [10, 30]');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('objs(2).child.values'))).toBe('[10,5,30]\n');
+        });
+
         it('Should assign nested class properties through structure and object values.', () => {
             const localInterpreter = Interpreter.Create();
 
@@ -1845,6 +1961,79 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('a.virtual(7)'))).toBe('217\n');
         });
 
+        it('Should apply public subsref descriptors to native values and class overloads.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                [
+                    'classdef PublicSubsrefValue',
+                    '  properties',
+                    '    x = 0;',
+                    '  end',
+                    '  methods',
+                    '    function y = subsref(obj, s)',
+                    '      if numel(s) == 2',
+                    '        y = obj.x + s(1).subs{1} + 100;',
+                    '      elseif isequal(s.type, ".")',
+                    '        y = obj.x + 20;',
+                    '      else',
+                    '        y = obj.x + s.subs{1};',
+                    '      end',
+                    '    end',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('A = [10, 20, 30]; subsref(A, substruct("()", {2}))'))).toBe('A=[10,20,30]\n20\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('S(1).x = 7; S(2).x = 9; subsref(S, substruct("()", {2}, ".", "x"))'))).toBe(
+                'S=[struct {\nx: 7\n},struct {\nx: 9\n}]\nS=[struct {\nx: 7\n},struct {\nx: 9\n}]\n9\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('[left, right] = subsref(S, substruct(".", "x")); left; right'))).toBe('left=7\nright=9\n7\n9\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('[manualLeft, manualRight] = subsref(S, struct("type", ".", "subs", "x")); manualLeft; manualRight'))).toBe(
+                'manualLeft=7\nmanualRight=9\n7\n9\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('Q.x = [1, 2]; subsref(Q, substruct(".", "x"))'))).toBe('Q=struct {\nx: [1,2]\n}\n[1,2]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('C = {4, 5}; subsref(C, substruct("{}", {2}))'))).toBe('C={4,5}\n5\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('subsref(A, substruct("()", {[1, 3]}))'))).toBe('[10,30]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('Grid = [1, 2, 3; 4, 5, 6]; subsref(Grid, substruct("()", {":", 2}))'))).toBe('Grid=[1,2,3;\n4,5,6]\n[2;\n5]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('subsref(Grid, substruct("()", {1, ":"}))'))).toBe('[1,2,3]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('subsref(Grid, substruct("()", {":"}))'))).toBe('[1;\n4;\n2;\n5;\n3;\n6]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('Column = [1; 2; 3; 4]; subsref(Column, substruct("()", {[true, false, true, false]}))'))).toBe(
+                'Column=[1;\n2;\n3;\n4]\n[1;\n3]\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('M = [1, 2; 3, 4]; subsref(M, substruct("()", {[true, false, true, false]}))'))).toBe('M=[1,2;\n3,4]\n[1,2]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('subsref(C, substruct("()", {2}))'))).toBe('{5}\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('subsref(C, substruct("()", {[1, 2]}))'))).toBe('{4,5}\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('subsref(C, substruct("()", {[true, false]}))'))).toBe('{4}\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('subsref(C, substruct("()", {2}, "{}", {1}))'))).toBe('5\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('subsref(C, substruct("{}", {":"}))'))).toBe('4\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('[allLeft, allRight] = subsref(C, substruct("{}", {":"})); allLeft; allRight'))).toBe('allLeft=4\nallRight=5\n4\n5\n');
+            expect(() => localInterpreter.Execute('[tooManyLeft, tooManyRight, tooManyExtra] = subsref(C, substruct("{}", {":"}))')).toThrow('element number 3 undefined in return list');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('NestedCell = {{1, 2}, {3, 4}}; subsref(NestedCell, substruct("()", {2}, "{}", {1}, "{}", {2}))'))).toBe(
+                'NestedCell={{1,2},{3,4}}\n4\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('text = "abcd"; subsref(text, substruct("()", {2}))'))).toBe('text=abcd\nb\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('subsref(text, substruct("()", {[4, 2]}))'))).toBe('db\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('subsref(text, substruct("()", {[true, false, true, false]}))'))).toBe('ac\n');
+            expect(() => localInterpreter.Execute('subsref(A, substruct("{}", {1}))')).toThrow('matrix cannot be indexed with {');
+            expect(() => localInterpreter.Execute('subsref(text, substruct("{}", {1}))')).toThrow('matrix cannot be indexed with {');
+            localInterpreter.Execute('values = {1, 2, 3}');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('[first, second] = subsref(values, substruct("{}", {1:2})); first; second'))).toBe('first=1\nsecond=2\n1\n2\n');
+            localInterpreter.Execute(['function y = publicsubsrefadd(left, right)', '  y = left + right;', 'end'].join('\n'));
+            localInterpreter.Execute(['function y = publicsubsrefsum3(left, middle, right)', '  y = left + middle + right;', 'end'].join('\n'));
+            expect(localInterpreter.Unparse(localInterpreter.Execute('publicsubsrefadd(subsref(values, substruct("{}", {1:2})))'))).toBe('3\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('publicsubsrefsum3(subsref(values, substruct("{}", {":"})))'))).toBe('6\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('wrapped = {subsref(values, substruct("{}", {":"}))}; wrapped'))).toBe('wrapped={1,2,3}\n{1,2,3}\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('obj = PublicSubsrefValue(); obj.x = 10; subsref(obj, substruct("()", {5}))'))).toBe(
+                'obj=PublicSubsrefValue object with properties: x\nobj=PublicSubsrefValue object with properties: x\n15\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('subsref(obj, substruct(".", "virtual"))'))).toBe('30\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('subsref(obj, substruct("()", {5}, ".", "virtual"))'))).toBe('115\n');
+            expect(() => localInterpreter.Execute('subsref(A, struct("type", ".", "subs", {1}))')).toThrow('invalid subsref descriptor.');
+            expect(() => localInterpreter.Execute('subsref(A, struct("type", "bad", "subs", {1}))')).toThrow('invalid subsref descriptor.');
+        });
+
         it('Should dispatch class end methods for indexed references.', () => {
             const localInterpreter = Interpreter.Create();
 
@@ -1920,6 +2109,11 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             localInterpreter.Execute('[chainedFirst, chainedSecond] = a(3).virtual');
             expect(localInterpreter.Unparse(localInterpreter.Execute('chainedFirst'))).toBe('108\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('chainedSecond'))).toBe('208\n');
+
+            localInterpreter.Execute('[explicitFirst, explicitSecond] = subsref(a, substruct("()", {3}))');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('explicitFirst'))).toBe('8\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('explicitSecond'))).toBe('18\n');
+            expect(() => localInterpreter.Execute('[tooMany1, tooMany2, tooMany3] = subsref(a, substruct("()", {3}))')).toThrow('element number 3 undefined in return list');
         });
 
         it('Should reject too many class subsref outputs using numArgumentsFromSubscript.', () => {
@@ -1994,6 +2188,99 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('a.x'))).toBe('217\n');
         });
 
+        it('Should apply public subsasgn descriptors to native values and class overloads.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                [
+                    'classdef PublicSubsasgnValue',
+                    '  properties',
+                    '    x = 0;',
+                    '  end',
+                    '  methods',
+                    '    function obj = subsasgn(obj, s, value)',
+                    '      obj.x = value + s.subs{1};',
+                    '    end',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('A = [1, 2, 3]; B = subsasgn(A, substruct("()", {2}), 9); A; B'))).toBe('A=[1,2,3]\nB=[1,9,3]\n[1,2,3]\n[1,9,3]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('S.x = 1; T = subsasgn(S, substruct(".", "y"), 5); isfield(S, "y"); T.y'))).toBe(
+                'S=struct {\nx: 1\n}\nT=struct {\nx: 1\ny: 5\n}\nfalse\n5\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('U = subsasgn(S, struct("type", ".", "subs", "z"), 6); U.z'))).toBe('U=struct {\nx: 1\nz: 6\n}\n6\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('Created = subsasgn([], substruct(".", "x"), 5); Created.x'))).toBe('Created=struct {\nx: 5\n}\n5\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('Nested = subsasgn([], substruct(".", "x", ".", "y"), 6); Nested.x.y'))).toBe(
+                'Nested=struct {\nx: struct {\ny: 6\n}\n}\n6\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('NumericField = subsasgn([], substruct(".", "x", "()", {2}), 7); NumericField.x'))).toBe(
+                'NumericField=struct {\nx: [0,7]\n}\n[0,7]\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('CellField = subsasgn([], substruct(".", "x", "{}", {2}), 8); CellField.x'))).toBe(
+                'CellField=struct {\nx: {[ ](0x0),8}\n}\n{[ ](0x0),8}\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('C = {1, 2}; D = subsasgn(C, substruct("{}", {2}), 8); C{2}; D{2}'))).toBe('C={1,2}\nD={1,8}\n2\n8\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('E = subsasgn(C, substruct("()", {2}), {9}); E'))).toBe('E={1,9}\n{1,9}\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('F = subsasgn(C, substruct("()", {2}, "{}", {1}), 9); F'))).toBe('F={1,9}\n{1,9}\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('Pair = {7, 8}; ParenDistributed = subsasgn(C, substruct("()", {1:2}), Pair); ParenDistributed'))).toBe(
+                'Pair={7,8}\nParenDistributed={7,8}\n{7,8}\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('BraceFilled = subsasgn(C, substruct("{}", {1:2}), 9); BraceFilled'))).toBe('BraceFilled={9,9}\n{9,9}\n');
+            expect(() => localInterpreter.Execute('subsasgn(C, substruct("{}", {1:2}), subsref(Pair, substruct("{}", {":"})))')).toThrow('Invalid call to subsasgn.');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('ContentFilled = subsasgn(C, substruct("{}", {":"}), 9); ContentFilled'))).toBe('ContentFilled={9,9}\n{9,9}\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('ContentCleared = subsasgn(C, substruct("{}", {":"}), []); ContentCleared'))).toBe(
+                'ContentCleared={[ ](0x0),[ ](0x0)}\n{[ ](0x0),[ ](0x0)}\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('Grid = [1, 2, 3; 4, 5, 6]; ColumnRemoved = subsasgn(Grid, substruct("()", {":", 2}), []); ColumnRemoved'))).toBe(
+                'Grid=[1,2,3;\n4,5,6]\nColumnRemoved=[1,3;\n4,6]\n[1,3;\n4,6]\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('RowRemoved = subsasgn(Grid, substruct("()", {1, ":"}), []); RowRemoved'))).toBe('RowRemoved=[4,5,6]\n[4,5,6]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('Filled = subsasgn(Grid, substruct("()", {":"}), 9); Filled'))).toBe('Filled=[9,9,9;\n9,9,9]\n[9,9,9;\n9,9,9]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('ClearedCell = subsasgn(C, substruct("()", {":"}), []); ClearedCell'))).toBe('ClearedCell={ }(1x0)\n{ }(1x0)\n');
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute('NestedCell = {{1, 2}, {3, 4}}; NestedUpdated = subsasgn(NestedCell, substruct("()", {2}, "{}", {1}, "{}", {2}), 9); NestedCell; NestedUpdated'),
+                ),
+            ).toBe('NestedCell={{1,2},{3,4}}\nNestedUpdated={{1,2},{3,9}}\n{{1,2},{3,4}}\n{{1,2},{3,9}}\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('text = "abcd"; changed = subsasgn(text, substruct("()", {2}), "X"); text; changed'))).toBe(
+                'text=abcd\nchanged=aXcd\nabcd\naXcd\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('numericTextChanged = subsasgn(text, substruct("()", {2}), 88); numericTextChanged'))).toBe(
+                'numericTextChanged=aXcd\naXcd\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('pairChanged = subsasgn(text, substruct("()", {[1, 4]}), "XY"); pairChanged'))).toBe('pairChanged=XbcY\nXbcY\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('numericPairChanged = subsasgn(text, substruct("()", {[1, 4]}), [88, 89]); numericPairChanged'))).toBe(
+                'numericPairChanged=XbcY\nXbcY\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('extendedText = subsasgn(text, substruct("()", {6}), "F"); extendedText'))).toBe('extendedText=abcd F\nabcd F\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('numericExtendedText = subsasgn(text, substruct("()", {6}), 70); numericExtendedText'))).toBe(
+                'numericExtendedText=abcd F\nabcd F\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('logicalTextChanged = subsasgn(text, substruct("()", {[true, false, true, false]}), "XY"); logicalTextChanged'))).toBe(
+                'logicalTextChanged=XbYd\nXbYd\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('deletedText = subsasgn(text, substruct("()", {2:3}), []); deletedText'))).toBe('deletedText=ad\nad\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('logicalTextDeleted = subsasgn(text, substruct("()", {[true, false, true, false]}), []); logicalTextDeleted'))).toBe(
+                'logicalTextDeleted=bd\nbd\n',
+            );
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute('Column = [1; 2; 3; 4]; ColumnDeleted = subsasgn(Column, substruct("()", {[true, false, true, false]}), []); ColumnDeleted'),
+                ),
+            ).toBe('Column=[1;\n2;\n3;\n4]\nColumnDeleted=[2;\n4]\n[2;\n4]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('LogicalCell = subsasgn(C, substruct("()", {[true, false]}), {9}); LogicalCell'))).toBe('LogicalCell={9,2}\n{9,2}\n');
+            expect(() => localInterpreter.Execute('subsasgn(C, substruct("()", {2}), 9)')).toThrow('cell array assignment requires a cell array value.');
+            expect(() => localInterpreter.Execute('subsasgn(text, substruct("{}", {1}), "X")')).toThrow('matrix cannot be indexed with {');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('obj = PublicSubsasgnValue(); updated = subsasgn(obj, substruct("()", {5}), 10); obj.x; updated.x'))).toBe(
+                'obj=PublicSubsasgnValue object with properties: x\nupdated=PublicSubsasgnValue object with properties: x\n0\n15\n',
+            );
+            expect(() => localInterpreter.Execute('subsasgn(A, substruct("{}", {1}), 9)')).toThrow('matrix cannot be indexed with {');
+            expect(() => localInterpreter.Execute('subsasgn(A, struct("type", ".", "subs", {1}), 9)')).toThrow('invalid subsasgn descriptor.');
+            expect(() => localInterpreter.Execute('subsasgn(A, struct("type", "bad", "subs", {1}), 9)')).toThrow('invalid subsasgn descriptor.');
+        });
+
         it('Should dispatch class subsref methods for selected object array elements.', () => {
             const localInterpreter = Interpreter.Create();
 
@@ -2023,6 +2310,75 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
             expect(localInterpreter.Unparse(localInterpreter.Execute('objs(2)'))).toBe('12\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('objs(2).virtual'))).toBe('1002\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('subsref(objs, substruct("()", {2}))'))).toBe('12\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('subsref(objs, substruct("()", {2}, ".", "virtual"))'))).toBe('1002\n');
+        });
+
+        it('Should apply public subsref descriptors to class property chains.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(['classdef PublicNestedSubsrefChild', '  properties', '    x = 0;', '  end', 'end'].join('\n'));
+            localInterpreter.Execute(['classdef PublicNestedSubsrefPoint', '  properties', '    child = PublicNestedSubsrefChild();', '  end', 'end'].join('\n'));
+            localInterpreter.Execute('a = PublicNestedSubsrefPoint()');
+            localInterpreter.Execute('b = PublicNestedSubsrefPoint()');
+            localInterpreter.Execute('a.child.x = 3');
+            localInterpreter.Execute('b.child.x = 4');
+            localInterpreter.Execute('objs = [a, b]');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('subsref(a, substruct(".", "child", ".", "x"))'))).toBe('3\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('subsref(objs, substruct(".", "child", ".", "x"))'))).toBe('[3,4]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('subsref(objs, substruct("()", {2}, ".", "child", ".", "x"))'))).toBe('4\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('[left, right] = subsref(objs, substruct(".", "child", ".", "x")); left; right'))).toBe('left=3\nright=4\n3\n4\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('[directLeft, directRight] = objs.child.x; directLeft; directRight'))).toBe('directLeft=3\ndirectRight=4\n3\n4\n');
+        });
+
+        it('Should apply public subsref descriptors to indexed nested class properties.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(['classdef PublicIndexedSubsrefChild', '  properties', '    values = [1, 2, 3];', '  end', 'end'].join('\n'));
+            localInterpreter.Execute(['classdef PublicIndexedSubsrefPoint', '  properties', '    child = PublicIndexedSubsrefChild();', '  end', 'end'].join('\n'));
+            localInterpreter.Execute('a = PublicIndexedSubsrefPoint()');
+            localInterpreter.Execute('b = PublicIndexedSubsrefPoint()');
+            localInterpreter.Execute('a.child.values = [10, 20, 30]');
+            localInterpreter.Execute('b.child.values = [40, 50, 60]');
+            localInterpreter.Execute('objs = [a, b]');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('subsref(a, substruct(".", "child", ".", "values", "()", {2}))'))).toBe('20\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('subsref(objs, substruct(".", "child", ".", "values", "()", {2}))'))).toBe('[20,50]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('subsref(objs, substruct("()", {2}, ".", "child", ".", "values", "()", {[1, 3]}))'))).toBe('[40,60]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('[left, right] = subsref(objs, substruct(".", "child", ".", "values", "()", {2})); left; right'))).toBe(
+                'left=20\nright=50\n20\n50\n',
+            );
+        });
+
+        it('Should dispatch explicit multiple-output subsref for selected object array elements.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                [
+                    'classdef ArrayMultiOutputSubsref',
+                    '  properties',
+                    '    x = 0;',
+                    '  end',
+                    '  methods',
+                    '    function n = numArgumentsFromSubscript(obj, s, context)',
+                    '      n = 2;',
+                    '    end',
+                    '    function [a, b] = subsref(obj, s)',
+                    '      a = obj.x + s.subs{1};',
+                    '      b = obj.x + s.subs{1} + 10;',
+                    '    end',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute('a = ArrayMultiOutputSubsref()');
+            localInterpreter.Execute('b = ArrayMultiOutputSubsref()');
+            localInterpreter.Execute('a.x = 1');
+            localInterpreter.Execute('b.x = 2');
+            localInterpreter.Execute('objs = [a, b]');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('[first, second] = subsref(objs, substruct("()", {2})); first; second'))).toBe('first=4\nsecond=14\n4\n14\n');
         });
 
         it('Should dispatch class subsasgn methods for selected object array elements.', () => {
@@ -2036,6 +2392,95 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             localInterpreter.Execute('objs = [a, b]');
 
             expect(() => localInterpreter.Execute('objs(2) = 5')).toThrow('subsasgn for class ArrayAssignedOverload must return an object of class ArrayAssignedOverload.');
+            expect(() => localInterpreter.Execute('subsasgn(objs, substruct("()", {2}), 5)')).toThrow(
+                'subsasgn for class ArrayAssignedOverload must return an object of class ArrayAssignedOverload.',
+            );
+        });
+
+        it('Should apply public subsasgn descriptors to selected object array elements.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                [
+                    'classdef PublicObjectArraySubsasgnValue',
+                    '  properties',
+                    '    x = 0;',
+                    '  end',
+                    '  methods',
+                    '    function obj = subsasgn(obj, s, value)',
+                    '      obj.x = value + s.subs{1};',
+                    '    end',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute('a = PublicObjectArraySubsasgnValue()');
+            localInterpreter.Execute('b = PublicObjectArraySubsasgnValue()');
+            localInterpreter.Execute('objs = [a, b]');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('updated = subsasgn(objs, substruct("()", {2}), 10); objs.x; updated.x'))).toBe(
+                'updated=[PublicObjectArraySubsasgnValue object with properties: x,PublicObjectArraySubsasgnValue object with properties: x]\n[0,0]\n[0,12]\n',
+            );
+        });
+
+        it('Should apply public subsasgn descriptors to class property chains.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(['classdef PublicNestedSubsasgnChild', '  properties', '    x = 0;', '  end', 'end'].join('\n'));
+            localInterpreter.Execute(['classdef PublicNestedSubsasgnPoint', '  properties', '    child = PublicNestedSubsasgnChild();', '  end', 'end'].join('\n'));
+            localInterpreter.Execute('a = PublicNestedSubsasgnPoint()');
+            localInterpreter.Execute('b = PublicNestedSubsasgnPoint()');
+            localInterpreter.Execute('objs = [a, b]');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('scalar = subsasgn(a, substruct(".", "child", ".", "x"), 5); a.child.x; scalar.child.x'))).toBe(
+                'scalar=PublicNestedSubsasgnPoint object with properties: child\n0\n5\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('whole = subsasgn(objs, substruct(".", "child", ".", "x"), [30, 40]); objs.child.x; whole.child.x'))).toBe(
+                'whole=[PublicNestedSubsasgnPoint object with properties: child,PublicNestedSubsasgnPoint object with properties: child]\n[0,0]\n[30,40]\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('indexed = subsasgn(objs, substruct("()", {[2, 1]}, ".", "child", ".", "x"), [70, 60]); indexed.child.x'))).toBe(
+                'indexed=[PublicNestedSubsasgnPoint object with properties: child,PublicNestedSubsasgnPoint object with properties: child]\n[60,70]\n',
+            );
+            localInterpreter.Execute('a.child.x = [1, 2, 3]');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('scalarIndexed = subsasgn(a, substruct(".", "child", ".", "x", "()", {2}), 9); a.child.x; scalarIndexed.child.x'))).toBe(
+                'scalarIndexed=PublicNestedSubsasgnPoint object with properties: child\n[1,2,3]\n[1,9,3]\n',
+            );
+            localInterpreter.Execute('[objs.child.x] = deal([1, 2, 3], [4, 5, 6])');
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute('indexedProperty = subsasgn(objs, substruct("()", {[2, 1]}, ".", "child", ".", "x", "()", {2}), [50, 20]); indexedProperty.child.x'),
+                ),
+            ).toBe('indexedProperty=[PublicNestedSubsasgnPoint object with properties: child,PublicNestedSubsasgnPoint object with properties: child]\n[[1,20,3],[4,50,6]]\n');
+        });
+
+        it('Should apply chained public subsasgn descriptors to selected object array elements.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                [
+                    'classdef PublicObjectArrayChainedSubsasgnValue',
+                    '  properties',
+                    '    x = 0;',
+                    '  end',
+                    '  methods',
+                    '    function obj = subsasgn(obj, s, value)',
+                    '      if numel(s) == 2',
+                    '        obj.x = value + s(1).subs{1} + 100;',
+                    '      else',
+                    '        obj.x = value + s.subs{1};',
+                    '      end',
+                    '    end',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute('a = PublicObjectArrayChainedSubsasgnValue()');
+            localInterpreter.Execute('b = PublicObjectArrayChainedSubsasgnValue()');
+            localInterpreter.Execute('objs = [a, b]');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('updated = subsasgn(objs, substruct("()", {2}, ".", "virtual"), 10); objs.x; updated.x'))).toBe(
+                'updated=[PublicObjectArrayChainedSubsasgnValue object with properties: x,PublicObjectArrayChainedSubsasgnValue object with properties: x]\n[0,0]\n[0,112]\n',
+            );
         });
 
         it('Should dispatch class subsref and subsasgn methods for dot references.', () => {
@@ -2049,14 +2494,14 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                     '  end',
                     '  methods',
                     '    function y = subsref(obj, s)',
-                    "      if isequal(s.type, '.') && isequal(s.subs{1}, 'virtual')",
+                    "      if isequal(s.type, '.') && isequal(s.subs, 'virtual')",
                     '        y = obj.x + 10;',
                     '      else',
                     '        y = obj.x;',
                     '      end',
                     '    end',
                     '    function obj = subsasgn(obj, s, value)',
-                    "      if isequal(s.type, '.') && isequal(s.subs{1}, 'virtual')",
+                    "      if isequal(s.type, '.') && isequal(s.subs, 'virtual')",
                     '        obj.x = value + 20;',
                     '      else',
                     '        obj.x = value;',

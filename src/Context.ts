@@ -145,18 +145,16 @@ type CallDispatchKind = 'callable' | 'bound-method' | 'bound-method-array' | 'st
 /**
  * Structured call/index dispatch decision.
  */
-type CallDispatch = {
-    /** Selected dispatch category. */
-    kind: CallDispatchKind;
-    /** Callable wrapper for built-ins, user functions, and anonymous handles. */
-    callable?: Callable;
-    /** Evaluated callee or indexed value. */
-    expr: NodeExpr;
-    /** Unresolved functional method name for `method(obj, ...)` syntax. */
-    functionalName?: string;
-    /** Pre-evaluated receiver for functional class method dispatch. */
-    functionalReceiver?: NodeInput;
-};
+type CallDispatch =
+    | { kind: 'callable'; callable: Callable; expr: NodeExpr }
+    | { kind: 'bound-method'; expr: ClassBoundMethod }
+    | { kind: 'bound-method-array'; expr: MultiArray }
+    | { kind: 'static-method'; expr: ClassStaticMethod }
+    | { kind: 'empty-method'; expr: ClassEmptyMethod }
+    | { kind: 'constructor'; expr: ClassDefinition }
+    | { kind: 'functional-class-method'; expr: NodeExpr; functionalName: string; functionalReceiver: NodeInput }
+    | { kind: 'undefined-function'; expr: NodeExpr; functionalName: string }
+    | { kind: 'indexing'; expr: NodeExpr };
 
 /**
  * Internal control-flow signal used to leave a function body on `return`.
@@ -791,8 +789,9 @@ class Context {
                 }
                 return Callables.fromFunctionNode(func);
             }
-            /* Lambda handle, for example `@(x)x^2`. */
-            return Callables.lambda(expr as FunctionHandle & { id: undefined });
+            if (FunctionHandle.isAnonymous(expr)) {
+                return Callables.lambda(expr);
+            }
         }
         return undefined;
     }
@@ -879,7 +878,7 @@ class Context {
      */
     public expandCommaSeparatedList(value: NodeInput): NodeInput[] {
         if (!AST.isNodeReturnList(value) || !value.commaSeparated) {
-            return [AST.reduceToFirstIfReturnList(value)];
+            return [this.reducedCommaListScalar(value)];
         }
         const length = value.returnListLength ?? value.handler(0).length;
         const evaluated = value.handler(length);
@@ -888,6 +887,14 @@ class Context {
             result.push(value.selector(evaluated, index));
         }
         return result;
+    }
+
+    /**
+     * Reduce a non-comma-list value before treating it as one scalar expansion
+     * item.
+     */
+    private reducedCommaListScalar(value: NodeInput): NodeInput {
+        return AST.reduceToFirstIfReturnList(value);
     }
 
     /**
@@ -900,7 +907,7 @@ class Context {
         this.pushRequestedOutputCount(1);
         this.pushCommaListExpansion();
         try {
-            return this.expandCommaSeparatedList(this.interpreter!.Evaluator(arg, this.currentScope));
+            return this.expandCommaSeparatedList(this.rawEvaluationResult(arg, this.currentScope));
         } finally {
             this.popCommaListExpansion();
             this.popRequestedOutputCount();
@@ -917,30 +924,25 @@ class Context {
         return args.flatMap((arg) => this.expressionValues(this.evaluateCommaListExpression(arg), 'arg'));
     }
 
+    /**
+     * Evaluate one call argument with comma-list expansion and expression
+     * validation.
+     */
+    private evaluateExpandedArgument(arg: NodeExpr, namePrefix = 'arg'): NodeExpr[] {
+        return this.expressionValues(this.evaluateCommaListExpression(arg), namePrefix);
+    }
+
     private evaluateArgs(args: NodeExpr[], parent: NodeInput, mode: 'all' | boolean[]): NodeExpr[] {
+        void parent;
         return args.flatMap((arg: NodeExpr, i: number) => {
             if (mode === 'all') {
-                this.pushRequestedOutputCount(1);
-                this.pushCommaListExpansion();
-                try {
-                    return this.expressionValues(this.expandCommaSeparatedList(this.interpreter!.Evaluator(arg, this.currentScope)), 'arg');
-                } finally {
-                    this.popCommaListExpansion();
-                    this.popRequestedOutputCount();
-                }
+                return this.evaluateExpandedArgument(arg);
             }
             const ev = mode;
             if (ev.length > 0 && i < ev.length && !ev[i]) {
                 return [arg];
             }
-            this.pushRequestedOutputCount(1);
-            this.pushCommaListExpansion();
-            try {
-                return this.expressionValues(this.expandCommaSeparatedList(this.interpreter!.Evaluator(arg, this.currentScope)), 'arg');
-            } finally {
-                this.popCommaListExpansion();
-                this.popRequestedOutputCount();
-            }
+            return this.evaluateExpandedArgument(arg);
         });
     }
 
@@ -1273,7 +1275,7 @@ class Context {
         const evaluateCallArgument = (arg: NodeExpr): NodeInput => {
             this.pushRequestedOutputCount(1);
             try {
-                return AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(arg, this.currentScope));
+                return this.evaluatedExpressionValue(arg, this.currentScope, 'argument');
             } finally {
                 this.popRequestedOutputCount();
             }
@@ -1289,7 +1291,7 @@ class Context {
             (_name, defaultValue) => {
                 this.pushRequestedOutputCount(1);
                 try {
-                    return AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(defaultValue, functionScope));
+                    return this.evaluatedExpressionValue(defaultValue, functionScope, 'default argument');
                 } finally {
                     this.popRequestedOutputCount();
                 }
@@ -1311,7 +1313,7 @@ class Context {
             /* Execute the function body. */
             try {
                 if (func.statements.list.length > 0) {
-                    this.interpreter!.Evaluator(func.statements, functionScope);
+                    this.evaluatedExecutionResult(func.statements, functionScope);
                 }
             } catch (e: unknown) {
                 if (!(e instanceof ReturnSignal)) {
@@ -1332,7 +1334,7 @@ class Context {
         const instance = ClassInstance.instantiate(classDefinition, (defaultValue) => {
             this.pushRequestedOutputCount(1);
             try {
-                return AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(defaultValue, this.currentScope));
+                return this.evaluatedExpressionValue(defaultValue, this.currentScope, 'property default');
             } finally {
                 this.popRequestedOutputCount();
             }
@@ -1392,7 +1394,7 @@ class Context {
         const evaluateCallArgument = (arg: NodeExpr): NodeInput => {
             this.pushRequestedOutputCount(1);
             try {
-                return AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(arg, this.currentScope));
+                return this.evaluatedExpressionValue(arg, this.currentScope, 'argument');
             } finally {
                 this.popRequestedOutputCount();
             }
@@ -1408,7 +1410,7 @@ class Context {
             (_name, defaultValue) => {
                 this.pushRequestedOutputCount(1);
                 try {
-                    return AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(defaultValue, functionScope));
+                    return this.evaluatedExpressionValue(defaultValue, functionScope, 'default argument');
                 } finally {
                     this.popRequestedOutputCount();
                 }
@@ -1430,7 +1432,7 @@ class Context {
             this.interpreter!.validateFunctionRepeatingArguments(func, functionScope, evaluatedArgs.slice(inputLayout.positionalParamCount));
             try {
                 if (func.statements.list.length > 0) {
-                    this.interpreter!.Evaluator(func.statements, functionScope);
+                    this.evaluatedExecutionResult(func.statements, functionScope);
                 }
             } catch (e: unknown) {
                 if (!(e instanceof ReturnSignal)) {
@@ -1555,6 +1557,37 @@ class Context {
     }
 
     /**
+     * Validate one value before exposing it as an ordinary argument expression.
+     */
+    private expressionValue(value: unknown, name: string): NodeExpr {
+        return expressionValue(value, name, 'Argument value', (message) => this.throwEvalError(message));
+    }
+
+    /**
+     * Evaluate one AST node through the interpreter and reduce lazy return-list
+     * carriers without applying expression-only validation.
+     */
+    private evaluatedExecutionResult(tree: NodeInput, scope: Scope = this.currentScope): NodeInput {
+        return AST.reduceToFirstIfReturnList(this.rawEvaluationResult(tree, scope));
+    }
+
+    /**
+     * Evaluate one AST node without reducing comma-separated return-list
+     * carriers, for contexts that must expand them explicitly.
+     */
+    private rawEvaluationResult(tree: NodeInput, scope: Scope = this.currentScope): NodeInput {
+        return this.interpreter!.Evaluator(tree, scope);
+    }
+
+    /**
+     * Evaluate one AST expression and validate the reduced value before it
+     * crosses a context-owned argument/default/receiver boundary.
+     */
+    private evaluatedExpressionValue(tree: NodeExpr, scope: Scope, name: string): NodeExpr {
+        return this.expressionValue(this.evaluatedExecutionResult(tree, scope), name);
+    }
+
+    /**
      * Validate values that are exposed through lazy return-list helpers.
      */
     private returnExpression(value: unknown, name: string): NodeExpr {
@@ -1577,6 +1610,30 @@ class Context {
     }
 
     /**
+     * Invoke one class method expecting a single output and reduce lazy
+     * return-list carriers before storing the result in array dispatch paths.
+     */
+    private reducedClassMethodResult(instance: ClassInstance, method: ClassMethodDefinition, args: NodeExpr[], parent: NodeInput): NodeInput {
+        this.pushRequestedOutputCount(1);
+        try {
+            return AST.reduceToFirstIfReturnList(this.callClassInstanceMethod(instance, method, args, parent));
+        } finally {
+            this.popRequestedOutputCount();
+        }
+    }
+
+    /**
+     * Read one class-instance element from an object array.
+     */
+    private classInstanceArrayElement(array: MultiArray, row: number, column: number, name: string): ClassInstance {
+        const instance = array.array[row][column];
+        if (!ClassInstance.isInstanceOf(instance)) {
+            this.throwUndefinedReferenceError(name);
+        }
+        return instance;
+    }
+
+    /**
      * Invoke each bound method stored in an object array.
      *
      * MATLAB/Octave dot access can produce arrays of method handles. Calling
@@ -1593,13 +1650,11 @@ class Context {
         const result = new MultiArray(expr.dimension);
         for (let n = 0; n < MultiArray.linearLength(expr); n++) {
             const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(expr.dimension[0], expr.dimension[1], n);
-            const boundMethod = expr.array[i][j] as ClassBoundMethod;
-            this.pushRequestedOutputCount(1);
-            try {
-                result.array[i][j] = AST.reduceToFirstIfReturnList(this.callClassInstanceMethod(boundMethod.instance, boundMethod.method, args, parent));
-            } finally {
-                this.popRequestedOutputCount();
+            const boundMethod = expr.array[i][j];
+            if (!ClassBoundMethod.isInstanceOf(boundMethod)) {
+                this.throwEvalError('internal error: bound method array contains a non-method value.');
             }
+            result.array[i][j] = this.reducedClassMethodResult(boundMethod.instance, boundMethod.method, args, parent);
         }
         MultiArray.setType(result);
         if (this.requestedOutputCount > 1) {
@@ -1632,7 +1687,7 @@ class Context {
         const result = new MultiArray(receiver.dimension);
         for (let n = 0; n < MultiArray.linearLength(receiver); n++) {
             const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(receiver.dimension[0], receiver.dimension[1], n);
-            const instance = receiver.array[i][j] as ClassInstance;
+            const instance = this.classInstanceArrayElement(receiver, i, j, name);
             if (name === 'delete') {
                 result.array[i][j] = this.deleteClassInstance(instance, parent);
                 continue;
@@ -1644,12 +1699,7 @@ class Context {
             if (!this.canAccessClassMember(method.classDefinition, method.access)) {
                 this.throwEvalError(`method '${name}' has ${method.access} access for class ${instance.classDefinition.name}.`);
             }
-            this.pushRequestedOutputCount(1);
-            try {
-                result.array[i][j] = AST.reduceToFirstIfReturnList(this.callClassInstanceMethod(instance, method, args, parent));
-            } finally {
-                this.popRequestedOutputCount();
-            }
+            result.array[i][j] = this.reducedClassMethodResult(instance, method, args, parent);
         }
         MultiArray.setType(result);
         if (this.requestedOutputCount > 1) {
@@ -1712,7 +1762,7 @@ class Context {
         this.pushRequestedOutputCount(1);
         let receiver: NodeInput;
         try {
-            receiver = AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(receiverExpression, this.currentScope));
+            receiver = this.evaluatedExpressionValue(receiverExpression, this.currentScope, 'method receiver');
         } finally {
             this.popRequestedOutputCount();
         }
@@ -1805,7 +1855,7 @@ class Context {
                     (arg) => {
                         this.pushRequestedOutputCount(1);
                         try {
-                            return AST.reduceToFirstIfReturnList(this.interpreter!.Evaluator(arg, this.currentScope));
+                            return this.evaluatedExpressionValue(arg, this.currentScope, 'argument');
                         } finally {
                             this.popRequestedOutputCount();
                         }
@@ -1813,8 +1863,7 @@ class Context {
                 );
                 this.pushCallStackFrame(new CallFrame(lambdaScope, callable, this.resolveCallSite(parent), FunctionHandle.toString(lambda), callArgs.length, requestedOutputCount, args));
                 try {
-                    const result = this.interpreter!.Evaluator(lambda.expression, lambdaScope);
-                    return result;
+                    return this.rawEvaluationResult(lambda.expression, lambdaScope);
                 } finally {
                     this.popCallStackFrame();
                 }
@@ -1906,39 +1955,24 @@ class Context {
     private applyCallDispatch(dispatch: CallDispatch, args: NodeExpr[], parent: NodeInput): NodeExpr | undefined {
         switch (dispatch.kind) {
             case 'callable':
-                return this.callCallable(dispatch.callable!, args, parent);
+                return this.callCallable(dispatch.callable, args, parent);
             case 'bound-method':
-                return this.callClassInstanceMethod((dispatch.expr as ClassBoundMethod).instance, (dispatch.expr as ClassBoundMethod).method, args, parent);
+                return this.callClassInstanceMethod(dispatch.expr.instance, dispatch.expr.method, args, parent);
             case 'bound-method-array':
-                return this.callClassBoundMethodArray(dispatch.expr as MultiArray, args, parent);
+                return this.callClassBoundMethodArray(dispatch.expr, args, parent);
             case 'static-method':
-                return this.callClassStaticMethod((dispatch.expr as ClassStaticMethod).method, args, parent);
+                return this.callClassStaticMethod(dispatch.expr.method, args, parent);
             case 'empty-method':
-                return this.callClassEmptyMethod(dispatch.expr as ClassEmptyMethod, args, parent);
+                return this.callClassEmptyMethod(dispatch.expr, args, parent);
             case 'constructor':
-                return this.constructClassInstance(dispatch.expr as ClassDefinition, args, parent);
+                return this.constructClassInstance(dispatch.expr, args, parent);
             case 'functional-class-method':
-                return this.callFunctionalClassMethod(dispatch.functionalName!, args, parent, dispatch.functionalReceiver);
+                return this.callFunctionalClassMethod(dispatch.functionalName, args, parent, dispatch.functionalReceiver);
             case 'undefined-function':
-                this.throwUndefinedReferenceError(dispatch.functionalName!);
+                this.throwUndefinedReferenceError(dispatch.functionalName);
             case 'indexing':
                 return undefined;
         }
-    }
-
-    private charStringIndexArray(value: CharString): MultiArray {
-        const result = new MultiArray(value.dimension);
-        result.array[0] = value.toCharacterScalars();
-        MultiArray.setType(result);
-        return result;
-    }
-
-    private charStringIndexResult(value: NodeExpr, quote: CharString['quote']): CharString {
-        const selected = MultiArray.isInstanceOf(value) ? MultiArray.linearize(value) : [value];
-        if (!selected.every((item) => CharString.isInstanceOf(item))) {
-            this.throwEvalError('character string indexing produced a non-character value.');
-        }
-        return CharString.fromCharacterScalars(selected as CharString[], quote);
     }
 
     /**
@@ -1954,21 +1988,24 @@ class Context {
             if (parent.delim === '{}') {
                 this.throwEvalError('matrix cannot be indexed with {');
             }
-            const array = this.charStringIndexArray(expr);
-            const evaluatedArgs = this.evaluateArgs(args, parent, 'all');
+            const array = MultiArray.characterVectorFromCharString(expr);
+            const evaluatedArgs = MultiArray.indexArguments(this.evaluateArgs(args, parent, 'all'));
             const result = MultiArray.getElements(array, parent.expr.id, [], evaluatedArgs);
             result!.parent = parent;
-            return this.charStringIndexResult(result, expr.quote);
+            return MultiArray.charStringFromCharacterVectorResult(result, expr.quote);
         }
         if (parent.delim === '{}' && !(MultiArray.isInstanceOf(expr) && expr.isCell)) {
             this.throwEvalError('matrix cannot be indexed with {');
         }
         const array = MultiArray.scalarOrCellToMultiArray(expr);
-        const evaluatedArgs = this.evaluateArgs(args, parent, 'all');
+        const evaluatedArgs = MultiArray.indexArguments(this.evaluateArgs(args, parent, 'all'));
         const result = MultiArray.getElements(array, parent.expr.id, [], evaluatedArgs);
         result!.parent = parent;
         if (array.isCell && parent.delim === '()') {
-            (result as MultiArray).isCell = true;
+            if (!MultiArray.isInstanceOf(result)) {
+                this.throwEvalError('internal error: cell parenthesis indexing did not produce a cell array.');
+            }
+            result.isCell = true;
             return result;
         }
         if (array.isCell && parent.delim === '{}' && (this.requestedOutputCount > 1 || this.commaListExpansionEnabled)) {
@@ -2005,7 +2042,7 @@ class Context {
         }
         const dispatch = this.resolveCallDispatch(expr, parent, args);
         if (this.interpreter!.debug) {
-            console.log('[DISPATCH]', dispatch.kind, dispatch.callable?.type ?? '');
+            console.log('[DISPATCH]', dispatch.kind, dispatch.kind === 'callable' ? dispatch.callable.type : '');
         }
         const callResult = this.applyCallDispatch(dispatch, args, parent);
         if (callResult) {

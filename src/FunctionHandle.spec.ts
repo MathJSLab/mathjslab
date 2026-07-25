@@ -25,6 +25,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const copy = handle.copy();
 
             expect(FunctionHandle.isInstanceOf(handle)).toBe(true);
+            expect(FunctionHandle.isAnonymous(handle)).toBe(false);
             expect(handle.id).toBe('sin');
             expect(handle.parameter).toEqual([]);
             expect(handle.expression).toBeNull();
@@ -43,6 +44,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const closure = Scope.create();
             const handle = FunctionHandle.create(undefined, [parameter], expression, closure);
 
+            expect(FunctionHandle.isAnonymous(handle)).toBe(true);
             expect(handle.id).toBeUndefined();
             expect(handle.parameter).toEqual([parameter]);
             expect(handle.expression).toBe(expression);
@@ -59,6 +61,16 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(copy.parameter[0]).not.toBe(handle.parameter[0]);
             expect(copy.expression).not.toBe(handle.expression);
             expect(copy.parameter[0].parent).toBe(copy);
+            expect(copy.expression?.parent).toBe(copy);
+        });
+
+        it('Should copy anonymous handle runtime-expression bodies through the opaque copy contract.', () => {
+            const expression = Complex.one();
+            const handle = FunctionHandle.create(undefined, [], expression, Scope.create());
+            const copy = handle.copy();
+
+            expect(copy.expression).not.toBe(expression);
+            expect(Complex.isInstanceOf(copy.expression)).toBe(true);
             expect(copy.expression?.parent).toBe(copy);
         });
     });

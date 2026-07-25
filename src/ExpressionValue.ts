@@ -1,4 +1,4 @@
-import { AST, type NodeExpr } from './AST';
+import { AST, type ExpressionBoundaryValue } from './AST';
 
 /** Callback used by expression-boundary helpers to report runtime errors. */
 type ThrowExpressionError = (message: string) => void;
@@ -17,11 +17,11 @@ type ThrowExpressionError = (message: string) => void;
  * @param throwError Error callback owned by the caller's context.
  * @returns The same value narrowed to expression position.
  */
-const expressionValue = (value: unknown, name: string, role: string, throwError: ThrowExpressionError): NodeExpr => {
+const expressionValue = (value: unknown, name: string, role: string, throwError: ThrowExpressionError): ExpressionBoundaryValue => {
     if (!AST.isStrictNodeExpr(value) && !AST.isNodeList(value)) {
         throwError(`${role} '${name}' is not an expression.`);
     }
-    return value;
+    return value as ExpressionBoundaryValue;
 };
 
 /**
@@ -33,7 +33,7 @@ const expressionValue = (value: unknown, name: string, role: string, throwError:
  * @param throwError Error callback owned by the caller's context.
  * @returns Values narrowed to expression position.
  */
-const expressionValues = (values: unknown[], namePrefix: string, role: string, throwError: ThrowExpressionError): NodeExpr[] =>
+const expressionValues = (values: unknown[], namePrefix: string, role: string, throwError: ThrowExpressionError): ExpressionBoundaryValue[] =>
     values.map((value, index) => expressionValue(value, `${namePrefix}${index + 1}`, role, throwError));
 
 export { expressionValue, expressionValues };

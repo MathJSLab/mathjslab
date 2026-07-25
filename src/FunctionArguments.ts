@@ -164,6 +164,25 @@ class FunctionArguments {
     }
 
     /**
+     * Convert one validated numeric size node to a literal dimension.
+     *
+     * @param node Candidate size expression.
+     * @param validationName Argument name used in diagnostics.
+     * @param throwSyntaxError Parser/interpreter syntax error adapter.
+     * @returns Positive integer size.
+     */
+    private static literalNumericSize(node: unknown, validationName: string, throwSyntaxError: ThrowSyntaxError): number {
+        if (!Complex.isInstanceOf(node) || !Complex.realIsInteger(node) || !Complex.imagIsZero(node)) {
+            throwSyntaxError(`arguments block size validation for '${validationName}' must use positive integer, symbolic, or ':' dimensions.`);
+        }
+        const size = Complex.realToNumber(node);
+        if (size < 1) {
+            throwSyntaxError(`arguments block size validation for '${validationName}' must use positive integer dimensions.`);
+        }
+        return size;
+    }
+
+    /**
      * Return the declared argument name, rejecting non-identifier declarations.
      */
     public static validationName(validation: NodeArgumentValidation, throwSyntaxError: ThrowSyntaxError): string {
@@ -218,14 +237,7 @@ class FunctionArguments {
             if (node?.type === ':') {
                 return { type: 'any' };
             }
-            if (!Complex.isInstanceOf(node) || !Complex.realIsInteger(node as ComplexType) || !Complex.imagIsZero(node as ComplexType)) {
-                throwSyntaxError(`arguments block size validation for '${validationName}' must use positive integer, symbolic, or ':' dimensions.`);
-            }
-            const size = Complex.realToNumber(node as ComplexType);
-            if (size < 1) {
-                throwSyntaxError(`arguments block size validation for '${validationName}' must use positive integer dimensions.`);
-            }
-            return size;
+            return FunctionArguments.literalNumericSize(node, validationName, throwSyntaxError);
         });
     }
 

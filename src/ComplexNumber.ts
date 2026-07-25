@@ -71,8 +71,8 @@ class ComplexNumber implements TypeOfComplex.ComplexInterface<number, number, un
     );
 
     public constructor(re?: TypeOfComplex.NumLike<number>, im?: TypeOfComplex.NumLike<number>, type?: TypeOfComplex.NumType<number>, parent?: TypeOfComplex.NumParent<unknown>) {
-        this.re = re ? Number(re) : 0;
-        this.im = im ? Number(im) : 0;
+        this.re = typeof re !== 'undefined' ? Number(re) : 0;
+        this.im = typeof im !== 'undefined' ? Number(im) : 0;
         this.type = type ?? ComplexNumber.COMPLEX;
         if (parent) {
             this.parent = parent;

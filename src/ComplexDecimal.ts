@@ -93,8 +93,8 @@ class ComplexDecimal implements TypeOfComplex.ComplexInterface<Decimal, number, 
     );
 
     public constructor(re?: TypeOfComplex.NumLike<Decimal>, im?: TypeOfComplex.NumLike<Decimal>, type?: TypeOfComplex.NumType<number>, parent?: TypeOfComplex.NumParent<unknown>) {
-        this.re = re ? new Decimal(re) : new Decimal(0);
-        this.im = im ? new Decimal(im) : new Decimal(0);
+        this.re = typeof re !== 'undefined' ? new Decimal(re) : new Decimal(0);
+        this.im = typeof im !== 'undefined' ? new Decimal(im) : new Decimal(0);
         this.type = type ?? ComplexDecimal.COMPLEX;
         this.parent = parent ?? undefined;
         ComplexDecimal.setNumberType(this);

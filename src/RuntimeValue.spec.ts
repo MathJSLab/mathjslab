@@ -45,6 +45,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(RuntimeValue.classDefinitionOfInstance(instance)).toBe(definition);
             expect(RuntimeValue.isClassInstance(meta)).toBe(false);
             expect(RuntimeValue.classDefinitionOfInstance(meta)).toBeUndefined();
+            expect(RuntimeValue.isClassInstance({ type: RuntimeValue.CLASS_INSTANCE, classDefinition: {}, properties: {} })).toBe(false);
+            expect(RuntimeValue.isClassInstance({ type: RuntimeValue.CLASS_INSTANCE, classDefinition: { name: 'Pseudo' }, properties: null })).toBe(false);
         });
 
         it('Should expose MATLAB-style dimensions for scalar, text, and array values.', () => {
@@ -62,6 +64,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         it('Should pad dimensions to the requested minimum rank.', () => {
             expect(RuntimeValue.dimensions(Complex.one(), 4)).toEqual([1, 1, 1, 1]);
             expect(RuntimeValue.dimensions(CharString.create('ab'), 4)).toEqual([1, 2, 1, 1]);
+            expect(RuntimeValue.dimensions({ dimension: [2, 'bad'] })).toEqual([1, 1]);
         });
 
         it('Should classify common runtime shapes structurally.', () => {

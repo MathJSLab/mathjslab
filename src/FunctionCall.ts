@@ -325,7 +325,7 @@ class FunctionCall {
      * Create a cell row for `varargin`.
      */
     public static vararginCell(values: NodeInput[]): MultiArray {
-        return AST.nodeFirstRow(AST.nodeList(values), true);
+        return MultiArray.firstRow(values, true);
     }
 
     /**

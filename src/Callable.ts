@@ -1,5 +1,5 @@
 import type { NodeBuiltInFunction, NodeFunctionDefinition } from './AST';
-import type { FunctionHandle } from './FunctionHandle';
+import type { AnonymousFunctionHandle } from './FunctionHandle';
 
 /**
  * Runtime representation of a built-in function after name/handle resolution.
@@ -23,7 +23,7 @@ interface BuiltinCallable {
  */
 interface LambdaCallable {
     type: 'LAMBDA';
-    node: FunctionHandle & { id: undefined };
+    node: AnonymousFunctionHandle;
 }
 
 /**
@@ -64,7 +64,7 @@ const Callables = {
     /**
      * Wrap an anonymous function handle.
      */
-    lambda(node: FunctionHandle & { id: undefined }): LambdaCallable {
+    lambda(node: AnonymousFunctionHandle): LambdaCallable {
         return { type: 'LAMBDA', node };
     },
 

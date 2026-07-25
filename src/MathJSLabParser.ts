@@ -33,6 +33,9 @@ import type {
     NodeExpr,
     NodeIdentifier,
     NodeFunctionDefinition,
+    NodeFunctionParameter,
+    NodeFunctionReturn,
+    NodeDeclarationElement,
     NodeList,
     NodeArgumentValidation,
     NodeArguments,
@@ -3289,7 +3292,7 @@ export default class MathJSLabParser extends Parser {
                         this.state = 720;
                         this.expression();
 
-                        localctx.node = AST.nodeOperation('=', localctx.identifier().node, localctx.expression().node);
+                        localctx.node = AST.nodeDefaultedParameter(localctx.identifier().node, localctx.expression().node);
                     }
                     break;
             }
@@ -8180,7 +8183,7 @@ export class DeclarationContext extends ParserRuleContext {
 }
 
 export class Declaration_elementContext extends ParserRuleContext {
-    public node: NodeExpr;
+    public node: NodeDeclarationElement;
     constructor(parser?: MathJSLabParser, parent?: ParserRuleContext, invokingState?: number) {
         super(parent, invokingState);
         this.parser = parser;
@@ -8813,7 +8816,7 @@ export class Param_listContext extends ParserRuleContext {
 }
 
 export class Param_list_eltContext extends ParserRuleContext {
-    public node: NodeExpr;
+    public node: NodeFunctionParameter;
     constructor(parser?: MathJSLabParser, parent?: ParserRuleContext, invokingState?: number) {
         super(parent, invokingState);
         this.parser = parser;
@@ -8830,7 +8833,7 @@ export class Param_list_eltContext extends ParserRuleContext {
 }
 
 export class Return_list_eltContext extends ParserRuleContext {
-    public node: NodeExpr;
+    public node: NodeFunctionReturn;
     constructor(parser?: MathJSLabParser, parent?: ParserRuleContext, invokingState?: number) {
         super(parent, invokingState);
         this.parser = parser;
@@ -8847,7 +8850,7 @@ export class Return_list_eltContext extends ParserRuleContext {
 }
 
 export class Return_listContext extends ParserRuleContext {
-    public node: NodeExpr;
+    public node: NodeList;
     public i: number = 0;
     constructor(parser?: MathJSLabParser, parent?: ParserRuleContext, invokingState?: number) {
         super(parent, invokingState);

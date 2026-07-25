@@ -182,5 +182,17 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(Complex.engine).toBeDefined();
             expectComplexFacade(Complex as unknown as ComplexInterfaceStatic<any, any>);
         }, 70);
+
+        it('Should preserve NaN values through the facade backends.', () => {
+            Complex.engine = 'number';
+            expect(Complex.realIsNaN(Complex.NaN_0())).toBe(true);
+            expect(Number.isNaN(Complex.realToNumber(Complex.NaN_0()))).toBe(true);
+
+            Complex.engine = 'decimal';
+            expect(Complex.realIsNaN(Complex.NaN_0())).toBe(true);
+            expect(Number.isNaN(Complex.realToNumber(Complex.NaN_0()))).toBe(true);
+
+            Complex.engine = 'number';
+        });
     });
 });

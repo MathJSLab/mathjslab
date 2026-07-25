@@ -3,6 +3,57 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 2.2.1
+
+- Added the public `substruct` built-in for MATLAB/Octave-compatible subscript
+  descriptor construction, including dot, parenthesis, and brace descriptors
+  with validation and signature metadata.
+- Added public `subsref` and `subsasgn` built-ins backed by `substruct`
+  descriptors, covering native array/cell/structure references and assignments
+  plus class overload dispatch.
+- Extended explicit `subsref`/`subsasgn` descriptor handling for selected
+  object-array elements and preserved comma-separated output lists for final
+  brace descriptors such as `subsref(C, substruct('{}', {1:2}))`.
+- Tightened manual `subsref`/`subsasgn` descriptor validation, including
+  operation-specific diagnostics and strict dot-descriptor shape checks, while
+  covering explicit class `subsref` multiple-output dispatch.
+- Aligned descriptor-based brace indexing with direct indexing so explicit
+  `subsref`/`subsasgn` reject `{}` on non-cell arrays.
+- Preserved structure-array comma-separated field lists for final public
+  `subsref` dot descriptors such as `subsref(S, substruct('.', 'field'))`.
+- Aligned public and class-dispatch dot subscript descriptors with
+  MATLAB/Octave so `substruct('.', 'field').subs` stores the field name
+  directly while descriptor readers still tolerate legacy cell-wrapped dot
+  payloads.
+- Allowed descriptor-based `subsasgn` to create structures from empty arrays
+  when the assignment path begins with a dot descriptor, including nested
+  fields and indexed field contents.
+- Aligned direct field assignment so ordinary `[]` roots can grow into
+  structures through `S.field = value` and nested dot paths.
+- Fixed automatic cell-array expansion to fill new cells with empty arrays
+  instead of numeric zeroes.
+- Extended linear expansion from ordinary `0x0` arrays for numeric, cell, and
+  structure-field indexed assignments such as `A(3)=5`, `C{2}=8`, and
+  `S(2).field=value`.
+- Corrected cell-array parenthesis assignment so `C(i) = {value}` stores the
+  cell contents in `C`, while non-cell RHS values are rejected for existing
+  cell-array targets.
+- Added implicit cell-array creation for undefined indexed assignments such as
+  `C(2) = {value}` and `C{2} = value`, while rejecting cell RHS assignment into
+  existing non-cell arrays.
+- Restored cell-array deletion through parenthesis indexing (`C(i) = []`) while
+  preserving brace assignment of empty arrays as cell contents (`C{i} = []`).
+- Fixed indexed structure-field assignment so array-valued RHS values are
+  stored as whole field values and nested field contents can be assigned or
+  deleted via `S.field(i)=...`, `S(k).field(i)=...`, and cell-field variants.
+- Added `ExpressionBoundaryValue` as the typed result of expression-boundary
+  validation, so `ExpressionValue` and AST factory helpers can expose
+  `StrictNodeExpr | NodeList` instead of the broader legacy `NodeExpr` alias.
+- Relaxed function-handle node copy metadata to accept opaque runtime `copy`
+  results, preserving anonymous function handles whose bodies are runtime
+  expression values while keeping parent relinking centralized in
+  `FunctionHandle`.
+
 ## 2.2.0
 
 - Aligned release metadata for version 2.1.5 and regenerated the API reference
@@ -56,6 +107,84 @@ project adheres to [Semantic Versioning](http://semver.org/).
 - Centralized evaluated expression-boundary checks in a shared helper used by
   function returns, context argument/return expansion, interpreter-owned
   comma-separated lists, and `for` loop iteration values.
+- Routed control-flow expression evaluation through an interpreter-owned
+  boundary for `if`, `switch`, `while`, `do-until`, and `for`, validating
+  reduced expression results before boolean conversion, case comparison, or
+  iteration expansion.
+- Extended that evaluated-expression boundary to operator operands, ranges,
+  `end`/colon index resolution, and indexed-expression receivers.
+- Routed class constant defaults, enumeration constructor arguments, lazy
+  `meta.property.DefaultValue` evaluation, and name-value `arguments` defaults
+  through the same evaluated-expression boundary.
+- Routed evaluated index arguments, class `subsref`/`subsasgn` descriptor
+  payloads, dynamic field names, and `arguments` validation expressions through
+  the shared interpreter expression boundary.
+- Routed parenthesized expressions, assignment RHS values, compound-assignment
+  results, declaration defaults, dot receivers, and superclass receivers
+  through the same evaluated-expression boundary.
+- Added a separate interpreter execution-result boundary for block execution,
+  textual evaluation, forward-reference solving, and control-flow bodies, so
+  expression validation and statement execution no longer share anonymous
+  return-list reduction sites.
+- Added a focused architecture regression test to keep direct evaluator
+  return-list reduction confined to the named interpreter boundary helpers.
+- Mirrored those evaluation boundaries in `Context`, routing function-call
+  arguments, defaults, class default construction, method receivers, lambda
+  inputs/results, and function bodies through named context helpers while
+  preserving raw evaluation for comma-separated-list expansion.
+- Centralized context built-in argument expansion through a shared helper that
+  preserves comma-separated-list expansion before expression validation.
+- Centralized class-method return-list reduction in named `Context` and
+  `Interpreter` helpers, including operator overloads, property accessors,
+  `subsref`/`subsasgn`, `end`, and object-array method dispatch.
+- Centralized assignment-result reduction before storing values into names,
+  structure fields, object properties, and event-listener fields.
+- Centralized scalar reductions for comma-list fallback expansion, class
+  `numArgumentsFromSubscript`, and scalar indexing/dispatch selections.
+- Extended architecture tests to cap `Context` and `Interpreter` return-list
+  reductions to their named semantic boundary helpers.
+- Added an explicit anonymous-function-handle type guard and used it in
+  callable resolution, removing the remaining lambda-handle structural cast.
+- Replaced object-array functional method dispatch casts with an explicit
+  class-instance element guard in `Context`.
+- Replaced function-handle casts in interpreter introspection built-ins with a
+  shared evaluated function-handle argument guard.
+- Centralized textual function-handle parsing for `str2func`, `feval`, and
+  arity introspection so those paths no longer call the built-in table through
+  structural casts.
+- Added local opaque-node guards to `FunctionHandle` copy/link handling,
+  removing its remaining structural casts without introducing an AST import.
+- Replaced internal `Structure` navigation casts with explicit nested-structure
+  construction and structure-array guards.
+- Reworked core AST structural guards to read candidate node properties through
+  validated reflection, removing residual guard-time casts from list, return
+  list, command-call, indexing, superclass, and dot-reference predicates.
+- Reworked `RuntimeValue` structural predicates for copy, class-instance, and
+  dimension detection through validated reflection, with regression coverage
+  for malformed object and shape candidates.
+- Tightened `MultiArray` structure-array helpers with explicit object/field
+  guards and validated runtime structure-factory results before field cloning.
+- Centralized `MultiArray` runtime structure creation and character-list
+  detection behind local guards, removing casts from structure expansion and
+  character concatenation paths.
+- Added a guarded numeric-element boundary for `MultiArray` logical conversion,
+  complex-element scanning, and imaginary-part detection, with regression
+  coverage for malformed runtime arrays.
+- Reused the `MultiArray` numeric-element boundary for numeric page slicing and
+  flat-array extraction, and reused the character-list guard for character
+  vector reconstruction.
+- Moved `arguments` block literal-size validation into a dedicated numeric-size
+  helper, removing residual casts while preserving MATLAB/Octave diagnostics.
+- Routed additional interpreter textual built-ins and Set/Get name-list
+  handling through shared character guards instead of direct casts, covering
+  warnings, errors, class introspection, workspace evaluation, and script
+  loading helpers.
+- Optimized `MultiArray.linearize` by filling a preallocated column-major
+  result vector directly, avoiding per-column slice/map allocations while
+  preserving the internal row-major page-stacked storage translation.
+- Refreshed release-adjacent JSDoc and compatibility docs for runtime
+  boundaries, Set/Get helpers, argument-size validation, and `MultiArray`
+  linearization semantics.
 - Added factory-time AST validation for command-word arguments, index
   expression arguments, and superclass constructor arguments so parser-created
   expression slots reject statement/block nodes before evaluation.
@@ -111,6 +240,18 @@ project adheres to [Semantic Versioning](http://semver.org/).
   lists.
 - Guarded object-array field assignment values before linearization so invalid
   runtime elements cannot be distributed into class property assignments.
+- Added an explicit native indexing boundary through `IndexArgument` and
+  `MultiArray.indexArguments`, so array/cell/string indexing rejects
+  non-numeric subscript values before they enter the low-level indexing engine.
+- Routed direct, compound, descriptor-based, and object-array indexed
+  assignment paths through evaluated index arguments instead of raw AST
+  subscript nodes.
+- Reused the same evaluated-index boundary when expanding cell-content
+  assignment targets such as `[C{idx}] = ...`, preserving comma-separated-list
+  assignment semantics with computed index vectors.
+- Added MATLAB/Octave-compatible `deal` support for comma-separated output
+  distribution, including singleton-input replication, positional multi-input
+  distribution, arity diagnostics, and `nargin`/`nargout` metadata.
 - Relaxed interpreter-owned comma-separated return-list inputs to `unknown[]`
   and validated them at selection time, removing unchecked casts from class and
   structure field expansion paths.
@@ -171,6 +312,139 @@ project adheres to [Semantic Versioning](http://semver.org/).
 - Refactored anonymous `FunctionHandle` AST-node copying into separate node and
   nested-value helpers, removing broad `unknown` casts while preserving parent
   relinking for copied lambda parameter/body nodes.
+- Expanded structure-field comma-separated targets on the left side of multiple
+  assignment, so `[S.field] = ...`, `[S(:).field] = ...`, and indexed structure
+  selections request and distribute one RHS output per selected structure
+  element.
+- Extended the same multiple-assignment target expansion to class instance
+  arrays, including direct, indexed, colon, and nested property targets such as
+  `[objs.x] = ...`, `[objs(:).x] = ...`, and `[objs.child.x] = ...`.
+- Kept indexed object-array property chains on the class-property assignment
+  path instead of the native chained `subsasgn` fallback, fixing nested targets
+  such as `objs(2).child.x = ...` and `[objs(idx).child.x] = ...`.
+- Added native public `subsasgn` handling for class property chains when no
+  class overload is present, covering scalar objects, object arrays, indexed
+  selections, and nested descriptors such as
+  `substruct('.', 'child', '.', 'x')`.
+- Added native public `subsref` handling for class property chains when no
+  class overload is present, including scalar objects, object arrays, indexed
+  selections, nested descriptors, and comma-separated outputs from the final
+  property in a chain.
+- Extended class property assignment to support indexed contents inside nested
+  properties, covering direct syntax and public `subsasgn` descriptors such as
+  `obj.child.values(2) = ...` and
+  `substruct('.', 'child', '.', 'values', '()', {2})`.
+- Extended public `subsref` fallback for class property chains to support final
+  indexed property contents, including scalar objects, object arrays, selected
+  object-array elements, and comma-separated outputs.
+- Extended public `subsref`/`subsasgn` descriptor handling to character
+  strings, so `substruct('()', {...})` can reference and assign text contents
+  consistently with direct `()` string indexing while `{}` remains invalid.
+- Centralized character-vector indexing helpers in `MultiArray` and aligned
+  direct character-string assignment/deletion with the same vectorized
+  semantics used by public `subsref`/`subsasgn`.
+- Corrected public `subsref` parenthesis descriptors so cell-array `()`
+  indexing returns cell arrays, while numeric arrays and character strings keep
+  their direct-indexing behavior.
+- Preserved intermediate cell-array parenthesis results in public
+  `subsref`/`subsasgn` descriptor chains, so combinations such as
+  `substruct('()', {2}, '{}', {1})` behave like direct `C(2){1}` syntax,
+  including deeper nested cell chains.
+- Corrected linear-index result shaping so explicit full-length index vectors
+  such as `A([1, 2, 3])` preserve the index vector orientation instead of being
+  treated like colon indexing (`A(:)`).
+- Extended linear-index shaping to follow MATLAB/Octave vector rules more
+  closely: vector sources keep their own row/column orientation for vector
+  indices, while matrix-shaped sources or matrix-shaped indices use the index
+  shape.
+- Added regression coverage for linear indexed assignment with explicit vector
+  and matrix-shaped indices, including ordinary arrays and cell arrays.
+- Added regression coverage for linear indexed deletion with explicit vector
+  indices, preserving row/column orientation for ordinary arrays and cell
+  arrays.
+- Corrected logical-index result shaping to match the equivalent
+  `A(find(mask))` behavior: vector targets preserve their own orientation,
+  vector masks shape matrix targets, and matrix-shaped masks return column
+  vectors.
+- Added regression coverage for logical indexed reads, assignments, and
+  deletions across ordinary arrays, column vectors, and cell arrays.
+- Added public `subsref`/`subsasgn` regression coverage for logical parenthesis
+  descriptors on numeric arrays, cell arrays, and character strings, including
+  text replacement and deletion through logical masks.
+- Added public `subsref`/`subsasgn` regression coverage for colon character
+  subscripts inside `substruct` descriptors, including full-column/full-row
+  references, `A(:)` references, scalar fill assignment, row/column deletion,
+  and cell-array clearing.
+- Added public brace-descriptor coverage for `substruct('{}', {':'})`,
+  including comma-separated `subsref` expansion, multiple assignment capture,
+  scalar content fill, and assigning empty arrays into all selected cells.
+- Extended comma-separated `subsref` descriptor regression coverage to include
+  too-many-output diagnostics, expansion into function calls, and expansion
+  inside cell-array literals.
+- Added public `subsasgn` descriptor coverage for cell parenthesis assignment
+  with cell-array RHS distribution, brace-content scalar fill over multiple
+  selected cells, and invalid comma-separated RHS expansion into the
+  three-argument `subsasgn` call.
+- Added direct indexing regression coverage for `end` in dimension-aware reads,
+  assignments, and deletions across numeric arrays and cell arrays.
+- Added chained indexing regression coverage for `end` evaluated against
+  intermediate field and cell-content values, including nested assignment and
+  deletion paths.
+- Fixed character-vector expansion during indexed assignment so assigning past
+  the end of a `CharString` fills intervening positions with spaces instead of
+  numeric zeroes.
+- Added direct and public `subsasgn` regression coverage for character-vector
+  growth, `end`-based replacement, repeated-position assignment, and `end`
+  range deletion.
+- Aligned `CharString` indexed assignment with MATLAB character-code conversion
+  so numeric real RHS values are converted to Unicode characters for both
+  direct assignment and public `subsasgn` descriptors.
+- Rejected non-character, non-numeric RHS values during character-vector
+  indexed assignment with a dedicated diagnostic instead of leaking a
+  post-assignment conversion error.
+- Added the native `char` built-in for character-vector conversion from numeric
+  code values, existing character values, numeric arrays, and multiple row
+  inputs with MATLAB-style blank padding.
+- Added the native `double` built-in for numeric/logical values and
+  character-vector/code conversion, including character arrays produced by
+  `char`.
+- Added the native `logical` built-in for numeric/logical and character-vector
+  conversion, including scalar, array, empty-text, and invalid-input coverage.
+- Fixed `ComplexNumber` and `ComplexDecimal` construction so explicit `NaN`
+  real or imaginary parts are preserved instead of being treated like omitted
+  constructor arguments.
+- Added native `isnan`, `isinf`, and `isfinite` built-ins for scalar, array,
+  complex, and character-vector classification, including MATLAB-compatible
+  handling of complex values that contain both `Inf` and `NaN` parts.
+- Added native `isfloat` and `isinteger` built-ins, matching the current
+  runtime type model where nonlogical numeric values are `double` floating
+  point values and integer storage classes are not represented yet.
+- Tightened interpreter assignment boundaries by replacing remaining scoped
+  temporary-value casts in native/class `subsasgn` paths with validated
+  expression and `MultiArray` retrieval helpers.
+- Strengthened call/index dispatch typing in `Context` by turning
+  `CallDispatch` into a discriminated union and replacing dispatch casts with
+  narrowed fields and explicit bound-method array validation.
+- Clarified function-node typing so user-defined `FCNDEF` nodes carry an
+  explicit `null` built-in implementation placeholder while `BUILTIN` nodes
+  require a concrete callable implementation.
+- Corrected `MultiArray.fromCharString` typing to reflect its scalar-or-array
+  runtime result, and removed redundant `MultiArray` casts from basic array and
+  cell checks.
+- Typed the internal `MultiArray.reduceToArray` representation as collected
+  element lines, replacing blind casts in the `min`/`max` dimensional reduction
+  path with runtime guards and direct coverage.
+- Centralized logical-index mask normalization and validation in `MultiArray`,
+  removing duplicated scalar/array coercions from read, assignment, and linear
+  index resolution paths, with direct regression coverage for malformed logical
+  masks.
+- Split parse-time matrix/cell row construction from ordinary runtime row
+  construction by parameterizing `MultiArray.firstRow`, `appendRow`, and
+  `emptyArray`, removing the remaining blind array-element cast from the AST
+  matrix/cell factories while preserving parent-link behavior.
+- Tightened generated parser action types for function return lists, function
+  parameter entries, and declaration entries, and added an explicit AST factory
+  for defaulted declaration/parameter nodes.
 
 ## 2.1.4
 

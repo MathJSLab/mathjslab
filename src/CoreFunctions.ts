@@ -32,7 +32,7 @@ abstract class CoreFunctions {
      * @throws Error when `M` is a cell array.
      */
     public static readonly throwErrorIfCellArray = (name: string, M: MultiArray | ComplexType): void => {
-        if (MultiArray.isInstanceOf(M) && (M as MultiArray).isCell) {
+        if (MultiArray.isInstanceOf(M) && M.isCell) {
             throw new Error(`${name}: wrong type argument 'cell'`);
         }
     };
@@ -185,6 +185,299 @@ abstract class CoreFunctions {
     public static readonly ischar = (X?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('ischar', !(typeof X !== 'undefined' && rest.length === 0));
         return CharString.isInstanceOf(X) ? Complex.true() : Complex.false();
+    };
+
+    /** Signature metadata for `char`. */
+    public static readonly charSignature: BuiltInFunctionSignature = {
+        inputs: { arity: -1, min: 1, parameters: [{ name: 'value', variadic: true }] },
+        outputs: { arity: 1 },
+    };
+
+    /**
+     * Convert numeric arrays and character values to MATLAB-style character
+     * arrays.
+     *
+     * @param args Values to convert and stack as rows.
+     * @returns Character vector or character array.
+     */
+    public static readonly char = (...args: ElementType[]): ElementType => {
+        AST.throwInvalidCallError('char', args.length === 0);
+        const rows = args.flatMap((arg) => CoreFunctions.charRows(arg));
+        if (rows.length === 1) {
+            return CharString.fromCharacterScalars(rows[0]);
+        }
+        const width = rows.reduce((max, row) => Math.max(max, row.length), 0);
+        const result = new MultiArray([rows.length, width]);
+        for (let i = 0; i < rows.length; i++) {
+            const quote = rows[i][0]?.quote ?? '"';
+            for (let j = 0; j < width; j++) {
+                result.array[i][j] = rows[i][j] ?? CharString.create(' ', quote);
+            }
+        }
+        MultiArray.setType(result);
+        return result;
+    };
+
+    /**
+     * Convert a scalar array element to a character scalar for `char`.
+     *
+     * @param value Element to convert.
+     * @param quote Quote style to preserve.
+     * @returns Character scalar.
+     */
+    private static readonly charElement = (value: ElementType, quote: CharString['quote'] = '"'): CharString => {
+        if (CharString.isInstanceOf(value)) {
+            return value;
+        }
+        if (Complex.isInstanceOf(value)) {
+            if (Complex.imagToNumber(value) !== 0) {
+                throw new Error('char: numeric character codes must be real.');
+            }
+            return CharString.fromNumericCode(Complex.realToNumber(value), quote);
+        }
+        throw new Error('char: invalid conversion input.');
+    };
+
+    /**
+     * Convert a runtime value into character rows.
+     *
+     * @param value Value accepted by `char`.
+     * @returns Character rows.
+     */
+    private static readonly charRows = (value: ElementType): CharString[][] => {
+        if (CharString.isInstanceOf(value)) {
+            return [value.toCharacterScalars()];
+        }
+        if (Complex.isInstanceOf(value)) {
+            return [[CoreFunctions.charElement(value)]];
+        }
+        if (MultiArray.isInstanceOf(value) && !value.isCell && value.dimension.length === 2) {
+            return value.array.map((row) => row.map((element) => CoreFunctions.charElement(element)));
+        }
+        throw new Error('char: invalid conversion input.');
+    };
+
+    /** Signature metadata for `double`. */
+    public static readonly doubleSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
+
+    /**
+     * Convert numeric/logical and character values to double-precision values.
+     *
+     * @param X Value to convert.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @returns Numeric scalar or array.
+     */
+    public static readonly double = (X?: ElementType, ...rest: unknown[]): ElementType => {
+        AST.throwInvalidCallError('double', !(typeof X !== 'undefined' && rest.length === 0));
+        if (CharString.isInstanceOf(X)) {
+            return MultiArray.fromCharString(X);
+        }
+        if (Complex.isInstanceOf(X)) {
+            return CoreFunctions.doubleElement(X);
+        }
+        if (MultiArray.isInstanceOf(X) && !X.isCell) {
+            const result = new MultiArray(X.dimension);
+            result.array = X.array.map((row) => row.map((element) => CoreFunctions.doubleElement(element)));
+            result.type = MultiArray.linearLength(result) === 0 ? Complex.REAL : result.type;
+            if (MultiArray.linearLength(result) > 0) {
+                MultiArray.setType(result);
+            }
+            return MultiArray.MultiArrayToScalar(result);
+        }
+        throw new Error('double: invalid conversion input.');
+    };
+
+    /**
+     * Convert a scalar value accepted by `double`.
+     *
+     * @param value Scalar runtime value.
+     * @returns Numeric scalar.
+     */
+    private static readonly doubleElement = (value: ElementType): ComplexType => {
+        if (Complex.isInstanceOf(value)) {
+            return Complex.create(Complex.realToNumber(value), Complex.imagToNumber(value));
+        }
+        if (CharString.isInstanceOf(value) && value.length === 1) {
+            return Complex.create(value.str.charCodeAt(0));
+        }
+        throw new Error('double: invalid conversion input.');
+    };
+
+    /** Signature metadata for `logical`. */
+    public static readonly logicalSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
+
+    /**
+     * Convert numeric/logical and character values to logical values.
+     *
+     * @param X Value to convert.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @returns Logical scalar or array.
+     */
+    public static readonly logical = (X?: ElementType, ...rest: unknown[]): ElementType => {
+        AST.throwInvalidCallError('logical', !(typeof X !== 'undefined' && rest.length === 0));
+        if (CharString.isInstanceOf(X)) {
+            return CoreFunctions.logical(MultiArray.fromCharString(X));
+        }
+        if (Complex.isInstanceOf(X)) {
+            return CoreFunctions.logicalElement(X);
+        }
+        if (MultiArray.isInstanceOf(X) && !X.isCell) {
+            const result = new MultiArray(X.dimension);
+            result.array = X.array.map((row) => row.map((element) => CoreFunctions.logicalElement(element)));
+            result.type = Complex.LOGICAL;
+            if (MultiArray.linearLength(result) > 0) {
+                MultiArray.setType(result);
+            }
+            return MultiArray.MultiArrayToScalar(result);
+        }
+        throw new Error('logical: invalid conversion input.');
+    };
+
+    /**
+     * Convert a scalar value accepted by `logical`.
+     *
+     * @param value Scalar runtime value.
+     * @returns Logical scalar.
+     */
+    private static readonly logicalElement = (value: ElementType): ComplexType => {
+        if (Complex.isInstanceOf(value)) {
+            if (!Complex.imagIsZero(value) || Complex.realIsNaN(value)) {
+                throw new Error('logical: complex and NaN values cannot be converted to logical.');
+            }
+            return Complex.realIsZero(value) ? Complex.false() : Complex.true();
+        }
+        if (CharString.isInstanceOf(value) && value.length === 1) {
+            return value.str.charCodeAt(0) === 0 ? Complex.false() : Complex.true();
+        }
+        throw new Error('logical: invalid conversion input.');
+    };
+
+    /**
+     * Apply a numeric classification predicate to scalars, arrays, and text.
+     *
+     * @param name Built-in name used for diagnostics.
+     * @param X Value to classify.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @param predicate Scalar predicate.
+     * @returns Logical scalar or array.
+     */
+    private static readonly numericClassification = (
+        name: 'isnan' | 'isinf' | 'isfinite',
+        X: ElementType | undefined,
+        rest: unknown[],
+        predicate: (value: ComplexType) => boolean,
+    ): ElementType => {
+        AST.throwInvalidCallError(name, !(typeof X !== 'undefined' && rest.length === 0));
+        if (CharString.isInstanceOf(X)) {
+            return CoreFunctions.numericClassification(name, MultiArray.fromCharString(X), [], predicate);
+        }
+        if (Complex.isInstanceOf(X)) {
+            return predicate(X) ? Complex.true() : Complex.false();
+        }
+        if (MultiArray.isInstanceOf(X) && !X.isCell) {
+            const result = new MultiArray(X.dimension);
+            result.array = X.array.map((row) => row.map((element) => (predicate(CoreFunctions.numericClassificationElement(name, element)) ? Complex.true() : Complex.false())));
+            result.type = Complex.LOGICAL;
+            return MultiArray.MultiArrayToScalar(result);
+        }
+        throw new Error(`${name}: invalid conversion input.`);
+    };
+
+    /**
+     * Convert an accepted scalar element for numeric classification.
+     *
+     * @param name Built-in name used for diagnostics.
+     * @param value Scalar value to classify.
+     * @returns Numeric scalar.
+     */
+    private static readonly numericClassificationElement = (name: string, value: ElementType): ComplexType => {
+        if (Complex.isInstanceOf(value)) {
+            return value;
+        }
+        if (CharString.isInstanceOf(value) && value.length === 1) {
+            return Complex.create(value.str.charCodeAt(0));
+        }
+        throw new Error(`${name}: invalid conversion input.`);
+    };
+
+    /** Signature metadata for `isnan`. */
+    public static readonly isnanSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
+
+    /**
+     * Test for NaN values.
+     *
+     * @param X Value to test.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @returns Logical scalar or array.
+     */
+    public static readonly isnan = (X?: ElementType, ...rest: unknown[]): ElementType =>
+        CoreFunctions.numericClassification('isnan', X, rest, (value) => Complex.realIsNaN(value) || Complex.imagIsNaN(value));
+
+    /** Signature metadata for `isinf`. */
+    public static readonly isinfSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
+
+    /**
+     * Test for infinite values.
+     *
+     * @param X Value to test.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @returns Logical scalar or array.
+     */
+    public static readonly isinf = (X?: ElementType, ...rest: unknown[]): ElementType =>
+        CoreFunctions.numericClassification(
+            'isinf',
+            X,
+            rest,
+            (value) => (!Complex.realIsFinite(value) && !Complex.realIsNaN(value)) || (!Complex.imagIsFinite(value) && !Complex.imagIsNaN(value)),
+        );
+
+    /** Signature metadata for `isfinite`. */
+    public static readonly isfiniteSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
+
+    /**
+     * Test for finite values.
+     *
+     * @param X Value to test.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @returns Logical scalar or array.
+     */
+    public static readonly isfinite = (X?: ElementType, ...rest: unknown[]): ElementType =>
+        CoreFunctions.numericClassification('isfinite', X, rest, (value) => Complex.realIsFinite(value) && Complex.imagIsFinite(value));
+
+    /** Signature metadata for `isfloat`. */
+    public static readonly isfloatSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
+
+    /**
+     * Return true if X is a floating-point array.
+     *
+     * The current numeric runtime represents floating-point numeric values as
+     * `double`; logical values are deliberately excluded.
+     *
+     * @param X Value to test.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @returns Logical scalar.
+     */
+    public static readonly isfloat = (X?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('isfloat', !(typeof X !== 'undefined' && rest.length === 0));
+        return FunctionValidation.numericElements(X) ? Complex.true() : Complex.false();
+    };
+
+    /** Signature metadata for `isinteger`. */
+    public static readonly isintegerSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
+
+    /**
+     * Return true if X is an integer-typed array.
+     *
+     * Integer storage classes are not represented yet, so double values that
+     * happen to have integer-valued contents correctly return false.
+     *
+     * @param X Value to test.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @returns Logical false for the currently supported value model.
+     */
+    public static readonly isinteger = (X?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('isinteger', !(typeof X !== 'undefined' && rest.length === 0));
+        return Complex.false();
     };
 
     /** Signature metadata for `isnumeric`. */
@@ -1872,6 +2165,79 @@ abstract class CoreFunctions {
         }
     };
 
+    /** Signature metadata for `substruct`. */
+    public static readonly substructSignature: BuiltInFunctionSignature = {
+        inputs: {
+            arity: -1,
+            min: 2,
+            parameters: [
+                {
+                    name: 'typeAndSubscript',
+                    variadic: true,
+                    variadicGroup: [{ name: 'type', classes: ['char'] }, { name: 'subscript' }],
+                },
+            ],
+        },
+        outputs: { arity: 1 },
+    };
+
+    /**
+     * Build a MATLAB-compatible subscript descriptor structure.
+     *
+     * The descriptor uses the public `substruct` shape: each element has a
+     * character `type` field (`'.'`, `'()'`, or `'{}'`). Dot descriptors store
+     * the field name directly in `subs`; parenthesis and brace descriptors
+     * store a cell-array of subscript values.
+     *
+     * @param args Alternating type/subscript arguments.
+     * @returns A scalar descriptor or a row structure array of descriptors.
+     * @throws Error when the type/subscript pairs are malformed.
+     */
+    public static readonly substruct = (...args: ElementType[]): ElementType => {
+        const errorMessage = `substruct: arguments must occur as TYPE, SUBS pairs`;
+        if (args.length < 2 || args.length % 2 !== 0) {
+            throw new Error(errorMessage);
+        }
+
+        const descriptors: Structure[] = [];
+        for (let i = 0; i < args.length; i += 2) {
+            const typeValue = args[i];
+            const subsValue = args[i + 1];
+            if (!CharString.isInstanceOf(typeValue)) {
+                throw new Error(errorMessage);
+            }
+
+            descriptors.push(CoreFunctions.createSubstructDescriptor(typeValue.str, subsValue));
+        }
+
+        return descriptors.length === 1 ? descriptors[0] : MultiArray.firstRow(descriptors);
+    };
+
+    /**
+     * Create one `substruct` descriptor element.
+     *
+     * @param type Subscript delimiter type.
+     * @param subs Raw subscript argument.
+     * @returns Descriptor structure with `type` and `subs` fields.
+     */
+    private static readonly createSubstructDescriptor = (type: string, subs: ElementType): Structure => {
+        switch (type) {
+            case '.':
+                if (!CharString.isInstanceOf(subs)) {
+                    throw new Error('substruct: dot subscripts must be character strings.');
+                }
+                return new Structure({ type: CharString.create(type), subs: subs.copy() });
+            case '()':
+            case '{}':
+                if (!MultiArray.isInstanceOf(subs) || !subs.isCell) {
+                    throw new Error(`substruct: ${type} subscripts must be supplied as a cell array.`);
+                }
+                return new Structure({ type: CharString.create(type), subs: subs.copy() });
+            default:
+                throw new Error("substruct: TYPE must be '.', '()', or '{}'.");
+        }
+    };
+
     public static readonly normSignature: BuiltInFunctionSignature = {
         inputs: [
             { arity: 1, parameters: [{ name: 'value', classes: ['double'] }] },
@@ -1996,6 +2362,14 @@ abstract class CoreFunctions {
         iscolumn: { func: CoreFunctions.iscolumn, signature: CoreFunctions.iscolumnSignature },
         isstruct: { func: CoreFunctions.isstruct, signature: CoreFunctions.isstructSignature },
         ischar: { func: CoreFunctions.ischar, signature: CoreFunctions.ischarSignature },
+        char: { func: CoreFunctions.char, signature: CoreFunctions.charSignature },
+        double: { func: CoreFunctions.double, signature: CoreFunctions.doubleSignature },
+        logical: { func: CoreFunctions.logical, signature: CoreFunctions.logicalSignature },
+        isnan: { func: CoreFunctions.isnan, signature: CoreFunctions.isnanSignature },
+        isinf: { func: CoreFunctions.isinf, signature: CoreFunctions.isinfSignature },
+        isfinite: { func: CoreFunctions.isfinite, signature: CoreFunctions.isfiniteSignature },
+        isfloat: { func: CoreFunctions.isfloat, signature: CoreFunctions.isfloatSignature },
+        isinteger: { func: CoreFunctions.isinteger, signature: CoreFunctions.isintegerSignature },
         isnumeric: { func: CoreFunctions.isnumeric, signature: CoreFunctions.isnumericSignature },
         islogical: { func: CoreFunctions.islogical, signature: CoreFunctions.islogicalSignature },
         isreal: { func: CoreFunctions.isreal, signature: CoreFunctions.isrealSignature },
@@ -2051,6 +2425,7 @@ abstract class CoreFunctions {
         var: { func: CoreFunctions.variance, signature: CoreFunctions.varianceSignature },
         std: { func: CoreFunctions.std, signature: CoreFunctions.stdSignature },
         struct: { func: CoreFunctions.struct, signature: CoreFunctions.structSignature },
+        substruct: { func: CoreFunctions.substruct, signature: CoreFunctions.substructSignature },
         norm: { func: CoreFunctions.norm, signature: CoreFunctions.normSignature },
     };
 }

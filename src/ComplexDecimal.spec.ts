@@ -13,6 +13,18 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
     });
 
+    describe('Construction and classification', () => {
+        it('Should preserve NaN values during construction.', () => {
+            const direct = ComplexDecimal.create(Number.NaN);
+            const literal = ComplexDecimal.NaN_0();
+
+            expect(ComplexDecimal.realIsNaN(direct)).toBe(true);
+            expect(ComplexDecimal.realIsNaN(literal)).toBe(true);
+            expect(ComplexDecimal.imagIsZero(literal)).toBe(true);
+            expect(Number.isNaN(ComplexDecimal.realToNumber(literal))).toBe(true);
+        });
+    });
+
     describe('Trigonometric identities', () => {
         const expectCloseToOne = (value: ReturnType<typeof ComplexDecimal.create>, tolerance = 1e-25): void => {
             expect(Math.abs(value.re.toNumber() - 1)).toBeLessThanOrEqual(tolerance);

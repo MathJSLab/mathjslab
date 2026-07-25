@@ -7,7 +7,7 @@ import { Complex } from './Complex';
 import { MultiArray } from './MultiArray';
 import { Callables } from './Callable';
 import { FunctionArity } from './FunctionArity';
-import { FunctionHandle } from './FunctionHandle';
+import { FunctionHandle, type AnonymousFunctionHandle } from './FunctionHandle';
 
 const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.sep}]+)\\.spec\\.([cm]?[jt]s)\$`))!;
 const unitName = __filenameMatch[1];
@@ -28,6 +28,14 @@ const functionDefinition = (parameterNames: string[], returnNames: string[]): No
         omitOutput: false,
     }) as NodeFunctionDefinition;
 
+const anonymousHandle = (...args: Parameters<typeof FunctionHandle.create>): AnonymousFunctionHandle => {
+    const handle = FunctionHandle.create(...args);
+    if (!FunctionHandle.isAnonymous(handle)) {
+        throw new Error('expected anonymous function handle fixture.');
+    }
+    return handle;
+};
+
 describe(`${unitName} unit test (.${testExtension} test file).`, () => {
     beforeAll(() => {
         AST.reload();
@@ -47,8 +55,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const fixedFunction = functionDefinition(['x', 'y'], ['z']);
             const variadicFunction = functionDefinition(['x', 'varargin'], ['z']);
 
-            expect(FunctionArity.inputArity(Callables.lambda(fixedLambda as FunctionHandle & { id: undefined }))).toBe(2);
-            expect(FunctionArity.inputArity(Callables.lambda(variadicLambda as FunctionHandle & { id: undefined }))).toBe(-2);
+            expect(FunctionArity.inputArity(Callables.lambda(anonymousHandle(undefined, fixedLambda.parameter, fixedLambda.expression)))).toBe(2);
+            expect(FunctionArity.inputArity(Callables.lambda(anonymousHandle(undefined, variadicLambda.parameter, variadicLambda.expression)))).toBe(-2);
             expect(FunctionArity.inputArity(Callables.functionDefinition(fixedFunction))).toBe(2);
             expect(FunctionArity.inputArity(Callables.functionDefinition(variadicFunction))).toBe(-2);
         });
@@ -66,7 +74,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             } as NodeBuiltInFunction;
             const builtinDefault = { type: 'BUILTIN', id: 'plain', mapper: false, ev: [], func: (x: unknown, y: unknown) => x ?? y } as NodeBuiltInFunction;
 
-            expect(FunctionArity.outputArity(Callables.lambda(FunctionHandle.create(undefined, [], AST.nodeIdentifier('x')) as FunctionHandle & { id: undefined }))).toBe(1);
+            expect(FunctionArity.outputArity(Callables.lambda(anonymousHandle(undefined, [], AST.nodeIdentifier('x'))))).toBe(1);
             expect(FunctionArity.outputArity(Callables.functionDefinition(fixedFunction))).toBe(2);
             expect(FunctionArity.outputArity(Callables.functionDefinition(variadicFunction))).toBe(-2);
             expect(FunctionArity.outputArity(Callables.builtin(builtinFixed))).toBe(3);
@@ -81,7 +89,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const invalidReturn = functionDefinition(['x'], ['y']);
             invalidReturn.return.list.push(AST.nodeReturn());
 
-            expect(() => FunctionArity.inputArity(Callables.lambda(invalidLambda as FunctionHandle & { id: undefined }))).toThrow(
+            expect(() => FunctionArity.inputArity(Callables.lambda(anonymousHandle(undefined, invalidLambda.parameter, invalidLambda.expression)))).toThrow(
                 'internal AST error: function handle parameter 2 has invalid node type.',
             );
             expect(() => FunctionArity.inputArity(Callables.functionDefinition(invalidParameter))).toThrow('internal AST error: function parameter 2 has invalid node type.');
