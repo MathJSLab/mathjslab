@@ -13,7 +13,7 @@ const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.
 const unitName = __filenameMatch[1];
 const testExtension = __filenameMatch[2];
 
-const functionDefinition = (id: string, nested = false): NodeFunctionDefinition =>
+const functionDefinition = (id: string, nested = false, sourceName?: string): NodeFunctionDefinition =>
     ({
         type: 'FCNDEF',
         id,
@@ -25,6 +25,7 @@ const functionDefinition = (id: string, nested = false): NodeFunctionDefinition 
         arguments: AST.nodeList([]),
         statements: AST.nodeList([]),
         attributes: nested ? { nested: true } : {},
+        sourceName,
         omitAnswer: false,
         omitOutput: false,
     }) as NodeFunctionDefinition;
@@ -57,6 +58,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(FunctionLookup.existCode('sum', undefined, undefined, builtInFunction('sum'))).toBe(5);
             expect(FunctionLookup.existCode('double', 'class', undefined, undefined)).toBe(8);
             expect(FunctionLookup.existCode('logical', 'class', undefined, undefined)).toBe(8);
+            expect(FunctionLookup.existCode('handle', 'class', undefined, undefined)).toBe(8);
             expect(FunctionLookup.existCode('meta.class', 'class', undefined, undefined)).toBe(8);
             expect(FunctionLookup.existCode('ExternalPoint', undefined, undefined, undefined, true)).toBe(8);
             expect(FunctionLookup.existCode('ExternalPoint', 'class', undefined, undefined, true)).toBe(8);
@@ -64,6 +66,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(FunctionLookup.existCode('startup', 'file', undefined, undefined, false, true)).toBe(2);
             expect(FunctionLookup.existCode('startup', 'function', undefined, undefined, false, true)).toBe(0);
             expect(FunctionLookup.existCode('sum', 'builtin', undefined, builtInFunction('sum'))).toBe(5);
+            expect(FunctionLookup.existCode('sum', ' builtin ', undefined, builtInFunction('sum'))).toBe(5);
             expect(FunctionLookup.existCode('x', 'function', { node: Complex.create(1) }, undefined)).toBe(0);
             expect(FunctionLookup.existCodeFromResolution('x', undefined, { kind: 'variable', name: 'x', resolvedName: 'x', source: 'local', entry: { node: Complex.create(1) } })).toBe(1);
             expect(
@@ -75,6 +78,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                     functionDefinition: functionDefinition('pkg.f'),
                 }),
             ).toBe(2);
+            expect(FunctionLookup.existCodeFromResolution('ExternalPoint', 'file', { kind: 'class', name: 'ExternalPoint', resolvedName: 'ExternalPoint', source: 'local' })).toBe(2);
             expect(FunctionLookup.existCodeFromResolution('startup', 'file', { kind: 'script', name: 'startup', resolvedName: 'startup', source: 'local' })).toBe(2);
         });
 
@@ -85,6 +89,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(FunctionLookup.whichResult('f', undefined, functionDefinition('f'), undefined, () => '')).toEqual(new CharString('f is a user-defined function'));
             expect(FunctionLookup.whichResult('nested', undefined, functionDefinition('nested', true), undefined, () => '')).toEqual(new CharString('nested is a nested function'));
             expect(FunctionLookup.whichResult('sum', undefined, builtInFunction('sum'), undefined, () => '')).toEqual(new CharString('sum is a built-in function'));
+            expect(FunctionLookup.whichResult('handle', undefined, undefined, undefined, () => '')).toEqual(new CharString('handle is a class'));
             expect(FunctionLookup.whichResult('meta.class', undefined, undefined, undefined, () => '')).toEqual(new CharString('meta.class is a class'));
             expect(FunctionLookup.whichResult('ExternalPoint', undefined, undefined, undefined, () => '', true)).toEqual(new CharString('ExternalPoint is a class'));
             expect(FunctionLookup.whichResult('startup', undefined, undefined, undefined, () => '', false, true)).toEqual(new CharString('startup is a script'));
@@ -103,6 +108,21 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             );
         });
 
+        it('Should preserve lazy handle source metadata when functions() cannot materialize a function.', () => {
+            const handle = FunctionHandle.create('lazyfile');
+            handle.sourceName = 'virtual/lazyfile.m';
+
+            const info = FunctionLookup.functionsInfo(
+                handle,
+                (name) => name,
+                () => undefined,
+                () => '@lazyfile',
+            );
+
+            expect((info.field.type as CharString).str).toBe('simple');
+            expect((info.field.file as CharString).str).toBe('virtual/lazyfile.m');
+        });
+
         it('Should convert function handles to and from strings.', () => {
             const named = FunctionLookup.str2func(
                 '  sin  ',
@@ -116,6 +136,15 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const anonymous = FunctionHandle.create(undefined, [AST.nodeIdentifier('x')], AST.nodeIdentifier('x'));
 
             expect(named.id).toBe('sin');
+            expect(() =>
+                FunctionLookup.str2func(
+                    '   ',
+                    () => anonymous,
+                    (message) => {
+                        throw new Error(message);
+                    },
+                ),
+            ).toThrow('str2func: function name cannot be empty.');
             expect(
                 FunctionLookup.str2func(
                     '@(x) x',
@@ -146,11 +175,15 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                 resolveFunction: () => functionDefinition('nested', true),
             };
             const anonymous = FunctionHandle.create(undefined, [AST.nodeIdentifier('x')], AST.nodeIdentifier('x'));
+            anonymous.sourceName = '+pkg/anonfile.m';
             const simpleInfo = FunctionLookup.functionsInfo(
                 simple,
                 (name) => name,
-                () => functionDefinition('f'),
+                () => functionDefinition('f', false, '+pkg/f.m'),
                 () => 'unused',
+                () => {
+                    throw new Error('simple handles should not expose closure workspace');
+                },
             );
             const nestedInfo = FunctionLookup.functionsInfo(
                 nested,
@@ -172,13 +205,14 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
             expect((simpleInfo.field.function as CharString).str).toBe('f');
             expect((simpleInfo.field.type as CharString).str).toBe('simple');
-            expect((simpleInfo.field.file as CharString).str).toBe('');
+            expect((simpleInfo.field.file as CharString).str).toBe('+pkg/f.m');
             expect((simpleInfo.field.workspace as MultiArray).isCell).toBe(true);
             expect(MultiArray.isEmpty(simpleInfo.field.workspace)).toBe(true);
             expect((nestedInfo.field.type as CharString).str).toBe('nested');
             expect((nestedInfo.field.workspace as MultiArray).isCell).toBe(true);
             expect((anonymousInfo.field.function as CharString).str).toBe('@(x) x');
             expect((anonymousInfo.field.type as CharString).str).toBe('anonymous');
+            expect((anonymousInfo.field.file as CharString).str).toBe('+pkg/anonfile.m');
         });
     });
 });

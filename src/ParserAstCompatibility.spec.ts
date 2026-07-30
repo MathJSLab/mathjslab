@@ -74,6 +74,29 @@ describe('Parser AST compatibility fixtures.', () => {
         expect(expectNode(vectorIndex.array[0][1], AST.isNodeBase, 'end-range').type).toBe('ENDRANGE');
     });
 
+    it('Should preserve arithmetic expressions inside cell-indexing braces.', () => {
+        const assignment = binaryOperationNode(parseList('picked = C{2*k - 1};').list[0]);
+        const index = indexNode(assignment.right);
+        const argument = binaryOperationNode(index.args[0]);
+
+        expect(index.delim).toBe('{}');
+        expect(identifierNode(index.expr).id).toBe('C');
+        expect(argument.type).toBe('-');
+        expect(binaryOperationNode(argument.left).type).toBe('*');
+        expect(numericValue(argument.right)).toBe(1);
+    });
+
+    it('Should preserve end expressions inside cell-indexing braces.', () => {
+        const assignment = binaryOperationNode(parseList('picked = C{end - 1};').list[0]);
+        const index = indexNode(assignment.right);
+        const argument = binaryOperationNode(index.args[0]);
+
+        expect(index.delim).toBe('{}');
+        expect(argument.type).toBe('-');
+        expect(expectNode(argument.left, AST.isNodeBase, 'end-range').type).toBe('ENDRANGE');
+        expect(numericValue(argument.right)).toBe(1);
+    });
+
     it('Should preserve keyword-like dot fields as literal field names.', () => {
         const assignment = binaryOperationNode(parseList('picked = s.properties.methods.events.enumeration.end;').list[0]);
         const access = indirectRefNode(assignment.right);
@@ -373,5 +396,22 @@ describe('Parser AST compatibility fixtures.', () => {
         expect(declaration.imports[1].index).toBe(1);
         expect(declaration.omitAnswer).toBe(true);
         expect(declaration.omitOutput).toBe(true);
+    });
+
+    it('Should expose bare import queries structurally.', () => {
+        const declaration = firstParsedNode('import', AST.isNodeImport, 'import query');
+
+        expect(declaration.type).toBe('IMPORT');
+        expect(declaration.imports).toEqual([]);
+        expect(declaration.omitAnswer).toBeUndefined();
+        expect(declaration.omitOutput).toBeUndefined();
+    });
+
+    it('Should expose import queries in expression position.', () => {
+        const assignment = binaryOperationNode(firstParsedNode('L = import', AST.isNodeOperation, 'assignment'));
+        const query = expectNode(assignment.right, AST.isNodeImport, 'import query');
+
+        expect(query.imports).toEqual([]);
+        expect(query.parent).toBe(assignment);
     });
 });

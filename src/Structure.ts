@@ -3,6 +3,9 @@ import { type ElementType, MultiArray } from './MultiArray';
 import type { RuntimeDisplay } from './RuntimeDisplay';
 import { RuntimeValue } from './RuntimeValue';
 
+/** Concrete runtime value that may be stored in a structure field. */
+type StructureFieldValue = Exclude<ElementType, null | undefined>;
+
 /**
  * Runtime representation of a MATLAB/Octave structure scalar.
  *
@@ -18,7 +21,7 @@ class Structure {
     /** Optional AST-style parent pointer used by generic value handling. */
     public parent?: unknown;
     /** Field storage keyed by field name. */
-    public field: Record<string, ElementType>;
+    public field: Record<string, StructureFieldValue>;
     /** Shared diagnostic for invalid dot-indexing targets. */
     private static readonly invalidReferenceMessage = 'value cannot be indexed with .';
 
@@ -38,7 +41,7 @@ class Structure {
      *
      * @param field An object with fields and values or an array of field names.
      */
-    constructor(field: Record<string, ElementType> | string[]) {
+    constructor(field: Record<string, StructureFieldValue> | string[]) {
         this.field = {};
         if (Array.isArray(field)) {
             let struct: Structure = this;
@@ -49,8 +52,8 @@ class Structure {
             }
             struct.field[field[field.length - 1]] = MultiArray.emptyArray();
         } else {
-            for (const f in field) {
-                this.field[f] = RuntimeValue.copy(field[f]);
+            for (const [name, value] of Object.entries(field)) {
+                this.field[name] = RuntimeValue.copy(value);
             }
         }
     }
@@ -106,7 +109,7 @@ class Structure {
      */
     public static hasField = (obj: ElementType, field: string): boolean => {
         const elements = Structure.structureElements(obj);
-        return elements.length > 0 && elements.every((structure) => Object.prototype.hasOwnProperty.call(structure.field, field));
+        return elements.length > 0 && elements.every((structure) => RuntimeValue.hasOwnField(structure.field, field));
     };
 
     /**
@@ -115,7 +118,7 @@ class Structure {
      * @param value Existing field value.
      * @returns `true` for missing or empty-array values.
      */
-    private static isMissingOrEmpty = (value: ElementType | undefined): boolean => typeof value === 'undefined' || MultiArray.isEmpty(value);
+    private static isMissingOrEmpty = (value: StructureFieldValue | undefined): boolean => typeof value === 'undefined' || MultiArray.isEmpty(value);
 
     /**
      * Resolve or create an intermediate value that supports further dot access.
@@ -124,7 +127,7 @@ class Structure {
      * @returns Structure scalar or structure array ready for nested assignment.
      * @throws EvalError when the existing value cannot be dot-indexed.
      */
-    private static ensureStructureLike = (value: ElementType | undefined): Structure | MultiArray => {
+    private static ensureStructureLike = (value: StructureFieldValue | undefined): Structure | MultiArray => {
         if (Structure.isMissingOrEmpty(value)) {
             return new Structure({});
         }
@@ -145,7 +148,7 @@ class Structure {
      * @param field Field path to assign.
      * @param value Value to store, or an empty array when omitted.
      */
-    private static assignFieldPath = (target: Structure | MultiArray, field: string[], value?: ElementType): void => {
+    private static assignFieldPath = (target: Structure | MultiArray, field: string[], value?: StructureFieldValue): void => {
         if (target instanceof MultiArray) {
             const elements = Structure.structureElements(target);
             if (elements.length === 0) {
@@ -175,7 +178,10 @@ class Structure {
      * @returns Values reached by the path in linear order.
      * @throws EvalError when any target cannot be dot-indexed.
      */
-    private static collectFieldPath = (obj: ElementType, field: string[]): ElementType[] => {
+    private static collectFieldPath = (obj: ElementType, field: string[]): StructureFieldValue[] => {
+        if (obj === null || typeof obj === 'undefined') {
+            throw new EvalError(Structure.invalidReferenceMessage);
+        }
         if (field.length === 0) {
             return [obj];
         }
@@ -200,7 +206,7 @@ class Structure {
      * @param field Field path to assign.
      * @param value Value to store, or an empty array when omitted.
      */
-    public static setField = (S: Structure | MultiArray, field: string[], value?: ElementType): void => {
+    public static setField = (S: Structure | MultiArray, field: string[], value?: StructureFieldValue): void => {
         Structure.assignFieldPath(S, field, value);
     };
 
@@ -212,7 +218,7 @@ class Structure {
      * @param value Value to store, or an empty array when omitted.
      * @throws EvalError when an intermediate field cannot be dot-indexed.
      */
-    public static setNewField = (S: Structure | MultiArray, field: string[], value?: ElementType): void => {
+    public static setNewField = (S: Structure | MultiArray, field: string[], value?: StructureFieldValue): void => {
         Structure.assignFieldPath(S, field, value);
     };
 
@@ -224,7 +230,7 @@ class Structure {
      * @returns Field value.
      * @throws EvalError when the target or path cannot be dot-indexed.
      */
-    public static getField = (obj: ElementType, field: string[]): ElementType => {
+    public static getField = (obj: ElementType, field: string[]): StructureFieldValue => {
         const values = Structure.collectFieldPath(obj, field);
         return values.length === 1 ? values[0] : MultiArray.toRowVector(values);
     };
@@ -236,7 +242,7 @@ class Structure {
      * @param field Field path to resolve.
      * @returns Field values in linear order.
      */
-    public static getFields = (obj: ElementType, field: string[]): ElementType[] => {
+    public static getFields = (obj: ElementType, field: string[]): StructureFieldValue[] => {
         return Structure.collectFieldPath(obj, field);
     };
 
@@ -279,8 +285,8 @@ class Structure {
      */
     public static copy = (S: Structure): Structure => {
         const result = new Structure({});
-        for (const f in S.field) {
-            result.field[f] = RuntimeValue.copy(S.field[f]);
+        for (const [name, value] of Object.entries(S.field)) {
+            result.field[name] = RuntimeValue.copy(value);
         }
         return result;
     };
@@ -348,6 +354,7 @@ class Structure {
 }
 
 export { Structure };
+export type { StructureFieldValue };
 export default { Structure };
 
-RuntimeValue.registerStructureFactory((field) => new Structure(field as Record<string, ElementType> | string[]));
+RuntimeValue.registerStructureFactory((field) => new Structure(field as Record<string, StructureFieldValue> | string[]));

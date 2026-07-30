@@ -17,9 +17,6 @@ type RuntimeObjectElement = object & {
     parent?: unknown;
     copy?: () => unknown;
 };
-type RuntimeStructureElement = RuntimeObjectElement & {
-    field: Record<string, ElementType>;
-};
 
 /**
  * Scalar runtime values that may be stored directly inside a `MultiArray`.
@@ -37,6 +34,11 @@ type Elements = ComplexType | CharString | RuntimeObjectElement;
  * omitted values.
  */
 type ElementType<ELEMENT = Elements> = MultiArray | ELEMENT | null | undefined;
+/** Concrete runtime value allowed in a structure field. */
+type StructureFieldElement = Exclude<ElementType, null | undefined>;
+type RuntimeStructureElement = RuntimeObjectElement & {
+    field: Record<string, StructureFieldElement>;
+};
 
 /**
  * Reduce factory function types.
@@ -61,6 +63,7 @@ type NodeReturnList = {
     handler?: ReturnHandler;
     parent?: unknown;
 };
+
 type IndexAssignmentScope = {
     resolveName(name: string): { node?: unknown } | undefined;
     defineName(name: string, node: ElementType): { node?: unknown };
@@ -102,6 +105,18 @@ const throwErrorIfGreaterThanReturnList = (maxLength: number, currentLength: num
         throw new EvalError(`element number ${currentLength} undefined in return list`);
     }
 };
+
+const nodeBoundedReturnList = (maxLength: number, selector: ReturnSelector, handler?: ReturnHandler): NodeReturnList =>
+    nodeReturnList(
+        (evaluated: ReturnHandlerResult, index: number): ElementType => {
+            throwErrorIfGreaterThanReturnList(maxLength, evaluated.length);
+            return selector(evaluated, index);
+        },
+        (length: number): ReturnHandlerResult => {
+            throwErrorIfGreaterThanReturnList(maxLength, length);
+            return handler ? handler(length) : { length };
+        },
+    );
 
 const throwInvalidCallError = (name: string): never => {
     throw new EvalError(`Invalid call to ${name}.`);
@@ -966,8 +981,9 @@ class MultiArray<ELEMENT = Elements> {
     /** Test whether a structural candidate can expose runtime fields. */
     private static readonly isObjectRecord = (value: unknown): value is object => typeof value === 'object' && value !== null;
 
-    /** Test whether a structural field bag can store runtime array elements. */
-    private static readonly isElementRecord = (value: unknown): value is Record<string, ElementType> => MultiArray.isObjectRecord(value) && !Array.isArray(value);
+    /** Test whether a structural field bag can store concrete structure fields. */
+    private static readonly isElementRecord = (value: unknown): value is Record<string, StructureFieldElement> =>
+        MultiArray.isObjectRecord(value) && !Array.isArray(value) && Object.values(value as Record<string, unknown>).every((item) => item !== null && typeof item !== 'undefined');
 
     /** Test whether a value is structurally a scalar MATLAB/Octave structure. */
     private static readonly isStructureScalar = (value: unknown): value is RuntimeStructureElement =>
@@ -993,6 +1009,9 @@ class MultiArray<ELEMENT = Elements> {
         return [];
     };
 
+    /** Convert an optional structure-field assignment value to concrete storage. */
+    private static readonly structureFieldValue = (value?: ElementType): StructureFieldElement => value ?? MultiArray.emptyArray();
+
     /** Return sorted field names for a structure scalar or array. */
     private static readonly structureFieldNames = (value: ElementType): string[] => Object.keys(MultiArray.structureElements(value)[0]?.field ?? {}).sort();
 
@@ -1002,7 +1021,7 @@ class MultiArray<ELEMENT = Elements> {
      * @param field Field map or nested field path.
      * @returns Validated structure scalar.
      */
-    private static readonly createStructureValue = (field: Record<string, ElementType> | string[]): RuntimeStructureElement => {
+    private static readonly createStructureValue = (field: Record<string, StructureFieldElement> | string[]): RuntimeStructureElement => {
         const result = RuntimeValue.createStructure(field);
         if (!MultiArray.isStructureScalar(result)) {
             throw new Error('runtime structure factory returned an invalid structure value.');
@@ -1019,7 +1038,7 @@ class MultiArray<ELEMENT = Elements> {
      * @param reference Structure whose field names should be copied.
      * @returns New structure with each field initialized to `[]`.
      */
-    private static readonly cloneStructureFields = (reference: RuntimeStructureElement): ElementType => {
+    private static readonly cloneStructureFields = (reference: RuntimeStructureElement): StructureFieldElement => {
         const result = MultiArray.createStructureValue({});
         Object.keys(reference.field).forEach((key) => {
             result.field[key] = MultiArray.emptyArray();
@@ -1029,7 +1048,7 @@ class MultiArray<ELEMENT = Elements> {
 
     private static readonly structureHasField = (value: ElementType, field: string): boolean => {
         const elements = MultiArray.structureElements(value);
-        return elements.length > 0 && elements.every((structure) => Object.prototype.hasOwnProperty.call(structure.field, field));
+        return elements.length > 0 && elements.every((structure) => RuntimeValue.hasOwnField(structure.field, field));
     };
 
     private static readonly structureCollectFieldPath = (value: ElementType, field: string[]): ElementType[] => {
@@ -1068,7 +1087,7 @@ class MultiArray<ELEMENT = Elements> {
             throw new EvalError(MultiArray.invalidStructureReferenceMessage);
         }
         if (field.length === 1) {
-            target.field[field[0]] = value ?? MultiArray.emptyArray();
+            target.field[field[0]] = MultiArray.structureFieldValue(value);
             return;
         }
         const head = field[0];
@@ -2010,7 +2029,7 @@ class MultiArray<ELEMENT = Elements> {
                 'evaluate',
                 ...M.array.map((row) => {
                     const values = row.flatMap((element) => evaluateElementValues(element));
-                    if (MultiArray.isCharStringList(values)) {
+                    if (MultiArray.isCharStringList(values) && values.every(CharString.isChar)) {
                         const quote = values[0].quote;
                         return MultiArray.scalarToMultiArray(CharString.fromCharacterScalars(values, quote));
                     }
@@ -3847,11 +3866,12 @@ class MultiArray<ELEMENT = Elements> {
                     });
                     MultiArray.setType(resultM);
                     MultiArray.setType(indexM);
-                    return nodeReturnList(
+                    return nodeBoundedReturnList(
+                        2,
                         (evaluated: ReturnHandlerResult, index: number): ElementType => {
                             if (evaluated.length === 1) return MultiArray.MultiArrayToScalar(resultM);
                             if (evaluated.length === 2) return MultiArray.MultiArrayToScalar(index === 0 ? resultM : indexM);
-                            throwErrorIfGreaterThanReturnList(2, evaluated.length);
+                            throw new EvalError('unreachable cumulative comparison return-list selector branch.');
                         },
                         (length: number): ReturnHandlerResult => ({ length }),
                     );
@@ -3885,11 +3905,12 @@ class MultiArray<ELEMENT = Elements> {
                         }
                         MultiArray.setType(resultM);
                         MultiArray.setType(indexM);
-                        return nodeReturnList(
+                        return nodeBoundedReturnList(
+                            2,
                             (evaluated: ReturnHandlerResult, index: number): ElementType => {
                                 if (evaluated.length === 1) return MultiArray.MultiArrayToScalar(resultM);
                                 if (evaluated.length === 2) return MultiArray.MultiArrayToScalar(index === 0 ? resultM : indexM);
-                                throwErrorIfGreaterThanReturnList(2, evaluated.length);
+                                throw new EvalError('unreachable comparison return-list selector branch.');
                             },
                             (length: number): ReturnHandlerResult => ({ length }),
                         );

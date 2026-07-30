@@ -1,4 +1,5 @@
 import type { NodeBuiltInFunction, NodeFunctionDefinition } from './AST';
+import type { ClassStaticMethod } from './ClassStaticMethod';
 import type { AnonymousFunctionHandle } from './FunctionHandle';
 
 /**
@@ -38,13 +39,22 @@ interface FunctionDefinitionCallable {
 }
 
 /**
+ * Runtime representation of a static class method selected through a function
+ * handle or imported simple-name dispatch.
+ */
+interface StaticMethodCallable {
+    type: 'STATIC_METHOD';
+    node: ClassStaticMethod;
+}
+
+/**
  * Unified callable abstraction used by call dispatch, `nargin`, `nargout`,
  * stack frames, function handles, and introspection.
  *
  * Keeping this union outside `Interpreter.ts` avoids parallel structural
  * definitions drifting apart as the MATLAB/Octave-like function engine grows.
  */
-type Callable = BuiltinCallable | LambdaCallable | FunctionDefinitionCallable;
+type Callable = BuiltinCallable | LambdaCallable | FunctionDefinitionCallable | StaticMethodCallable;
 
 /**
  * Factory and type-guard helpers for the `Callable` union.
@@ -76,6 +86,13 @@ const Callables = {
     },
 
     /**
+     * Wrap a static class method for uniform dispatch.
+     */
+    staticMethod(node: ClassStaticMethod): StaticMethodCallable {
+        return { type: 'STATIC_METHOD', node };
+    },
+
+    /**
      * Wrap a function-table node while preserving its concrete kind.
      */
     fromFunctionNode(node: NodeBuiltInFunction | NodeFunctionDefinition): BuiltinCallable | FunctionDefinitionCallable {
@@ -102,8 +119,15 @@ const Callables = {
     isFunctionDefinition(callable: Callable): callable is FunctionDefinitionCallable {
         return callable.type === 'FCNDEF';
     },
+
+    /**
+     * Narrow a callable to the static-method variant.
+     */
+    isStaticMethod(callable: Callable): callable is StaticMethodCallable {
+        return callable.type === 'STATIC_METHOD';
+    },
 };
 
-export type { BuiltinCallable, LambdaCallable, FunctionDefinitionCallable, Callable };
+export type { BuiltinCallable, LambdaCallable, FunctionDefinitionCallable, StaticMethodCallable, Callable };
 export { Callables };
 export default Callables;

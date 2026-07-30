@@ -176,6 +176,33 @@ describe('MATLAB/Octave compatibility stability fixtures.', () => {
         expect(interpreter.Unparse(interpreter.Execute('first; afterClear; second'))).toBe('12\n8\n12\n');
     });
 
+    it('Should clear loaded classes collectively without removing variables or functions.', () => {
+        const interpreter = Interpreter.Create({
+            classSourceTable: {
+                ReloadableClassOne: ['classdef ReloadableClassOne', '  properties', '    Value = 12;', '  end', 'end'].join('\n'),
+                ReloadableClassTwo: ['classdef ReloadableClassTwo', '  properties', '    Value = 14;', '  end', 'end'].join('\n'),
+            },
+            functionSourceTable: {
+                stillCallable: ['function y = stillCallable(x)', '  y = x + 1;', 'end'].join('\n'),
+            },
+        });
+
+        interpreter.Execute(
+            [
+                'first = ReloadableClassOne().Value + ReloadableClassTwo().Value;',
+                'classes = 99;',
+                'beforeFunction = stillCallable(4);',
+                'clear classes',
+                'classOneCode = exist("ReloadableClassOne", "class");',
+                'classTwoCode = exist("ReloadableClassTwo", "class");',
+                'afterFunction = stillCallable(5);',
+                'second = ReloadableClassOne().Value + ReloadableClassTwo().Value;',
+            ].join('\n'),
+        );
+
+        expect(interpreter.Unparse(interpreter.Execute('first; classes; beforeFunction; classOneCode; classTwoCode; afterFunction; second'))).toBe('26\n99\n5\n8\n8\n6\n26\n');
+    });
+
     it('Should clear imported loaded symbols by their simple alias.', () => {
         const interpreter = Interpreter.Create({
             classSourceTable: {
@@ -201,6 +228,21 @@ describe('MATLAB/Octave compatibility stability fixtures.', () => {
         );
 
         expect(interpreter.Unparse(interpreter.Execute('beforeClass; beforeFunction; afterClass; afterFunction; againClass; againFunction'))).toBe('18\n10\n8\n2\n18\n11\n');
+    });
+
+    it('Should clear the active import list without removing qualified host sources.', () => {
+        const interpreter = Interpreter.Create({
+            functionSourceTable: {
+                'pkg.clearimport.shift': ['function y = shift(x)', '  y = x + 4;', 'end'].join('\n'),
+            },
+        });
+
+        interpreter.Execute(
+            ['import pkg.clearimport.shift', 'before = shift(2);', 'clear import', 'afterImport = exist("shift", "function");', 'qualified = pkg.clearimport.shift(3);'].join('\n'),
+        );
+
+        expect(interpreter.Unparse(interpreter.Execute('before; afterImport; qualified'))).toBe('6\n0\n7\n');
+        expect(() => interpreter.Execute('shift(2)')).toThrow("'shift' undefined.");
     });
 
     it('Should prefer registered imported classes over imported functions with the same name.', () => {

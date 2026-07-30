@@ -14,15 +14,16 @@ describe('Architecture', () => {
             [
                 'private evaluatedExpressionValue(tree: NodeExpr, scope: Scope, name: string): NodeExpr',
                 'private evaluatedExecutionResult(tree: NodeInput, scope: Scope): NodeInput',
-                'private reducedClassMethodResult(instance: ClassInstance, method: ClassMethodDefinition, args: NodeExpr[], parent: NodeInput): NodeInput',
-                'private reducedClassMethodResultWithOutputCount(instance: ClassInstance, method: ClassMethodDefinition, args: NodeExpr[], parent: NodeInput, outputCount: number): NodeInput',
+                'private reducedClassMethodResult(instance: ClassInstance, method: ClassMethodDefinition, args: ExpressionBoundaryValue[], parent: NodeInput): NodeInput',
+                'private reducedClassMethodResultWithOutputCount(',
+                'args: ExpressionBoundaryValue[],',
                 'private reducedAssignmentValue(value: NodeInput): NodeInput',
                 'private reducedIndexingResult(value: NodeInput): NodeInput',
             ].forEach((signature) => expect(interpreterSource).toContain(signature));
             [
                 'private reducedCommaListScalar(value: NodeInput): NodeInput',
                 'private evaluatedExecutionResult(tree: NodeInput, scope: Scope = this.currentScope): NodeInput',
-                'private reducedClassMethodResult(instance: ClassInstance, method: ClassMethodDefinition, args: NodeExpr[], parent: NodeInput): NodeInput',
+                'private reducedClassMethodResult(instance: ClassInstance, method: ClassMethodDefinition, args: CallArgumentValue[], parent: NodeInput): NodeInput',
             ].forEach((signature) => expect(contextSource).toContain(signature));
         });
 
@@ -43,7 +44,7 @@ describe('Architecture', () => {
 
             expect([...source.matchAll(directReductionPattern)]).toHaveLength(0);
             expect([...source.matchAll(directEvaluationPattern)]).toHaveLength(1);
-            expect(source).toContain('private evaluatedExpressionValue(tree: NodeExpr, scope: Scope, name: string): NodeExpr');
+            expect(source).toContain('private evaluatedExpressionValue(tree: NodeExpr, scope: Scope, name: string): ExpressionBoundaryValue');
             expect(source).toContain('private evaluatedExecutionResult(tree: NodeInput, scope: Scope = this.currentScope): NodeInput');
             expect(source).toContain('private rawEvaluationResult(tree: NodeInput, scope: Scope = this.currentScope): NodeInput');
         });
@@ -53,9 +54,13 @@ describe('Architecture', () => {
             const contextSource = readFileSync(join(process.cwd(), 'src', 'Context.ts'), 'utf8');
 
             expect([...interpreterSource.matchAll(/AST\.reduceToFirstIfReturnList\(this\.context\.callClassInstanceMethod\(/g)]).toHaveLength(1);
-            expect(interpreterSource).toContain('private reducedClassMethodResult(instance: ClassInstance, method: ClassMethodDefinition, args: NodeExpr[], parent: NodeInput): NodeInput');
+            expect(interpreterSource).toContain(
+                'private reducedClassMethodResult(instance: ClassInstance, method: ClassMethodDefinition, args: ExpressionBoundaryValue[], parent: NodeInput): NodeInput',
+            );
             expect([...contextSource.matchAll(/AST\.reduceToFirstIfReturnList\(this\.callClassInstanceMethod\(/g)]).toHaveLength(1);
-            expect(contextSource).toContain('private reducedClassMethodResult(instance: ClassInstance, method: ClassMethodDefinition, args: NodeExpr[], parent: NodeInput): NodeInput');
+            expect(contextSource).toContain(
+                'private reducedClassMethodResult(instance: ClassInstance, method: ClassMethodDefinition, args: CallArgumentValue[], parent: NodeInput): NodeInput',
+            );
         });
     });
 });

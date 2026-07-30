@@ -158,13 +158,13 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                 alternatives: [{ name: 'text', classes: ['char'] }],
             };
 
-            expect(FunctionValidation.matchesBuiltInParameter(new CharString('name'), textOrCell)).toBe(true);
+            expect(FunctionValidation.matchesBuiltInParameter(new CharString('name', "'"), textOrCell)).toBe(true);
             expect(FunctionValidation.matchesBuiltInParameter(MultiArray.emptyArray(true), textOrCell)).toBe(true);
             expect(FunctionValidation.matchesBuiltInParameter(Complex.one(), textOrCell)).toBe(false);
             expect(FunctionValidation.matchesBuiltInParameter(Complex.create(3), scalarOrVector)).toBe(true);
             expect(FunctionValidation.matchesBuiltInParameter(MultiArray.firstRow([Complex.create(2), Complex.create(3)]), scalarOrVector)).toBe(true);
             expect(FunctionValidation.matchesBuiltInParameter(new CharString('bad'), scalarOrVector)).toBe(false);
-            expect(FunctionValidation.matchesBuiltInParameter(new CharString('ok'), alternativesOnly)).toBe(true);
+            expect(FunctionValidation.matchesBuiltInParameter(new CharString('ok', "'"), alternativesOnly)).toBe(true);
             expect(FunctionValidation.matchesBuiltInParameter(Complex.one(), alternativesOnly)).toBe(false);
         });
 

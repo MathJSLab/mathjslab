@@ -3,6 +3,9 @@ import { Complex, type ComplexType } from './Complex';
 import { FunctionHandle } from './FunctionHandle';
 import { ClassDefinition } from './ClassDefinition';
 import { ClassInstance } from './ClassInstance';
+import { CharString } from './CharString';
+import { MultiArray } from './MultiArray';
+import { AST } from './AST';
 
 import { parseClassDefinition as parseClass } from './ParserTestUtils';
 
@@ -32,9 +35,33 @@ describe('ClassInstance', () => {
             const instance = ClassInstance.instantiate(definition, () => Complex.create(0));
 
             ClassInstance.setProperty(instance, 'x', Complex.create(10));
+            Object.setPrototypeOf(instance.properties, { inherited: Complex.one() });
 
             expect(realNumber(ClassInstance.getProperty(instance, 'x'))).toBe(10);
+            expect(ClassInstance.hasProperty(instance, 'inherited')).toBe(false);
             expect(() => ClassInstance.setProperty(instance, 'missing', Complex.create(1))).toThrow("unknown property 'missing' for class MutableSpec.");
+        });
+
+        it('Should reject non-runtime property values.', () => {
+            const definition = ClassDefinition.create(parseClass(['classdef RuntimePropertySpec', '  properties', '    x = 0;', '  end', 'end'].join('\n')));
+            const instance = ClassInstance.instantiate(definition, () => Complex.create(0));
+
+            expect(() => new ClassInstance(definition, { x: AST.nodeIdentifier('notRuntime') } as never)).toThrow("property 'x' is not a runtime value.");
+            expect(() => ClassInstance.setProperty(instance, 'x', AST.nodeIdentifier('notRuntime') as never)).toThrow("property 'x' is not a runtime value.");
+        });
+
+        it('Should create type-compatible implicit property defaults.', () => {
+            const definition = ClassDefinition.create(
+                parseClass(['classdef TypedDefaultSpec', '  properties', '    name string', '    text char', '    items cell', '    values double', '  end', 'end'].join('\n')),
+            );
+            const instance = ClassInstance.instantiate(definition, () => Complex.create(0));
+
+            expect(ClassInstance.getProperty(instance, 'name')).toEqual(CharString.create('', '"'));
+            expect(ClassInstance.getProperty(instance, 'text')).toEqual(CharString.create('', "'"));
+            expect(MultiArray.isInstanceOf(ClassInstance.getProperty(instance, 'items'))).toBe(true);
+            expect((ClassInstance.getProperty(instance, 'items') as MultiArray).isCell).toBe(true);
+            expect(MultiArray.isInstanceOf(ClassInstance.getProperty(instance, 'values'))).toBe(true);
+            expect((ClassInstance.getProperty(instance, 'values') as MultiArray).isCell).toBe(false);
         });
 
         it('Should copy instance property tables.', () => {

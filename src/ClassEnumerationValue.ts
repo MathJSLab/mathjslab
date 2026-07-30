@@ -1,4 +1,4 @@
-import type { NodeInput } from './AST';
+import type { RuntimeExpressionValue } from './AST';
 import type { ClassEnumerationDefinition as ClassEnumerationDefinitionBase } from './ClassMember';
 import type { ClassDefinition } from './ClassDefinition';
 import type { RuntimeDisplay } from './RuntimeDisplay';
@@ -20,7 +20,7 @@ class ClassEnumerationValue {
     /** Enumeration member metadata. */
     public readonly enumeration: ClassEnumerationDefinition;
     /** Constructor-like arguments attached to the enumeration member. */
-    public readonly args: NodeInput[];
+    public readonly args: RuntimeExpressionValue[];
 
     /**
      * Test whether a value is a class enumeration value.
@@ -37,7 +37,7 @@ class ClassEnumerationValue {
      * @param enumeration Enumeration member metadata.
      * @param args Constructor-like argument values.
      */
-    constructor(classDefinition: ClassDefinition, enumeration: ClassEnumerationDefinition, args: NodeInput[] = []) {
+    constructor(classDefinition: ClassDefinition, enumeration: ClassEnumerationDefinition, args: RuntimeExpressionValue[] = []) {
         this.classDefinition = classDefinition;
         this.enumeration = enumeration;
         this.args = args;
@@ -51,7 +51,7 @@ class ClassEnumerationValue {
      * @param args Constructor-like argument values.
      * @returns Runtime enumeration value.
      */
-    public static readonly create = (classDefinition: ClassDefinition, enumeration: ClassEnumerationDefinition, args: NodeInput[] = []): ClassEnumerationValue =>
+    public static readonly create = (classDefinition: ClassDefinition, enumeration: ClassEnumerationDefinition, args: RuntimeExpressionValue[] = []): ClassEnumerationValue =>
         new ClassEnumerationValue(classDefinition, enumeration, args);
 
     /**

@@ -258,16 +258,31 @@ class ClassDefinition {
     }
 
     /**
+     * Validate local classdef metadata that does not require superclass
+     * resolution or runtime class registration.
+     *
+     * Source lookup probes use this to reject malformed host-provided class
+     * sources without loading dependencies. Full class loading still calls
+     * `resolveSuperclasses`, which adds inherited constraints afterward.
+     *
+     * @param throwEvalError Interpreter error callback.
+     */
+    public validateLocalDefinition(throwEvalError: (message: string) => never): void {
+        this.validateSupportedAttributes(throwEvalError);
+        this.validateAccessAttributes(throwEvalError);
+        this.validateAttributeCombinations(throwEvalError);
+        this.validateDuplicateMembers(throwEvalError);
+        this.validatePropertyAccessors(throwEvalError);
+    }
+
+    /**
      * Resolve named superclasses after all known classes have been registered.
      *
      * @param resolve Class lookup callback.
      * @param throwEvalError Interpreter error callback.
      */
     public resolveSuperclasses(resolve: (name: string) => ClassDefinition | undefined, throwEvalError: (message: string) => never): void {
-        this.validateSupportedAttributes(throwEvalError);
-        this.validateAccessAttributes(throwEvalError);
-        this.validateAttributeCombinations(throwEvalError);
-        this.validateDuplicateMembers(throwEvalError);
+        this.validateLocalDefinition(throwEvalError);
         this.superclassDefinitions.length = 0;
         for (const name of this.superclasses) {
             if (ClassDefinition.builtinSuperclassNames.has(name)) {
@@ -289,7 +304,6 @@ class ClassDefinition {
             this.superclassDefinitions.push(definition);
         }
         this.validateInheritanceCycles(throwEvalError);
-        this.validatePropertyAccessors(throwEvalError);
         this.validateSealedMethodOverrides(throwEvalError);
     }
 
@@ -945,11 +959,17 @@ class ClassDefinition {
             if (method.isAbstract && method.node.statements.list.length > 0) {
                 throwEvalError(`abstract method '${method.name}' in class ${this.name} cannot define a method body.`);
             }
+            if (method.isAbstract && method.node.arguments.list.length > 0) {
+                throwEvalError(`arguments blocks are not allowed in abstract method '${method.name}' of class ${this.name}.`);
+            }
             if (this.isConstructorMethodName(method.name) && method.isStatic) {
                 throwEvalError(`constructor for class ${this.name} cannot be static.`);
             }
             if (this.isConstructorMethodName(method.name) && method.isAbstract) {
                 throwEvalError(`constructor for class ${this.name} cannot be abstract.`);
+            }
+            if (method.name === 'delete' && method.node.arguments.list.length > 0) {
+                throwEvalError(`arguments blocks are not allowed in delete method of class ${this.name}.`);
             }
             const returns = this.methodReturns(method);
             if (this.isConstructorMethodName(method.name) && (returns.length !== 1 || AST.isNodeIgnoredTarget(returns[0]))) {

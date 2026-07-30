@@ -36,6 +36,15 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(RuntimeValue.copy(definition)).toBe(definition);
         });
 
+        it('Should test only own runtime fields.', () => {
+            const inherited = { inheritedField: 1 };
+            const table = Object.create(inherited) as Record<string, number>;
+            table.ownField = 2;
+
+            expect(RuntimeValue.hasOwnField(table, 'ownField')).toBe(true);
+            expect(RuntimeValue.hasOwnField(table, 'inheritedField')).toBe(false);
+        });
+
         it('Should identify class instances without confusing class metadata.', () => {
             const definition = ClassDefinition.create(parseClass(['classdef RuntimeValueObjectSpec', '  properties', '    x = 0;', '  end', 'end'].join('\n')));
             const instance = ClassInstance.instantiate(definition, () => Complex.zero());

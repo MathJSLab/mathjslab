@@ -1,4 +1,4 @@
-import type { NodeInput } from './AST';
+import type { RuntimeExpressionValue } from './AST';
 import { CharString } from './CharString';
 import type { ClassInstance } from './ClassInstance';
 import { ClassEventData } from './ClassEventData';
@@ -53,7 +53,7 @@ class ClassPropertyEvent extends ClassEventData {
      * @param field Field name.
      * @returns Field value, if supported.
      */
-    public static readonly getProperty = (eventData: ClassEventData, field: string): NodeInput | undefined => {
+    public static readonly getProperty = (eventData: ClassEventData, field: string): RuntimeExpressionValue | undefined => {
         if (!ClassPropertyEvent.isInstanceOf(eventData)) {
             return ClassEventData.getProperty(eventData, field);
         }

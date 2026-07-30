@@ -1,5 +1,6 @@
 import type {
     ClassAttributeTable,
+    ExpressionBoundaryValue,
     NodeClassAttribute,
     NodeClassEnumeration,
     NodeClassEvent,
@@ -35,11 +36,11 @@ interface ClassPropertyDefinition<OWNER = unknown> {
     /** Default value expression, when one was declared. */
     defaultValue: NodeExpr | null;
     /** Literal/symbolic size declaration from the property validation syntax. */
-    size: NodeInput[];
+    size: ExpressionBoundaryValue[];
     /** Class declaration from the property validation syntax. */
     class: NodeInput | null;
     /** Validator function declarations from the property validation syntax. */
-    functions: NodeInput[];
+    functions: ExpressionBoundaryValue[];
     /** Containing `properties` section. */
     section: NodeClassSection;
     /** Duplicate-preserving attribute table inherited from the section. */
@@ -137,7 +138,7 @@ interface ClassEnumerationDefinition<OWNER = unknown> {
     /** AST node that originated the enumeration member. */
     node: NodeClassEnumeration;
     /** Constructor-like arguments attached to the enumeration member. */
-    args: NodeExpr[];
+    args: ExpressionBoundaryValue[];
     /** Containing `enumeration` section. */
     section: NodeClassSection;
     /** Duplicate-preserving attribute table inherited from the section. */

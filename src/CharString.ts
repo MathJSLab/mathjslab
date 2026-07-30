@@ -123,6 +123,22 @@ class CharString {
     public static readonly isInstanceOf = (obj: unknown): obj is CharString => obj instanceof CharString;
 
     /**
+     * Test whether a runtime text value represents a MATLAB/Octave char vector.
+     *
+     * Single-quoted literals and values produced with the single-quote style
+     * are classified as `char`.
+     */
+    public static readonly isChar = (obj: unknown): obj is CharString => CharString.isInstanceOf(obj) && obj.quote === singleQuoteCharacter;
+
+    /**
+     * Test whether a runtime text value represents a MATLAB string scalar.
+     *
+     * Double-quoted literals and values produced with the double-quote style
+     * are classified as `string`.
+     */
+    public static readonly isString = (obj: unknown): obj is CharString => CharString.isInstanceOf(obj) && obj.quote === doubleQuoteCharacter;
+
+    /**
      * Creates a copy of `CharString` `value`.
      * @param value `CharString` to copy.
      * @returns A copy of `value`.

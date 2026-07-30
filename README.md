@@ -340,24 +340,25 @@ After run this command you will need to do workspace setup running
 The engine implements a practical subset of
 [MATLAB&reg;](https://www.mathworks.com/products/matlab.html)/[Octave](https://www.gnu.org/software/octave/)
 syntax, including expressions, arrays, cell arrays, structures, control flow,
-loops, user functions, anonymous functions, function handles, `arguments`
-blocks, imports, command syntax, comma-separated lists, descriptor-based
-indexing with `substruct`/`subsref`/`subsasgn`, browser-hosted `.m` sources,
-and substantial `classdef` support, including class metadata, properties,
-methods, events, enumerations, listeners, accessors, SetGet mixins, common
-static/instance dispatch paths, and stricter AST/runtime expression boundary
-validation. Runtime array helpers preserve MATLAB/Octave column-major logical
-semantics over MathJSLab's page-stacked internal storage.
+loops, sequential `parfor`/`spmd` fallbacks, user functions, anonymous
+functions, function handles, `arguments` blocks including repeating and
+output-repeating forms, imports, command syntax, comma-separated lists,
+descriptor-based indexing with `substruct`/`subsref`/`subsasgn`, browser-hosted
+`.m` sources, and substantial `classdef` support, including class metadata,
+properties, methods, events, enumerations, listeners, accessors, SetGet mixins,
+common static/instance dispatch paths, and stricter AST/runtime expression
+boundary validation. Runtime array helpers preserve MATLAB/Octave column-major
+logical semantics over MathJSLab's page-stacked internal storage.
 
 The main remaining limitations are general external filesystem access,
 incomplete MATLAB/Octave library and toolbox coverage, and less common class
 semantics that still need focused compatibility work. Browser-first
-host-provided source APIs cover `.m` functions, scripts, classes, and external
-class method files. Numeric values use one complex numeric type; other
-implemented runtime types include logical values, character strings,
-structures, function handles, and class objects. Common arrays can hold any
-runtime value. The source tree is also kept free of circular module
-dependencies as a release gate.
+host-provided source APIs cover `.m` functions, scripts, classes, external
+class method files, and virtual source-name introspection. Numeric values use
+one complex numeric type; other implemented runtime types include logical
+values, character strings, structures, function handles, and class objects.
+Common arrays can hold any runtime value. The source tree is also kept free of
+circular module dependencies as a release gate.
 
 ## Trademark Notes
 

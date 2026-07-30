@@ -136,7 +136,7 @@ abstract class Configuration {
                     name: 'configuration',
                     optional: true,
                     alternatives: [
-                        { name: 'name', classes: ['char'] },
+                        { name: 'name', classes: ['char', 'string'] },
                         { name: 'configurationList', classes: ['cell'] },
                     ],
                 },
@@ -198,7 +198,7 @@ abstract class Configuration {
                     name: 'configuration',
                     optional: true,
                     alternatives: [
-                        { name: 'name', classes: ['char'] },
+                        { name: 'name', classes: ['char', 'string'] },
                         { name: 'configurationList', classes: ['cell'] },
                     ],
                 },

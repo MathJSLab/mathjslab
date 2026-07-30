@@ -20,6 +20,10 @@ type ThrowEvalError = (message: string) => never;
 type EvaluateAnonymousHandle = (source: string) => NodeInput;
 /** Callback that builds the `functions(handle).workspace` cell array. */
 type WorkspaceInfo = (handle: FunctionHandle) => NodeInput;
+/** Minimal metadata for an imported static class method. */
+type StaticMethodInfo = { className: string; methodName: string; sourceName?: string };
+/** Callback that resolves a named handle as an imported static class method. */
+type ResolveStaticMethod = (name: string, handle?: FunctionHandle) => StaticMethodInfo | undefined;
 
 /**
  * Implements function/handle lookup and introspection helpers.
@@ -42,6 +46,7 @@ class FunctionLookup {
         'event.listener',
         'event.EventData',
         'event.PropertyEvent',
+        'handle',
         'meta.class',
         'meta.property',
         'meta.method',
@@ -63,7 +68,7 @@ class FunctionLookup {
      * @returns MATLAB-like `exist` code for in-memory symbols supported by the runtime.
      */
     public static existCode(name: string, kind: string | undefined, variable: NameEntry | undefined, func: LookupFunction | undefined, classDefined = false, scriptDefined = false): number {
-        const normalizedKind = kind?.toLowerCase();
+        const normalizedKind = kind?.trim().toLowerCase();
         const variableCode = variable && typeof variable.node !== 'undefined' && !ClassDefinition.isInstanceOf(variable.node) ? 1 : 0;
         const functionCode = func?.type === 'FCNDEF' ? 2 : func?.type === 'BUILTIN' ? 5 : 0;
         const classCode = classDefined || (variable && ClassDefinition.isInstanceOf(variable.node)) || this.isRuntimeClassName(name) ? 8 : 0;
@@ -100,6 +105,31 @@ class FunctionLookup {
         const func = resolved?.kind === 'function' || resolved?.kind === 'builtin' ? resolved.functionDefinition : undefined;
         const classDefined = resolved?.kind === 'class';
         const scriptDefined = resolved?.kind === 'script';
+        const sourceFunctionDefined = resolved?.kind === 'function' && !resolved.functionDefinition;
+        const sourceClassDefined = resolved?.kind === 'class' && !resolved.classDefinition;
+        if (sourceFunctionDefined) {
+            const normalizedKind = kind?.trim().toLowerCase();
+            switch (normalizedKind) {
+                case undefined:
+                case 'file':
+                case 'function':
+                    return 2;
+                default:
+                    return 0;
+            }
+        }
+        if (sourceClassDefined) {
+            const normalizedKind = kind?.trim().toLowerCase();
+            switch (normalizedKind) {
+                case undefined:
+                case 'class':
+                    return 8;
+                case 'file':
+                    return 2;
+                default:
+                    return 0;
+            }
+        }
         return this.existCode(name, kind, variable, func, classDefined, scriptDefined);
     }
 
@@ -123,6 +153,7 @@ class FunctionLookup {
         unparseHandle: UnparseHandle,
         classDefined = false,
         scriptDefined = false,
+        staticMethod?: StaticMethodInfo,
     ): CharString {
         if (handle && !handle.id) {
             return new CharString(`${unparseHandle(handle).trim()} is an anonymous function`);
@@ -135,6 +166,9 @@ class FunctionLookup {
         }
         if (func?.type === 'BUILTIN') {
             return new CharString(`${func.id} is a built-in function`);
+        }
+        if (staticMethod) {
+            return new CharString(`${staticMethod.className}.${staticMethod.methodName} is a static method`);
         }
         if (classDefined || (variable && ClassDefinition.isInstanceOf(variable.node)) || this.isRuntimeClassName(name)) {
             return new CharString(`${name} is a class`);
@@ -154,10 +188,19 @@ class FunctionLookup {
      * @param unparseHandle Callback used to render anonymous handles.
      * @returns Text value describing what the name resolves to.
      */
-    public static whichResultFromResolution(name: string, resolved: SymbolResolution | undefined, handle: FunctionHandle | undefined, unparseHandle: UnparseHandle): CharString {
+    public static whichResultFromResolution(
+        name: string,
+        resolved: SymbolResolution | undefined,
+        handle: FunctionHandle | undefined,
+        unparseHandle: UnparseHandle,
+        staticMethod?: StaticMethodInfo,
+    ): CharString {
+        if (resolved?.kind === 'function' && !resolved.functionDefinition) {
+            return new CharString(`${name} is a user-defined function`);
+        }
         const variable = resolved?.kind === 'variable' ? resolved.entry : undefined;
         const func = resolved?.kind === 'function' || resolved?.kind === 'builtin' ? resolved.functionDefinition : undefined;
-        return this.whichResult(name, variable, func, handle, unparseHandle, resolved?.kind === 'class', resolved?.kind === 'script');
+        return this.whichResult(name, variable, func, handle, unparseHandle, resolved?.kind === 'class', resolved?.kind === 'script', staticMethod);
     }
 
     /**
@@ -184,6 +227,9 @@ class FunctionLookup {
      */
     public static str2func(sourceText: string, evaluateAnonymousHandle: EvaluateAnonymousHandle, throwEvalError: ThrowEvalError): FunctionHandle {
         const source = sourceText.trim();
+        if (source.length === 0) {
+            throwEvalError('str2func: function name cannot be empty.');
+        }
         if (!source.startsWith('@')) {
             return FunctionHandle.create(source);
         }
@@ -210,18 +256,28 @@ class FunctionLookup {
         resolveFunction: ResolveFunction,
         unparseHandle: UnparseHandle,
         workspaceInfo: WorkspaceInfo = () => MultiArray.emptyArray(true),
+        resolveStaticMethod: ResolveStaticMethod = () => undefined,
     ): Structure {
         let type = 'anonymous';
+        let file = handle.sourceName ?? '';
         if (handle.id) {
             const canonical = aliasNameFunction(handle.id);
             const func = (handle.closure?.resolveFunction(canonical) as LookupFunction | undefined) ?? resolveFunction(handle.id);
-            type = func?.type === 'FCNDEF' && func.attributes?.nested ? 'nested' : 'simple';
+            if (func?.type === 'FCNDEF') {
+                type = func.attributes?.nested ? 'nested' : 'simple';
+                file = func.sourceName ?? '';
+            } else {
+                const staticMethod = resolveStaticMethod(handle.id, handle);
+                type = 'simple';
+                file = staticMethod?.sourceName ?? file;
+            }
         }
+        const workspace = type === 'simple' ? MultiArray.emptyArray(true) : workspaceInfo(handle);
         return new Structure({
             function: this.func2str(handle, unparseHandle),
             type: new CharString(type),
-            file: new CharString(''),
-            workspace: workspaceInfo(handle),
+            file: new CharString(file),
+            workspace,
         });
     }
 
@@ -253,6 +309,6 @@ class FunctionLookup {
     }
 }
 
-export type { LookupFunction };
+export type { LookupFunction, StaticMethodInfo };
 export { FunctionLookup };
 export default { FunctionLookup };

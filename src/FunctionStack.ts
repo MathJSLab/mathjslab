@@ -1,4 +1,4 @@
-import type { NodeExpr, NodeFunctionDefinition } from './AST';
+import type { ExpressionBoundaryValue, NodeFunctionDefinition } from './AST';
 import { FunctionWorkspace, type WorkspaceScope } from './FunctionWorkspace';
 
 type FunctionFrame = {
@@ -8,7 +8,8 @@ type FunctionFrame = {
     name?: string;
     nargin: number;
     nargout: number;
-    inputArgs: NodeExpr[];
+    inputArgs: ExpressionBoundaryValue[];
+    outputMask?: boolean[];
 };
 
 type CreateScope = (parent?: WorkspaceScope) => WorkspaceScope;

@@ -6,9 +6,18 @@ options { tokenVocab = MathJSLabLexer; }
 
 import type {
     OperatorType,
+    ExpressionBoundaryValue,
     NodeInput,
-    NodeExpr,
     NodeIdentifier,
+    NodeEndRange,
+    NodeMetaClass,
+    NodeColon,
+    NodeIgnoredTarget,
+    NodeOperation,
+    NodeIndexExpr,
+    NodeSuperclassConstructor,
+    NodeIndirectRef,
+    NodeRange,
     NodeFunctionDefinition,
     NodeFunctionParameter,
     NodeFunctionReturn,
@@ -35,9 +44,19 @@ import type {
     NodeClassEnumeration,
     NodeClassAttribute,
 } from './AST';
-import type { StringQuoteCharacter } from './CharString';
+import type { ComplexType } from './Complex';
+import type { FunctionHandle } from './FunctionHandle';
+import type { MultiArray } from './MultiArray';
+import type { CharString, StringQuoteCharacter } from './CharString';
 import { AST } from './AST';
 
+type ParserConstantNode = ComplexType | CharString | NodeEndRange;
+type ParserPrimaryExpressionNode = NodeIdentifier | ParserConstantNode | FunctionHandle | NodeMetaClass | MultiArray<ExpressionBoundaryValue> | NodeOperation | NodeImport;
+type ParserOperatorExpressionNode = ParserPrimaryExpressionNode | NodeOperation | NodeIndexExpr | NodeSuperclassConstructor | NodeIndirectRef;
+type ParserSimpleExpressionNode = ParserOperatorExpressionNode | NodeRange;
+type ParserExpressionNode = ParserSimpleExpressionNode | FunctionHandle | NodeOperation;
+type ParserAssignmentTargetNode = ParserSimpleExpressionNode | MultiArray<ExpressionBoundaryValue>;
+type ParserArgumentValidationNameNode = NodeIdentifier | NodeIndirectRef;
 
 /**
  * # MathJSLabParser
@@ -58,7 +77,7 @@ import { AST } from './AST';
  * Input (start non-terminal symbol).
  */
 
-input returns [node: NodeInput]
+input returns [node: NodeInput | null]
     : sep? EOF {
         localctx.node = null;
     }
@@ -165,7 +184,7 @@ word_list_cmd returns [node: NodeInput]
     }
     ;
 
-command_word returns [node: NodeExpr]
+command_word returns [node: CharString]
     : string {
         localctx.node = localctx.string_().node;
     }
@@ -175,7 +194,7 @@ command_word returns [node: NodeExpr]
  * Expressions
  */
 
-identifier returns [node: NodeExpr]
+identifier returns [node: NodeIdentifier]
     : IDENTIFIER {
         localctx.node = AST.nodeIdentifier(localctx.IDENTIFIER().getText());
     }
@@ -211,7 +230,7 @@ qualified_identifier returns [node: NodeIdentifier]
     })*
     ;
 
-string returns [node: NodeExpr]
+string returns [node: CharString]
     : STRING {
         const str = localctx.STRING().getText();
         localctx.node = AST.nodeString(str.substring(1, str.length - 1), str[0] as StringQuoteCharacter);
@@ -221,19 +240,19 @@ string returns [node: NodeExpr]
     }
     ;
 
-number returns [node: NodeExpr]
+number returns [node: ComplexType]
     : FLOAT_NUMBER {
         localctx.node = AST.nodeNumber(localctx.FLOAT_NUMBER().getText());
     }
     ;
 
-end_range returns [node: NodeExpr]
+end_range returns [node: NodeEndRange]
     : ENDRANGE {
         localctx.node = AST.nodeEndRange();
     }
     ;
 
-constant returns [node: NodeExpr]
+constant returns [node: ParserConstantNode]
     : number {
         localctx.node = localctx.number_().node;
     }
@@ -245,7 +264,7 @@ constant returns [node: NodeExpr]
     }
     ;
 
-matrix returns [node: NodeExpr]
+matrix returns [node: MultiArray<ExpressionBoundaryValue>]
     locals [i: number = 0]
     : LBRACKET RBRACKET {
         localctx.node = AST.emptyArray();
@@ -277,27 +296,30 @@ matrix_row returns [node: NodeList | null]
     } )* (COMMA | WSPACE)?
     ;
 
-fcn_handle returns [node: NodeExpr]
+fcn_handle returns [node: FunctionHandle]
     : COMMAT qualified_identifier {
         localctx.node = AST.nodeFunctionHandle(localctx.qualified_identifier().node);
     }
     ;
 
-meta_class returns [node: NodeExpr]
+meta_class returns [node: NodeMetaClass]
     : QUESTION qualified_identifier {
         localctx.node = AST.nodeMetaClass(localctx.qualified_identifier().node);
     }
     ;
 
-anon_fcn_handle returns [node: NodeExpr]
+anon_fcn_handle returns [node: FunctionHandle]
     : COMMAT param_list expression {
         localctx.node = AST.nodeFunctionHandle(null, localctx.param_list().node, localctx.expression().node);
     }
     ;
 
-primary_expr returns [node: NodeExpr]
+primary_expr returns [node: ParserPrimaryExpressionNode]
     : identifier {
         localctx.node = localctx.identifier().node;
+    }
+    | IMPORT {
+        localctx.node = AST.nodeImport();
     }
     | constant {
         localctx.node = localctx.constant().node;
@@ -316,19 +338,19 @@ primary_expr returns [node: NodeExpr]
     }
     ;
 
-magic_colon returns [node: NodeExpr]
+magic_colon returns [node: NodeColon]
     : COLON {
         localctx.node = AST.nodeColon();
     }
     ;
 
-magic_tilde returns [node: NodeExpr]
+magic_tilde returns [node: NodeIgnoredTarget]
     : TILDE {
         localctx.node = AST.nodeIgnoredTarget();
     }
     ;
 
-list_element returns [node: NodeExpr]
+list_element returns [node: ParserExpressionNode | NodeColon | NodeIgnoredTarget]
     : expression {
         localctx.node = localctx.expression().node;
     }
@@ -349,7 +371,7 @@ arg_list returns [node: NodeList]
     } )*
     ;
 
-oper_expr returns [node: NodeExpr]
+oper_expr returns [node: ParserOperatorExpressionNode]
     : primary_expr {
         localctx.node = localctx.primary_expr().node;
     }
@@ -391,7 +413,7 @@ oper_expr returns [node: NodeExpr]
     }
     ;
 
-power_expr returns [node: NodeExpr]
+power_expr returns [node: ParserOperatorExpressionNode]
     : primary_expr {
         localctx.node = localctx.primary_expr().node;
     }
@@ -421,7 +443,7 @@ power_expr returns [node: NodeExpr]
     }
     ;
 
-colon_expr returns [node: NodeExpr]
+colon_expr returns [node: NodeRange]
     : oper_expr COLON oper_expr (COLON oper_expr)? {
         if (localctx.oper_expr(2)) {
             localctx.node = AST.nodeRange(localctx.oper_expr(0).node, localctx.oper_expr(2).node, localctx.oper_expr(1).node);
@@ -431,7 +453,7 @@ colon_expr returns [node: NodeExpr]
     }
     ;
 
-simple_expr returns [node: NodeExpr]
+simple_expr returns [node: ParserSimpleExpressionNode]
     : oper_expr {
         localctx.node = localctx.oper_expr().node;
     }
@@ -455,7 +477,7 @@ simple_expr returns [node: NodeExpr]
     }
     ;
 
-expression returns [node: NodeExpr]
+expression returns [node: ParserExpressionNode]
     : simple_expr {
         localctx.node = localctx.simple_expr().node;
     }
@@ -467,7 +489,7 @@ expression returns [node: NodeExpr]
     }
     ;
 
-assign_lhs returns [node: NodeExpr]
+assign_lhs returns [node: ParserAssignmentTargetNode]
     : simple_expr {
         localctx.node = localctx.simple_expr().node;
     }
@@ -548,11 +570,13 @@ declaration_element returns [node: NodeDeclarationElement]
 
 import_command returns [node: NodeImport]
     locals [i: number = 0]
-    : IMPORT import_name {
+    : IMPORT {
+        localctx.node = AST.nodeImport();
+    } (import_name {
         localctx.node = AST.nodeImportFirst(localctx.import_name(localctx.i++).node);
     } (COMMA? import_name {
         localctx.node = AST.nodeAppendImport(localctx.node, localctx.import_name(localctx.i++).node);
-    })*
+    })*)?
     ;
 
 import_name returns [node: NodeIdentifier]
@@ -831,7 +855,7 @@ return_list returns [node: NodeList]
  * Function definition.
  */
 
-function returns [node: NodeInput]
+function returns [node: NodeFunctionDefinition]
     : FUNCTION (return_list EQ)? function_name param_list? sep? arguments_block_list? list? (END | ENDFUNCTION | EOF) {
         localctx.node = AST.nodeFunctionDefinition(
             localctx.function_name().node,
@@ -1062,12 +1086,21 @@ arguments_block_list returns [node: NodeList]
     ;
 
 arguments_block returns [node: NodeArguments]
-    : ARGUMENTS sep? (LPAREN identifier RPAREN sep?)? args_validation_list? sep? (END | ENDARGUMENTS) {
+    : ARGUMENTS sep? (LPAREN arguments_attribute_list RPAREN sep?)? args_validation_list? sep? (END | ENDARGUMENTS) {
         localctx.node = AST.nodeArguments(
-            localctx.identifier() ? localctx.identifier().node : null,
+            localctx.arguments_attribute_list() ? localctx.arguments_attribute_list().node : null,
             localctx.args_validation_list() ? localctx.args_validation_list().node : AST.nodeListFirst(),
         );
     }
+    ;
+
+arguments_attribute_list returns [node: NodeList]
+    locals [i: number = 0]
+    : identifier {
+        localctx.node = AST.nodeListFirst(localctx.identifier(localctx.i++).node);
+    } (COMMA identifier {
+        localctx.node = AST.appendNodeList(localctx.node, localctx.identifier(localctx.i++).node);
+    })*
     ;
 
 args_validation_list returns [node: NodeList]
@@ -1091,7 +1124,7 @@ arg_validation returns [node: NodeArgumentValidation]
     }
     ;
 
-arg_validation_name returns [node: NodeExpr]
+arg_validation_name returns [node: ParserArgumentValidationNameNode]
     locals [i: number = 1]
     : identifier {
         localctx.node = localctx.identifier(0).node;

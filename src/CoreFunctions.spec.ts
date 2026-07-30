@@ -40,7 +40,14 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(Complex.realToNumber(CoreFunctions.ismatrix(matrix))).toBe(1);
             expect(Complex.realToNumber(CoreFunctions.iscell(cell))).toBe(1);
             expect(Complex.realToNumber(CoreFunctions.isstruct(structure))).toBe(1);
-            expect(Complex.realToNumber(CoreFunctions.ischar(new CharString('abc')))).toBe(1);
+            expect(Complex.realToNumber(CoreFunctions.issparse(matrix))).toBe(0);
+            expect(Complex.realToNumber(CoreFunctions.ischar(new CharString('abc', "'")))).toBe(1);
+            expect(Complex.realToNumber(CoreFunctions.ischar(new CharString('abc', '"')))).toBe(0);
+            expect(Complex.realToNumber(CoreFunctions.ischar(new MultiArray([2, 1], [[new CharString('a', "'")], [new CharString('b', "'")]])))).toBe(1);
+            expect(Complex.realToNumber(CoreFunctions.isstring(new CharString('abc', '"')))).toBe(1);
+            expect(Complex.realToNumber(CoreFunctions.isstring(new CharString('abc', "'")))).toBe(0);
+            expect(Complex.realToNumber(CoreFunctions.isstring(MultiArray.firstRow([new CharString('a', '"'), new CharString('b', '"')])))).toBe(1);
+            expect(Complex.realToNumber(CoreFunctions.isstring(MultiArray.firstRow([new CharString('a', "'"), new CharString('b', "'")])))).toBe(0);
             expect(Complex.realToNumber(CoreFunctions.isnumeric(matrix))).toBe(1);
             expect(Complex.realToNumber(CoreFunctions.isnumeric(Complex.true()))).toBe(0);
             expect(Complex.realToNumber(CoreFunctions.islogical(MultiArray.firstRow([Complex.true(), Complex.false()])))).toBe(1);
@@ -69,6 +76,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             matrix.array[1][1] = Complex.create(68);
 
             expect((CoreFunctions.char(Complex.create(65)) as CharString).str).toBe('A');
+            expect((CoreFunctions.char(Complex.create(65)) as CharString).quote).toBe("'");
             expect((CoreFunctions.char(vector) as CharString).str).toBe('ABC');
             expect((CoreFunctions.char(new CharString('abc')) as CharString).str).toBe('abc');
             expect((CoreFunctions.char(Complex.create(65.9)) as CharString).str).toBe('A');
@@ -163,6 +171,63 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => CoreFunctions.isinteger()).toThrow("Invalid call to isinteger. Type 'help isinteger' to see correct usage.");
         });
 
+        it('Should expose sparse compatibility functions over dense storage.', () => {
+            const matrix = new MultiArray([2, 3]);
+            matrix.array[0][0] = Complex.create(1);
+            matrix.array[0][1] = Complex.zero();
+            matrix.array[0][2] = Complex.create(2);
+            matrix.array[1][0] = Complex.zero();
+            matrix.array[1][1] = Complex.create(3);
+            matrix.array[1][2] = Complex.zero();
+            const vector = CoreFunctions.nonzeros(matrix) as MultiArray;
+            const sparseShape = CoreFunctions.sparse(Complex.create(2), Complex.create(3)) as MultiArray;
+            const allocated = CoreFunctions.spalloc(Complex.create(2), Complex.create(3), Complex.create(5)) as MultiArray;
+            const logicalAllocated = CoreFunctions.spalloc(Complex.create(1), Complex.create(2), Complex.zero(), CharString.create('logical')) as MultiArray;
+            const triplet = CoreFunctions.sparse(
+                MultiArray.firstRow([Complex.create(1), Complex.create(2), Complex.create(2)]),
+                MultiArray.firstRow([Complex.create(1), Complex.create(2), Complex.create(2)]),
+                MultiArray.firstRow([Complex.create(4), Complex.create(5), Complex.create(6)]),
+                Complex.create(2),
+                Complex.create(2),
+            ) as MultiArray;
+            const uniqueTriplet = CoreFunctions.sparse(
+                MultiArray.firstRow([Complex.create(1), Complex.create(1)]),
+                MultiArray.firstRow([Complex.create(2), Complex.create(2)]),
+                MultiArray.firstRow([Complex.create(7), Complex.create(8)]),
+                Complex.create(1),
+                Complex.create(2),
+                new CharString('unique'),
+            ) as MultiArray;
+
+            expect(CoreFunctions.functions.sparse.func).toBe(CoreFunctions.sparse);
+            expect(CoreFunctions.functions.spalloc.func).toBe(CoreFunctions.spalloc);
+            expect(CoreFunctions.functions.full.func).toBe(CoreFunctions.full);
+            expect(CoreFunctions.functions.nnz.func).toBe(CoreFunctions.nnz);
+            expect(realNumber(CoreFunctions.issparse(matrix))).toBe(0);
+            expect(CoreFunctions.full(matrix)).not.toBe(matrix);
+            expect(realNumber(CoreFunctions.nnz(matrix))).toBe(3);
+            expect(realNumber(CoreFunctions.nzmax(matrix))).toBe(3);
+            expect(vector.dimension).toEqual([3, 1]);
+            expect(vector.array.map((row) => realNumber(row[0]))).toEqual([1, 3, 2]);
+            expect(sparseShape.dimension).toEqual([2, 3]);
+            expect(sparseShape.array.flat().map(realNumber)).toEqual([0, 0, 0, 0, 0, 0]);
+            expect(allocated.dimension).toEqual([2, 3]);
+            expect(allocated.array.flat().map(realNumber)).toEqual([0, 0, 0, 0, 0, 0]);
+            expect(logicalAllocated.dimension).toEqual([1, 2]);
+            expect(logicalAllocated.array[0].map((value) => (value as ComplexType).type)).toEqual([Complex.LOGICAL, Complex.LOGICAL]);
+            expect(triplet.array.map((row) => row.map(realNumber))).toEqual([
+                [4, 0],
+                [0, 11],
+            ]);
+            expect(uniqueTriplet.array[0].map(realNumber)).toEqual([0, 8]);
+            expect(() => CoreFunctions.sparse(Complex.create(0), Complex.one(), Complex.one())).toThrow('sparse: argument 1 must contain positive integer subscripts.');
+            expect(() => CoreFunctions.sparse(Complex.create(1), Complex.create(1), Complex.one(), Complex.create(0), Complex.create(0))).toThrow('sparse: subscript indices out of range.');
+            expect(() => CoreFunctions.spalloc(Complex.create(1), Complex.create(1), Complex.create(-1))).toThrow('spalloc: argument 3 must be a nonnegative integer scalar.');
+            expect(() => CoreFunctions.spalloc(Complex.create(1), Complex.create(1), Complex.create(1), CharString.create('int32'))).toThrow(
+                "spalloc: typename must be 'double', 'single', or 'logical'.",
+            );
+        });
+
         it('Should distinguish vector and matrix norm orders 1 and Inf.', () => {
             const vector = MultiArray.firstRow([Complex.create(1), Complex.create(-2), Complex.create(3)]);
             const matrix = new MultiArray([2, 2]);
@@ -196,11 +261,14 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const structure = new Structure({ alpha: Complex.one(), beta: Complex.two() });
             const names = MultiArray.firstRow([new CharString('alpha'), new CharString('missing')], true);
             const result = CoreFunctions.isfield(structure, names) as MultiArray;
+            const built = CoreFunctions.struct(new CharString('alpha'), Complex.one(), new CharString('beta'), MultiArray.emptyArray()) as Structure;
 
             expect(CoreFunctions.functions.isfield.func).toBe(CoreFunctions.isfield);
             expect(CoreFunctions.functions.isfield.signature).toBe(CoreFunctions.isfieldSignature);
             expect(realNumber(CoreFunctions.isfield(structure, new CharString('alpha')))).toBe(1);
             expect(realNumber(CoreFunctions.isfield(structure, new CharString('missing')))).toBe(0);
+            expect(realNumber(built.field.alpha)).toBe(1);
+            expect(built.field.beta).toEqual(MultiArray.emptyArray());
             expect(result).toBeInstanceOf(MultiArray);
             expect(result.dimension).toEqual([1, 2]);
             expect(result.array[0].map(realNumber)).toEqual([1, 0]);

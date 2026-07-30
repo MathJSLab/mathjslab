@@ -1,7 +1,8 @@
-import type { FunctionTable, NameEntry, NameTable, NodeExpr, NodeFunctionDefinition, NodeInput } from './AST';
+import type { ExpressionBoundaryValue, FunctionTable, NameEntry, NameTable, NodeExpr, NodeFunctionDefinition, NodeInput, RuntimeExpressionValue } from './AST';
 import { AST } from './AST';
 import { CharString } from './CharString';
 import { Complex } from './Complex';
+import { runtimeExpressionValue } from './ExpressionValue';
 import { MultiArray } from './MultiArray';
 import { RuntimeValue } from './RuntimeValue';
 
@@ -14,10 +15,16 @@ type WorkspaceScope = {
     hasLocalName(name: string): boolean;
 };
 
+type RuntimeNameWriter = {
+    nameTable?: NameTable;
+    defineName(name: string, node: RuntimeExpressionValue): NameEntry;
+};
+
 type ThrowSyntaxError = (message: string) => never;
 type EvaluateInScope = (source: string, scope: WorkspaceScope) => NodeInput;
-type UnparseInputArgument = (arg: NodeExpr) => string;
+type UnparseInputArgument = (arg: ExpressionBoundaryValue) => string;
 type IsCatchableError = (error: unknown) => boolean;
+type OnCatchError = (error: unknown) => void;
 
 /**
  * Workspace helpers shared by function calls and MATLAB/Octave workspace
@@ -36,7 +43,7 @@ class FunctionWorkspace {
      * the lifetime of a parsed function definition. Call scopes receive copies
      * when the function is entered and write values back when it returns.
      */
-    public static ensurePersistentTable(func: NodeFunctionDefinition): Record<string, NodeInput> {
+    public static ensurePersistentTable(func: NodeFunctionDefinition): Record<string, RuntimeExpressionValue> {
         if (!func.attributes) {
             func.attributes = {};
         }
@@ -81,7 +88,13 @@ class FunctionWorkspace {
      * `onlyVariableNames` is false, the original caller expression is returned
      * when an unparser is supplied.
      */
-    public static inputName(inputArgs: NodeExpr[], indexNode: NodeInput, throwSyntaxError: ThrowSyntaxError, onlyVariableNames = true, unparse?: UnparseInputArgument): CharString {
+    public static inputName(
+        inputArgs: ExpressionBoundaryValue[],
+        indexNode: NodeInput,
+        throwSyntaxError: ThrowSyntaxError,
+        onlyVariableNames = true,
+        unparse?: UnparseInputArgument,
+    ): CharString {
         const valueNode = MultiArray.isInstanceOf(indexNode) && MultiArray.isScalar(indexNode) ? MultiArray.firstElement(indexNode) : indexNode;
         if (!Complex.isInstanceOf(valueNode) || !Complex.imagIsZero(valueNode)) {
             throwSyntaxError('inputname: argument number must be a positive integer.');
@@ -124,6 +137,8 @@ class FunctionWorkspace {
      * leaving parsing and execution to the callback supplied by the interpreter.
      * The optional predicate lets the interpreter keep control-flow signals
      * such as `return`, `break`, and `continue` out of the catch string path.
+     * The optional catch hook records the original error before catch source
+     * execution so `lasterr`/`lasterror` see the same state as `try/catch`.
      */
     public static evaluateWithCatch(
         scope: WorkspaceScope,
@@ -131,6 +146,7 @@ class FunctionWorkspace {
         catchSource: string | undefined,
         evaluate: EvaluateInScope,
         isCatchableError: IsCatchableError = () => true,
+        onCatchError?: OnCatchError,
     ): NodeInput {
         try {
             return evaluate(source, scope);
@@ -138,6 +154,7 @@ class FunctionWorkspace {
             if (typeof catchSource === 'undefined' || !isCatchableError(e)) {
                 throw e;
             }
+            onCatchError?.(e);
             return evaluate(catchSource, scope);
         }
     }
@@ -149,7 +166,7 @@ class FunctionWorkspace {
      * The result is `VOID` because assignment-by-side-effect should not display
      * an answer in the command UI.
      */
-    public static assignIn(scope: Pick<WorkspaceScope, 'defineName'>, name: string, value: NodeInput): NodeInput {
+    public static assignIn(scope: RuntimeNameWriter, name: string, value: RuntimeExpressionValue): NodeInput {
         scope.defineName(name, RuntimeValue.copy(value));
         return AST.nodeVoid();
     }
@@ -162,26 +179,31 @@ class FunctionWorkspace {
      * the name has not been seen before, matching MATLAB/Octave persistent
      * semantics.
      */
-    public static declarePersistent(name: string, value: NodeInput | undefined, func: NodeFunctionDefinition, scope: Pick<WorkspaceScope, 'defineName'>): void {
+    public static declarePersistent(name: string, value: RuntimeExpressionValue | undefined, func: NodeFunctionDefinition, scope: RuntimeNameWriter): void {
         const table = this.ensurePersistentTable(func);
+        if (scope.nameTable?.[name]?.persistent) {
+            return;
+        }
         if (typeof value !== 'undefined' && typeof table[name] === 'undefined') {
             table[name] = RuntimeValue.copy(value);
         } else if (typeof table[name] === 'undefined') {
             table[name] = AST.emptyArray();
         }
-        scope.defineName(name, RuntimeValue.copy(table[name]));
+        const entry = scope.defineName(name, RuntimeValue.copy(table[name]));
+        entry.persistent = true;
     }
 
     /**
      * Load all persistent variables into a fresh function-call scope.
      */
-    public static loadPersistentVariables(func: NodeFunctionDefinition, scope: Pick<WorkspaceScope, 'defineName'>): void {
+    public static loadPersistentVariables(func: NodeFunctionDefinition, scope: RuntimeNameWriter): void {
         const table = this.ensurePersistentTable(func);
         for (const name of Object.keys(table)) {
             if (typeof table[name] === 'undefined') {
                 table[name] = AST.emptyArray();
             }
-            scope.defineName(name, RuntimeValue.copy(table[name]));
+            const entry = scope.defineName(name, RuntimeValue.copy(table[name]));
+            entry.persistent = true;
         }
     }
 
@@ -196,7 +218,11 @@ class FunctionWorkspace {
         for (const name of Object.keys(table)) {
             const entry = scope.hasLocalName(name) ? scope.nameTable[name] : undefined;
             if (entry && typeof entry.node !== 'undefined') {
-                table[name] = RuntimeValue.copy(entry.node);
+                table[name] = RuntimeValue.copy(
+                    runtimeExpressionValue(entry.node, name, 'persistent variable', (message) => {
+                        throw new EvalError(message);
+                    }),
+                );
             }
         }
     }
@@ -207,30 +233,51 @@ class FunctionWorkspace {
      * Local and global scopes share the same `NameEntry` object. Mutating one
      * side therefore updates the other, which is the behavior expected by
      * MATLAB/Octave-like `global` declarations.
+     *
+     * Octave-style `global name = value` initializes a global binding only once
+     * through declaration syntax. Later global declarations for the same name
+     * reattach the existing binding without overwriting user changes.
      */
-    public static declareGlobal(name: string, value: NodeInput | undefined, globalNameSet: Set<string>, globalNameTable: NameTable, scopeNameTable: NameTable): void {
+    public static declareGlobal(
+        name: string,
+        value: RuntimeExpressionValue | undefined,
+        globalNameSet: Set<string>,
+        globalNameTable: NameTable,
+        scopeNameTable: NameTable,
+        globalInitializedNameSet?: Set<string>,
+    ): void {
         globalNameSet.add(name);
         let entry = globalNameTable[name];
         if (!entry) {
             entry = globalNameTable[name] = {};
         }
         entry.global = true;
-        if (typeof value !== 'undefined') {
+        const initialized = Boolean(entry.globalInitialized || globalInitializedNameSet?.has(name));
+        if (typeof value !== 'undefined' && !initialized) {
             entry.node = RuntimeValue.copy(value);
             delete entry.undefinedReference;
+            entry.globalInitialized = true;
+            globalInitializedNameSet?.add(name);
+        } else if (typeof entry.node === 'undefined') {
+            entry.node = AST.emptyArray();
         }
         scopeNameTable[name] = entry;
     }
 
     /**
-     * Clear all global variables from global, active, and captured scopes.
+     * Clear global variables from global, active, and captured scopes.
      *
      * Function handles and nested functions can keep references to defining
      * scopes. The recursive walk follows those defining scopes so `clear global`
      * does not leave stale global aliases hidden in closures.
+     *
+     * @param globalNameSet Names currently declared as global.
+     * @param globalScope Base global scope.
+     * @param callScopes Active call scopes that may contain global aliases.
+     * @param requestedNames Optional subset of global names to remove.
      */
-    public static clearGlobalVariables(globalNameSet: Set<string>, globalScope: WorkspaceScope | undefined, callScopes: WorkspaceScope[]): void {
-        const names = [...globalNameSet];
+    public static clearGlobalVariables(globalNameSet: Set<string>, globalScope: WorkspaceScope | undefined, callScopes: WorkspaceScope[], requestedNames?: string[]): void {
+        const names = requestedNames ? requestedNames.filter((name) => globalNameSet.has(name)) : [...globalNameSet];
         const visited = new Set<WorkspaceScope>();
         const clearFromScopeChain = (scope?: WorkspaceScope) => {
             while (scope && !visited.has(scope)) {
@@ -250,7 +297,13 @@ class FunctionWorkspace {
         for (const scope of callScopes) {
             clearFromScopeChain(scope);
         }
-        globalNameSet.clear();
+        if (requestedNames) {
+            for (const name of names) {
+                globalNameSet.delete(name);
+            }
+        } else {
+            globalNameSet.clear();
+        }
     }
 }
 

@@ -279,6 +279,13 @@ Base class for MATLAB-like class meta objects.
 
 Meta object representing a class property.
 
+## ClassMetaPropertyValue
+
+- Kind: `type`
+- Source: `src/ClassMeta.ts`
+
+Runtime values exposed by public MATLAB-like `meta.*` properties.
+
 ## ClassMethodDefinition
 
 - Kind: `interface`
@@ -371,7 +378,8 @@ Runtime value representing a static class method selected from a class.
 Command-form external function.
 
 Returning `undefined` leaves evaluation with the original command-word-list
-node; returning a value supplies the evaluated result.
+node; returning a value supplies the evaluated result. Host integrations may
+return primitive values, which the interpreter normalizes to runtime values.
 
 ## CommandWordListTable
 
@@ -1093,7 +1101,7 @@ Ignored return target (`~`) in a return or assignment list.
 - Kind: `interface`
 - Source: `src/AST.ts`
 
-MATLAB-style package/class import declaration.
+MATLAB-style package/class import declaration or import-list query.
 
 ## NodeIndexExpr
 
@@ -1185,7 +1193,7 @@ Reserved node.
 - Kind: `interface`
 - Source: `src/AST.ts`
 
-Return list node
+Lazy multi-output return-list node.
 
 ## NodeSpmd
 
@@ -1349,6 +1357,16 @@ this interface, but tests and future renderers can provide smaller objects.
 Minimal evaluation surface required when runtime containers evaluate their
 child expressions.
 
+## RuntimeExpressionValue
+
+- Kind: `type`
+- Source: `src/AST.ts`
+
+AST node that can appear in expression position.
+
+Runtime value shape accepted by expression evaluation before it is wrapped
+into parser-created AST containers.
+
 ## ScriptSource
 
 - Kind: `type`
@@ -1418,6 +1436,13 @@ Runtime representation of a MATLAB/Octave structure scalar.
 Structure arrays are represented as `MultiArray` values whose elements are
 `Structure` instances. A scalar `Structure` stores fields in a plain object
 keyed by field name.
+
+## StructureFieldValue
+
+- Kind: `type`
+- Source: `src/Structure.ts`
+
+Concrete runtime value that may be stored in a structure field.
 
 ## toNumber
 

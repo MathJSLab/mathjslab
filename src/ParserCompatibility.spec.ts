@@ -32,6 +32,13 @@ describe('Parser compatibility fixtures.', () => {
         expect(interpreter.Unparse(interpreter.Execute(source))).toBe('x=3\n');
     });
 
+    it('Should parse bare import as an import-list query.', () => {
+        const interpreter = Interpreter.Create();
+
+        expect(interpreter.Unparse(interpreter.Parse('import'))).toBe('import\n');
+        expect(interpreter.Unparse(interpreter.Parse('L = import'))).toBe('L=(import)\n');
+    });
+
     it('Should parse and execute Octave-like indexing and field names in one script.', () => {
         const interpreter = Interpreter.Create();
         const source = ['A = [10, 20, 30, 40];', 'last = A(end);', 'tail = A(2:end);', 'field.end = last;', 'dyn = "end";', 'again = field.(dyn);'].join('\n');
@@ -49,9 +56,17 @@ describe('Parser compatibility fixtures.', () => {
             's.end = 5;',
             'picked = s.properties + s.methods + s.events + s.enumeration + s.end;',
         ].join('\n');
-        const finalStruct = 's=struct {\nproperties: 1\nmethods: 2\nevents: 3\nenumeration: 4\nend: 5\n}\n';
-
-        expect(interpreter.Unparse(interpreter.Execute(source))).toBe(`${finalStruct}${finalStruct}${finalStruct}${finalStruct}${finalStruct}picked=15\n`);
+        expect(interpreter.Unparse(interpreter.Execute(source))).toBe(
+            [
+                's=struct {\nproperties: 1\n}',
+                's=struct {\nproperties: 1\nmethods: 2\n}',
+                's=struct {\nproperties: 1\nmethods: 2\nevents: 3\n}',
+                's=struct {\nproperties: 1\nmethods: 2\nevents: 3\nenumeration: 4\n}',
+                's=struct {\nproperties: 1\nmethods: 2\nevents: 3\nenumeration: 4\nend: 5\n}',
+                'picked=15',
+                '',
+            ].join('\n'),
+        );
     });
 
     it('Should parse MATLAB/Octave assignment target lists.', () => {
@@ -61,18 +76,47 @@ describe('Parser compatibility fixtures.', () => {
         expect(interpreter.Unparse(interpreter.Parse(source))).toBe('[A(1),A(3)]=pair(10)\n[S.a,S.(dyn)]=pair(20)\n[~,keep]=pair(30)\n');
     });
 
-    it('Should parse Octave-style structure field for-loop targets.', () => {
+    it('Should execute MATLAB/Octave assignment target lists.', () => {
         const interpreter = Interpreter.Create();
-        const source = ['for [value, name] = S', '  keep = name;', 'end'].join('\n');
+        const source = [
+            'function [a, b] = pair(x)',
+            '  a = x;',
+            '  b = x + 1;',
+            'end',
+            'dyn = "b";',
+            '[A(1) A(3)] = pair(10);',
+            '[S.a S.(dyn)] = pair(20);',
+            '[~, keep] = pair(30);',
+            'A; S.a; S.b; keep',
+        ].join('\n');
 
-        expect(interpreter.Unparse(interpreter.Parse(source))).toBe('FOR [value,name]=S\nkeep=name\n\nENDFOR\n');
+        expect(interpreter.Unparse(interpreter.Execute(source))).toBe('dyn=b\nA=[10]\nA=[10,0,11]\nS=struct {\na: 20\n}\nS=struct {\na: 20\nb: 21\n}\nkeep=31\n[10,0,11]\n20\n21\n31\n');
     });
 
-    it('Should preserve parenthesized parfor worker expressions.', () => {
+    it('Should parse Octave-style structure field for-loop targets.', () => {
         const interpreter = Interpreter.Create();
-        const source = ['parfor (i = 1:4, 2)', '  total = i;', 'end'].join('\n');
+        const source = [
+            'S.a = 10;',
+            'S.b = 20;',
+            'names = {};',
+            'values = [];',
+            'for [value, name] = S',
+            '  names{end + 1} = name;',
+            '  values(end + 1) = value;',
+            'end',
+            'names; values',
+        ].join('\n');
 
-        expect(interpreter.Unparse(interpreter.Parse(source))).toBe('PARFOR (i=1:4,2)\ntotal=i\n\nENDPARFOR\n');
+        expect(interpreter.Unparse(interpreter.Parse(['for [value, name] = S', '  keep = name;', 'end'].join('\n')))).toBe('FOR [value,name]=S\nkeep=name\n\nENDFOR\n');
+        expect(interpreter.Unparse(interpreter.Execute(source))).toBe('S=struct {\na: 10\n}\nS=struct {\na: 10\nb: 20\n}\nnames={ }(0x0)\nvalues=[ ](0x0)\n{a,b}\n[10,20]\n{a,b}\n[10,20]\n');
+    });
+
+    it('Should preserve and execute parenthesized parfor worker expressions.', () => {
+        const interpreter = Interpreter.Create();
+        const source = ['total = 0;', 'parfor (i = 1:4, 2)', '  total = total + i;', 'end', 'total'].join('\n');
+
+        expect(interpreter.Unparse(interpreter.Parse(['parfor (i = 1:4, 2)', '  total = i;', 'end'].join('\n')))).toBe('PARFOR (i=1:4,2)\ntotal=i\n\nENDPARFOR\n');
+        expect(interpreter.Unparse(interpreter.Execute(source))).toBe('total=0\n10\n10\n');
     });
 
     it('Should execute chained indexing and field access with end.', () => {
@@ -98,6 +142,14 @@ describe('Parser compatibility fixtures.', () => {
         const source = ['C = {[1, 2, 3], [4; 5; 6]};', 'first = C{1};', 'second = C{2};', 'picked = C{1}(2);'].join('\n');
 
         expect(interpreter.Unparse(interpreter.Execute(source))).toBe('C={[1,2,3],[4;\n5;\n6]}\nfirst=[1,2,3]\nsecond=[4;\n5;\n6]\npicked=2\n');
+    });
+
+    it('Should parse spaced expressions inside cell indexing braces.', () => {
+        const interpreter = Interpreter.Create();
+        const source = ['C = {10, 20, 30};', 'k = 2;', 'picked = C{2*k - 1};', 'again = C{', '  k + 1', '};', 'previous = C{end - 1};'].join('\n');
+
+        expect(interpreter.Unparse(interpreter.Parse(source))).toContain('picked=C{2*k-1}');
+        expect(interpreter.Unparse(interpreter.Execute(source))).toBe('C={10,20,30}\nk=2\npicked=30\nagain=30\nprevious=20\n');
     });
 
     it('Should accept trailing row separators in matrix and cell literals.', () => {
@@ -252,6 +304,9 @@ describe('Parser compatibility fixtures.', () => {
         const source = ['classdef ValidatedProperties', '  properties', '    x (1,1) double {mustBePositive} = 1', '    label string', '  end', 'end'].join('\n');
 
         expect(interpreter.Unparse(interpreter.Parse(source))).toBe('CLASSDEF ValidatedProperties\nPROPERTIES\nx(1,1) double {mustBePositive}=1\nlabel string\nENDPROPERTIES\nENDCLASSDEF\n');
+        expect(interpreter.Unparse(interpreter.Execute([source, 'obj = ValidatedProperties(); obj.x; obj.label'].join('\n')))).toBe(
+            'obj=ValidatedProperties object with properties: x,label\n1\n\n',
+        );
     });
 
     it('Should parse Octave-style adjacent class events and enumerations.', () => {
@@ -260,6 +315,9 @@ describe('Parser compatibility fixtures.', () => {
 
         expect(interpreter.Unparse(interpreter.Parse(source))).toBe(
             'CLASSDEF AdjacentClassMembers\nEVENTS\nStarted\nFinished\nENDEVENTS\nENUMERATION\nRed(1)\nBlue(2)\nENDENUMERATION\nENDCLASSDEF\n',
+        );
+        expect(interpreter.Unparse(interpreter.Execute([source, 'events("AdjacentClassMembers"); enumeration("AdjacentClassMembers"); AdjacentClassMembers.Red'].join('\n')))).toBe(
+            '{Finished;\nStarted}\n{Blue;\nRed}\nAdjacentClassMembers.Red\n',
         );
     });
 
@@ -292,5 +350,12 @@ describe('Parser compatibility fixtures.', () => {
 
         expect(interpreter.Unparse(interpreter.Parse(source))).toBe('FUNCTION [a,b]=spacereturns(x)\na=x\nb=x+1\nENDFUNCTION\n');
         expect(interpreter.Unparse(interpreter.Execute([source, '[first second] = spacereturns(4)'].join('\n')))).toBe('first=4\nsecond=5\n');
+    });
+
+    it('Should execute empty function return lists as no-output functions.', () => {
+        const interpreter = Interpreter.Create();
+        const source = ['global touched', 'function [] = markemptyreturn(x)', '  global touched', '  touched = x;', 'end', 'markemptyreturn(8);', 'touched'].join('\n');
+
+        expect(interpreter.Unparse(interpreter.Execute(source))).toBe('8\n');
     });
 });

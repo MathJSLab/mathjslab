@@ -3,6 +3,8 @@ import type {
     NodeArguments,
     NodeDefaultedParameter,
     NodeExpr,
+    ExpressionBoundaryValue,
+    RuntimeExpressionValue,
     NodeFunctionDefinition,
     NodeFunctionParameter,
     NodeFunctionReturn,
@@ -15,6 +17,7 @@ import { Complex, type ComplexType } from './Complex';
 import { MultiArray } from './MultiArray';
 import { FunctionValidation } from './FunctionValidation';
 import { RuntimeValue } from './RuntimeValue';
+import { runtimeExpressionValue } from './ExpressionValue';
 
 type ThrowSyntaxError = (message: string) => never;
 type ThrowEvalError = (message: string) => never;
@@ -24,14 +27,25 @@ type ArgumentSizeDimension = number | { type: 'symbol'; name: string } | { type:
 type ArgumentValidatorSpec = { name: string; value?: NodeExpr; bounds?: NodeExpr[]; custom?: 'implicit' | 'explicit'; expression?: NodeExpr };
 /** Resolved workspace entry used during call-time validation. */
 type ValidationEntry = { node?: NodeInput };
+/** Value that has crossed an expression boundary and can be validated as data. */
+type EvaluatedArgumentValue = ExpressionBoundaryValue;
+/** Concrete runtime value accepted by built-in argument validators. */
+type RuntimeArgumentValue = RuntimeExpressionValue;
+/** Host callbacks for validators that depend on a virtual filesystem. */
+type PathValidationCallbacks = {
+    /** Return whether a text path refers to a host-provided file. */
+    fileExists?: (path: string) => boolean;
+    /** Return whether a text path refers to a host-provided folder. */
+    folderExists?: (path: string) => boolean;
+};
 /** Interpreter services needed by parser-independent argument validation. */
-type ArgumentValidationCallbacks = {
+type ArgumentValidationCallbacks = PathValidationCallbacks & {
     /** Resolve the argument or return value currently being validated. */
     resolveEntry: (validation: NodeArgumentValidation, localNamesOnly: boolean) => ValidationEntry | undefined;
     /** Evaluate a validator expression or default-dependent bound. */
     evaluate: (expr: NodeExpr) => NodeInput;
     /** Optional class matcher that can include user-defined classes. */
-    matchesClass?: (value: NodeInput, className: string) => boolean;
+    matchesClass?: (value: RuntimeArgumentValue, className: string) => boolean;
     /** Evaluation-error callback supplied by the interpreter. */
     throwEvalError: ThrowEvalError;
     /** Syntax-error callback supplied by the interpreter/parser layer. */
@@ -40,8 +54,14 @@ type ArgumentValidationCallbacks = {
 /** Callback set used for `arguments (Repeating)` validation over `varargin`. */
 type RepeatingArgumentValidationCallbacks = Omit<ArgumentValidationCallbacks, 'resolveEntry'> & {
     /** Validate one repeated value with a per-group symbolic dimension map. */
-    validateRepeatingValue: (validation: NodeArgumentValidation, validationName: string, value: NodeInput, displayName: string, symbolicDimensions: Map<string, number>) => void;
+    validateRepeatingValue: (validation: NodeArgumentValidation, validationName: string, value: EvaluatedArgumentValue, displayName: string, symbolicDimensions: Map<string, number>) => void;
 };
+/** One requested repeating output value and its one-based cell index. */
+type RepeatingOutputValue = { value: EvaluatedArgumentValue; index: number };
+/** Metadata for a MATLAB-style repeating output argument. */
+type OutputRepeatingInfo = { name: string; fixedReturnCount: number };
+/** Normalized semantic kind of an `arguments` block. */
+type ArgumentBlockKind = 'Input' | 'Output' | 'Repeating' | 'OutputRepeating';
 
 /**
  * Parser-independent support for MATLAB-like `arguments` blocks.
@@ -86,6 +106,14 @@ class FunctionArguments {
     }
 
     /**
+     * Narrow a boundary-checked expression to the concrete runtime values that
+     * MATLAB-style class, size, and `mustBe*` validators can inspect.
+     */
+    private static runtimeArgumentValue(value: unknown, name: string, throwEvalError: ThrowEvalError): RuntimeArgumentValue {
+        return runtimeExpressionValue(value, name, 'Argument value', throwEvalError);
+    }
+
+    /**
      * Return syntactically valid function parameters from the AST list.
      */
     private static functionParameters(func: NodeFunctionDefinition): NodeFunctionParameter[] {
@@ -113,37 +141,88 @@ class FunctionArguments {
         return this.checkedList(block.validation, AST.isNodeArgumentValidation, 'arguments validation');
     }
 
-    /**
-     * Classes currently supported by the function infrastructure.
-     *
-     * A future class-system implementation can expand this list without
-     * changing the parser representation of `arguments` blocks.
-     */
-    private static readonly supportedArgumentClasses = new Set(['double', 'single', 'logical', 'char', 'string', 'cell', 'struct', 'function_handle']);
     private static readonly supportedArgumentValidators = new Set([
         'mustBeNumeric',
+        'mustBeFloat',
         'mustBeNumericOrLogical',
         'mustBeText',
         'mustBeTextScalar',
+        'mustBeNonzeroLengthText',
+        'mustBeValidVariableName',
+        'mustBeFile',
+        'mustBeFolder',
         'mustBeScalarOrEmpty',
         'mustBeScalar',
         'mustBeMatrix',
         'mustBeSquare',
         'mustBeVector',
+        'mustBeRow',
+        'mustBeColumn',
         'mustBeNonempty',
         'mustBePositive',
         'mustBeNonnegative',
+        'mustBeNegative',
+        'mustBeNonpositive',
         'mustBeNonzero',
+        'mustBeNonNan',
+        'mustBeNonmissing',
+        'mustBeNonsparse',
+        'mustBeSparse',
         'mustBeInteger',
         'mustBeOdd',
         'mustBeFinite',
         'mustBeReal',
     ]);
     private static readonly supportedComparatorValidators = new Set(['mustBeGreaterThan', 'mustBeGreaterThanOrEqual', 'mustBeLessThan', 'mustBeLessThanOrEqual']);
-    private static readonly supportedRangeValidators = new Set(['mustBeInRange']);
+    private static readonly supportedRangeValidators = new Set(['mustBeInRange', 'mustBeBetween']);
     private static readonly supportedMembershipValidators = new Set(['mustBeMember']);
+    private static readonly supportedClassRelationshipValidators = new Set(['mustBeA', 'mustBeUnderlyingType']);
     private static readonly supportedRangeOptions = new Set(['inclusive', 'exclude-lower', 'exclude-upper', 'exclude-both']);
+    private static readonly supportedBetweenOptions = new Set(['closed', 'open', 'openleft', 'openright', 'closedleft', 'closedright']);
     private static readonly supportedBlockAttributes = new Set(['Input', 'Output', 'Repeating']);
+
+    /**
+     * Return every syntactic attribute attached to an `arguments` block.
+     */
+    private static blockAttributeNames(block: NodeArguments): string[] {
+        return block.attributes?.length ? block.attributes.map((attribute) => attribute.id) : block.attribute ? [block.attribute.id] : [];
+    }
+
+    /**
+     * Normalize MATLAB-style block attributes to the semantic validation path.
+     */
+    private static blockKind(block: NodeArguments, throwSyntaxError: ThrowSyntaxError): ArgumentBlockKind {
+        const names = this.blockAttributeNames(block);
+        if (names.length === 0) {
+            return 'Input';
+        }
+        const unique = new Set<string>();
+        for (const name of names) {
+            if (!this.supportedBlockAttributes.has(name)) {
+                throwSyntaxError(`unsupported arguments block attribute '${name}'.`);
+            }
+            if (unique.has(name)) {
+                throwSyntaxError(`duplicate arguments block attribute '${name}'.`);
+            }
+            unique.add(name);
+        }
+        const hasInput = unique.has('Input');
+        const hasOutput = unique.has('Output');
+        const hasRepeating = unique.has('Repeating');
+        if (hasInput && hasOutput) {
+            throwSyntaxError("arguments block attributes 'Input' and 'Output' cannot be combined.");
+        }
+        if (unique.size > 2 || (!hasInput && !hasOutput && !hasRepeating)) {
+            throwSyntaxError(`unsupported arguments block attribute list '${names.join(',')}'.`);
+        }
+        if (hasRepeating && hasOutput) {
+            return 'OutputRepeating';
+        }
+        if (hasRepeating) {
+            return 'Repeating';
+        }
+        return hasOutput ? 'Output' : 'Input';
+    }
 
     /**
      * Render one argument-size dimension for diagnostics.
@@ -217,6 +296,86 @@ class FunctionArguments {
     public static validationDisplayName(validation: NodeArgumentValidation, throwSyntaxError: ThrowSyntaxError): string {
         const nameValue = this.nameValueTarget(validation, throwSyntaxError);
         return nameValue ? `${nameValue.parameter}.${nameValue.field}` : this.validationName(validation, throwSyntaxError);
+    }
+
+    /**
+     * Return a referenced name-value argument/container inside an expression.
+     *
+     * MATLAB keeps name-value arguments independent: defaults cannot reference
+     * name-value structures, and validators can reference only the value being
+     * validated. This syntactic scan catches those dependencies before call
+     * evaluation starts.
+     */
+    private static nameValueReferenceDisplay(node: unknown, nameValueParameters: Set<string>, allowedTarget?: string, visited = new WeakSet<object>()): string | undefined {
+        if (node === null || typeof node !== 'object') {
+            return undefined;
+        }
+        if (visited.has(node)) {
+            return undefined;
+        }
+        visited.add(node);
+        if (AST.isNodeIdentifier(node) && nameValueParameters.has(node.id)) {
+            return node.id;
+        }
+        if (AST.isNodeIndirectRef(node) && AST.isNodeIdentifier(node.obj) && nameValueParameters.has(node.obj.id)) {
+            const field = node.field[0];
+            const display = typeof field === 'string' ? `${node.obj.id}.${field}` : node.obj.id;
+            return display === allowedTarget ? undefined : display;
+        }
+        if (AST.isNodeIndexExpr(node)) {
+            return (
+                this.nameValueReferenceDisplay(node.expr, nameValueParameters, allowedTarget, visited) ??
+                this.firstNameValueReferenceDisplay(node.args, nameValueParameters, allowedTarget, visited)
+            );
+        }
+        if (AST.isNodeRange(node)) {
+            return (
+                this.nameValueReferenceDisplay(node.start_, nameValueParameters, allowedTarget, visited) ??
+                this.nameValueReferenceDisplay(node.stop_, nameValueParameters, allowedTarget, visited) ??
+                this.nameValueReferenceDisplay(node.stride_, nameValueParameters, allowedTarget, visited)
+            );
+        }
+        if (AST.isNodeBinaryOperation(node)) {
+            return (
+                this.nameValueReferenceDisplay(node.left, nameValueParameters, allowedTarget, visited) ??
+                this.nameValueReferenceDisplay(node.right, nameValueParameters, allowedTarget, visited)
+            );
+        }
+        if (AST.isNodePrefixOperation(node)) {
+            return this.nameValueReferenceDisplay(node.right, nameValueParameters, allowedTarget, visited);
+        }
+        if (AST.isNodePostfixOperation(node)) {
+            return this.nameValueReferenceDisplay(node.left, nameValueParameters, allowedTarget, visited);
+        }
+        if (AST.isNodeSuperclassConstructor(node)) {
+            return (
+                this.nameValueReferenceDisplay(node.instance, nameValueParameters, allowedTarget, visited) ??
+                this.firstNameValueReferenceDisplay(node.args, nameValueParameters, allowedTarget, visited)
+            );
+        }
+        if (AST.isNodeMetaClass(node)) {
+            return undefined;
+        }
+        if (AST.isNodeList(node)) {
+            return this.firstNameValueReferenceDisplay(node.list, nameValueParameters, allowedTarget, visited);
+        }
+        if (MultiArray.isInstanceOf(node)) {
+            return this.firstNameValueReferenceDisplay(MultiArray.linearize(node), nameValueParameters, allowedTarget, visited);
+        }
+        return undefined;
+    }
+
+    /**
+     * Return the first name-value reference found in an expression list.
+     */
+    private static firstNameValueReferenceDisplay(items: unknown[], nameValueParameters: Set<string>, allowedTarget?: string, visited = new WeakSet<object>()): string | undefined {
+        for (const item of items) {
+            const display = this.nameValueReferenceDisplay(item, nameValueParameters, allowedTarget, visited);
+            if (display) {
+                return display;
+            }
+        }
+        return undefined;
     }
 
     /**
@@ -307,8 +466,20 @@ class FunctionArguments {
             }
             if (
                 AST.isNodeIndexExpr(node) &&
+                node.delim === '()' &&
                 AST.isNodeIdentifier(node.expr) &&
-                (this.supportedComparatorValidators.has(node.expr.id) || this.supportedRangeValidators.has(node.expr.id) || this.supportedMembershipValidators.has(node.expr.id))
+                this.supportedClassRelationshipValidators.has(node.expr.id) &&
+                node.args.length === 2
+            ) {
+                return { name: node.expr.id, value: node.args[0], bounds: [node.args[1]] };
+            }
+            if (
+                AST.isNodeIndexExpr(node) &&
+                AST.isNodeIdentifier(node.expr) &&
+                (this.supportedComparatorValidators.has(node.expr.id) ||
+                    this.supportedRangeValidators.has(node.expr.id) ||
+                    this.supportedMembershipValidators.has(node.expr.id) ||
+                    this.supportedClassRelationshipValidators.has(node.expr.id))
             ) {
                 throwSyntaxError(`arguments block function validation for '${validationName}' has invalid ${node.expr.id} arguments.`);
             }
@@ -322,18 +493,18 @@ class FunctionArguments {
     /**
      * Return the MATLAB-like size of a value.
      */
-    public static valueSize(value: NodeInput): number[] {
+    public static valueSize(value: RuntimeArgumentValue): number[] {
         return RuntimeValue.dimensions(value);
     }
 
     /**
      * Extract text elements from scalar text or a cell array of text values.
      */
-    private static textElements(value: NodeInput): string[] | undefined {
+    private static textElements(value: RuntimeArgumentValue): string[] | undefined {
         if (CharString.isInstanceOf(value)) {
             return [value.str];
         }
-        if (MultiArray.isInstanceOf(value) && value.isCell) {
+        if (MultiArray.isInstanceOf(value)) {
             const values = MultiArray.linearize(value);
             return values.every(CharString.isInstanceOf) ? values.map((item) => item.str) : undefined;
         }
@@ -341,15 +512,27 @@ class FunctionArguments {
     }
 
     /**
+     * Extract class-name strings from `mustBeA`'s accepted MATLAB forms.
+     */
+    private static classNameElements(value: RuntimeArgumentValue): string[] | undefined {
+        const elements = this.textElements(value);
+        if (!elements || elements.length === 0 || elements.some((item) => item.length === 0)) {
+            return undefined;
+        }
+        return [...new Set(elements)];
+    }
+
+    /**
      * Validate one built-in `mustBe*` function against an evaluated value.
      */
     public static validateArgumentFunction(
         name: string,
-        value: NodeInput,
+        value: RuntimeArgumentValue,
         validator: string,
-        bounds: NodeInput[],
+        bounds: RuntimeArgumentValue[],
         throwEvalError: ThrowEvalError,
         throwSyntaxError: ThrowSyntaxError,
+        pathValidation: PathValidationCallbacks = {},
         validationContext = 'arguments block',
     ): void {
         const numericElements = FunctionValidation.numericElements(value);
@@ -372,6 +555,20 @@ class FunctionArguments {
             return;
         }
         switch (validator) {
+            case 'mustBeFile': {
+                const pathElements = FunctionValidation.matchesBuiltInValidator(value, 'textScalar') ? this.textElements(value) : undefined;
+                if (!pathElements || pathElements.length !== 1 || !pathValidation.fileExists || !pathValidation.fileExists(pathElements[0])) {
+                    fail();
+                }
+                return;
+            }
+            case 'mustBeFolder': {
+                const pathElements = FunctionValidation.matchesBuiltInValidator(value, 'text') ? this.textElements(value) : undefined;
+                if (!pathElements || pathElements.length === 0 || !pathValidation.folderExists || !pathElements.every(pathValidation.folderExists)) {
+                    fail();
+                }
+                return;
+            }
             case 'mustBeOdd':
                 if (!numericElements || !numericElements.every((item) => Complex.realIsInteger(item) && Complex.imagIsZero(item) && Math.abs(Complex.realToNumber(item) % 2) === 1)) {
                     fail();
@@ -403,6 +600,27 @@ class FunctionArguments {
                         : (item: ComplexType) => Complex.realGreaterThanOrEqualTo(item, lower);
                 const upperTest =
                     optionText === 'exclude-upper' || optionText === 'exclude-both'
+                        ? (item: ComplexType) => Complex.realLessThan(item, upper)
+                        : (item: ComplexType) => Complex.realLessThanOrEqualTo(item, upper);
+                if (!numericElements || !numericElements.every((item) => Complex.imagIsZero(item) && lowerTest(item) && upperTest(item))) {
+                    fail();
+                }
+                return;
+            }
+            case 'mustBeBetween': {
+                const lower = getRealBound(0);
+                const upper = getRealBound(1);
+                const option = bounds[2];
+                const optionText = typeof option === 'undefined' ? 'closed' : CharString.isInstanceOf(option) ? option.str : undefined;
+                if (typeof optionText === 'undefined' || !this.supportedBetweenOptions.has(optionText)) {
+                    fail();
+                }
+                const lowerTest =
+                    optionText === 'open' || optionText === 'openleft' || optionText === 'closedright'
+                        ? (item: ComplexType) => Complex.realGreaterThan(item, lower)
+                        : (item: ComplexType) => Complex.realGreaterThanOrEqualTo(item, lower);
+                const upperTest =
+                    optionText === 'open' || optionText === 'openright' || optionText === 'closedleft'
                         ? (item: ComplexType) => Complex.realLessThan(item, upper)
                         : (item: ComplexType) => Complex.realLessThanOrEqualTo(item, upper);
                 if (!numericElements || !numericElements.every((item) => Complex.imagIsZero(item) && lowerTest(item) && upperTest(item))) {
@@ -462,8 +680,10 @@ class FunctionArguments {
         if (!entry || typeof entry.node === 'undefined') {
             callbacks.throwEvalError(`'${displayName}' undefined.`);
         }
+        let entryValue: RuntimeArgumentValue | undefined;
+        const runtimeEntryValue = (): RuntimeArgumentValue => (entryValue ??= this.runtimeArgumentValue(entry.node, displayName, callbacks.throwEvalError));
         if (expected) {
-            const actual = this.valueSize(entry.node);
+            const actual = this.valueSize(runtimeEntryValue());
             const length = Math.max(expected.length, actual.length);
             if (length > expected.length) {
                 expected.push(...new Array(length - expected.length).fill(1));
@@ -487,10 +707,10 @@ class FunctionArguments {
                 callbacks.throwEvalError(`${validationContext} validation failed for '${displayName}': expected size ${this.argumentSizeDisplay(expected)}, got ${actual.join('x')}.`);
             }
         }
-        const matchesClass = callbacks.matchesClass ?? ((value: NodeInput, className: string): boolean => FunctionValidation.matchesClass(value, className));
-        if (classNames && !classNames.some((className) => matchesClass(entry.node!, className))) {
+        const matchesClass = callbacks.matchesClass ?? ((value: RuntimeArgumentValue, className: string): boolean => FunctionValidation.matchesClass(value, className));
+        if (classNames && !classNames.some((className) => matchesClass(runtimeEntryValue(), className))) {
             callbacks.throwEvalError(
-                `${validationContext} validation failed for '${displayName}': expected class ${this.argumentClassDisplay(classNames)}, got ${FunctionValidation.className(entry.node)}.`,
+                `${validationContext} validation failed for '${displayName}': expected class ${this.argumentClassDisplay(classNames)}, got ${FunctionValidation.className(runtimeEntryValue())}.`,
             );
         }
         for (const validator of validators) {
@@ -505,9 +725,33 @@ class FunctionArguments {
                 callbacks.evaluate(AST.nodeIndexExpr(AST.nodeIdentifier(validator.name), AST.nodeList([entry.node])));
                 continue;
             }
-            const value = validator.value ? callbacks.evaluate(validator.value) : entry.node;
-            const bounds = validator.bounds?.map((bound) => callbacks.evaluate(bound)) ?? [];
-            this.validateArgumentFunction(displayName, value, validator.name, bounds, callbacks.throwEvalError, callbacks.throwSyntaxError, validationContext);
+            const value = validator.value ? this.runtimeArgumentValue(callbacks.evaluate(validator.value), displayName, callbacks.throwEvalError) : runtimeEntryValue();
+            const bounds = validator.bounds?.map((bound, index) => this.runtimeArgumentValue(callbacks.evaluate(bound), `${displayName} bound ${index + 1}`, callbacks.throwEvalError)) ?? [];
+            if (validator.name === 'mustBeA') {
+                const acceptedClasses = this.classNameElements(bounds[0]);
+                const originalAcceptedClasses =
+                    validator.bounds?.[0] && AST.isExpressionBoundaryValue(validator.bounds[0])
+                        ? this.classNameElements(this.runtimeArgumentValue(validator.bounds[0], `${displayName} class names`, callbacks.throwEvalError))
+                        : undefined;
+                const classGroups = [acceptedClasses, originalAcceptedClasses].filter((group): group is string[] => Boolean(group));
+                if (classGroups.length === 0 || !classGroups.some((group) => group.some((className) => matchesClass(value, className)))) {
+                    callbacks.throwEvalError(`${validationContext} validation failed for '${displayName}': mustBeA.`);
+                }
+                continue;
+            }
+            if (validator.name === 'mustBeUnderlyingType') {
+                const acceptedTypes = this.classNameElements(bounds[0]);
+                const originalAcceptedTypes =
+                    validator.bounds?.[0] && AST.isExpressionBoundaryValue(validator.bounds[0])
+                        ? this.classNameElements(this.runtimeArgumentValue(validator.bounds[0], `${displayName} underlying types`, callbacks.throwEvalError))
+                        : undefined;
+                const typeGroups = [acceptedTypes, originalAcceptedTypes].filter((group): group is string[] => Boolean(group));
+                if (typeGroups.length === 0 || !typeGroups.some((group) => group.includes(FunctionValidation.underlyingType(value)))) {
+                    callbacks.throwEvalError(`${validationContext} validation failed for '${displayName}': mustBeUnderlyingType.`);
+                }
+                continue;
+            }
+            this.validateArgumentFunction(displayName, value, validator.name, bounds, callbacks.throwEvalError, callbacks.throwSyntaxError, callbacks, validationContext);
         }
     }
 
@@ -523,12 +767,15 @@ class FunctionArguments {
     ): void {
         const symbolicDimensions = new Map<string, number>();
         for (const block of this.argumentBlocks(func)) {
-            const attribute = block.attribute?.id ?? 'Input';
+            const attribute = this.blockKind(block, callbacks.throwSyntaxError);
             if (attribute !== targetAttribute) {
                 continue;
             }
             for (const validation of this.argumentValidations(block)) {
                 if (namesToValidate && !namesToValidate.has(this.validationName(validation, callbacks.throwSyntaxError))) {
+                    continue;
+                }
+                if (this.nameValueTarget(validation, callbacks.throwSyntaxError) && typeof callbacks.resolveEntry(validation, localNamesOnly)?.node === 'undefined') {
                     continue;
                 }
                 this.validateArgumentValidation(validation, symbolicDimensions, callbacks, localNamesOnly);
@@ -539,9 +786,9 @@ class FunctionArguments {
     /**
      * Validate `arguments (Repeating)` values grouped across `varargin`.
      */
-    public static validateRepeatingArguments(func: NodeFunctionDefinition, values: NodeInput[], callbacks: RepeatingArgumentValidationCallbacks): void {
+    public static validateRepeatingArguments(func: NodeFunctionDefinition, values: EvaluatedArgumentValue[], callbacks: RepeatingArgumentValidationCallbacks): void {
         for (const block of this.argumentBlocks(func)) {
-            const attribute = block.attribute?.id ?? 'Input';
+            const attribute = this.blockKind(block, callbacks.throwSyntaxError);
             if (attribute !== 'Repeating') {
                 continue;
             }
@@ -561,6 +808,68 @@ class FunctionArguments {
     }
 
     /**
+     * Return the declared repeating output metadata, when present.
+     */
+    public static outputRepeatingInfo(func: NodeFunctionDefinition, throwSyntaxError: ThrowSyntaxError): OutputRepeatingInfo | undefined {
+        const returnNames = this.functionReturns(func).map((node) => (AST.isNodeIgnoredTarget(node) ? null : node.id));
+        let result: OutputRepeatingInfo | undefined;
+        for (const block of this.argumentBlocks(func)) {
+            const attribute = this.blockKind(block, throwSyntaxError);
+            if (attribute !== 'OutputRepeating') {
+                continue;
+            }
+            if (result) {
+                throwSyntaxError(`function ${func.id} can contain only one arguments (Output,Repeating) block.`);
+            }
+            const validations = this.argumentValidations(block);
+            if (validations.length !== 1) {
+                throwSyntaxError(`arguments (Output,Repeating) requires exactly one declaration in function ${func.id}.`);
+            }
+            const validation = validations[0];
+            if (this.nameValueTarget(validation, throwSyntaxError)) {
+                throwSyntaxError(`arguments (Output,Repeating) declaration in function ${func.id} must be a return identifier.`);
+            }
+            const name = this.validationName(validation, throwSyntaxError);
+            const returnIndex = returnNames.indexOf(name);
+            if (returnIndex < 0) {
+                throwSyntaxError(`arguments block declaration '${name}' does not match a return value in function ${func.id}.`);
+            }
+            if (returnIndex !== returnNames.length - 1) {
+                throwSyntaxError(`arguments (Output,Repeating) declaration '${name}' must be the last return in function ${func.id}.`);
+            }
+            if (name === 'varargout' && returnNames.length !== 1) {
+                throwSyntaxError(`arguments (Output,Repeating) declaration 'varargout' must be the only return in function ${func.id}.`);
+            }
+            result = { name, fixedReturnCount: returnIndex };
+        }
+        return result;
+    }
+
+    /**
+     * Return the repeating output variable name, when present.
+     */
+    public static outputRepeatingName(func: NodeFunctionDefinition, throwSyntaxError: ThrowSyntaxError): string | undefined {
+        return this.outputRepeatingInfo(func, throwSyntaxError)?.name;
+    }
+
+    /**
+     * Validate requested `arguments (Output,Repeating)` values.
+     */
+    public static validateRepeatingOutputArguments(func: NodeFunctionDefinition, values: RepeatingOutputValue[], callbacks: RepeatingArgumentValidationCallbacks): void {
+        for (const block of this.argumentBlocks(func)) {
+            const attribute = this.blockKind(block, callbacks.throwSyntaxError);
+            if (attribute !== 'OutputRepeating') {
+                continue;
+            }
+            const validation = this.argumentValidations(block)[0];
+            const validationName = this.validationName(validation, callbacks.throwSyntaxError);
+            values.forEach((item) => {
+                callbacks.validateRepeatingValue(validation, validationName, item.value, `${validationName}{${item.index}}`, new Map<string, number>());
+            });
+        }
+    }
+
+    /**
      * Validate the static consistency of all `arguments` blocks in a function.
      *
      * This is run when a function definition is registered, before any call, so
@@ -568,6 +877,9 @@ class FunctionArguments {
      * assume the block structure is coherent.
      */
     public static validateBlocks(func: NodeFunctionDefinition, throwSyntaxError: ThrowSyntaxError): void {
+        if (func.attributes?.nested && func.arguments.list.length > 0) {
+            throwSyntaxError(`arguments blocks are not allowed in nested function ${func.id}.`);
+        }
         const inputNames = new Set(
             this.functionParameters(func)
                 .map((node) => this.parameterName(node))
@@ -578,18 +890,65 @@ class FunctionArguments {
                 .filter(AST.isNodeIdentifier)
                 .map((node) => node.id),
         );
+        const declaredNameValueParameters = new Set<string>();
+        for (const block of this.argumentBlocks(func)) {
+            if (this.blockKind(block, throwSyntaxError) !== 'Input') {
+                continue;
+            }
+            for (const validation of this.argumentValidations(block)) {
+                const target = this.nameValueTarget(validation, throwSyntaxError);
+                if (target) {
+                    declaredNameValueParameters.add(target.parameter);
+                }
+            }
+        }
         const hasVarargin = inputNames.has('varargin');
         const nameValueFields = new Set<string>();
+        const nameValuePublicFields = new Map<string, string>();
+        const nameValueParameters = new Set<string>();
+        const ordinaryInputDeclarations = new Set<string>();
+        const repeatingDeclarations = new Set<string>();
+        const outputDeclarations = new Set<string>();
+        let hasOutputRepeating = false;
+        let hasInputRepeating = false;
+        let hasOptionalInput = false;
+        let hasNameValueInput = false;
+        let hasOutputBlock = false;
         for (const block of this.argumentBlocks(func)) {
-            const attribute = block.attribute?.id ?? 'Input';
-            if (!this.supportedBlockAttributes.has(attribute)) {
-                throwSyntaxError(`unsupported arguments block attribute '${attribute}'.`);
+            const attribute = this.blockKind(block, throwSyntaxError);
+            if ((attribute === 'Input' || attribute === 'Repeating') && hasOutputBlock) {
+                throwSyntaxError(`input arguments blocks must appear before output arguments blocks in function ${func.id}.`);
+            }
+            if (attribute === 'Input') {
+                const hasOrdinaryDeclaration = this.argumentValidations(block).some((validation) => !this.nameValueTarget(validation, throwSyntaxError));
+                if (hasInputRepeating && hasOrdinaryDeclaration) {
+                    throwSyntaxError(`ordinary input arguments blocks cannot follow repeating arguments block in function ${func.id}.`);
+                }
+            }
+            if (attribute === 'Repeating') {
+                if (hasInputRepeating) {
+                    throwSyntaxError(`function ${func.id} can contain only one arguments (Repeating) block.`);
+                }
+                if (hasNameValueInput) {
+                    throwSyntaxError(`arguments (Repeating) block must appear before name-value arguments in function ${func.id}.`);
+                }
+                hasInputRepeating = true;
+            }
+            if (attribute === 'Output' || attribute === 'OutputRepeating') {
+                hasOutputBlock = true;
+            }
+            if (attribute === 'OutputRepeating') {
+                if (hasOutputRepeating) {
+                    throwSyntaxError(`function ${func.id} can contain only one arguments (Output,Repeating) block.`);
+                }
+                hasOutputRepeating = true;
+                this.outputRepeatingInfo(func, throwSyntaxError);
             }
             if (attribute === 'Repeating' && !hasVarargin) {
                 throwSyntaxError(`arguments (Repeating) requires a varargin parameter in function ${func.id}.`);
             }
-            if (attribute === 'Repeating' && block.validation.length === 0) {
-                throwSyntaxError(`arguments (Repeating) requires at least one declaration in function ${func.id}.`);
+            if ((attribute === 'Repeating' || attribute === 'OutputRepeating') && block.validation.length === 0) {
+                throwSyntaxError(`arguments (${attribute === 'OutputRepeating' ? 'Output,Repeating' : 'Repeating'}) requires at least one declaration in function ${func.id}.`);
             }
             const validNames = attribute === 'Output' ? outputNames : attribute === 'Input' ? inputNames : undefined;
             for (const validation of this.argumentValidations(block)) {
@@ -606,10 +965,51 @@ class FunctionArguments {
                     if (nameValueFields.has(key)) {
                         throwSyntaxError(`duplicate arguments block name-value declaration '${validationName}' in function ${func.id}.`);
                     }
+                    const publicKey = nameValue.field.toLowerCase();
+                    const existingPublicField = nameValuePublicFields.get(publicKey);
+                    if (existingPublicField) {
+                        throwSyntaxError(`duplicate arguments block name-value field '${existingPublicField}' in function ${func.id}.`);
+                    }
+                    if (ordinaryInputDeclarations.has(nameValue.parameter)) {
+                        throwSyntaxError(`arguments block parameter '${nameValue.parameter}' cannot have both ordinary and name-value declarations in function ${func.id}.`);
+                    }
                     nameValueFields.add(key);
+                    nameValuePublicFields.set(publicKey, nameValue.field);
+                    nameValueParameters.add(nameValue.parameter);
+                    hasNameValueInput = true;
                 } else if (validNames && !validNames.has(validationName)) {
                     const target = attribute === 'Output' ? 'return value' : 'function parameter';
                     throwSyntaxError(`arguments block declaration '${validationName}' does not match a ${target} in function ${func.id}.`);
+                }
+                if (!nameValue && attribute === 'Input') {
+                    if (ordinaryInputDeclarations.has(validationName)) {
+                        throwSyntaxError(`duplicate arguments block declaration '${validationName}' in function ${func.id}.`);
+                    }
+                    if (nameValueParameters.has(validationName)) {
+                        throwSyntaxError(`arguments block parameter '${validationName}' cannot have both ordinary and name-value declarations in function ${func.id}.`);
+                    }
+                    if (hasNameValueInput && validationName !== 'varargin') {
+                        throwSyntaxError(`ordinary input arguments must appear before name-value arguments in function ${func.id}.`);
+                    }
+                    if (hasOptionalInput && !validation.default && validationName !== 'varargin') {
+                        throwSyntaxError(`required input arguments cannot follow optional input arguments in function ${func.id}.`);
+                    }
+                    ordinaryInputDeclarations.add(validationName);
+                    if (validation.default) {
+                        hasOptionalInput = true;
+                    }
+                }
+                if (!nameValue && attribute === 'Repeating') {
+                    if (repeatingDeclarations.has(validationName)) {
+                        throwSyntaxError(`duplicate arguments (Repeating) declaration '${validationName}' in function ${func.id}.`);
+                    }
+                    repeatingDeclarations.add(validationName);
+                }
+                if (!nameValue && attribute === 'Output') {
+                    if (outputDeclarations.has(validationName)) {
+                        throwSyntaxError(`duplicate arguments block output declaration '${validationName}' in function ${func.id}.`);
+                    }
+                    outputDeclarations.add(validationName);
                 }
                 const hasSize = validation.size.some((node) => typeof node !== 'undefined');
                 const hasClass = Boolean(validation.class && (!AST.isNodeList(validation.class) || validation.class.list.length > 0));
@@ -626,8 +1026,17 @@ class FunctionArguments {
                 if (validation.default && attribute !== 'Input') {
                     throwSyntaxError(`arguments block default for '${validationName}' is only supported for input parameters.`);
                 }
-                if (nameValue && !validation.default) {
-                    throwSyntaxError(`arguments block name-value declaration '${validationName}' requires a default value.`);
+                if (nameValue && validation.default) {
+                    const reference = this.nameValueReferenceDisplay(validation.default, declaredNameValueParameters);
+                    if (reference) {
+                        throwSyntaxError(`arguments block name-value default for '${validationName}' cannot reference name-value argument '${reference}' in function ${func.id}.`);
+                    }
+                }
+                if (nameValue && hasFunctions) {
+                    const reference = this.firstNameValueReferenceDisplay(validation.functions, declaredNameValueParameters, validationName);
+                    if (reference) {
+                        throwSyntaxError(`arguments block name-value validation for '${validationName}' cannot reference name-value argument '${reference}' in function ${func.id}.`);
+                    }
                 }
                 if (validation.default && !nameValue && validationName === 'varargin') {
                     throwSyntaxError(`arguments block default for 'varargin' is not supported.`);
@@ -642,7 +1051,7 @@ class FunctionArguments {
     public static nameValueParameters(func: NodeFunctionDefinition, throwSyntaxError: ThrowSyntaxError): Set<string> {
         const result = new Set<string>();
         for (const block of this.argumentBlocks(func)) {
-            const attribute = block.attribute?.id ?? 'Input';
+            const attribute = this.blockKind(block, throwSyntaxError);
             if (attribute !== 'Input') {
                 continue;
             }
@@ -662,7 +1071,7 @@ class FunctionArguments {
     public static nameValueDeclarations(func: NodeFunctionDefinition, throwSyntaxError: ThrowSyntaxError): Map<string, Map<string, NodeArgumentValidation>> {
         const result = new Map<string, Map<string, NodeArgumentValidation>>();
         for (const block of this.argumentBlocks(func)) {
-            const attribute = block.attribute?.id ?? 'Input';
+            const attribute = this.blockKind(block, throwSyntaxError);
             if (attribute !== 'Input') {
                 continue;
             }
@@ -693,7 +1102,7 @@ class FunctionArguments {
             }
         }
         for (const block of this.argumentBlocks(func)) {
-            const attribute = block.attribute?.id ?? 'Input';
+            const attribute = this.blockKind(block, throwSyntaxError);
             if (attribute !== 'Input') {
                 continue;
             }
@@ -715,10 +1124,10 @@ class FunctionArguments {
      */
     public static splitCallNameValueArguments(
         func: NodeFunctionDefinition,
-        args: NodeExpr[],
+        args: ExpressionBoundaryValue[],
         throwEvalError: ThrowEvalError,
         throwSyntaxError: ThrowSyntaxError,
-    ): { positional: NodeExpr[]; named: Map<string, NodeExpr> } {
+    ): { positional: ExpressionBoundaryValue[]; named: Map<string, ExpressionBoundaryValue> } {
         const declarations = this.nameValueDeclarations(func, throwSyntaxError);
         const knownFields = new Set([...declarations.values()].flatMap((fields) => [...fields.keys()]));
         const params = this.functionParameters(func);
@@ -740,8 +1149,8 @@ class FunctionArguments {
             }
             minPositionalCount--;
         }
-        const positional: NodeExpr[] = [];
-        const named = new Map<string, NodeExpr>();
+        const positional: ExpressionBoundaryValue[] = [];
+        const named = new Map<string, ExpressionBoundaryValue>();
         let seenNamed = false;
         const fields = [...knownFields];
         const hasPotentialNameValueField = (name: string): boolean => fields.some((field) => field.toLowerCase().startsWith(name.toLowerCase()));
@@ -766,7 +1175,7 @@ class FunctionArguments {
             }
             throwEvalError(`unknown name-value argument '${name}' in function ${func.id}`);
         };
-        const appendNamed = (name: string, value: NodeExpr) => {
+        const appendNamed = (name: string, value: ExpressionBoundaryValue) => {
             seenNamed = true;
             const canonicalName = resolveNameValueField(name);
             named.set(canonicalName, value);
@@ -775,7 +1184,11 @@ class FunctionArguments {
             const arg = args[i];
             if (AST.isNodeDefaultedParameter(arg) && declarations.size > 0) {
                 appendNamed(arg.left.id, arg.right);
-            } else if (CharString.isInstanceOf(arg) && declarations.size > 0 && (hasPotentialNameValueField(arg.str) || (!hasVarargin && positional.length >= positionalParams.length))) {
+            } else if (
+                CharString.isInstanceOf(arg) &&
+                declarations.size > 0 &&
+                ((positional.length >= minPositionalCount && hasPotentialNameValueField(arg.str)) || (!hasVarargin && positional.length >= positionalParams.length))
+            ) {
                 if (i + 1 >= args.length) {
                     throwEvalError(`missing value for name-value argument '${arg.str}' in function ${func.id}`);
                 }
@@ -797,17 +1210,21 @@ class FunctionArguments {
      * behavior where requesting fewer outputs does not require later return
      * variables to be assigned.
      */
-    public static outputNamesToValidate(func: NodeFunctionDefinition, requestedOutputCount: number): Set<string> | undefined {
+    public static outputNamesToValidate(func: NodeFunctionDefinition, requestedOutputCount: number, outputMask: boolean[] = []): Set<string> | undefined {
         const returnNames = this.functionReturns(func).map((node) => (AST.isNodeIgnoredTarget(node) ? null : node.id));
         const hasVarargout = returnNames.length > 0 && returnNames[returnNames.length - 1] === 'varargout';
         if (returnNames.length === 1 && hasVarargout) {
             return undefined;
         }
         const fixedReturnNames = hasVarargout ? returnNames.slice(0, -1) : returnNames;
-        return new Set(fixedReturnNames.slice(0, Math.min(Math.max(requestedOutputCount, 1), fixedReturnNames.length)).filter((name): name is string => name !== null));
+        return new Set(
+            fixedReturnNames
+                .slice(0, Math.min(Math.max(requestedOutputCount, 1), fixedReturnNames.length))
+                .filter((name, index): name is string => name !== null && (outputMask[index] ?? true)),
+        );
     }
 }
 
-export type { ArgumentValidatorSpec };
+export type { ArgumentValidatorSpec, PathValidationCallbacks };
 export { FunctionArguments };
 export default { FunctionArguments };

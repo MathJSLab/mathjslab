@@ -46,6 +46,34 @@ type KeyOfTypeOfMathOperation = Exclude<keyof typeof MathOperation, 'prototype' 
  *
  */
 abstract class MathOperation {
+    private static readonly elementWiseOperatorSymbols: Record<TBinaryOperationName, string> = {
+        add: '+',
+        sub: '-',
+        mod: 'mod',
+        rem: 'rem',
+        mul: '.*',
+        rdiv: './',
+        ldiv: '.\\',
+        power: '.^',
+        lt: '<',
+        le: '<=',
+        eq: '==',
+        ge: '>=',
+        gt: '>',
+        ne: '~=',
+        and: '&',
+        or: '|',
+        xor: 'xor',
+        minWise: 'min',
+        maxWise: 'max',
+    };
+
+    private static readonly unaryOperatorSymbols: Record<TUnaryOperationLeftName, string> = {
+        copy: '+',
+        neg: '-',
+        not: '~',
+    };
+
     /**
      * Creates a copy of `MathObject` object.
      * @param value
@@ -67,6 +95,7 @@ abstract class MathOperation {
         if (CharString.isInstanceOf(right)) {
             right = MultiArray.fromCharString(right as CharString);
         }
+        MathOperation.throwIfStructureBinaryOperand(MathOperation.elementWiseOperatorSymbols[op], left, right);
         if (op === 'eq' || op === 'ne') {
             if (MathOperation.hasClassInstanceOperand(left) || MathOperation.hasClassInstanceOperand(right)) {
                 return MathOperation.classInstanceEqualityOperation(op, left, right);
@@ -81,7 +110,21 @@ abstract class MathOperation {
         } else if (MultiArray.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
             return MultiArray.elementWiseOperation(op, left as MultiArray, right as MultiArray);
         } else {
-            throw new EvalError(`binary operator '${op}' not implemented for 'scalar struct' operands.`);
+            throw new EvalError(`operator ${MathOperation.elementWiseOperatorSymbols[op]} is not defined for these operands.`);
+        }
+    };
+
+    private static readonly hasStructureOperand = (value: MathObject): boolean => Structure.isInstanceOf(value) || (MultiArray.isInstanceOf(value) && Structure.isStructure(value));
+
+    private static readonly throwIfStructureBinaryOperand = (operator: string, left: MathObject, right: MathObject): void => {
+        if (MathOperation.hasStructureOperand(left) || MathOperation.hasStructureOperand(right)) {
+            throw new EvalError(`operator ${operator} is not defined for struct operands.`);
+        }
+    };
+
+    private static readonly throwIfStructureUnaryOperand = (operator: string, value: MathObject): void => {
+        if (MathOperation.hasStructureOperand(value)) {
+            throw new EvalError(`operator ${operator} is not defined for struct operands.`);
         }
     };
 
@@ -168,12 +211,13 @@ abstract class MathOperation {
         if (CharString.isInstanceOf(right)) {
             right = MultiArray.fromCharString(right as CharString);
         }
+        MathOperation.throwIfStructureUnaryOperand(MathOperation.unaryOperatorSymbols[op], right);
         if (Complex.isInstanceOf(right)) {
             return Complex[op](right as ComplexType);
         } else if (MultiArray.isInstanceOf(right)) {
             return MultiArray.leftOperation(op, right as MultiArray);
         } else {
-            throw new EvalError(`unary operator '${op}' not implemented for 'scalar struct' operands.`);
+            throw new EvalError(`operator ${MathOperation.unaryOperatorSymbols[op]} is not defined for this operand.`);
         }
     };
 
@@ -230,6 +274,7 @@ abstract class MathOperation {
         if (CharString.isInstanceOf(right)) {
             right = MultiArray.fromCharString(right as CharString);
         }
+        MathOperation.throwIfStructureBinaryOperand('*', left, right);
         if (Complex.isInstanceOf(left) && Complex.isInstanceOf(right)) {
             return Complex.mul(left as ComplexType, right as ComplexType);
         } else if (Complex.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
@@ -262,6 +307,7 @@ abstract class MathOperation {
         if (CharString.isInstanceOf(right)) {
             right = MultiArray.fromCharString(right as CharString);
         }
+        MathOperation.throwIfStructureBinaryOperand('/', left, right);
         if (Complex.isInstanceOf(left) && Complex.isInstanceOf(right)) {
             return Complex.rdiv(left as ComplexType, right as ComplexType);
         } else if (Complex.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
@@ -294,6 +340,7 @@ abstract class MathOperation {
         if (CharString.isInstanceOf(right)) {
             right = MultiArray.fromCharString(right as CharString);
         }
+        MathOperation.throwIfStructureBinaryOperand('\\', left, right);
         if (Complex.isInstanceOf(left) && Complex.isInstanceOf(right)) {
             return Complex.ldiv(left as ComplexType, right as ComplexType);
         } else if (Complex.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
@@ -326,6 +373,7 @@ abstract class MathOperation {
         if (CharString.isInstanceOf(right)) {
             right = MultiArray.fromCharString(right as CharString);
         }
+        MathOperation.throwIfStructureBinaryOperand('^', left, right);
         const leftScalar = MathOperation.numericScalarValue(left);
         const rightScalar = MathOperation.numericScalarValue(right);
         if (leftScalar && rightScalar) {

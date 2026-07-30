@@ -77,6 +77,17 @@ describe('Context', () => {
             expect(context.aliasNameFunction('cos')).toBe('cos');
         });
 
+        it('Should resolve aliases from own table entries only.', () => {
+            const context = Context.create();
+            const aliases = Object.create({ inherited: /^leaked$/ }) as Record<string, RegExp>;
+            aliases.visible = /^shown$/;
+
+            context.setAliasNameTable(aliases);
+
+            expect(context.aliasNameFunction('shown')).toBe('visible');
+            expect(context.aliasNameFunction('leaked')).toBe('leaked');
+        });
+
         it('Should expose structured MATLAB/Octave name precedence.', () => {
             const context = Context.create();
             const localFunction = AST.nodeFunctionDefinition(AST.nodeIdentifier('target'), AST.nodeList([]), AST.nodeList([]), AST.nodeList([]), AST.nodeList([]));
@@ -112,6 +123,25 @@ describe('Context', () => {
             expect(context.resolveSymbol('wildonly')?.resolvedName).toBe('pkg.wild.wildonly');
         });
 
+        it('Should reject ambiguous explicit imports that both resolve.', () => {
+            const context = Context.create();
+            const first = AST.nodeFunctionDefinition(AST.nodeIdentifier('pkg.first.Target'), AST.nodeList([]), AST.nodeList([]), AST.nodeList([]), AST.nodeList([]));
+            const second = AST.nodeFunctionDefinition(AST.nodeIdentifier('pkg.second.Target'), AST.nodeList([]), AST.nodeList([]), AST.nodeList([]), AST.nodeList([]));
+
+            context.assignFunction('pkg.first.Target', first);
+            context.assignFunction('pkg.second.Target', second);
+            context.defineImport('pkg.first.Target');
+            context.defineImport('pkg.second.Target');
+
+            expect(() => context.resolveSymbol('Target')).toThrow("imported name 'Target' is ambiguous: pkg.first.Target, pkg.second.Target.");
+        });
+
+        it('Should reject unqualified import declarations.', () => {
+            const context = Context.create();
+
+            expect(() => context.defineImport('Target')).toThrow('import: imported name must be qualified.');
+        });
+
         it('Should create child scopes with the current scope as default parent.', () => {
             const context = Context.create();
             const child = context.createChildScope();
@@ -131,6 +161,19 @@ describe('Context', () => {
             expect(context.resolveClassDefinition('notAClass')).toBeUndefined();
         });
 
+        it('Should clear class definitions without removing ordinary variables.', () => {
+            const context = Context.create();
+            const definition = ClassDefinition.create(parseClass(['classdef ClearContextClass', 'end'].join('\n')));
+
+            context.defineClassDefinition(definition);
+            context.assignName('ordinary', Complex.create(4));
+
+            context.clearClassDefinitions();
+
+            expect(context.resolveClassDefinition('ClearContextClass')).toBeUndefined();
+            expect(Complex.realToNumber(context.currentScope.resolveName('ordinary')?.node)).toBe(4);
+        });
+
         it('Should classify call dispatch before applying calls or indexing.', () => {
             const context = Context.create();
             const parent = AST.nodeIndexExpr(AST.nodeIdentifier('target'), AST.nodeList([]), '()');
@@ -142,7 +185,9 @@ describe('Context', () => {
             expect(context.resolveCallDispatch(FunctionHandle.create('sin'), parent).kind).toBe('callable');
             expect(context.resolveCallDispatch(classDefinition, parent).kind).toBe('constructor');
             expect(context.resolveCallDispatch(AST.nodeIdentifier('read'), parent, [receiver]).kind).toBe('functional-class-method');
+            expect(context.resolveCallDispatch(AST.nodeIdentifier('read'), parent, [MultiArray.emptyArray()]).kind).toBe('undefined-function');
             expect(context.resolveCallDispatch(AST.nodeIdentifier('missing'), parent, [Complex.create(1)]).kind).toBe('undefined-function');
+            expect(context.resolveCallDispatch(MultiArray.emptyArray(), parent).kind).toBe('indexing');
             expect(context.resolveCallDispatch(Complex.create(1), parent).kind).toBe('indexing');
         });
 

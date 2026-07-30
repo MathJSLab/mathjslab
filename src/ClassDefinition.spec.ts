@@ -216,6 +216,58 @@ describe('ClassDefinition', () => {
             );
         });
 
+        it('Should reject arguments blocks in abstract and delete methods.', () => {
+            const abstractArguments = ClassDefinition.create(
+                parseClass(
+                    [
+                        'classdef AbstractArgumentsMethodSpec',
+                        '  methods (Abstract)',
+                        '    function y = value(obj, x)',
+                        '      arguments',
+                        '        obj',
+                        '        x double',
+                        '      end',
+                        '    end',
+                        '  end',
+                        'end',
+                    ].join('\n'),
+                ),
+            );
+            const deleteArguments = ClassDefinition.create(
+                parseClass(
+                    ['classdef DeleteArgumentsMethodSpec < handle', '  methods', '    function delete(obj)', '      arguments', '        obj', '      end', '    end', '  end', 'end'].join(
+                        '\n',
+                    ),
+                ),
+            );
+            const concreteArguments = ClassDefinition.create(
+                parseClass(
+                    [
+                        'classdef ConcreteArgumentsMethodSpec',
+                        '  methods',
+                        '    function y = value(obj, x)',
+                        '      arguments',
+                        '        obj',
+                        '        x double',
+                        '      end',
+                        '      y = x;',
+                        '    end',
+                        '  end',
+                        'end',
+                    ].join('\n'),
+                ),
+            );
+            const raise = (message: string): never => {
+                throw new Error(message);
+            };
+
+            expect(() => abstractArguments.resolveSuperclasses(() => undefined, raise)).toThrow(
+                "arguments blocks are not allowed in abstract method 'value' of class AbstractArgumentsMethodSpec.",
+            );
+            expect(() => deleteArguments.resolveSuperclasses(() => undefined, raise)).toThrow('arguments blocks are not allowed in delete method of class DeleteArgumentsMethodSpec.');
+            expect(() => concreteArguments.resolveSuperclasses(() => undefined, raise)).not.toThrow();
+        });
+
         it('Should reject non-boolean values for boolean class and section attributes.', () => {
             const invalidClassBoolean = ClassDefinition.create(parseClass(['classdef (Abstract = 1) InvalidClassBooleanSpec', 'end'].join('\n')));
             const invalidPropertyBoolean = ClassDefinition.create(

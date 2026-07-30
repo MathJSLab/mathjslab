@@ -308,11 +308,19 @@ type NodeInput = NodeProgramElement | NodeList;
 /**
  * AST node that can appear in expression position.
  *
+ * Runtime value shape accepted by expression evaluation before it is wrapped
+ * into parser-created AST containers.
+ */
+type RuntimeExpressionValue = Exclude<ElementType, null | undefined>;
+
+/**
+ * AST node that can appear in expression position.
+ *
  * Strict expression shape used by new code that can stay inside the typed AST
  * and runtime-value surface.
  */
 type StrictNodeExpr =
-    | Exclude<ElementType, null | undefined>
+    | RuntimeExpressionValue
     | NodeVoid
     | NodeIdentifier
     | NodeCmdWList
@@ -325,6 +333,7 @@ type StrictNodeExpr =
     | NodeOperation
     | NodeIgnoredTarget
     | NodeIndirectRef
+    | NodeImport
     | NodeReturnList;
 
 /**
@@ -408,7 +417,7 @@ interface NodeIndexExpr extends NodeBase {
     type: 'IDX';
     expr: NodeExpr;
     exprEvaluated?: NodeExpr;
-    args: NodeExpr[];
+    args: ExpressionBoundaryValue[];
     delim: IndexingDelimiterType;
 }
 
@@ -419,7 +428,7 @@ interface NodeSuperclassConstructor extends NodeBase {
     type: 'SUPERCLASS_CTOR';
     instance: NodeExpr;
     superclass: NodeIdentifier;
-    args: NodeExpr[];
+    args: ExpressionBoundaryValue[];
 }
 
 /**
@@ -435,8 +444,8 @@ interface NodeMetaClass extends NodeBase {
  */
 interface NodeRange extends NodeBase {
     type: 'RANGE';
-    start_: NodeExpr | null;
-    stop_: NodeExpr | null;
+    start_: NodeExpr;
+    stop_: NodeExpr;
     stride_: NodeExpr | null;
 }
 
@@ -580,13 +589,17 @@ type ThrowError = (message: string) => never;
 type BuiltInFunctionImplementation = Function;
 
 /**
- * Return list node
+ * Lazy multi-output return-list node.
  */
 interface NodeReturnList extends NodeBase {
     type: 'RETLIST';
+    /** Select one materialized output by zero-based index. */
     selector: ReturnSelector;
+    /** Materialize the caller-requested output arity. */
     handler: ReturnHandler;
+    /** Marks values that should expand as a MATLAB/Octave comma-separated list. */
     commaSeparated?: boolean;
+    /** Number of comma-separated elements available without forcing the handler. */
     returnListLength?: number;
 }
 
@@ -600,6 +613,14 @@ interface NodeFunction extends NodeBase {
     ev: boolean[];
     func: Function | null;
     definingScope?: DefiningScope;
+    /**
+     * Canonical virtual source name for function-file backed definitions.
+     *
+     * The browser runtime has no ambient filesystem, so this stores the
+     * resolver-provided `.m` source identity used by `mfilename("fullpath")`
+     * and stack/introspection helpers.
+     */
+    sourceName?: string;
     attributes?: {
         /**
          * Per-function persistent variable storage.
@@ -608,7 +629,7 @@ interface NodeFunction extends NodeBase {
          * back after execution. The table lives on the function node so it
          * survives between calls while the definition remains registered.
          */
-        persistent?: Record<string, NodeInput>;
+        persistent?: Record<string, RuntimeExpressionValue>;
 
         /**
          * Marks function definitions registered from inside another function.
@@ -683,9 +704,12 @@ interface BuiltInFunctionArity {
  */
 type BuiltInFunctionParameterValidator =
     | 'numeric'
+    | 'float'
     | 'numericOrLogical'
     | 'text'
     | 'textScalar'
+    | 'nonzeroLengthText'
+    | 'validVariableName'
     | 'scalar'
     | 'scalarOrEmpty'
     | 'scalarOrVector'
@@ -693,6 +717,8 @@ type BuiltInFunctionParameterValidator =
     | 'matrix2d'
     | 'squareMatrix'
     | 'vector'
+    | 'rowVector'
+    | 'columnVector'
     | 'twoElement'
     | 'oneOrTwoElement'
     | 'dimension'
@@ -703,7 +729,13 @@ type BuiltInFunctionParameterValidator =
     | 'nonempty'
     | 'positive'
     | 'nonnegative'
+    | 'negative'
+    | 'nonpositive'
     | 'nonzero'
+    | 'nonnan'
+    | 'nonmissing'
+    | 'nonsparse'
+    | 'sparse'
     | 'zeroOrOne'
     | 'integer'
     | 'finite'
@@ -790,6 +822,16 @@ type NameEntry = {
      * Marks shared entries created by `global`.
      */
     global?: boolean;
+    /**
+     * Tracks whether an Octave-style `global name = value` declaration has
+     * already initialized this global binding.
+     */
+    globalInitialized?: boolean;
+
+    /**
+     * Marks function-local entries loaded from a function persistent table.
+     */
+    persistent?: boolean;
 };
 
 /**
@@ -806,15 +848,23 @@ type UndefinedReferenceTable = Record<string, Set<string>>;
  * Command-form external function.
  *
  * Returning `undefined` leaves evaluation with the original command-word-list
- * node; returning a value supplies the evaluated result.
+ * node; returning a value supplies the evaluated result. Host integrations may
+ * return primitive values, which the interpreter normalizes to runtime values.
  */
-type CommandWordListFunction = (...args: string[]) => NodeInput | void;
+type CommandWordListFunction = (...args: string[]) => NodeInput | string | number | boolean | void;
 
 /**
  * `commandWordListTable` entry type.
  */
 type CommandWordListEntry = {
     func: CommandWordListFunction;
+    /**
+     * Keep this command name as an ordinary identifier when it is followed by
+     * an assignment operator. This is needed for built-ins such as `run` and
+     * `source`, which support command-form calls but are also common variable
+     * names in MATLAB/Octave code.
+     */
+    preserveAssignment?: boolean;
 };
 
 /**
@@ -834,7 +884,7 @@ interface NodeArgumentValidation extends NodeBase {
     /**
      * Literal/symbolic size declaration.
      */
-    size: NodeInput[];
+    size: ExpressionBoundaryValue[];
     /**
      * Class declaration. May be a single identifier or a list.
      */
@@ -842,7 +892,7 @@ interface NodeArgumentValidation extends NodeBase {
     /**
      * Validator function declarations.
      */
-    functions: NodeInput[];
+    functions: ExpressionBoundaryValue[];
     /**
      * Default expression, when declared for an input argument.
      */
@@ -854,7 +904,14 @@ interface NodeArgumentValidation extends NodeBase {
  */
 interface NodeArguments extends NodeBase {
     type: 'ARGS';
+    /**
+     * First block attribute kept for compatibility with existing single-attribute code paths.
+     */
     attribute: NodeIdentifier | null;
+    /**
+     * Full MATLAB-like block attribute list, for example `Input,Repeating`.
+     */
+    attributes: NodeIdentifier[];
     validation: NodeArgumentValidation[];
 }
 
@@ -867,10 +924,14 @@ interface NodeDeclaration extends NodeBase {
 }
 
 /**
- * MATLAB-style package/class import declaration.
+ * MATLAB-style package/class import declaration or import-list query.
  */
 interface NodeImport extends NodeBase {
     type: 'IMPORT';
+    /**
+     * Fully qualified class/package imports. An empty list represents bare
+     * `import`, which queries the currently visible imports.
+     */
     imports: NodeIdentifier[];
 }
 
@@ -1062,11 +1123,11 @@ interface NodeClassProperty extends NodeBase {
     /** Identifier node for diagnostics and metadata construction. */
     name: NodeIdentifier;
     /** Literal/symbolic size validation list. */
-    size: NodeInput[];
+    size: ExpressionBoundaryValue[];
     /** Class validation node, or an empty list/null when absent. */
     class: NodeInput | null;
     /** Validator function declarations. */
-    functions: NodeInput[];
+    functions: ExpressionBoundaryValue[];
     /** Default value expression, when declared. */
     defaultValue: NodeExpr | null;
 }
@@ -1088,7 +1149,7 @@ interface NodeClassEnumeration extends NodeBase {
     /** Enumeration member name. */
     id: string;
     /** Constructor-like arguments attached to the member declaration. */
-    args: NodeExpr[];
+    args: ExpressionBoundaryValue[];
 }
 
 /**
@@ -1109,23 +1170,23 @@ abstract class AST {
     /**
      * External node factory methods.
      */
-    public static nodeString: (str: string, quote?: StringQuoteCharacter) => CharString;
+    public static nodeString: (str: string, quote?: StringQuoteCharacter) => CharString = CharString.create;
     /**
      * External number factory, rebound by `reload`.
      */
-    public static nodeNumber: (value: string) => ComplexType;
+    public static nodeNumber: (value: string) => ComplexType = Complex.parse;
     /**
      * External first-row matrix factory, rebound by `reload`.
      */
-    public static firstRow: <ELEMENT>(row: ElementType<ELEMENT>[], iscell?: boolean) => MultiArray<ELEMENT>;
+    public static firstRow: <ELEMENT>(row: ElementType<ELEMENT>[], iscell?: boolean) => MultiArray<ELEMENT> = MultiArray.firstRow;
     /**
      * External row-append matrix factory, rebound by `reload`.
      */
-    public static appendRow: <ELEMENT>(M: MultiArray<ELEMENT>, row: ElementType<ELEMENT>[]) => MultiArray<ELEMENT>;
+    public static appendRow: <ELEMENT>(M: MultiArray<ELEMENT>, row: ElementType<ELEMENT>[]) => MultiArray<ELEMENT> = MultiArray.appendRow;
     /**
      * External empty-array factory, rebound by `reload`.
      */
-    public static emptyArray: <ELEMENT>(iscell?: boolean | undefined) => MultiArray<ELEMENT>;
+    public static emptyArray: <ELEMENT>(iscell?: boolean | undefined) => MultiArray<ELEMENT> = MultiArray.emptyArray;
 
     /**
      * Reload external node factory methods.
@@ -1327,7 +1388,7 @@ abstract class AST {
     /**
      * Test whether an unknown value is a runtime value allowed in expression position.
      */
-    public static readonly isRuntimeExpressionValue = (value: unknown): value is Exclude<ElementType, null | undefined> =>
+    public static readonly isRuntimeExpressionValue = (value: unknown): value is RuntimeExpressionValue =>
         value !== null &&
         value !== undefined &&
         (MultiArray.isInstanceOf(value) ||
@@ -1353,7 +1414,31 @@ abstract class AST {
                 AST.isNodeOperation(value) ||
                 AST.isNodeIgnoredTarget(value) ||
                 AST.isNodeIndirectRef(value) ||
+                AST.isNodeImport(value) ||
                 AST.isNodeReturnList(value)));
+
+    /**
+     * Test whether an unknown value has passed an expression-boundary shape.
+     *
+     * This accepts strict expression values plus `NodeList` execution-result
+     * carriers used by `eval`/`evalin` and comma-separated return paths.
+     */
+    public static readonly isExpressionBoundaryValue = (value: unknown): value is ExpressionBoundaryValue => AST.isStrictNodeExpr(value) || AST.isNodeList(value);
+
+    /**
+     * Validate and narrow an unknown parser/runtime value to the strict expression shape.
+     *
+     * @param value Candidate expression value.
+     * @param role Human-readable role used in diagnostics.
+     * @returns The same value narrowed to `StrictNodeExpr`.
+     * @throws TypeError When `value` is a statement, list, or other non-expression carrier.
+     */
+    public static readonly requireStrictNodeExpr = (value: unknown, role = 'expression'): StrictNodeExpr => {
+        if (!AST.isStrictNodeExpr(value)) {
+            throw new TypeError(`${role} is not an expression node.`);
+        }
+        return value;
+    };
 
     /**
      * Test whether an unknown value is an `arguments` block node.
@@ -1439,10 +1524,10 @@ abstract class AST {
      * nodes in expression-only fields.
      */
     private static readonly factoryExpression = (value: NodeInput, role: string, allowNodeList = false): ExpressionBoundaryValue => {
-        if (!AST.isStrictNodeExpr(value) && !(allowNodeList && AST.isNodeList(value))) {
-            throw new TypeError(`${role} is not an expression node.`);
+        if (allowNodeList && AST.isNodeList(value)) {
+            return value;
         }
-        return value;
+        return AST.requireStrictNodeExpr(value, role);
     };
 
     /**
@@ -1541,8 +1626,10 @@ abstract class AST {
         };
         result.expr.parent = result;
         result.args.forEach((node, index) => {
-            node.parent = result;
-            node.index = index;
+            if (AST.isNodeBase(node)) {
+                node.parent = result;
+                node.index = index;
+            }
         });
         return result;
     };
@@ -1562,7 +1649,9 @@ abstract class AST {
         result.instance.parent = result;
         result.superclass.parent = result;
         result.args.forEach((node) => {
-            node.parent = result;
+            if (AST.isNodeBase(node)) {
+                node.parent = result;
+            }
         });
         return result;
     };
@@ -1697,8 +1786,8 @@ abstract class AST {
                     left: AST.factoryExpression(data1, `left operand for ${op}`),
                     right: AST.factoryExpression(data2, `right operand for ${op}`, AST.assignmentNodeOperation.has(op)),
                 };
-                result.left.parent = result;
-                result.right.parent = result;
+                (result as BinaryOperation).left.parent = result;
+                (result as BinaryOperation).right.parent = result;
                 break;
             case '()':
             case '!':
@@ -1708,14 +1797,14 @@ abstract class AST {
             case '++_':
             case '--_':
                 result = { type: op, right: AST.factoryExpression(data1, `operand for ${op}`) };
-                result.right.parent = result;
+                (result as UnaryOperationR).right.parent = result;
                 break;
             case ".'":
             case "'":
             case '_++':
             case '_--':
                 result = { type: op, left: AST.factoryExpression(data1, `operand for ${op}`) };
-                result.left.parent = result;
+                (result as UnaryOperationL).left.parent = result;
                 break;
             default:
                 result = { type: `INVALID:${op}` as NodeType } as NodeOperation;
@@ -1825,7 +1914,7 @@ abstract class AST {
      * @returns
      */
     public static readonly nodeIndirectRef = (left: NodeExpr, right: string | NodeExpr): NodeIndirectRef => {
-        if (left.type === '.') {
+        if (AST.isNodeIndirectRef(left)) {
             left.field.push(typeof right === 'string' ? right : AST.factoryExpression(right, 'indirect reference field'));
             if (typeof right !== 'string') {
                 right.parent = left;
@@ -1864,6 +1953,53 @@ abstract class AST {
     };
 
     /**
+     * Create a return-list node that represents a comma-separated list.
+     *
+     * Runtime producers such as brace indexing, structure field expansion, and
+     * built-ins like `deal` use this marker so callers can distinguish ordinary
+     * lazy multi-output values from values that should expand across argument or
+     * assignment positions.
+     *
+     * @param returnListLength Number of elements available in the comma-separated list.
+     * @param selector Output selector for materialized handler results.
+     * @param handler Optional materializer for requested output counts.
+     * @returns Comma-separated lazy return-list node.
+     */
+    public static readonly nodeCommaSeparatedReturnList = (returnListLength: number, selector: ReturnSelector, handler?: ReturnHandler): NodeReturnList => {
+        const result = AST.nodeReturnList(selector, handler);
+        result.commaSeparated = true;
+        result.returnListLength = returnListLength;
+        return result;
+    };
+
+    /**
+     * Create a return-list node with a fixed maximum output count.
+     *
+     * Many MATLAB/Octave built-ins return a lazy list whose values are only
+     * computed after the caller-selected arity is known. This helper keeps the
+     * standard "element number N undefined in return list" diagnostic in one
+     * place for those bounded return lists.
+     *
+     * @param maxLength Maximum number of outputs supported by the list.
+     * @param selector Output selector for valid indexes.
+     * @param handler Optional materializer for valid output counts.
+     * @param throwError Optional callback used to rethrow through interpreter diagnostics.
+     * @returns Bounded lazy return-list node.
+     */
+    public static readonly nodeBoundedReturnList = (maxLength: number, selector: ReturnSelector, handler?: ReturnHandler, throwError?: ThrowError): NodeReturnList => {
+        return AST.nodeReturnList(
+            (evaluated: ReturnHandlerResult, index: number): NodeExpr => {
+                AST.throwErrorIfGreaterThanReturnList(maxLength, evaluated.length, throwError);
+                return selector(evaluated, index);
+            },
+            (length: number): ReturnHandlerResult => {
+                AST.throwErrorIfGreaterThanReturnList(maxLength, length, throwError);
+                return handler ? handler(length) : { length };
+            },
+        );
+    };
+
+    /**
      * Ensures that the node is of type `NodeReturnList`.
      * @param node A `NodeExpr`
      * @returns A lazy return-list wrapper for `node`.
@@ -1877,8 +2013,9 @@ abstract class AST {
             if (index === 0) {
                 return result;
             } else {
-                AST.throwErrorIfGreaterThanReturnList(evaluated.length, index);
+                AST.throwErrorIfGreaterThanReturnList(1, index + 1);
             }
+            throw new EvalError('unreachable return-list selector branch.');
         });
     };
 
@@ -2049,11 +2186,19 @@ abstract class AST {
             omitOutput: true,
         } as NodeArgumentValidation;
         result.name.parent = result;
-        result.size.forEach((node) => (node.parent = result));
+        result.size.forEach((node) => {
+            if (AST.isNodeBase(node)) {
+                node.parent = result;
+            }
+        });
         if (result.class) {
             result.class.parent = result;
         }
-        result.functions.forEach((node) => (node.parent = result));
+        result.functions.forEach((node) => {
+            if (AST.isNodeBase(node)) {
+                node.parent = result;
+            }
+        });
         if (result.default) {
             result.default.parent = result;
         }
@@ -2063,21 +2208,21 @@ abstract class AST {
     /**
      * Create an `arguments` block.
      *
-     * @param attribute Optional block attribute (`Input`, `Output`, `Repeating`).
+     * @param attribute Optional block attribute or attribute list (`Input`, `Output`, `Repeating`).
      * @param validationList Declaration list.
      * @returns Arguments block node.
      */
-    public static readonly nodeArguments = (attribute: NodeIdentifier | null, validationList: NodeList): NodeArguments => {
+    public static readonly nodeArguments = (attribute: NodeIdentifier | NodeList | null, validationList: NodeList): NodeArguments => {
+        const attributes = attribute ? (AST.isNodeList(attribute) ? AST.factoryNodeList(attribute, AST.isNodeIdentifier, 'arguments block attribute ') : [attribute]) : [];
         const result = {
             type: 'ARGS',
-            attribute,
+            attribute: attributes[0] ?? null,
+            attributes,
             validation: AST.factoryNodeList(validationList, AST.isNodeArgumentValidation, 'arguments validation '),
             omitAnswer: true,
             omitOutput: true,
         } as NodeArguments;
-        if (result.attribute) {
-            result.attribute.parent = result;
-        }
+        result.attributes.forEach((node) => (node.parent = result));
         result.validation.forEach((node) => (node.parent = result));
         return result;
     };
@@ -2147,21 +2292,24 @@ abstract class AST {
     };
 
     /**
+     * Create a bare MATLAB-style `import` query node.
+     *
+     * @returns Import node with no declared names.
+     */
+    public static readonly nodeImport = (): NodeImport => ({ type: 'IMPORT', imports: [] }) as NodeImport;
+
+    /**
      * Create the first node for a MATLAB-style `import` declaration.
      *
      * @param importName Fully qualified class/package name, optionally ending in `.*`.
      * @returns Import declaration node.
      */
-    public static readonly nodeImportFirst = (importName: NodeIdentifier): NodeImport =>
-        AST.nodeAppendImport(
-            {
-                type: 'IMPORT',
-                imports: [],
-                omitAnswer: true,
-                omitOutput: true,
-            } as NodeImport,
-            importName,
-        );
+    public static readonly nodeImportFirst = (importName: NodeIdentifier): NodeImport => {
+        const node = AST.nodeImport();
+        node.omitAnswer = true;
+        node.omitOutput = true;
+        return AST.nodeAppendImport(node, importName);
+    };
 
     /**
      * Append one fully qualified import name to an `import` declaration.
@@ -2522,7 +2670,11 @@ abstract class AST {
             omitAnswer: true,
             omitOutput: true,
         } as NodeClassEnumeration;
-        result.args.forEach((node) => (node.parent = result));
+        result.args.forEach((node) => {
+            if (AST.isNodeBase(node)) {
+                node.parent = result;
+            }
+        });
         return result;
     };
 
@@ -2556,6 +2708,7 @@ export type {
     NodeClassMember,
     NodeClassSectionMember,
     NodeListElement,
+    RuntimeExpressionValue,
     StrictNodeExpr,
     ExpressionBoundaryValue,
     NodeExpr,

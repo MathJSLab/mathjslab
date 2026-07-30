@@ -1,6 +1,7 @@
 /// <reference types="jest" />
 import { AST } from './AST';
 import { CallFrame } from './CallFrame';
+import { Complex } from './Complex';
 import { Scope } from './Scope';
 
 describe('CallFrame', () => {
@@ -22,15 +23,16 @@ describe('CallFrame', () => {
         it('Should store call metadata.', () => {
             const scope = Scope.create();
             const callSite = AST.nodeIdentifier('f');
-            const arg = AST.nodeIdentifier('x');
-            const frame = new CallFrame(scope, undefined, callSite, 'f', 1, 2, [arg]);
+            const identifierArg = AST.nodeIdentifier('x');
+            const runtimeArg = Complex.create(2);
+            const frame = new CallFrame(scope, undefined, callSite, 'f', 2, 2, [identifierArg, runtimeArg]);
 
             expect(frame.scope).toBe(scope);
             expect(frame.callSite).toBe(callSite);
             expect(frame.name).toBe('f');
-            expect(frame.nargin).toBe(1);
+            expect(frame.nargin).toBe(2);
             expect(frame.nargout).toBe(2);
-            expect(frame.inputArgs).toEqual([arg]);
+            expect(frame.inputArgs).toEqual([identifierArg, runtimeArg]);
         });
 
         it('Should link to its caller frame.', () => {

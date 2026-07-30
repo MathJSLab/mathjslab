@@ -31,7 +31,7 @@ type IntrospectionFrame = {
     /**
      * Callable metadata, when the frame represents a function call.
      */
-    func?: { type: string; node?: { id?: string } };
+    func?: { type: string; node?: unknown };
     /**
      * AST node that originated the call, used for line information.
      */
@@ -54,11 +54,27 @@ type ThrowSyntaxError = (message: string) => never;
 /**
  * Implements stack and local-function introspection built-ins.
  *
- * The browser runtime has no real MATLAB/Octave file stack, so file names are
- * intentionally empty. Function names, line numbers, and local function handles
- * are still derived from active call frames and scopes.
+ * The browser runtime has no real MATLAB/Octave filesystem stack, so file
+ * names are reported from optional virtual `sourceName` metadata attached by
+ * host source resolvers. Function names, line numbers, and local function
+ * handles are derived from active call frames and scopes.
  */
 class FunctionIntrospection {
+    /**
+     * Read an optional string property from callable metadata.
+     *
+     * @param node Callable payload to inspect.
+     * @param key Metadata key to read.
+     * @returns String metadata value, or `undefined` when absent.
+     */
+    private static metadataString(node: unknown, key: 'id' | 'sourceName'): string | undefined {
+        if (node && typeof node === 'object' && key in node) {
+            const value = (node as Record<typeof key, unknown>)[key];
+            return typeof value === 'string' ? value : undefined;
+        }
+        return undefined;
+    }
+
     private static functionNames(scope: IntrospectionScope): string[] {
         return Object.keys(scope.functionTable).filter((name) => scope.functionTable[name]?.type === 'FCNDEF');
     }
@@ -76,7 +92,7 @@ class FunctionIntrospection {
         let scope = frame.scope.parent;
         while (scope) {
             if (this.functionNames(scope).length > 0) {
-                return { scope, excludeName: frame.func?.node?.id, hasFunctionFrame: true };
+                return { scope, excludeName: this.metadataString(frame.func?.node, 'id'), hasFunctionFrame: true };
             }
             scope = scope.parent;
         }
@@ -116,14 +132,29 @@ class FunctionIntrospection {
         if (!func) return '';
         switch (func.type) {
             case 'BUILTIN':
-                return func.node?.id ?? '<builtin>';
+                return this.metadataString(func.node, 'id') ?? '<builtin>';
             case 'LAMBDA':
                 return '<anonymous>';
             case 'FCNDEF':
-                return func.node?.id ?? '<function>';
+                return this.metadataString(func.node, 'id') ?? '<function>';
             default:
                 return '';
         }
+    }
+
+    /**
+     * Compute the virtual source file reported for a stack frame.
+     *
+     * Browser-hosted code does not necessarily have an operating-system path,
+     * but host source resolvers may provide MATLAB/Octave-like identities such
+     * as `+pkg/f.m` or `@Class/method.m`. Interactive definitions keep the
+     * traditional empty file field.
+     *
+     * @param frame Frame to inspect.
+     * @returns Virtual source file name, or an empty string when unavailable.
+     */
+    public static frameFile(frame: IntrospectionFrame): string {
+        return this.metadataString(frame.func?.node, 'sourceName') ?? '';
     }
 
     /**
@@ -144,7 +175,7 @@ class FunctionIntrospection {
         const result = new MultiArray([frames.length, 1]);
         result.array = frames.map((frame) => [
             new Structure({
-                file: new CharString(''),
+                file: new CharString(this.frameFile(frame)),
                 name: new CharString(this.frameName(frame)),
                 line: Complex.create(frame.callSite?.start?.line ?? 0),
             }),

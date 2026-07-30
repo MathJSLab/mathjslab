@@ -31,6 +31,20 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             Structure.setField(structure, ['a', 'b'], value);
 
             expect(Structure.getField(structure, ['a', 'b'])).toEqual(value);
+            expect(() => Structure.getField(undefined, [])).toThrow('value cannot be indexed with .');
+        });
+
+        it('Should construct structures from own fields only.', () => {
+            const inherited = { inherited: Complex.one() };
+            const fields = Object.create(inherited) as Record<string, ReturnType<typeof Complex.create>>;
+            fields.own = Complex.two();
+
+            const structure = new Structure(fields);
+
+            expect(Structure.fieldNames(structure)).toEqual(['own']);
+            expect(Structure.getField(structure, ['own'])).not.toBe(fields.own);
+            expect((Structure.getField(structure, ['own']) as ReturnType<typeof Complex.create>).re.toString()).toBe('2');
+            expect(() => Structure.getField(structure, ['inherited'])).toThrow('value cannot be indexed with .');
         });
 
         it('Should set nested fields through intermediate structure arrays.', () => {
@@ -76,6 +90,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(Structure.fieldNames(array)).toEqual(['a', 'z']);
             expect(Structure.hasField(array, 'a')).toBe(true);
             expect(Structure.hasField(array, 'missing')).toBe(false);
+
+            Object.setPrototypeOf((scalar as Structure).field, { inherited: Complex.one() });
+            expect(Structure.hasField(scalar, 'inherited')).toBe(false);
         });
     });
 
@@ -83,11 +100,13 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         it('Should deep-copy fields.', () => {
             const source = new Structure({ value: Complex.create(1) });
             const constructed = new Structure({ value: source.field.value });
+            Object.setPrototypeOf(source.field, { inherited: Complex.two() });
             const copy = source.copy();
 
             expect(constructed.field.value).not.toBe(source.field.value);
             expect(copy).not.toBe(source);
             expect(copy.field.value).not.toBe(source.field.value);
+            expect(Structure.fieldNames(copy)).toEqual(['value']);
             expect((source.field.value as ReturnType<typeof Complex.create>).re.toString()).toBe('1');
         });
 

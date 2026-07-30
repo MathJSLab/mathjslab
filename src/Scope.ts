@@ -1,11 +1,11 @@
-import type { FunctionTable, NameEntry, NameTable, NodeBuiltInFunction, NodeExpr, NodeFunctionDefinition, NodeInput, UndefinedReferenceTable } from './AST';
+import type { ExpressionBoundaryValue, FunctionTable, NameEntry, NameTable, NodeBuiltInFunction, NodeFunctionDefinition, NodeInput, UndefinedReferenceTable } from './AST';
 
 /**
  * Package/class import table for one lexical scope.
  */
 type ImportTable = {
-    /** Explicit simple-name aliases, e.g. `Point -> pkg.Point`. */
-    explicit: Record<string, string>;
+    /** Explicit simple-name aliases, e.g. `Point -> [pkg.Point]`. */
+    explicit: Record<string, string[]>;
     /** Wildcard package prefixes, e.g. `pkg` for `import pkg.*`. */
     wildcard: string[];
 };
@@ -111,8 +111,8 @@ class Scope {
      * @param table Name/value table to merge into the local scope.
      */
     public defineNameTable(table: Record<string, NodeInput>): void {
-        for (const name in table) {
-            this.nameTable[name] = { node: table[name] };
+        for (const [name, node] of Object.entries(table)) {
+            this.nameTable[name] = { node };
         }
     }
 
@@ -232,7 +232,7 @@ class Scope {
      * @param names Formal parameter names.
      * @param args Evaluated argument nodes.
      */
-    public bindParameters(names: string[], args: NodeExpr[]): void {
+    public bindParameters(names: string[], args: ExpressionBoundaryValue[]): void {
         for (let i = 0; i < names.length; i++) {
             this.defineName(names[i], args[i]);
         }
@@ -248,7 +248,7 @@ class Scope {
      * @param args Evaluated argument nodes.
      * @throws Error when the list lengths differ.
      */
-    public bindParametersChecked(names: string[], args: NodeExpr[]): void {
+    public bindParametersChecked(names: string[], args: ExpressionBoundaryValue[]): void {
         if (names.length !== args.length) {
             throw new Error(`Arity mismatch: expected ${names.length} argument(s), got ${args.length}`);
         }
@@ -322,8 +322,79 @@ class Scope {
         }
         const simpleName = qualifiedName.split('.').pop() ?? qualifiedName;
         if (simpleName) {
-            this.importTable.explicit[simpleName] = qualifiedName;
+            const imports = (this.importTable.explicit[simpleName] ??= []);
+            if (!imports.includes(qualifiedName)) {
+                imports.push(qualifiedName);
+            }
         }
+    }
+
+    /**
+     * Remove all imports declared directly in this scope.
+     *
+     * Parent imports remain visible through the lexical chain, matching the
+     * same local-only behavior used by ordinary name/function tables.
+     */
+    public clearImports(): void {
+        this.importTable.explicit = Object.create(null);
+        this.importTable.wildcard = [];
+    }
+
+    /**
+     * Create a detached copy of imports declared directly in this scope.
+     *
+     * @returns Copy suitable for later restoration.
+     */
+    public importSnapshot(): ImportTable {
+        return { explicit: Scope.cloneExplicitImports(this.importTable.explicit), wildcard: this.importTable.wildcard.slice() };
+    }
+
+    /**
+     * Replace imports declared directly in this scope.
+     *
+     * Parent imports are not touched, preserving lexical import visibility.
+     *
+     * @param importTable Snapshot produced by `importSnapshot`.
+     */
+    public restoreImports(importTable: ImportTable): void {
+        this.importTable = {
+            explicit: Scope.cloneExplicitImports(importTable.explicit),
+            wildcard: importTable.wildcard.slice(),
+        };
+    }
+
+    /**
+     * Return the currently visible import declarations.
+     *
+     * Imports are reported from the innermost scope to outer scopes, with
+     * explicit imports before wildcard package imports in each scope. Duplicate
+     * entries are suppressed while preserving first visibility.
+     *
+     * @returns Fully qualified imports visible from this scope.
+     */
+    public importList(): string[] {
+        const result: string[] = [];
+        const seen = new Set<string>();
+        let scope: Scope | undefined = this;
+        while (scope) {
+            for (const imports of Object.values(scope.importTable.explicit)) {
+                for (const qualifiedName of imports) {
+                    if (!seen.has(qualifiedName)) {
+                        seen.add(qualifiedName);
+                        result.push(qualifiedName);
+                    }
+                }
+            }
+            for (const prefix of scope.importTable.wildcard) {
+                const qualifiedName = `${prefix}.*`;
+                if (!seen.has(qualifiedName)) {
+                    seen.add(qualifiedName);
+                    result.push(qualifiedName);
+                }
+            }
+            scope = scope.parent;
+        }
+        return result;
     }
 
     /**
@@ -340,8 +411,8 @@ class Scope {
         let scope: Scope | undefined = this;
         while (scope) {
             const explicit = scope.importTable.explicit[name];
-            if (explicit) {
-                result.push(explicit);
+            if (explicit?.length) {
+                result.push(...explicit);
                 break;
             }
             for (const prefix of scope.importTable.wildcard) {
@@ -366,8 +437,7 @@ class Scope {
     public snapshot(copyNode: (node: NodeInput) => NodeInput): Scope {
         const parent = this.parent ? this.parent.snapshot(copyNode) : undefined;
         const scope = Scope.create(parent);
-        for (const name in this.nameTable) {
-            const entry = this.nameTable[name];
+        for (const [name, entry] of Object.entries(this.nameTable)) {
             scope.nameTable[name] = {
                 ...entry,
                 node: typeof entry.node !== 'undefined' ? copyNode(entry.node) : entry.node,
@@ -375,10 +445,10 @@ class Scope {
         }
         scope.functionTable = { ...this.functionTable };
         scope.undefinedReferenceTable = Object.create(null);
-        for (const name in this.undefinedReferenceTable) {
-            scope.undefinedReferenceTable[name] = new Set(this.undefinedReferenceTable[name]);
+        for (const [name, references] of Object.entries(this.undefinedReferenceTable)) {
+            scope.undefinedReferenceTable[name] = new Set(references);
         }
-        scope.importTable.explicit = { ...this.importTable.explicit };
+        scope.importTable.explicit = Scope.cloneExplicitImports(this.importTable.explicit);
         scope.importTable.wildcard = [...this.importTable.wildcard];
         return scope;
     }
@@ -397,8 +467,7 @@ class Scope {
      */
     public capture(copyNode: (node: NodeInput) => NodeInput, resolveParentNames: boolean = true): Scope {
         const scope = Scope.create(this, resolveParentNames);
-        for (const name in this.nameTable) {
-            const entry = this.nameTable[name];
+        for (const [name, entry] of Object.entries(this.nameTable)) {
             scope.nameTable[name] = {
                 ...entry,
                 node: typeof entry.node !== 'undefined' ? copyNode(entry.node) : entry.node,
@@ -406,12 +475,24 @@ class Scope {
         }
         scope.functionTable = { ...this.functionTable };
         scope.undefinedReferenceTable = Object.create(null);
-        for (const name in this.undefinedReferenceTable) {
-            scope.undefinedReferenceTable[name] = new Set(this.undefinedReferenceTable[name]);
+        for (const [name, references] of Object.entries(this.undefinedReferenceTable)) {
+            scope.undefinedReferenceTable[name] = new Set(references);
         }
-        scope.importTable.explicit = { ...this.importTable.explicit };
+        scope.importTable.explicit = Scope.cloneExplicitImports(this.importTable.explicit);
         scope.importTable.wildcard = [...this.importTable.wildcard];
         return scope;
+    }
+
+    /**
+     * Clone an explicit import table while preserving the prototype-less
+     * internal representation used for scope maps.
+     */
+    private static cloneExplicitImports(imports: Record<string, string[]>): Record<string, string[]> {
+        const explicit = Object.create(null) as Record<string, string[]>;
+        for (const [name, candidates] of Object.entries(imports)) {
+            explicit[name] = candidates.slice();
+        }
+        return explicit;
     }
 }
 

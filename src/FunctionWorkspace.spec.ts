@@ -145,6 +145,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         it('Should evaluate source with optional catch source in a workspace.', () => {
             const scope = new TestScope();
             const evaluated: string[] = [];
+            const caught: string[] = [];
             const evaluate = (source: string, _scope: TestScope) => {
                 evaluated.push(source);
                 if (source === 'bad') {
@@ -154,8 +155,15 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             };
 
             expect((FunctionWorkspace.evaluateWithCatch(scope, 'ok', undefined, evaluate) as CharString).str).toBe('ok');
-            expect((FunctionWorkspace.evaluateWithCatch(scope, 'bad', 'fallback', evaluate) as CharString).str).toBe('fallback');
+            expect(
+                (
+                    FunctionWorkspace.evaluateWithCatch(scope, 'bad', 'fallback', evaluate, undefined, (error) => {
+                        caught.push((error as Error).message);
+                    }) as CharString
+                ).str,
+            ).toBe('fallback');
             expect(evaluated).toEqual(['ok', 'bad', 'fallback']);
+            expect(caught).toEqual(['bad source']);
             expect(() => FunctionWorkspace.evaluateWithCatch(scope, 'bad', undefined, evaluate)).toThrow('bad source');
         });
 
@@ -198,6 +206,31 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(Complex.realToNumber(secondScope.nameTable.p.node)).toBe(5);
         });
 
+        it('Should not reset a live persistent binding when it is redeclared in the same call.', () => {
+            const func = functionDefinition();
+            const scope = new TestScope();
+
+            FunctionWorkspace.declarePersistent('p', Complex.create(1), func, scope);
+            expect(scope.nameTable.p.persistent).toBe(true);
+            scope.nameTable.p.node = Complex.create(5);
+            FunctionWorkspace.declarePersistent('p', Complex.create(99), func, scope);
+            FunctionWorkspace.storePersistentVariables(func, scope);
+
+            const nextScope = new TestScope();
+            FunctionWorkspace.loadPersistentVariables(func, nextScope);
+            expect(Complex.realToNumber(nextScope.nameTable.p.node)).toBe(5);
+        });
+
+        it('Should reject non-runtime persistent values before storing them.', () => {
+            const func = functionDefinition();
+            const scope = new TestScope();
+
+            FunctionWorkspace.declarePersistent('p', Complex.create(1), func, scope);
+            scope.defineName('p', AST.nodeIdentifier('notRuntime'));
+
+            expect(() => FunctionWorkspace.storePersistentVariables(func, scope)).toThrow("persistent variable 'p' is not a runtime value.");
+        });
+
         it('Should share global entries and clear them from reachable scopes.', () => {
             const globalNames = new Set<string>();
             const globalScope = new TestScope();
@@ -217,6 +250,58 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(globalNames.size).toBe(0);
             expect(globalScope.nameTable.g).toBeUndefined();
             expect(localScope.nameTable.g).toBeUndefined();
+        });
+
+        it('Should initialize global declaration values only once.', () => {
+            const globalNames = new Set<string>();
+            const globalScope = new TestScope();
+            const localScope = new TestScope(globalScope);
+
+            FunctionWorkspace.declareGlobal('g', Complex.create(1), globalNames, globalScope.nameTable, localScope.nameTable);
+            FunctionWorkspace.declareGlobal('g', Complex.create(2), globalNames, globalScope.nameTable, localScope.nameTable);
+
+            expect(Complex.realToNumber(globalScope.nameTable.g.node)).toBe(1);
+            expect(globalScope.nameTable.g.globalInitialized).toBe(true);
+
+            localScope.defineName('g', Complex.create(3));
+            FunctionWorkspace.declareGlobal('g', Complex.create(4), globalNames, globalScope.nameTable, localScope.nameTable);
+
+            expect(localScope.nameTable.g).toBe(globalScope.nameTable.g);
+            expect(Complex.realToNumber(localScope.nameTable.g.node)).toBe(1);
+        });
+
+        it('Should preserve global initialization state after the binding is cleared.', () => {
+            const globalNames = new Set<string>();
+            const initializedNames = new Set<string>();
+            const globalScope = new TestScope();
+            const localScope = new TestScope(globalScope);
+
+            FunctionWorkspace.declareGlobal('g', Complex.create(1), globalNames, globalScope.nameTable, localScope.nameTable, initializedNames);
+            delete globalScope.nameTable.g;
+            delete localScope.nameTable.g;
+            FunctionWorkspace.declareGlobal('g', Complex.create(2), globalNames, globalScope.nameTable, localScope.nameTable, initializedNames);
+
+            expect(initializedNames.has('g')).toBe(true);
+            expect(localScope.nameTable.g).toBe(globalScope.nameTable.g);
+            expect(globalScope.nameTable.g.node).toEqual(AST.emptyArray());
+        });
+
+        it('Should clear only requested global names from reachable scopes.', () => {
+            const globalNames = new Set<string>();
+            const globalScope = new TestScope();
+            const localScope = new TestScope(globalScope);
+
+            FunctionWorkspace.declareGlobal('g', Complex.create(7), globalNames, globalScope.nameTable, localScope.nameTable);
+            FunctionWorkspace.declareGlobal('h', Complex.create(9), globalNames, globalScope.nameTable, localScope.nameTable);
+
+            FunctionWorkspace.clearGlobalVariables(globalNames, globalScope, [localScope], ['g']);
+
+            expect(globalNames.has('g')).toBe(false);
+            expect(globalNames.has('h')).toBe(true);
+            expect(globalScope.nameTable.g).toBeUndefined();
+            expect(localScope.nameTable.g).toBeUndefined();
+            expect(Complex.realToNumber(globalScope.nameTable.h.node)).toBe(9);
+            expect(localScope.nameTable.h).toBe(globalScope.nameTable.h);
         });
     });
 });

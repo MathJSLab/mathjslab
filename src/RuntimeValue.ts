@@ -49,6 +49,19 @@ abstract class RuntimeValue {
     public static readonly copy = <T>(value: T): T => (RuntimeValue.hasCopy(value) ? value.copy() : value);
 
     /**
+     * Test whether a runtime field table owns one key directly.
+     *
+     * MATLAB/Octave structures and class instances expose only stored fields or
+     * properties; inherited JavaScript prototype names must never be visible as
+     * runtime members.
+     *
+     * @param table Runtime field/property table.
+     * @param key Field or property name.
+     * @returns `true` when `key` is an own property of `table`.
+     */
+    public static readonly hasOwnField = (table: object, key: string): boolean => Object.prototype.hasOwnProperty.call(table, key);
+
+    /**
      * Register the runtime structure constructor without coupling generic
      * runtime helpers to the concrete `Structure` module.
      *

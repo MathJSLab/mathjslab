@@ -527,7 +527,8 @@ abstract class LinearAlgebra {
         if (!M || M.dimension.length !== 2 || M.dimension[0] !== M.dimension[1]) {
             throw new Error(`PLU decomposition can only be applied to square matrices.`);
         }
-        return AST.nodeReturnList(
+        return AST.nodeBoundedReturnList(
+            3,
             (evaluated: ReturnHandlerResult, index: number): NodeExpr => {
                 if (evaluated.length === 1) {
                     return evaluated.U;
@@ -606,7 +607,7 @@ abstract class LinearAlgebra {
                         name: 'normType',
                         alternatives: [
                             { name: 'numericNormType', classes: ['double'], validators: ['numeric', 'scalar', 'real'] },
-                            { name: 'frobeniusNormType', classes: ['char'], allowedStrings: ['fro'] },
+                            { name: 'frobeniusNormType', classes: ['char', 'string'], allowedStrings: ['fro'] },
                         ],
                     },
                 ],
@@ -1493,7 +1494,8 @@ abstract class LinearAlgebra {
         if (!M || M.dimension.length !== 2) {
             throw new Error(`QR decomposition can only be applied to 2D matrices.`);
         }
-        return AST.nodeReturnList(
+        return AST.nodeBoundedReturnList(
+            3,
             (evaluated: ReturnHandlerResult, index: number): NodeExpr => {
                 if (evaluated.length === 1) {
                     if (index === 0) {
@@ -1516,7 +1518,6 @@ abstract class LinearAlgebra {
                 }
             },
             (length: number): ReturnHandlerResult => {
-                AST.throwErrorIfGreaterThanReturnList(3, length);
                 if (length === 1) {
                     const { R } = LinearAlgebra.qrDecomposition(M, 1);
                     return {
@@ -1752,7 +1753,8 @@ abstract class LinearAlgebra {
      * diagnostics.
      */
     public static eig = (M: MultiArray): NodeReturnList => {
-        return AST.nodeReturnList(
+        return AST.nodeBoundedReturnList(
+            3,
             (evaluated: ReturnHandlerResult, index: number): NodeExpr | undefined => {
                 if (evaluated.length === 1) {
                     if (index === 0) {
@@ -1777,7 +1779,6 @@ abstract class LinearAlgebra {
                 return undefined;
             },
             (length: number): ReturnHandlerResult => {
-                AST.throwErrorIfGreaterThanReturnList(3, length);
                 if (length === 1) {
                     const { D } = LAPACK.eig_hermitian(M);
                     return { length, values: D };
@@ -1806,7 +1807,8 @@ abstract class LinearAlgebra {
      * @returns A lazy return list with deterministic placeholder values.
      */
     public static test(A: MultiArray) {
-        return AST.nodeReturnList(
+        return AST.nodeBoundedReturnList(
+            3,
             (evaluated: ReturnHandlerResult, index: number): NodeExpr | undefined => {
                 if (evaluated.length === 1) {
                     if (index === 0) {
@@ -1831,13 +1833,7 @@ abstract class LinearAlgebra {
                 return undefined;
             },
             (length: number): ReturnHandlerResult => {
-                if (length === 1) {
-                    return { length };
-                } else if (length === 2) {
-                    return { length };
-                } else {
-                    return { length };
-                }
+                return { length };
             },
         );
     }

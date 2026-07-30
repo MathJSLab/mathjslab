@@ -3,6 +3,339 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 2.3.0
+
+- Tightened generated parser return types for identifiers, function
+  definitions, and matrix literals, and cleaned related AST factory narrowing
+  in preparation for removing the remaining broad `NodeExpr` compatibility
+  carrier.
+- Narrowed generated parser return types for primary lexical expression forms,
+  including strings, numbers, `end`, colon/tilde magic nodes, function handles,
+  and metaclass literals.
+- Replaced the generated parser's remaining `NodeExpr` rule contracts with
+  grammar-local expression-family aliases, keeping generic expression
+  compatibility out of the ANTLR output.
+- Added the `RuntimeExpressionValue` AST contract and centralized
+  expression-boundary validation through `AST.isExpressionBoundaryValue`.
+- Moved value-oriented function validation onto the `RuntimeExpressionValue`
+  contract, with core type predicates normalizing optional inputs before
+  invoking shared validators.
+- Tightened user-function and anonymous-function argument binding so evaluated
+  positional, name-value, default, and `varargin` values pass through the
+  shared expression-boundary contract before entering function workspaces.
+- Narrowed `arguments`-block runtime validation so size, class, `mustBe*`,
+  repeating, and name-value values distinguish expression-boundary carriers
+  from concrete runtime values before validation.
+- Fixed singleton return-list wrapping so requesting a second output from a
+  single-valued expression reports the MATLAB/Octave-style undefined
+  return-list element instead of an internal unreachable-branch error.
+- Added interpreter-side runtime-value validation before storing evaluated
+  values in structure fields, including ordinary dot assignment, descriptor
+  `subsasgn`, nested object field updates, and function name-value option
+  structs.
+- Typed scalar structure fields as concrete runtime values, keeping `null` and
+  `undefined` out of structure storage while preserving `[]` as the MATLAB-like
+  empty value.
+- Narrowed interpreter-created structure maps for function-handle workspace
+  metadata and Set/Get object property snapshots to concrete structure field
+  values.
+- Aligned `MultiArray`'s structural view of structure fields with the same
+  non-null field-value contract, while preserving `null`/`undefined` as
+  internal array/cell construction slots.
+- Tightened indexed assignment RHS preparation so scalar values stored through
+  native array, cell, and brace-assignment paths are narrowed to concrete
+  runtime values before entering `MultiArray` storage.
+- Narrowed workspace initializer paths so `assignin`, `global = value`, and
+  `persistent = value` store concrete runtime values rather than broader
+  expression carriers.
+- Typed per-function persistent storage as `RuntimeExpressionValue` and reject
+  non-runtime workspace carriers before saving persistent variables back to a
+  function definition.
+- Typed class-instance property storage and public event-data fields as
+  `RuntimeExpressionValue`, with runtime guards preventing AST-only carriers
+  from being stored in object property state.
+- Typed resolved class-enumeration constructor arguments as
+  `RuntimeExpressionValue`, so enumeration values do not retain parser-only AST
+  carriers after member resolution.
+- Tightened public class metadata properties so `meta.*` objects expose
+  `RuntimeExpressionValue` data, with parser-only property defaults rendered as
+  expression text instead of leaking AST nodes through `DefaultValue`.
+- Split runtime workspace writers from general scope storage so `assignin` and
+  persistent-variable loading can only write concrete runtime values, while the
+  broader scope name table remains available for parser and definition nodes.
+- Narrowed `arguments`-block and class-property size/function validator lists
+  from generic AST inputs to expression-boundary values, matching the AST
+  factory guards that build those validation nodes.
+- Narrowed factory-built index, superclass-constructor, and class-enumeration
+  argument arrays to expression-boundary values, matching the AST factory
+  guards that accept those expression slots.
+- Aligned function-call, class-constructor, method-dispatch, and indexing
+  argument contracts across `FunctionArguments`, `FunctionCall`, `Context`, and
+  `Interpreter` so AST-normalized call arguments use expression-boundary values
+  instead of broader legacy expression arrays.
+- Updated architectural boundary tests to track the new call-argument
+  contracts, avoiding stale source-signature expectations during the full
+  build.
+- Carried expression-boundary call-argument typing through call frames,
+  function-stack metadata, `inputname`, and class-operator overload dispatch.
+- Added regression coverage for `mfilename("fullpath")` inside host-provided
+  external class method files, including local subfunctions sharing the same
+  virtual `@Class/method.m` source identity.
+- Extended `dbstack` frame structures to report browser-hosted virtual source
+  file names when loaded function files or external class method files provide
+  a `sourceName`.
+- Extended `functions(handle).file` metadata for named and nested user function
+  handles so host-provided function files report their virtual `sourceName`
+  instead of always returning an empty file field.
+- Added diagnostic regressions proving that `catch ME` and `lasterror` public
+  stack structures preserve virtual source file names from browser-hosted
+  function files and their local subfunctions.
+- Inferred virtual `sourceName` metadata from path-like source-table and
+  provider keys such as `+pkg/f.m`, `@Class/method.m`, and `folder/script.m`,
+  so hosts can use compact string entries without losing source introspection.
+- Aligned plain `mfilename()` for virtual `.m` files with the file basename
+  while keeping `mfilename("fullpath")` tied to the complete virtual source
+  identity.
+- Propagated host-provided script `sourceName` metadata to script-local
+  functions, so `mfilename`, `dbstack`, `functions(handle)`, and captured local
+  handles retain the surrounding virtual script file identity.
+- Propagated host-provided classdef `sourceName` metadata to inline methods, so
+  class methods defined inside virtual class files report the class file
+  through `mfilename`, `dbstack`, and public caught-error stack structures.
+- Propagated virtual function/method `sourceName` metadata into nested
+  functions, keeping `mfilename` and `dbstack` aligned for nested code inside
+  browser-hosted function files and inline class methods.
+- Added coverage for returned nested function handles from virtual function
+  files, including `functions(handle).file` metadata and caught-error stack
+  file names after the outer function has returned.
+- Normalized plain `mfilename()` for URL-like virtual source identities with
+  query strings or fragments, while preserving the complete identity in
+  `mfilename("fullpath")`.
+- Preserved path-derived virtual `sourceName` metadata in
+  `ManifestSourceResolver.fromTable`, aligning preloaded in-memory source
+  manifests with table-backed and fetch-backed resolver behavior.
+- Propagated virtual `sourceName` metadata into anonymous function handles,
+  keeping `mfilename`, `dbstack`, and `functions(handle).file` aligned for
+  closures created inside browser-hosted function files and scripts.
+- Preserved class-context metadata in anonymous function handles created inside
+  instance and static methods, so returned closures keep `mfilename("class")`
+  aligned with the defining class.
+- Tightened explicit import resolution so multiple same-scope imports for the
+  same simple name are preserved as ordered candidates and produce a clear
+  ambiguity error when more than one imported function or class resolves.
+- Validated `import` declarations so unqualified simple names are rejected and
+  ambiguous wildcard imports report all resolving function/class candidates
+  instead of picking one silently.
+- Added direct dispatch for explicitly imported static class methods such as
+  `import pkg.Class.method; method(args)`, including access checks and
+  ambiguity diagnostics across imported method candidates.
+- Extended `feval("method", ...)` to dispatch through explicitly imported
+  static class methods, preserving the same access checks and ambiguity
+  diagnostics as direct imported-method calls.
+- Extended function handles for explicitly imported static class methods, so
+  `h = @method; h(args)`, `feval(h, ...)`, and arity introspection share the
+  same imported-method dispatch path.
+- Preserved imported static-method bindings for `str2func("method")` handles
+  created inside functions, and exposed those handles through `which(handle)`
+  and `functions(handle)` metadata.
+- Resolved host-provided table entries by their virtual `sourceName` paths, so
+  a source keyed internally as `f` but declared as `+pkg/f.m` can still be
+  loaded through the qualified `pkg.f` name.
+- Indexed `ManifestSourceResolver.fromTable` entries by both their table keys
+  and declared `sourceName` paths, covering preloaded function, script, and
+  class sources bundled for browser execution.
+- Normalized URL-like virtual source paths with query strings or fragments for
+  lookup while preserving the complete `sourceName` in `mfilename`, stack, and
+  function-handle introspection metadata.
+- Allowed fetched manifest entries to use absolute URLs without prefixing the
+  resolver `baseUrl`, while still deriving MATLAB/Octave package names from
+  their virtual `.m` paths.
+- Added explicit `sourceName` support to fetched manifest entries, allowing
+  hosts to fetch cache/CDN paths while exposing stable MATLAB/Octave virtual
+  file names for lookup and introspection.
+- Resolved manifest-backed sources through the same canonical path, URL-like,
+  and script-name candidates used when indexing manifests, so equivalent
+  browser source names remain loadable after query/hash or separator changes.
+- Indexed explicit `name` metadata from source-table entries, allowing browser
+  hosts to use cache-oriented keys while exposing stable canonical function,
+  class, and script lookup names.
+- Added integration coverage for cache-keyed host function, class, and external
+  method sources using explicit canonical `name` metadata, including imported
+  dispatch, function handles, `exist`, `which`, and `mfilename` source identity
+  checks.
+- Extended the parser and AST for MATLAB-style multi-attribute `arguments`
+  blocks such as `arguments (Input,Repeating)`, preserving all block attributes
+  while keeping the existing single-attribute compatibility field.
+- Routed `arguments (Input,Repeating)` through the existing repeating-input
+  validation path.
+- Implemented `arguments (Output,Repeating)` call semantics for both
+  `varargout` and MATLAB-style named repeating output variables, including
+  requested-output validation of repeated return cells.
+- Distinguished cell literals from cell-indexing braces in the lexer, allowing
+  spaced and multiline expressions such as `C{2*k - 1}` while preserving
+  whitespace-separated cell literal elements.
+- Aligned class-property validation with function `arguments` validation for
+  parametrized validators, so property references such as
+  `{mustBeGreaterThan(x, 0)}` evaluate against the candidate property value.
+- Fixed compound assignments to structure fields, including nested fields,
+  structure arrays, and indexed field chains such as `s.v(2) += 5`, so the
+  operation uses the selected field value rather than the containing structure.
+- Extended prefix and postfix increment/decrement semantics from simple
+  identifiers to assignable targets such as indexed arrays and structure
+  fields, reusing the same assignment pipeline as `+=` and `-=`.
+- Returned copied assignment snapshots from mutable assignment targets,
+  avoiding later structure or array mutations from changing previously produced
+  statement results.
+- Preserved scalar results for compound assignment through descriptor chains,
+  so nested cell targets such as `s.c{2} += 3` store `5` rather than `[5]`.
+- Distributed vectorized compound-assignment results across final brace
+  descriptor targets, so nested selections such as `s.c{1:2} += [10,20]` update
+  each selected cell content instead of storing duplicated vectors.
+- Added functional `clear(...)` built-in support on top of the existing
+  command-form `clear`, including multiple names and `clear("functions")`.
+- Added command-form support for interpreter-owned `exist`, `warning`, and
+  `dbstack`, reusing their existing functional semantics while preserving
+  assignment parsing for variables named `exist`.
+- Added command-form `error` support, including identifier/message parsing for
+  forms such as `error mathjslab:id message text`.
+- Allowed selected zero-argument built-ins (`mfilename`, `lastwarn`, `lasterr`,
+  `lasterror`, and `localfunctions`) to be invoked without parentheses when no
+  variable shadows the name.
+- Normalized primitive results returned by host-provided command-form functions
+  into runtime values, so browser-integrated commands such as `help` can return
+  plain strings, numbers, or booleans safely.
+- Evaluated MATLAB-style `spmd` worker specifications before running the
+  sequential browser fallback body, so invalid or side-effecting worker
+  expressions are no longer silently ignored.
+- Evaluated parenthesized `parfor` worker expressions once before the
+  sequential browser fallback loop, preserving the stored AST worker expression
+  while avoiding silent skips.
+- Validated sequential `parfor` and `spmd` worker-count expressions as
+  nonnegative integer scalars, aligning the browser fallback with MATLAB's
+  worker specification rules.
+- Rejected invalid `spmd(minWorkers,maxWorkers)` fallback headers when the
+  minimum worker count exceeds the maximum worker count.
+- Exposed `spmdIndex` and `spmdSize` inside the sequential browser `spmd`
+  fallback as local worker metadata, restoring any user variables with the same
+  names after the block exits.
+- Tightened sequential `parfor` header semantics so the loop variable must be a
+  simple identifier and the evaluated range must be a row vector of consecutive
+  integer values, while preserving ordinary `for` targets and iteration rules.
+- Added static `parfor` body validation for the sequential fallback, rejecting
+  MATLAB-incompatible constructs such as `break`, `return`, `global`,
+  `persistent`, nested `parfor`, nested `spmd`, and assignments to the loop
+  variable.
+- Narrowed the legacy scope parameter-binding helpers to expression-boundary
+  values, keeping simple evaluated-argument storage aligned with the newer
+  function-call pipeline.
+- Added shared runtime-expression boundary helpers and routed function argument
+  validation plus interpreter runtime-storage checks through them, documenting
+  the stricter boundary between expression carriers and concrete runtime data.
+- Reused the shared runtime-expression boundary for persistent-variable
+  storage, class-instance property storage, and public `struct` field
+  construction.
+- Tightened expression-boundary error callbacks to `never`, letting TypeScript
+  narrow expression and runtime guards without local casts.
+- Added a non-throwing optional runtime-expression helper and reused it in
+  predicate-style built-in checks and dimension-vector validation.
+- Kept `Context` comma-list expansion and built-in argument evaluation typed as
+  expression-boundary values, avoiding an unnecessary widening back to the
+  legacy expression-array carrier during call dispatch.
+- Recognized the declarative `array` class in shared function-parameter
+  validation and removed an obsolete fixed-class table from `arguments` block
+  handling, keeping user-defined class declarations on the dynamic validation
+  path.
+- Tightened `arguments` block class validation for user-defined classes so
+  object arrays must contain at least one matching class/enumeration element,
+  preventing generic empty arrays from satisfying a class-specific declaration
+  while still allowing classdef property defaults to use the implicit empty
+  placeholder before a real value is assigned.
+- Aligned `isa` with object-array class semantics so homogeneous arrays of
+  class instances report membership in their class or superclass rather than
+  falling through as generic arrays.
+- Tightened class introspection helpers so object-array inputs must be non-cell
+  arrays made entirely of class objects from the same class metadata, rejecting
+  mixed arrays such as `[obj, 1]` instead of introspecting the first object and
+  ignoring the rest.
+- Aligned the interpreter-owned `class` built-in with object-array semantics so
+  homogeneous arrays of class instances or enumeration values report the object
+  class name instead of the generic `array` classifier.
+- Registered the built-in `handle` superclass as a runtime class for
+  interpreter-owned lookup helpers, aligning `isclass`, `exist(..., "class")`,
+  and `which` with `isa(obj, "handle")`.
+- Tightened `str2func` validation so empty or whitespace-only function names
+  fail immediately with a clear diagnostic instead of creating an unusable
+  named function handle.
+- Tightened `builtin` and `feval` string-target validation so empty or
+  whitespace-only function names fail before entering built-in lookup or
+  function-handle dispatch.
+- Extended command-style `which` to accept word-list queries such as
+  `which sin cos missing`, returning one lookup description per requested
+  symbol while keeping the functional `which(...)` built-in scalar.
+- Tightened `nargin` and `nargout` function-target validation so empty or
+  whitespace-only string names fail before attempting symbol resolution.
+- Aligned `functions(handle)` workspace metadata so simple named function
+  handles do not expose interpreter closure state, while anonymous and nested
+  handles still report their captured workspaces.
+- Tightened `exist(name, "builtin")` lookup so it consults the built-in table
+  directly even when a user-defined or host-provided function source shadows
+  the same name, and normalized whitespace around the `exist` kind selector.
+- Implemented class-aware `mfilename("class")` for instance and static class
+  methods, using the interpreter's existing class-access context while keeping
+  the browser-first file path behavior unchanged.
+- Preserved the public `ME.stack` payload through `rethrow(ME)`, so relaunching
+  a caught error from another helper function keeps the original MATLAB/Octave
+  stack instead of rebuilding it at the rethrow site.
+- Aligned scalar-output `deal` calls with MATLAB/Octave so `x = deal(a, b, c)`
+  returns the first input while multiple-output calls still require matching
+  input/output counts unless there is exactly one input value.
+- Added command-form `run script` and `source script [base|caller]` support on
+  top of the browser-friendly virtual script source resolver, while preserving
+  assignment parsing for variables named like command-form functions.
+- Extended assignment-preserving command-form parsing to built-in command names
+  such as `clear` and `which`, and to host-provided command entries that
+  explicitly opt into the same contract.
+- Added conservative formatted-message support to `warning` and `error`,
+  including identifier/message forms and common `%s`, `%d`, `%i`, `%f`, `%g`,
+  and `%%` conversions.
+- Split diagnostic message formatting into a dedicated helper with direct unit
+  coverage, keeping `Interpreter` focused on dispatch and error-state updates.
+- Added interpreter-owned `warning("on"|"off"|"query", id)` state handling,
+  including global suppression, identifier-specific suppression, `last`
+  identifier targeting, MATLAB/Octave-style `lastwarn` updates for suppressed
+  warnings, previous-state returns, state-structure restoration, and restart
+  reset coverage.
+- Extended warning-state handling with the MATLAB/Octave `error` state, so
+  selected warning identifiers or the global warning state can promote warnings
+  to catchable errors while still updating `lastwarn`.
+- Made `warning()` and `warning("query")` return complete save/restore
+  snapshots, including the global `all` state and all warning identifiers
+  modified in the current interpreter session.
+- Added virtual source identity plumbing for browser-provided `.m` files:
+  source entries can expose `sourceName`, manifest entries preserve their path,
+  and `mfilename("fullpath")` reports that virtual identity for loaded function
+  files and their private subfunctions.
+- Extended `lasterror` beyond simple queries with MATLAB/Octave-compatible
+  `lasterror(err)` and `lasterror("reset")` forms, including default field
+  normalization and previous-state returns.
+- Added the companion `lasterr` message/id query and setter API on top of the
+  same last-error state used by `lasterror`, `catch ME`, and `rethrow`.
+- Centralized fixed-size lazy return-list validation with a shared AST helper
+  and reused it across multi-output built-ins such as `find`, `sort`,
+  `meshgrid`, `lu`, `qr`, and `eig`.
+- Tightened local multi-output helpers for `min`, `max`, `cummin`, and `cummax`
+  so ignored outputs still validate excessive requested arity before values are
+  selected.
+- Preserved MATLAB/Octave diagnostics for detached `:` and `end` nodes by
+  guarding parent/index lookup through AST type guards instead of assuming
+  parser-attached index parents.
+- Avoided class-method dispatch false positives for empty arrays, so empty
+  `MultiArray` values fall back to ordinary indexing or undefined-function
+  diagnostics instead of vacuous object-array method resolution.
+- Centralized comma-separated return-list metadata in `AST`, and routed
+  context/interpreter return-list producers such as field expansion and `deal`
+  through that shared constructor.
+
 ## 2.2.1
 
 - Added the public `substruct` built-in for MATLAB/Octave-compatible subscript

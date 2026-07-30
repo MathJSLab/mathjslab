@@ -1,15 +1,18 @@
-import type { NodeInput } from './AST';
+import type { NodeInput, RuntimeExpressionValue } from './AST';
+import { AST } from './AST';
 import type { ClassDefinition } from './ClassDefinition';
 import type { FunctionHandle } from './FunctionHandle';
 import type { RuntimeDisplay } from './RuntimeDisplay';
 import { ClassEventListener } from './ClassEventListener';
+import { CharString } from './CharString';
+import { runtimeExpressionValue } from './ExpressionValue';
 import { MultiArray } from './MultiArray';
 import { RuntimeValue } from './RuntimeValue';
 
 /** Instance property storage keyed by property name. */
-type ClassInstancePropertyTable = Record<string, NodeInput>;
+type ClassInstancePropertyTable = Record<string, RuntimeExpressionValue>;
 /** Callback used to evaluate property default expressions at construction time. */
-type ClassPropertyDefaultEvaluator = (expression: NodeInput) => NodeInput;
+type ClassPropertyDefaultEvaluator = (expression: NodeInput) => RuntimeExpressionValue;
 
 /**
  * Runtime value representing one MATLAB/Octave class object instance.
@@ -49,8 +52,61 @@ class ClassInstance {
      */
     constructor(classDefinition: ClassDefinition, properties: ClassInstancePropertyTable = {}) {
         this.classDefinition = classDefinition;
-        this.properties = properties;
+        this.properties = {};
+        for (const [name, value] of Object.entries(properties)) {
+            this.properties[name] = ClassInstance.runtimePropertyValue(name, value);
+        }
     }
+
+    /**
+     * Validate a value before storing it in object property state.
+     */
+    private static readonly runtimePropertyValue = (name: string, value: unknown): RuntimeExpressionValue => {
+        return runtimeExpressionValue(value, name, 'property', (message) => {
+            throw new Error(message);
+        });
+    };
+
+    /**
+     * Return class names declared by a property validation class expression.
+     *
+     * The parser stores simple declarations such as `x string` as an
+     * identifier, and union-like forms as a list. Defaults only need the class
+     * names to choose a compatible empty runtime value before validation runs.
+     */
+    private static readonly propertyClassNames = (value: NodeInput | null): string[] => {
+        if (value === null) {
+            return [];
+        }
+        if (AST.isNodeIdentifier(value)) {
+            return [value.id];
+        }
+        if (AST.isNodeList(value)) {
+            return value.list.flatMap((item) => (AST.isNodeIdentifier(item) ? [item.id] : []));
+        }
+        return [];
+    };
+
+    /**
+     * Build a MATLAB/Octave-compatible implicit property default.
+     *
+     * Untyped and numeric properties keep the traditional empty double matrix.
+     * Text and cell declarations need type-compatible empty values so that a
+     * property declared without an explicit initializer validates successfully.
+     */
+    private static readonly implicitPropertyDefault = (property: ClassDefinition['properties'][number]): RuntimeExpressionValue => {
+        const classNames = ClassInstance.propertyClassNames(property.class);
+        if (classNames.includes('char')) {
+            return CharString.create('', "'");
+        }
+        if (classNames.includes('string')) {
+            return CharString.create('', '"');
+        }
+        if (classNames.includes('cell')) {
+            return MultiArray.emptyArray(true);
+        }
+        return MultiArray.emptyArray();
+    };
 
     /**
      * Instantiate a class by evaluating defaults for all non-dependent
@@ -66,7 +122,7 @@ class ClassInstance {
             if (property.isDependent) {
                 continue;
             }
-            properties[property.name] = property.defaultValue ? evaluateDefault(property.defaultValue) : MultiArray.emptyArray();
+            properties[property.name] = property.defaultValue ? evaluateDefault(property.defaultValue) : ClassInstance.implicitPropertyDefault(property);
         }
         return new ClassInstance(classDefinition, properties);
     };
@@ -110,7 +166,7 @@ class ClassInstance {
      * @param name Property name.
      * @returns Stored property value, if present.
      */
-    public static readonly getProperty = (instance: ClassInstance, name: string): NodeInput | undefined => {
+    public static readonly getProperty = (instance: ClassInstance, name: string): RuntimeExpressionValue | undefined => {
         ClassInstance.throwIfDeleted(instance);
         return instance.properties[name];
     };
@@ -122,7 +178,7 @@ class ClassInstance {
      * @param name Property name.
      * @returns `true` when the property has storage.
      */
-    public static readonly hasProperty = (instance: ClassInstance, name: string): boolean => Object.prototype.hasOwnProperty.call(instance.properties, name);
+    public static readonly hasProperty = (instance: ClassInstance, name: string): boolean => RuntimeValue.hasOwnField(instance.properties, name);
 
     /**
      * Write a concrete stored property.
@@ -131,12 +187,12 @@ class ClassInstance {
      * @param name Property name.
      * @param value Value to store.
      */
-    public static readonly setProperty = (instance: ClassInstance, name: string, value: NodeInput): void => {
+    public static readonly setProperty = (instance: ClassInstance, name: string, value: RuntimeExpressionValue): void => {
         ClassInstance.throwIfDeleted(instance);
         if (!ClassInstance.hasProperty(instance, name)) {
             throw new Error(`unknown property '${name}' for class ${instance.classDefinition.name}.`);
         }
-        instance.properties[name] = value;
+        instance.properties[name] = ClassInstance.runtimePropertyValue(name, value);
     };
 
     /**

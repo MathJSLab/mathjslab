@@ -22,6 +22,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
     describe('Named handles', () => {
         it('Should create, format, copy, and logically convert named handles.', () => {
             const handle = FunctionHandle.create('sin');
+            handle.sourceName = '+pkg/sinwrap.m';
+            handle.className = 'HandleOwner';
             const copy = handle.copy();
 
             expect(FunctionHandle.isInstanceOf(handle)).toBe(true);
@@ -33,6 +35,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(handle.toString()).toBe('@sin');
             expect(copy).not.toBe(handle);
             expect(copy.id).toBe('sin');
+            expect(copy.sourceName).toBe('+pkg/sinwrap.m');
+            expect(copy.className).toBe('HandleOwner');
             expect(Complex.realToNumber(handle.toLogical())).toBe(0);
         });
     });
@@ -56,12 +60,16 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const parameter = AST.nodeIdentifier('x');
             const expression = AST.nodeOperation('+', AST.nodeIdentifier('x'), AST.nodeIdentifier('x'));
             const handle = FunctionHandle.create(undefined, [parameter], expression, Scope.create());
+            handle.sourceName = '+pkg/anon.m';
+            handle.className = 'AnonOwner';
             const copy = handle.copy();
 
             expect(copy.parameter[0]).not.toBe(handle.parameter[0]);
             expect(copy.expression).not.toBe(handle.expression);
             expect(copy.parameter[0].parent).toBe(copy);
             expect(copy.expression?.parent).toBe(copy);
+            expect(copy.sourceName).toBe('+pkg/anon.m');
+            expect(copy.className).toBe('AnonOwner');
         });
 
         it('Should copy anonymous handle runtime-expression bodies through the opaque copy contract.', () => {

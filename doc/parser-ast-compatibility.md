@@ -35,10 +35,11 @@ forms:
 - user function definitions with return lists, parameter lists, ignored `~`
   entries, nested statements, script-local functions, private subfunctions, and
   `arguments` blocks;
-- empty and non-empty `arguments` blocks, including input/output attributes and
-  AST validation declarations;
+- empty and non-empty `arguments` blocks, including input/output, repeating,
+  and output-repeating attributes plus AST validation declarations;
 - control-flow blocks including `if`, `switch`, loops, `try`, and
-  `unwind_protect`, with `parfor` preserving optional worker expressions;
+  `unwind_protect`, with sequential browser fallbacks for `parfor` and `spmd`
+  preserving and validating worker expressions;
 - `classdef` syntax for class attributes, superclass lists, `properties`,
   `methods`, `events`, and `enumeration` sections;
 - class section attributes, including negated attributes such as `~Dependent`
@@ -63,31 +64,115 @@ The AST layer normalizes parse output into node contracts exported from
 - `NodeArgumentValidation` keeps the declared name, optional size, class,
   validator functions, and default expression as distinct child nodes. Class
   property validation declarations reuse this shape so parser and runtime
-  validation paths stay aligned;
+  validation paths stay aligned. Size and validator-function lists are
+  expression-boundary values, not arbitrary AST inputs;
+- AST arrays built by `factoryExpressionList`, including index arguments,
+  superclass-constructor arguments, class-enumeration arguments, validation
+  sizes, and validator-function lists, are expression-boundary arrays;
 - `NodeImport` stores imported qualified names as identifier-like entries with
   parent/index links, including wildcard names such as `pkg.*`;
+- `NodeReturnList` represents lazy multi-output values. Use
+  `AST.nodeBoundedReturnList` for fixed maximum-output helpers and
+  `AST.nodeCommaSeparatedReturnList` for values that should expand as
+  comma-separated lists; direct metadata mutation should stay inside AST
+  factories;
 - `NodeFor` preserves `parallel === true` for `parfor` and stores optional
   worker expressions separately from the loop target/range;
 - `NodeOperation` consumers should narrow through the AST binary, prefix, and
   postfix guards before reading operands. Parser actions still produce one
   operation family, while interpreter and unparser paths now enforce the
   refined shapes they consume;
-- `StrictNodeExpr` is the documented expression contract for new hand-written
-  code. `LegacyNodeExprCarrier` names the remaining broad compatibility edge
-  while generated parser actions and older evaluator reducers are migrated;
+- `RuntimeExpressionValue` names evaluated runtime values accepted in
+  expression position, while `StrictNodeExpr` is the documented expression
+  contract for new hand-written AST code. `LegacyNodeExprCarrier` names the
+  remaining broad compatibility edge while older evaluator reducers are
+  migrated;
 - `ExpressionBoundaryValue` is the result type for validated expression
   boundary helpers. It accepts strict expression values plus explicit
   `NodeList` execution-result carriers, and should be preferred when a helper
   has already rejected statements/control-flow nodes;
+- call-site argument lists that have crossed AST factory boundaries should keep
+  the `ExpressionBoundaryValue[]` contract through function argument splitting,
+  user-function binding, class constructor/method dispatch, and native indexing
+  helpers, instead of widening back to legacy expression arrays. Call-frame
+  metadata used by `inputname` should preserve the same boundary-checked
+  argument shape, context-level comma-list expansion and built-in argument
+  evaluation should keep that type, and low-level scope parameter binding
+  should not widen already evaluated arguments back to generic AST expressions;
 - evaluated values that cross expression-only boundaries should pass through
   the shared `ExpressionValue` helpers, so return lists, comma-separated lists,
   function-call arguments, assignment lowering, `for` iteration values,
   indexing descriptors, and class dispatch reject control-flow nodes before
   exposing ordinary values;
+- `arguments`-block validation then narrows those boundary-checked values to
+  concrete `RuntimeExpressionValue` data before applying size, class,
+  name-value, repeating, and built-in `mustBe*` checks. Use the shared
+  runtime-expression helpers when a boundary must reject parser-only carriers
+  such as `NodeList` before writing runtime storage or inspecting value shape;
+- class names declared in `arguments` blocks are preserved dynamically instead
+  of being filtered by a syntax-time built-in class list. Runtime validation is
+  responsible for matching built-in classes, the internal declarative `array`
+  class, and user-defined class definitions/subclasses. Class-specific object
+  arrays must contain at least one matching class/enumeration element, because
+  generic empty arrays do not carry user-class metadata in the current runtime.
+  Classdef property default validation is the narrow exception: it may accept
+  the implicit empty placeholder produced for an uninitialized class-typed
+  property, but subsequent assignments are validated strictly;
+- runtime class-membership checks should use the same object-array semantics:
+  homogeneous arrays of class instances or enumeration values match their
+  declared class/superclass, while generic empty arrays do not imply a
+  user-defined class. Interpreter-owned classification built-ins such as
+  `class` may use this richer object-array metadata even when lower-level
+  runtime validators still describe heterogeneous non-cell arrays as `array`;
+- runtime class lookup should include built-in language classes that are not
+  ordinary source-backed `classdef` files, including `handle`, event metadata
+  classes, and `meta.*` reflection classes, so `isclass`, `exist`, and `which`
+  agree with dispatch and `isa`;
+- class introspection helpers such as `properties`, `methods`, `events`, and
+  `superclasses` should accept scalar class objects, `meta.class` values, and
+  non-cell arrays composed entirely of objects tied to the same class metadata.
+  Mixed arrays should be rejected rather than selecting the first object;
+- predicate-style checks that should return false instead of throwing should
+  use the shared optional runtime-expression helper before calling runtime
+  validators;
+- structure-field storage should receive concrete `RuntimeExpressionValue`
+  values after assignment and descriptor-based `subsasgn` evaluation, keeping
+  AST-only carriers out of runtime data containers. Scalar `Structure` fields
+  are typed as non-null concrete runtime values; use `MultiArray.emptyArray()`
+  for MATLAB-like empty field values. Interpreter-created metadata structures,
+  including function-handle workspaces and Set/Get property snapshots, should
+  use the same structure-field contract. `MultiArray`'s structural helpers
+  preserve `null`/`undefined` only for array/cell construction slots, not for
+  structure fields;
 - native array, cell, and character indexing should receive only validated
   `IndexArgument` values (`ComplexType` or `MultiArray`). Use
   `MultiArray.indexArguments` at interpreter/context boundaries rather than
   forwarding raw AST subscript nodes or arbitrary evaluated runtime values;
+- native indexed assignment should prepare scalar RHS values as concrete
+  `RuntimeExpressionValue` data before wrapping them for `MultiArray`
+  assignment, while already-materialized `MultiArray` RHS values preserve their
+  array/cell shape;
+- workspace initializer paths such as `assignin`, `global = value`, and
+  `persistent = value` should store concrete `RuntimeExpressionValue` data when
+  an initializer is supplied;
+- per-function persistent tables store `RuntimeExpressionValue` entries and
+  should reject non-runtime workspace carriers before saving state between
+  function calls. Helpers that write evaluated values into workspaces should
+  use the runtime-name-writer contract instead of the broader scope contract,
+  which also carries parser and definition nodes;
+- class-instance property tables and event-data public fields expose
+  `RuntimeExpressionValue` values, so object state does not retain parser-only
+  AST carriers after construction or assignment;
+- function-call and class-dispatch resolution should not classify empty arrays
+  as object arrays by vacuous matching. Empty arrays must fall back to ordinary
+  indexing or undefined-reference diagnostics unless a path explicitly carries
+  class metadata;
+- resolved class-enumeration values store constructor-like member arguments as
+  `RuntimeExpressionValue` entries, separating parsed enumeration argument
+  expressions from runtime enumeration instances;
+- public `meta.*` object properties expose `RuntimeExpressionValue` data. When
+  a parser-only class metadata object has an unevaluated property default, the
+  default is represented as compact expression text rather than an AST node;
 - `MultiArray.linearize` and related indexing helpers must preserve
   MATLAB/Octave column-major logical order over the engine's page-stacked
   physical storage. Optimizations should stay equivalent to

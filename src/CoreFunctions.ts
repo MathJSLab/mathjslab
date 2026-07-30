@@ -1,7 +1,7 @@
 import { CharString } from './CharString';
 import { Complex, ComplexType } from './Complex';
 import { type ElementType, MultiArray } from './MultiArray';
-import { Structure } from './Structure';
+import { Structure, type StructureFieldValue } from './Structure';
 import { ClassDefinition } from './ClassDefinition';
 import { ClassInstance } from './ClassInstance';
 import { ClassEnumerationValue } from './ClassEnumerationValue';
@@ -9,6 +9,7 @@ import { ClassEventListener } from './ClassEventListener';
 import { ClassMetaClass, ClassMetaObject } from './ClassMeta';
 import { type BuiltInFunctionSignature, type NodeReturnList, AST, type FunctionSignatureEntry, ReturnHandlerResult } from './AST';
 import { FunctionValidation } from './FunctionValidation';
+import { optionalRuntimeExpressionValue, runtimeExpressionValue } from './ExpressionValue';
 import { RuntimeEquality } from './RuntimeEquality';
 import { RuntimeValue } from './RuntimeValue';
 import { LAPACK } from './LAPACK';
@@ -138,6 +139,252 @@ abstract class CoreFunctions {
         return MultiArray.isCellArray(X) ? Complex.true() : Complex.false();
     };
 
+    /** Signature metadata for `issparse`. */
+    public static readonly issparseSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
+    /**
+     * Return whether a value uses sparse storage.
+     *
+     * MathJSLab intentionally keeps array storage dense for browser/runtime
+     * efficiency. Sparse-related APIs are compatibility facades, so current
+     * runtime values are never sparse.
+     *
+     * @param X Value to test.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @returns Logical false for every currently representable value.
+     */
+    public static readonly issparse = (X?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('issparse', !(typeof X !== 'undefined' && rest.length === 0));
+        return Complex.false();
+    };
+
+    /** Signature metadata for `full`. */
+    public static readonly fullSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
+    /**
+     * Convert a sparse value to dense storage.
+     *
+     * Since runtime storage is already dense, this returns a value copy.
+     *
+     * @param X Value to materialize densely.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @returns Dense copy of `X`.
+     */
+    public static readonly full = (X?: ElementType, ...rest: unknown[]): ElementType => {
+        AST.throwInvalidCallError('full', !(typeof X !== 'undefined' && rest.length === 0));
+        return RuntimeValue.copy(X);
+    };
+
+    /**
+     * Test whether an element contributes to sparse/nonzero APIs.
+     *
+     * @param value Candidate runtime element.
+     * @returns `true` when the element is nonzero or nonempty text/object data.
+     */
+    public static readonly isNonzeroElement = (value: ElementType): boolean => {
+        if (Complex.isInstanceOf(value)) {
+            return Complex.realToNumber(value) !== 0 || Complex.imagToNumber(value) !== 0;
+        }
+        if (CharString.isInstanceOf(value)) {
+            return value.str.length > 0 && value.str.split('').some((char) => char.charCodeAt(0) !== 0);
+        }
+        if (MultiArray.isInstanceOf(value)) {
+            return MultiArray.linearize(value).some(CoreFunctions.isNonzeroElement);
+        }
+        return value !== null && typeof value !== 'undefined';
+    };
+
+    /** Signature metadata for `nnz`. */
+    public static readonly nnzSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
+    /**
+     * Count nonzero elements in a dense-compatible value.
+     *
+     * @param X Value to inspect.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @returns Number of nonzero elements.
+     */
+    public static readonly nnz = (X?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('nnz', !(typeof X !== 'undefined' && rest.length === 0));
+        return Complex.create(MultiArray.linearize(MultiArray.scalarToMultiArray(X)).filter(CoreFunctions.isNonzeroElement).length);
+    };
+
+    /** Signature metadata for `nzmax`. */
+    public static readonly nzmaxSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
+    /**
+     * Return sparse allocation capacity for compatibility.
+     *
+     * Without sparse storage, allocated sparse capacity is represented by the
+     * number of nonzero dense elements.
+     *
+     * @param X Value to inspect.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @returns Dense-compatible nonzero capacity.
+     */
+    public static readonly nzmax = (X?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('nzmax', !(typeof X !== 'undefined' && rest.length === 0));
+        return CoreFunctions.nnz(X);
+    };
+
+    /** Signature metadata for `nonzeros`. */
+    public static readonly nonzerosSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
+    /**
+     * Return nonzero values as a column vector.
+     *
+     * @param X Value to inspect.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @returns Column vector of nonzero elements.
+     */
+    public static readonly nonzeros = (X?: ElementType, ...rest: unknown[]): ElementType => {
+        AST.throwInvalidCallError('nonzeros', !(typeof X !== 'undefined' && rest.length === 0));
+        return MultiArray.MultiArrayToScalar(MultiArray.toColumnVector(MultiArray.linearize(MultiArray.scalarToMultiArray(X)).filter(CoreFunctions.isNonzeroElement).map(RuntimeValue.copy)));
+    };
+
+    /**
+     * Extract one nonnegative integer dimension from a scalar argument.
+     *
+     * @param value Candidate dimension value.
+     * @param name Function name used in diagnostics.
+     * @param index One-based argument index.
+     * @returns Integer dimension.
+     */
+    private static readonly sparseDimension = (value: ElementType, name: string, index: number): number => {
+        const scalar = MultiArray.MultiArrayToScalar(value);
+        if (!Complex.isInstanceOf(scalar) || !Complex.imagIsZero(scalar) || !Complex.realIsInteger(scalar) || Complex.realToNumber(scalar) < 0) {
+            throw new Error(`${name}: argument ${index} must be a nonnegative integer scalar.`);
+        }
+        return Complex.realToNumber(scalar);
+    };
+
+    /**
+     * Expand scalar/vector sparse constructor inputs to a common triplet count.
+     *
+     * @param value Subscript or value input.
+     * @param count Common triplet count.
+     * @param name Function name used in diagnostics.
+     * @param index One-based argument index.
+     * @returns Linearized values expanded to `count`.
+     */
+    private static readonly sparseTripletValues = (value: ElementType, count: number, name: string, index: number): ElementType[] => {
+        const values = MultiArray.linearize(MultiArray.scalarToMultiArray(value));
+        if (values.length === count) {
+            return values.map(RuntimeValue.copy);
+        }
+        if (values.length === 1) {
+            return new Array(count).fill(undefined).map(() => RuntimeValue.copy(values[0]));
+        }
+        throw new Error(`${name}: argument ${index} must be scalar or match the sparse triplet count.`);
+    };
+
+    /**
+     * Extract sparse constructor subscripts.
+     *
+     * @param value Subscript scalar or vector.
+     * @param count Common triplet count.
+     * @param name Function name used in diagnostics.
+     * @param index One-based argument index.
+     * @returns One-based positive integer subscripts.
+     */
+    private static readonly sparseSubscripts = (value: ElementType, count: number, name: string, index: number): number[] =>
+        CoreFunctions.sparseTripletValues(value, count, name, index).map((item) => {
+            if (!Complex.isInstanceOf(item) || !Complex.imagIsZero(item) || !Complex.realIsInteger(item) || Complex.realToNumber(item) < 1) {
+                throw new Error(`${name}: argument ${index} must contain positive integer subscripts.`);
+            }
+            return Complex.realToNumber(item);
+        });
+
+    /** Signature metadata for `sparse`. */
+    public static readonly sparseSignature: BuiltInFunctionSignature = {
+        inputs: { arity: -6, min: 1, max: 6, parameters: [{ name: 'value', variadic: true }] },
+        outputs: { arity: 1 },
+    };
+    /**
+     * Sparse constructor compatibility facade.
+     *
+     * The returned value is a dense matrix equivalent to the sparse matrix that
+     * MATLAB/Octave would construct for supported forms.
+     *
+     * @param args Sparse constructor arguments.
+     * @returns Dense equivalent of the requested sparse matrix.
+     */
+    public static readonly sparse = (...args: ElementType[]): ElementType => {
+        AST.throwInvalidCallError('sparse', args.length < 1 || args.length > 6);
+        if (args.length === 1) {
+            return RuntimeValue.copy(args[0]);
+        }
+        if (args.length === 2) {
+            return new MultiArray([CoreFunctions.sparseDimension(args[0], 'sparse', 1), CoreFunctions.sparseDimension(args[1], 'sparse', 2)], Complex.zero());
+        }
+        const count = Math.max(...args.slice(0, 3).map((arg) => MultiArray.linearize(MultiArray.scalarToMultiArray(arg)).length));
+        const rows = CoreFunctions.sparseSubscripts(args[0], count, 'sparse', 1);
+        const columns = CoreFunctions.sparseSubscripts(args[1], count, 'sparse', 2);
+        const values = CoreFunctions.sparseTripletValues(args[2], count, 'sparse', 3);
+        const rowCount = args.length >= 5 ? CoreFunctions.sparseDimension(args[3], 'sparse', 4) : rows.reduce((max, row) => Math.max(max, row), 0);
+        const columnCount = args.length >= 5 ? CoreFunctions.sparseDimension(args[4], 'sparse', 5) : columns.reduce((max, column) => Math.max(max, column), 0);
+        if (args.length === 6 && CharString.isInstanceOf(args[5]) && !['sum', 'unique'].includes(args[5].str)) {
+            throw new Error("sparse: option must be 'sum' or 'unique'.");
+        }
+        const unique = args.length === 6 && CharString.isInstanceOf(args[5]) && args[5].str === 'unique';
+        const result = new MultiArray([rowCount, columnCount], Complex.zero());
+        for (let k = 0; k < count; k++) {
+            if (rows[k] > rowCount || columns[k] > columnCount) {
+                throw new Error('sparse: subscript indices out of range.');
+            }
+            const row = rows[k] - 1;
+            const column = columns[k] - 1;
+            const value = values[k];
+            const current = result.array[row][column];
+            result.array[row][column] = !unique && Complex.isInstanceOf(current) && Complex.isInstanceOf(value) ? Complex.add(current, value) : RuntimeValue.copy(value);
+        }
+        MultiArray.setType(result);
+        return MultiArray.MultiArrayToScalar(result);
+    };
+
+    /** Signature metadata for `spalloc`. */
+    public static readonly spallocSignature: BuiltInFunctionSignature = {
+        inputs: [
+            {
+                arity: 3,
+                parameters: [
+                    { name: 'm', validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
+                    { name: 'n', validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
+                    { name: 'nz', validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
+                ],
+            },
+            {
+                arity: 4,
+                parameters: [
+                    { name: 'm', validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
+                    { name: 'n', validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
+                    { name: 'nz', validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
+                    { name: 'typename', classes: ['char', 'string'], allowedStrings: ['double', 'single', 'logical'] },
+                ],
+            },
+        ],
+        outputs: { arity: 1 },
+    };
+    /**
+     * Allocate a sparse-compatible all-zero matrix over dense storage.
+     *
+     * MathJSLab does not allocate sparse backing storage. The `nz` capacity is
+     * validated for MATLAB/Octave API compatibility and intentionally ignored.
+     *
+     * @param m Number of rows.
+     * @param n Number of columns.
+     * @param nz Requested sparse nonzero capacity.
+     * @param typename Optional sparse storage class name.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @returns Dense all-zero matrix with the requested shape.
+     */
+    public static readonly spalloc = (m?: ElementType, n?: ElementType, nz?: ElementType, typename?: ElementType, ...rest: unknown[]): ElementType => {
+        AST.throwInvalidCallError('spalloc', !(typeof m !== 'undefined' && typeof n !== 'undefined' && typeof nz !== 'undefined' && rest.length === 0));
+        const rows = CoreFunctions.sparseDimension(m, 'spalloc', 1);
+        const columns = CoreFunctions.sparseDimension(n, 'spalloc', 2);
+        CoreFunctions.sparseDimension(nz, 'spalloc', 3);
+        if (typeof typename !== 'undefined' && (!CharString.isInstanceOf(typename) || !['double', 'single', 'logical'].includes(typename.str))) {
+            throw new Error("spalloc: typename must be 'double', 'single', or 'logical'.");
+        }
+        const zero = CharString.isInstanceOf(typename) && typename.str === 'logical' ? Complex.false() : Complex.zero();
+        return MultiArray.MultiArrayToScalar(new MultiArray([rows, columns], zero));
+    };
+
     /** Signature metadata for `isrow`. */
     public static readonly isrowSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
     /**
@@ -184,7 +431,16 @@ abstract class CoreFunctions {
     public static readonly ischarSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
     public static readonly ischar = (X?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('ischar', !(typeof X !== 'undefined' && rest.length === 0));
-        return CharString.isInstanceOf(X) ? Complex.true() : Complex.false();
+        const value = optionalRuntimeExpressionValue(X);
+        return value && FunctionValidation.matchesClass(value, 'char') ? Complex.true() : Complex.false();
+    };
+
+    /** Signature metadata for `isstring`. */
+    public static readonly isstringSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
+    public static readonly isstring = (X?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('isstring', !(typeof X !== 'undefined' && rest.length === 0));
+        const value = optionalRuntimeExpressionValue(X);
+        return value && FunctionValidation.matchesClass(value, 'string') ? Complex.true() : Complex.false();
     };
 
     /** Signature metadata for `char`. */
@@ -209,7 +465,7 @@ abstract class CoreFunctions {
         const width = rows.reduce((max, row) => Math.max(max, row.length), 0);
         const result = new MultiArray([rows.length, width]);
         for (let i = 0; i < rows.length; i++) {
-            const quote = rows[i][0]?.quote ?? '"';
+            const quote = rows[i][0]?.quote ?? "'";
             for (let j = 0; j < width; j++) {
                 result.array[i][j] = rows[i][j] ?? CharString.create(' ', quote);
             }
@@ -225,7 +481,7 @@ abstract class CoreFunctions {
      * @param quote Quote style to preserve.
      * @returns Character scalar.
      */
-    private static readonly charElement = (value: ElementType, quote: CharString['quote'] = '"'): CharString => {
+    private static readonly charElement = (value: ElementType, quote: CharString['quote'] = "'"): CharString => {
         if (CharString.isInstanceOf(value)) {
             return value;
         }
@@ -459,7 +715,8 @@ abstract class CoreFunctions {
      */
     public static readonly isfloat = (X?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('isfloat', !(typeof X !== 'undefined' && rest.length === 0));
-        return FunctionValidation.numericElements(X) ? Complex.true() : Complex.false();
+        const value = optionalRuntimeExpressionValue(X);
+        return value && FunctionValidation.numericElements(value) ? Complex.true() : Complex.false();
     };
 
     /** Signature metadata for `isinteger`. */
@@ -484,21 +741,24 @@ abstract class CoreFunctions {
     public static readonly isnumericSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
     public static readonly isnumeric = (X?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('isnumeric', !(typeof X !== 'undefined' && rest.length === 0));
-        return FunctionValidation.numericElements(X) ? Complex.true() : Complex.false();
+        const value = optionalRuntimeExpressionValue(X);
+        return value && FunctionValidation.numericElements(value) ? Complex.true() : Complex.false();
     };
 
     /** Signature metadata for `islogical`. */
     public static readonly islogicalSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
     public static readonly islogical = (X?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('islogical', !(typeof X !== 'undefined' && rest.length === 0));
-        return FunctionValidation.isLogicalValue(X) ? Complex.true() : Complex.false();
+        const value = optionalRuntimeExpressionValue(X);
+        return value && FunctionValidation.isLogicalValue(value) ? Complex.true() : Complex.false();
     };
 
     /** Signature metadata for `isreal`. */
     public static readonly isrealSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
     public static readonly isreal = (X?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('isreal', !(typeof X !== 'undefined' && rest.length === 0));
-        const elements = FunctionValidation.numericElements(X, { includeLogical: true });
+        const value = optionalRuntimeExpressionValue(X);
+        const elements = value ? FunctionValidation.numericElements(value, { includeLogical: true }) : undefined;
         return elements && elements.every((item) => Complex.imagIsZero(item)) ? Complex.true() : Complex.false();
     };
 
@@ -564,12 +824,21 @@ abstract class CoreFunctions {
             return value.classDefinition;
         }
         if (MultiArray.isInstanceOf(value) && !value.isCell) {
-            const object = MultiArray.linearize(value).find((item) => ClassInstance.isInstanceOf(item) || ClassEnumerationValue.isInstanceOf(item) || ClassMetaClass.isInstanceOf(item));
-            if (ClassMetaClass.isInstanceOf(object)) {
-                return object.definition;
-            }
-            if (ClassInstance.isInstanceOf(object) || ClassEnumerationValue.isInstanceOf(object)) {
-                return object.classDefinition;
+            const definitionFor = (item: ElementType): ClassDefinition | undefined => {
+                if (ClassMetaClass.isInstanceOf(item)) {
+                    return item.definition;
+                }
+                if (ClassInstance.isInstanceOf(item) || ClassEnumerationValue.isInstanceOf(item)) {
+                    return item.classDefinition;
+                }
+                return undefined;
+            };
+            const definitions = MultiArray.linearize(value).map(definitionFor);
+            if (definitions.length > 0 && definitions.every((definition): definition is ClassDefinition => typeof definition !== 'undefined')) {
+                const first = definitions[0];
+                if (definitions.every((definition) => definition === first)) {
+                    return first;
+                }
             }
         }
         throw new EvalError(`${name}: input must be a class object.`);
@@ -719,7 +988,7 @@ abstract class CoreFunctions {
     };
 
     public static readonly ismethodSignature: BuiltInFunctionSignature = {
-        inputs: { arity: 2, parameters: [{ name: 'object' }, { name: 'methodName', classes: ['char'] }] },
+        inputs: { arity: 2, parameters: [{ name: 'object' }, { name: 'methodName', classes: ['char', 'string'] }] },
         outputs: { arity: 1 },
     };
     public static readonly ismethod = (X?: ElementType, methodName?: ElementType, ...rest: unknown[]): ComplexType => {
@@ -845,7 +1114,7 @@ abstract class CoreFunctions {
                 parameters: [
                     { name: 'value', classes: ['double'] },
                     { name: 'count', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
-                    { name: 'direction', classes: ['char'], allowedStrings: ['first', 'last'] },
+                    { name: 'direction', classes: ['char', 'string'], allowedStrings: ['first', 'last'] },
                 ],
             },
         ],
@@ -880,7 +1149,7 @@ abstract class CoreFunctions {
         const columns = entries.map(({ index }) => Complex.create(MultiArray.linearIndexToSubscript(MA.dimension, index)[1] ?? 1));
         const foundValues = entries.map(({ value }) => value);
         const toColumn = (items: ElementType[]): ElementType => MultiArray.MultiArrayToScalar(MultiArray.toColumnVector(items));
-        return AST.nodeReturnList((evaluated: ReturnHandlerResult, index: number): ElementType => {
+        return AST.nodeBoundedReturnList(3, (evaluated: ReturnHandlerResult, index: number): ElementType => {
             if (evaluated.length === 1) {
                 return toColumn(indices);
             }
@@ -892,7 +1161,7 @@ abstract class CoreFunctions {
                 case 2:
                     return toColumn(foundValues);
                 default:
-                    return MultiArray.emptyArray();
+                    throw new EvalError('unreachable find return-list selector branch.');
             }
         });
     };
@@ -908,7 +1177,7 @@ abstract class CoreFunctions {
                         name: 'dimensionOrDirection',
                         alternatives: [
                             { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
-                            { name: 'direction', classes: ['char'], allowedStrings: ['ascend', 'descend'] },
+                            { name: 'direction', classes: ['char', 'string'], allowedStrings: ['ascend', 'descend'] },
                         ],
                     },
                 ],
@@ -918,7 +1187,7 @@ abstract class CoreFunctions {
                 parameters: [
                     { name: 'value', classes: ['double'] },
                     { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
-                    { name: 'direction', classes: ['char'], allowedStrings: ['ascend', 'descend'] },
+                    { name: 'direction', classes: ['char', 'string'], allowedStrings: ['ascend', 'descend'] },
                 ],
             },
         ],
@@ -977,9 +1246,9 @@ abstract class CoreFunctions {
         }
         MultiArray.setType(sorted);
         indices.type = Complex.REAL;
-        return AST.nodeReturnList((evaluated: ReturnHandlerResult, index: number): ElementType =>
-            index === 0 || evaluated.length === 1 ? MultiArray.MultiArrayToScalar(sorted) : MultiArray.MultiArrayToScalar(indices),
-        );
+        return AST.nodeBoundedReturnList(2, (evaluated: ReturnHandlerResult, index: number): ElementType => {
+            return index === 0 || evaluated.length === 1 ? MultiArray.MultiArrayToScalar(sorted) : MultiArray.MultiArrayToScalar(indices);
+        });
     };
 
     public static readonly ind2subSignature: BuiltInFunctionSignature = {
@@ -1346,10 +1615,7 @@ abstract class CoreFunctions {
                 break;
             }
         }
-        return AST.nodeReturnList((evaluated: ReturnHandlerResult, index: number): ElementType => {
-            if (evaluated.length > 3) {
-                throw new Error('meshgrid: function called with too many outputs.');
-            }
+        return AST.nodeBoundedReturnList(3, (evaluated: ReturnHandlerResult, index: number): ElementType => {
             const args: ElementType[][] = argsLinearized;
             while (args.length < evaluated.length) {
                 args[args.length] = args[args.length - 1];
@@ -1408,7 +1674,7 @@ abstract class CoreFunctions {
                 }
             }
             if (evaluated.length > args.length) {
-                throw new Error('ndgrid: function called with too many outputs.');
+                AST.throwErrorIfGreaterThanReturnList(args.length, evaluated.length);
             }
             const shape: number[] = args.map((M) => M.dimension[0] * M.dimension[1]);
             const r: number[] = new Array(args.length).fill(1);
@@ -2111,7 +2377,7 @@ abstract class CoreFunctions {
                     {
                         name: 'structOrEmptyArray',
                         alternatives: [
-                            { name: 'field', classes: ['char'] },
+                            { name: 'field', classes: ['char', 'string'] },
                             { name: 'struct', classes: ['struct'] },
                             { name: 'emptyArray', classes: ['double', 'cell', 'array'] },
                         ],
@@ -2125,7 +2391,7 @@ abstract class CoreFunctions {
                     {
                         name: 'field',
                         variadic: true,
-                        variadicGroup: [{ name: 'field', classes: ['char'] }, { name: 'value' }],
+                        variadicGroup: [{ name: 'field', classes: ['char', 'string'] }, { name: 'value' }],
                     },
                 ],
             },
@@ -2153,10 +2419,13 @@ abstract class CoreFunctions {
             if (args.length % 2 !== 0) {
                 throw new Error(errorMessage);
             }
-            const resultFields: Record<string, ElementType> = {};
+            const resultFields: Record<string, StructureFieldValue> = {};
             for (let i = 0; i < args.length; i += 2) {
                 if (CharString.isInstanceOf(args[i])) {
-                    resultFields[(args[i] as CharString).str] = args[i + 1];
+                    const value = runtimeExpressionValue(args[i + 1], (args[i] as CharString).str, 'struct field', () => {
+                        throw new Error(errorMessage);
+                    });
+                    resultFields[(args[i] as CharString).str] = value;
                 } else {
                     throw new Error(errorMessage);
                 }
@@ -2174,7 +2443,7 @@ abstract class CoreFunctions {
                 {
                     name: 'typeAndSubscript',
                     variadic: true,
-                    variadicGroup: [{ name: 'type', classes: ['char'] }, { name: 'subscript' }],
+                    variadicGroup: [{ name: 'type', classes: ['char', 'string'] }, { name: 'subscript' }],
                 },
             ],
         },
@@ -2249,7 +2518,7 @@ abstract class CoreFunctions {
                         name: 'order',
                         alternatives: [
                             { name: 'numericOrder', classes: ['double'], validators: ['numeric', 'scalar', 'real'] },
-                            { name: 'frobeniusOrder', classes: ['char'], allowedStrings: ['fro'] },
+                            { name: 'frobeniusOrder', classes: ['char', 'string'], allowedStrings: ['fro'] },
                         ],
                     },
                 ],
@@ -2361,7 +2630,15 @@ abstract class CoreFunctions {
         isrow: { func: CoreFunctions.isrow, signature: CoreFunctions.isrowSignature },
         iscolumn: { func: CoreFunctions.iscolumn, signature: CoreFunctions.iscolumnSignature },
         isstruct: { func: CoreFunctions.isstruct, signature: CoreFunctions.isstructSignature },
+        issparse: { func: CoreFunctions.issparse, signature: CoreFunctions.issparseSignature },
+        full: { func: CoreFunctions.full, signature: CoreFunctions.fullSignature },
+        sparse: { func: CoreFunctions.sparse, signature: CoreFunctions.sparseSignature },
+        spalloc: { func: CoreFunctions.spalloc, signature: CoreFunctions.spallocSignature },
+        nnz: { func: CoreFunctions.nnz, signature: CoreFunctions.nnzSignature },
+        nzmax: { func: CoreFunctions.nzmax, signature: CoreFunctions.nzmaxSignature },
+        nonzeros: { func: CoreFunctions.nonzeros, signature: CoreFunctions.nonzerosSignature },
         ischar: { func: CoreFunctions.ischar, signature: CoreFunctions.ischarSignature },
+        isstring: { func: CoreFunctions.isstring, signature: CoreFunctions.isstringSignature },
         char: { func: CoreFunctions.char, signature: CoreFunctions.charSignature },
         double: { func: CoreFunctions.double, signature: CoreFunctions.doubleSignature },
         logical: { func: CoreFunctions.logical, signature: CoreFunctions.logicalSignature },

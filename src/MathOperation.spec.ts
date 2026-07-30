@@ -3,6 +3,7 @@ import path from 'node:path';
 import { Complex, type ComplexType } from './Complex';
 import { MathOperation } from './MathOperation';
 import { MultiArray } from './MultiArray';
+import { Structure } from './Structure';
 
 const __filenameMatch = __filename.match(new RegExp(`.*\\${path.sep}([^\\${path.sep}]+)\\.spec\\.([cm]?[jt]s)\$`))!;
 const unitName = __filenameMatch[1];
@@ -109,6 +110,19 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         it('MathOperation matrix division should reject nonconformant matrix dimensions', () => {
             expect(() => MathOperation.mrdivide(createRealMatrix([[1, 2]]), createRealMatrix([[1, 2]]))).toThrow('operator /: nonconformant arguments');
             expect(() => MathOperation.mldivide(createRealMatrix([[1, 2, 3]]), createRealMatrix([[1], [2], [3]]))).toThrow('operator \\: nonconformant arguments');
+        });
+
+        it('MathOperation dispatchers should reject structure operands explicitly.', () => {
+            const scalarStruct = new Structure({ x: Complex.create(1) });
+            const structArray = MultiArray.firstRow([scalarStruct, Structure.copy(scalarStruct)], false);
+
+            expect(() => MathOperation.plus(scalarStruct, Complex.create(1))).toThrow('operator + is not defined for struct operands.');
+            expect(() => MathOperation.eq(scalarStruct, Structure.copy(scalarStruct))).toThrow('operator == is not defined for struct operands.');
+            expect(() => MathOperation.mtimes(structArray, Complex.create(2))).toThrow('operator * is not defined for struct operands.');
+            expect(() => MathOperation.mrdivide(Complex.create(2), scalarStruct)).toThrow('operator / is not defined for struct operands.');
+            expect(() => MathOperation.mldivide(scalarStruct, Complex.create(2))).toThrow('operator \\ is not defined for struct operands.');
+            expect(() => MathOperation.mpower(scalarStruct, Complex.create(2))).toThrow('operator ^ is not defined for struct operands.');
+            expect(() => MathOperation.uminus(structArray)).toThrow('operator - is not defined for struct operands.');
         });
 
         it('MathOperation.mpower should accept numeric scalar values stored in 1x1 matrices', () => {

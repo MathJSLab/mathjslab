@@ -1,4 +1,5 @@
 /// <reference types="jest" />
+import { AST } from './AST';
 import { Complex } from './Complex';
 import { ClassDefinition } from './ClassDefinition';
 import { ClassEnumerationValue } from './ClassEnumerationValue';
@@ -18,6 +19,7 @@ describe('ClassEnumerationValue', () => {
             expect(value.classDefinition).toBe(definition);
             expect(value.enumeration).toBe(enumeration);
             expect(value.args.length).toBe(1);
+            expect(AST.isRuntimeExpressionValue(value.args[0])).toBe(true);
             expect(copy).not.toBe(value);
             expect(copy.args).not.toBe(value.args);
             expect(ClassEnumerationValue.unparse(value, Interpreter.Create())).toBe('EnumSpec.One');

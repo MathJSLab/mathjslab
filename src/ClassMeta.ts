@@ -9,7 +9,7 @@ import { CharString } from './CharString';
 import { Complex } from './Complex';
 import { MultiArray } from './MultiArray';
 import { Structure } from './Structure';
-import { AST, type ClassAttributeTable, type NodeArgumentValidation, type NodeFunctionParameter, type NodeFunctionReturn, type NodeInput } from './AST';
+import { AST, type ClassAttributeTable, type NodeArgumentValidation, type NodeFunctionParameter, type NodeFunctionReturn, type NodeInput, type RuntimeExpressionValue } from './AST';
 import type { RuntimeDisplay } from './RuntimeDisplay';
 
 type ClassPropertyDefinition = ClassPropertyDefinitionBase<ClassDefinition>;
@@ -20,14 +20,16 @@ type ClassEnumerationDefinition = ClassEnumerationDefinitionBase<ClassDefinition
 type ClassMetaMemberDefinition = ClassPropertyDefinition | ClassMethodDefinition | ClassEventDefinition | ClassEnumerationDefinition;
 /** Supported meta-object kind names. */
 type ClassMetaKind = 'meta.class' | 'meta.property' | 'meta.method' | 'meta.event' | 'meta.EnumerationMember';
+/** Runtime values exposed by public MATLAB-like `meta.*` properties. */
+type ClassMetaPropertyValue = RuntimeExpressionValue;
 /**
  * Callback used by runtime-created meta objects to evaluate property defaults
  * lazily.
  */
-type ClassPropertyDefaultProvider = (property: ClassPropertyDefinition) => NodeInput | undefined;
+type ClassPropertyDefaultProvider = (property: ClassPropertyDefinition) => RuntimeExpressionValue | undefined;
 type ValidationMetadata = Pick<NodeArgumentValidation, 'name' | 'size' | 'class' | 'functions'> & {
-    default?: NodeInput | null;
-    defaultValue?: NodeInput | null;
+    default?: ClassMetaPropertyValue | null;
+    defaultValue?: ClassMetaPropertyValue | null;
 };
 
 /**
@@ -119,6 +121,18 @@ const expressionText = (node: unknown): string => {
     }
     return '';
 };
+
+/**
+ * Convert an unevaluated metadata default into a runtime value.
+ *
+ * Parser-created meta objects do not have an evaluator available. In that case,
+ * expose a textual representation rather than leaking AST nodes through the
+ * public `meta.property.DefaultValue` surface.
+ *
+ * @param value Parsed default expression.
+ * @returns Runtime value suitable for meta-object properties.
+ */
+const defaultExpressionValue = (value: NodeInput): RuntimeExpressionValue => (AST.isRuntimeExpressionValue(value) ? value : CharString.create(expressionText(value)));
 
 /**
  * Convert one argument validation declaration to a structure.
@@ -223,7 +237,7 @@ abstract class ClassMetaObject {
      * @param field Property name.
      * @returns Property value, if supported.
      */
-    public abstract getProperty(field: string): NodeInput | undefined;
+    public abstract getProperty(field: string): ClassMetaPropertyValue | undefined;
 
     /**
      * Return the display name used by unparse and diagnostics.
@@ -297,7 +311,7 @@ class ClassMetaClass extends ClassMetaObject {
      * @param field Property name.
      * @returns Property value, if supported.
      */
-    public getProperty(field: string): NodeInput | undefined {
+    public getProperty(field: string): ClassMetaPropertyValue | undefined {
         switch (field) {
             case 'Name':
                 return CharString.create(this.definition.name);
@@ -376,7 +390,7 @@ abstract class ClassMetaMember extends ClassMetaObject {
      * @param field Property name.
      * @returns Property value, if supported by all member meta objects.
      */
-    protected commonProperty(field: string): NodeInput | undefined {
+    protected commonProperty(field: string): ClassMetaPropertyValue | undefined {
         switch (field) {
             case 'Name':
                 return CharString.create(this.member.name);
@@ -430,16 +444,16 @@ class ClassMetaProperty extends ClassMetaMember {
     /**
      * Return the default value exposed through metadata.
      *
-     * Runtime-created meta objects evaluate defaults lazily; unit-created meta
-     * objects without a provider preserve the parsed default expression.
+     * Runtime-created meta objects evaluate defaults lazily; parser-created
+     * meta objects without a provider expose compact expression text.
      *
      * @returns Evaluated/default expression value, or `null` when absent.
      */
-    private defaultValue(): NodeInput | null {
+    private defaultValue(): ClassMetaPropertyValue | null {
         if (!this.property.defaultValue) {
             return null;
         }
-        return this.defaultProvider?.(this.property) ?? this.property.defaultValue;
+        return this.defaultProvider?.(this.property) ?? defaultExpressionValue(this.property.defaultValue);
     }
 
     /**
@@ -448,7 +462,7 @@ class ClassMetaProperty extends ClassMetaMember {
      * @param field Property name.
      * @returns Property value, if supported.
      */
-    public getProperty(field: string): NodeInput | undefined {
+    public getProperty(field: string): ClassMetaPropertyValue | undefined {
         const common = this.commonProperty(field);
         if (typeof common !== 'undefined') {
             return common;
@@ -544,7 +558,7 @@ class ClassMetaMethod extends ClassMetaMember {
      * @param field Property name.
      * @returns Property value, if supported.
      */
-    public getProperty(field: string): NodeInput | undefined {
+    public getProperty(field: string): ClassMetaPropertyValue | undefined {
         const common = this.commonProperty(field);
         if (typeof common !== 'undefined') {
             return common;
@@ -612,7 +626,7 @@ class ClassMetaEvent extends ClassMetaMember {
      * @param field Property name.
      * @returns Property value, if supported.
      */
-    public getProperty(field: string): NodeInput | undefined {
+    public getProperty(field: string): ClassMetaPropertyValue | undefined {
         const common = this.commonProperty(field);
         if (typeof common !== 'undefined') {
             return common;
@@ -668,7 +682,7 @@ class ClassMetaEnumerationMember extends ClassMetaMember {
      * @param field Property name.
      * @returns Property value, if supported.
      */
-    public getProperty(field: string): NodeInput | undefined {
+    public getProperty(field: string): ClassMetaPropertyValue | undefined {
         const common = this.commonProperty(field);
         if (typeof common !== 'undefined') {
             return common;
@@ -683,5 +697,5 @@ class ClassMetaEnumerationMember extends ClassMetaMember {
 }
 
 export { ClassMetaObject, ClassMetaClass, ClassMetaMember, ClassMetaProperty, ClassMetaMethod, ClassMetaEvent, ClassMetaEnumerationMember };
-export type { ClassMetaKind };
+export type { ClassMetaKind, ClassMetaPropertyValue };
 export default { ClassMetaObject, ClassMetaClass, ClassMetaMember, ClassMetaProperty, ClassMetaMethod, ClassMetaEvent, ClassMetaEnumerationMember };

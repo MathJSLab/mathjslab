@@ -1,4 +1,4 @@
-import type { NodeInput } from './AST';
+import type { RuntimeExpressionValue } from './AST';
 import { CharString } from './CharString';
 import type { ClassInstance } from './ClassInstance';
 import type { RuntimeDisplay } from './RuntimeDisplay';
@@ -53,7 +53,7 @@ class ClassEventData {
      * @param field Field name.
      * @returns Field value, if supported.
      */
-    public static readonly getProperty = (eventData: ClassEventData, field: string): NodeInput | undefined => {
+    public static readonly getProperty = (eventData: ClassEventData, field: string): RuntimeExpressionValue | undefined => {
         switch (field) {
             case 'Source':
                 return eventData.source;

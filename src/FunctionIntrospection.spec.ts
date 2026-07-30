@@ -42,9 +42,9 @@ class TestScope implements IntrospectionScope {
     }
 }
 
-const frame = (type: string | undefined, scope: TestScope, name = '', parentFrame?: IntrospectionFrame, id = name): IntrospectionFrame => ({
+const frame = (type: string | undefined, scope: TestScope, name = '', parentFrame?: IntrospectionFrame, id = name, sourceName?: string): IntrospectionFrame => ({
     scope,
-    func: type ? { type, node: { id } } : undefined,
+    func: type ? { type, node: { id, sourceName } } : undefined,
     name,
     parentFrame,
 });
@@ -59,6 +59,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(FunctionIntrospection).toBeDefined();
             expect(FunctionIntrospection.localFunctionHandles).toBeDefined();
             expect(FunctionIntrospection.frameName).toBeDefined();
+            expect(FunctionIntrospection.frameFile).toBeDefined();
             expect(FunctionIntrospection.dbstackResult).toBeDefined();
         });
 
@@ -70,6 +71,16 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(FunctionIntrospection.frameName(frame('BUILTIN', scope, '', undefined, 'sum'))).toBe('sum');
             expect(FunctionIntrospection.frameName(frame('LAMBDA', scope, ''))).toBe('<anonymous>');
             expect(FunctionIntrospection.frameName(frame(undefined, scope))).toBe('');
+        });
+
+        it('Should resolve virtual frame files from function metadata.', () => {
+            const scope = new TestScope();
+            const lambda = FunctionHandle.create(undefined, [], AST.nodeIdentifier('x'));
+            lambda.sourceName = '+pkg/anon.m';
+
+            expect(FunctionIntrospection.frameFile(frame('FCNDEF', scope, 'virtual', undefined, 'virtual', '+pkg/virtual.m'))).toBe('+pkg/virtual.m');
+            expect(FunctionIntrospection.frameFile({ scope, func: { type: 'LAMBDA', node: lambda } })).toBe('+pkg/anon.m');
+            expect(FunctionIntrospection.frameFile(frame('FCNDEF', scope, 'interactive'))).toBe('');
         });
 
         it('Should list local function handles from the nearest function frame scope.', () => {
@@ -112,6 +123,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const globalFrame = frame(undefined, scope);
             const outerFrame = frame('FCNDEF', scope, 'outer', globalFrame);
             const innerFrame = frame('LAMBDA', scope, '@(x)x', outerFrame);
+            outerFrame.func = { type: 'FCNDEF', node: { id: 'outer', sourceName: '+pkg/outer.m' } };
             outerFrame.callSite = { type: 'IDENT', id: 'outer', start: { line: 10, column: 1 } };
             innerFrame.callSite = { type: 'IDENT', id: 'anon', start: { line: 12, column: 3 } };
 
@@ -121,6 +133,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const first = result.array[0][0] as Structure;
 
             expect(result.dimension).toEqual([1, 1]);
+            expect((first.field.file as CharString).str).toBe('+pkg/outer.m');
             expect((first.field.name as CharString).str).toBe('outer');
             expect(Complex.realToNumber(first.field.line as ComplexType)).toBe(10);
         });

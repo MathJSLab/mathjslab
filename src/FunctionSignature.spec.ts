@@ -97,8 +97,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             } as NodeBuiltInFunction;
 
             expect(FunctionSignature.inputParametersAreValid(builtin, [Complex.create(1)])).toBe(true);
-            expect(FunctionSignature.inputParametersAreValid(builtin, [new CharString('x'), Complex.create(2)])).toBe(true);
-            expect(FunctionSignature.inputParametersAreValid(builtin, [new CharString('x')])).toBe(false);
+            expect(FunctionSignature.inputParametersAreValid(builtin, [new CharString('x', "'"), Complex.create(2)])).toBe(true);
+            expect(FunctionSignature.inputParametersAreValid(builtin, [new CharString('x', "'")])).toBe(false);
             expect(FunctionSignature.inputParametersAreValid(builtin, [Complex.create(1), Complex.create(2)])).toBe(false);
         });
     });

@@ -145,6 +145,23 @@ class FunctionHandle {
     public closure?: FunctionHandleClosure;
 
     /**
+     * Virtual source identity where the anonymous handle was created.
+     *
+     * Browser-hosted function files and scripts do not have real filesystem
+     * paths, but MATLAB-compatible introspection still needs a stable `file`
+     * value for `functions`, `dbstack`, and `mfilename`.
+     */
+    public sourceName?: string;
+
+    /**
+     * Class context where the anonymous handle was created, if any.
+     *
+     * The value is a plain class name instead of a `ClassDefinition` reference
+     * so function handles remain independent from the class runtime module.
+     */
+    public className?: string;
+
+    /**
      * Type guard for FunctionHandle.
      *
      * @param obj - Value to test
@@ -277,6 +294,8 @@ class FunctionHandle {
             result.expression.parent = result;
         }
         result.parent = fhandle.parent;
+        result.sourceName = fhandle.sourceName;
+        result.className = fhandle.className;
         return result;
     };
 

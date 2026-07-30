@@ -1,4 +1,4 @@
-import type { NodeExpr } from './AST';
+import type { ExpressionBoundaryValue, NodeExpr } from './AST';
 import type { Callable } from './Callable';
 import type { Scope } from './Scope';
 
@@ -27,8 +27,9 @@ class CallFrame {
      * @param name Display name used by stack traces and introspection.
      * @param nargin Number of input arguments supplied by the caller.
      * @param nargout Number of output values requested by the caller.
-     * @param inputArgs Original unevaluated argument nodes, used by `inputname`.
+     * @param inputArgs Original unevaluated call arguments, used by `inputname`.
      * @param parentFrame Caller frame.
+     * @param outputMask Per-output request flags used by `isargout`.
      */
     public constructor(
         public scope: Scope,
@@ -37,8 +38,9 @@ class CallFrame {
         public name?: string,
         public nargin: number = 0,
         public nargout: number = 0,
-        public inputArgs: NodeExpr[] = [],
+        public inputArgs: ExpressionBoundaryValue[] = [],
         public parentFrame?: CallFrame,
+        public outputMask: boolean[] = [],
     ) {}
 }
 

@@ -144,6 +144,28 @@ describe('ClassMeta', () => {
             expect(realNumber(validation.field.DefaultValue)).toBe(1);
         });
 
+        it('Should expose parser-only property defaults as runtime metadata values.', () => {
+            const definition = ClassDefinition.create(parseClass(['classdef ParserOnlyDefaultMetaSpec', '  properties', '    x = sin(1)', '  end', 'end'].join('\n')));
+            const property = ClassMetaProperty.create(definition.properties[0]);
+            const validation = MultiArray.linearize(property.getProperty('Validation') as MultiArray)[0] as Structure;
+
+            expect(property.getProperty('DefaultValue')).toEqual(CharString.create('sin(1)'));
+            expect(AST.isRuntimeExpressionValue(property.getProperty('DefaultValue'))).toBe(true);
+            expect(validation.field.DefaultValue).toEqual(CharString.create('sin(1)'));
+            expect(AST.isRuntimeExpressionValue(validation.field.DefaultValue)).toBe(true);
+        });
+
+        it('Should expose evaluated property defaults supplied by a runtime provider.', () => {
+            const definition = ClassDefinition.create(parseClass(['classdef RuntimeDefaultMetaSpec', '  properties', '    x = sin(1)', '  end', 'end'].join('\n')));
+            const property = ClassMetaProperty.create(definition.properties[0], () => Complex.create(42));
+            const validation = MultiArray.linearize(property.getProperty('Validation') as MultiArray)[0] as Structure;
+
+            expect(realNumber(property.getProperty('DefaultValue'))).toBe(42);
+            expect(AST.isRuntimeExpressionValue(property.getProperty('DefaultValue'))).toBe(true);
+            expect(realNumber(validation.field.DefaultValue)).toBe(42);
+            expect(AST.isRuntimeExpressionValue(validation.field.DefaultValue)).toBe(true);
+        });
+
         it('Should expose method, event, and enumeration metadata.', () => {
             const definition = ClassDefinition.create(
                 parseClass(

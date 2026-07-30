@@ -39,6 +39,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
         it('Should compute input and return layouts.', () => {
             const func = functionDefinition(['x', 'opts', 'varargin'], ['a', 'varargout']);
+            const repeatingOutput = functionDefinition(['x'], ['items']);
 
             expect(FunctionCall.inputLayout(func, new Set(['opts']))).toMatchObject({
                 hasVarargin: true,
@@ -49,6 +50,12 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                 hasVarargout: true,
                 fixedReturnCount: 1,
                 names: ['a', 'varargout'],
+            });
+            expect(FunctionCall.returnLayout(repeatingOutput, 'items')).toMatchObject({
+                hasVarargout: false,
+                variableOutputName: 'items',
+                fixedReturnCount: 0,
+                names: ['items'],
             });
         });
 
@@ -106,6 +113,27 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(prepared.minFixedParamCount).toBe(1);
         });
 
+        it('Should preserve colon default markers while expanding positional arguments.', () => {
+            const func = functionDefinition(['x', 'y'], ['z']);
+            const colon = AST.nodeColon();
+            const expanded = Complex.create(3);
+            const prepared = FunctionCall.prepareFunctionCall(func, [colon], 1, {
+                nameValueParameters: () => new Set(),
+                splitCallArguments: (_func, args) => ({ positional: args, named: new Map() }),
+                expandPositionalArguments: (args) => (args[0] === colon ? [expanded] : args),
+                inputDefaults: () =>
+                    new Map([
+                        ['x', Complex.create(1) as NodeExpr],
+                        ['y', Complex.create(2) as NodeExpr],
+                    ]),
+                throwEvalError: (message) => {
+                    throw new Error(message);
+                },
+            });
+
+            expect(prepared.callArguments.positional).toEqual([colon]);
+        });
+
         it('Should reject invalid calls while preparing function calls.', () => {
             const func = functionDefinition(['x'], ['y']);
 
@@ -157,19 +185,87 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(bound.get('y')).toBe(y);
         });
 
+        it('Should bind Octave colon default markers for positional defaults.', () => {
+            const func = functionDefinition(['x', 'y', 'varargin'], ['z']);
+            const inputLayout = FunctionCall.inputLayout(func, new Set());
+            const bound = new Map<string, unknown>();
+            const x = Complex.create(2);
+            const y = Complex.create(10);
+            const marker = AST.nodeColon();
+            const evaluated = FunctionCall.evaluateCallArguments(
+                [x, marker],
+                AST.nodeIndexExpr(AST.nodeIdentifier('f')),
+                (expr) => expr,
+                (message) => {
+                    throw new Error(message);
+                },
+                0,
+                true,
+            );
+
+            FunctionCall.bindPositionalInputs(
+                func,
+                inputLayout,
+                evaluated,
+                new Map([['y', y]]),
+                (name, value) => bound.set(name, value),
+                (_name, expression) => expression,
+                (message) => {
+                    throw new Error(message);
+                },
+            );
+
+            expect(bound.get('x')).toBe(x);
+            expect(bound.get('y')).toBe(y);
+        });
+
+        it('Should reject Octave colon default markers without matching defaults.', () => {
+            const func = functionDefinition(['x', 'y'], ['z']);
+            const inputLayout = FunctionCall.inputLayout(func, new Set());
+            const evaluated = FunctionCall.evaluateCallArguments(
+                [Complex.create(2), AST.nodeColon()],
+                AST.nodeIndexExpr(AST.nodeIdentifier('f')),
+                (expr) => expr,
+                (message) => {
+                    throw new Error(message);
+                },
+                0,
+                true,
+            );
+
+            expect(() =>
+                FunctionCall.bindPositionalInputs(
+                    func,
+                    inputLayout,
+                    evaluated,
+                    new Map(),
+                    () => undefined,
+                    (_name, expression) => expression,
+                    (message) => {
+                        throw new Error(message);
+                    },
+                ),
+            ).toThrow("invalid use of default argument marker ':' in function f");
+        });
+
         it('Should bind variadic input and output cells through callbacks.', () => {
             const func = functionDefinition(['x', 'varargin'], ['y', 'varargout']);
+            const repeatingOutput = functionDefinition(['x'], ['items']);
             const inputLayout = FunctionCall.inputLayout(func, new Set());
             const returnLayout = FunctionCall.returnLayout(func);
+            const repeatingReturnLayout = FunctionCall.returnLayout(repeatingOutput, 'items');
             const bound = new Map<string, unknown>();
 
             FunctionCall.bindVarargin(inputLayout, [Complex.create(1), Complex.create(2), Complex.create(3)], (name, value) => bound.set(name, value));
             FunctionCall.bindVarargout(returnLayout, 3, (name, value) => bound.set(name, value));
+            FunctionCall.bindVarargout(repeatingReturnLayout, 2, (name, value) => bound.set(name, value));
 
             expect(bound.get('varargin')).toBeInstanceOf(MultiArray);
             expect((bound.get('varargin') as MultiArray).dimension).toEqual([1, 2]);
             expect(bound.get('varargout')).toBeInstanceOf(MultiArray);
             expect((bound.get('varargout') as MultiArray).dimension).toEqual([1, 2]);
+            expect(bound.get('items')).toBeInstanceOf(MultiArray);
+            expect((bound.get('items') as MultiArray).dimension).toEqual([1, 2]);
         });
 
         it('Should evaluate call arguments while preserving parent and indexes.', () => {
@@ -177,7 +273,15 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const first = AST.nodeIdentifier('x');
             const second = AST.nodeIdentifier('y');
 
-            const evaluated = FunctionCall.evaluateCallArguments([first, second], parent, (expr) => expr, 3);
+            const evaluated = FunctionCall.evaluateCallArguments(
+                [first, second],
+                parent,
+                (expr) => expr,
+                (message) => {
+                    throw new Error(message);
+                },
+                3,
+            );
 
             expect(evaluated).toEqual([first, second]);
             expect(first.parent).toBe(parent);
@@ -189,7 +293,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         it('Should bind lambda fixed inputs and varargin.', () => {
             const parent = AST.nodeIndexExpr(AST.nodeIdentifier('f'));
             const params = [AST.nodeIdentifier('x'), AST.nodeIdentifier('varargin')];
-            const args: NodeExpr[] = [Complex.create(1), Complex.create(2), Complex.create(3)];
+            const args = [AST.nodeIdentifier('a'), AST.nodeIdentifier('b'), AST.nodeIdentifier('c')];
             const bound = new Map<string, unknown>();
 
             FunctionCall.bindLambdaInputs(
@@ -200,6 +304,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                 1,
                 (name, value) => bound.set(name, value),
                 (expr) => expr,
+                (message) => {
+                    throw new Error(message);
+                },
             );
 
             expect(bound.get('x')).toBe(args[0]);
@@ -210,6 +317,22 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(args[2].index).toBe(2);
         });
 
+        it('Should reject non-expression values while evaluating function arguments.', () => {
+            const parent = AST.nodeIndexExpr(AST.nodeIdentifier('f'));
+            const arg = AST.nodeIdentifier('x');
+
+            expect(() =>
+                FunctionCall.evaluateCallArguments(
+                    [arg],
+                    parent,
+                    () => AST.nodeReturn(),
+                    (message) => {
+                        throw new Error(message);
+                    },
+                ),
+            ).toThrow("Argument value 'argument 1' is not an expression.");
+        });
+
         it('Should reject non-expression values while building return lists.', () => {
             const returnLayout = FunctionCall.returnLayout(functionDefinition([], ['y']));
             const returnList = FunctionCall.createReturnList(returnLayout, { y: { node: AST.nodeReturn() } } as NameTable, (message) => {
@@ -218,6 +341,23 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
             expect(AST.isNodeReturnList(returnList)).toBe(true);
             expect(() => returnList.handler(1)).toThrow("Return variable 'y' is not an expression.");
+        });
+
+        it('Should build return lists from named repeating output cells.', () => {
+            const returnLayout = FunctionCall.returnLayout(functionDefinition([], ['items']), 'items');
+            const returnList = FunctionCall.createReturnList(
+                returnLayout,
+                { items: { node: MultiArray.firstRow([Complex.create(10), Complex.create(20)], true) } } as NameTable,
+                (message) => {
+                    throw new Error(message);
+                },
+            );
+
+            const returned = returnList.handler(2);
+
+            expect(returned.length).toBe(2);
+            expect(Complex.realToNumber(returned.items0 as NodeExpr)).toBe(10);
+            expect(Complex.realToNumber(returned.items1 as NodeExpr)).toBe(20);
         });
     });
 });

@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 import path from 'node:path';
-import { AST, type NodeExpr, type NodeIdentifier, type NodeInput, type StrictNodeExpr } from './AST';
+import { AST, type NodeExpr, type NodeIdentifier, type NodeInput, type RuntimeExpressionValue, type StrictNodeExpr } from './AST';
 import { CharString } from './CharString';
 import { Complex } from './Complex';
 import { FunctionHandle } from './FunctionHandle';
@@ -60,6 +60,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const range = AST.nodeRange(AST.nodeNumber('1') as NodeExpr, AST.nodeNumber('2') as NodeExpr);
             const ctor = AST.nodeSuperclassConstructor(AST.nodeIdentifier('obj'), AST.nodeIdentifier('Base'));
             const commandWordList = AST.nodeCmdWList(AST.nodeIdentifier('help'), AST.nodeListFirst(AST.nodeString('plot') as unknown as NodeInput));
+            const legacyExpressionCarriers: NodeExpr[] = [list, statement, classMember];
+            const runtimeExpressions: RuntimeExpressionValue[] = [Complex.one(), AST.nodeString('runtime text'), MultiArray.emptyArray()];
             const strictExpressions: StrictNodeExpr[] = [
                 Complex.one(),
                 AST.nodeString('text'),
@@ -102,9 +104,17 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(AST.isNodeMetaClass(metaclass)).toBe(true);
             expect(AST.isRuntimeExpressionValue(Complex.one())).toBe(true);
             expect(AST.isRuntimeExpressionValue(AST.nodeString('text'))).toBe(true);
+            expect(runtimeExpressions.every((node) => AST.isRuntimeExpressionValue(node))).toBe(true);
+            expect(AST.isExpressionBoundaryValue(identifier)).toBe(true);
+            expect(AST.isExpressionBoundaryValue(list)).toBe(true);
+            expect(AST.isExpressionBoundaryValue(statement)).toBe(false);
+            expect(legacyExpressionCarriers.every((node) => !AST.isStrictNodeExpr(node))).toBe(true);
             expect(strictExpressions.every((node) => AST.isStrictNodeExpr(node))).toBe(true);
             expect(AST.isStrictNodeExpr(list)).toBe(false);
             expect(AST.isStrictNodeExpr(statement)).toBe(false);
+            expect(AST.requireStrictNodeExpr(identifier)).toBe(identifier);
+            expect(() => AST.requireStrictNodeExpr(list, 'test list')).toThrow('test list is not an expression node.');
+            expect(() => AST.requireStrictNodeExpr(statement, 'test statement')).toThrow('test statement is not an expression node.');
             expect(AST.isNodeClassEvent(classMember)).toBe(true);
             expect(AST.isNodeClassMember(classMember)).toBe(true);
             expect(AST.isNodeDefaultedParameter({ type: '=', left: AST.nodeIdentifier('x') })).toBe(false);
@@ -285,7 +295,42 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(returnList.handler(2)).toMatchObject({ length: 2, first, second });
             expect(reduced).toBe(first);
             expect(reduced.parent).toBe(parent);
-            expect(() => AST.ensureReturnList(first).selector({ length: 1 }, 2)).toThrow('element number 2 undefined in return list');
+            expect(() => AST.ensureReturnList(first).selector(AST.ensureReturnList(first).handler(2), 1)).toThrow('element number 2 undefined in return list');
+        });
+
+        it('Should create comma-separated return lists with expansion metadata.', () => {
+            const first = AST.nodeIdentifier('first');
+            const second = AST.nodeIdentifier('second');
+            const returnList = AST.nodeCommaSeparatedReturnList(
+                2,
+                (evaluated, index) => (index === 0 ? evaluated.first : evaluated.second),
+                (length) => ({ length, first, second }),
+            );
+
+            const evaluated = returnList.handler(2);
+
+            expect(returnList.commaSeparated).toBe(true);
+            expect(returnList.returnListLength).toBe(2);
+            expect(evaluated).toMatchObject({ length: 2, first, second });
+            expect(returnList.selector(evaluated, 0)).toBe(first);
+            expect(returnList.selector(evaluated, 1)).toBe(second);
+        });
+
+        it('Should create bounded return lists with standard arity diagnostics.', () => {
+            const first = AST.nodeIdentifier('first');
+            const second = AST.nodeIdentifier('second');
+            const returnList = AST.nodeBoundedReturnList(
+                2,
+                (evaluated, index) => (index === 0 ? evaluated.first : evaluated.second),
+                (length) => ({ length, first, second }),
+            );
+
+            const evaluated = returnList.handler(2);
+
+            expect(evaluated).toMatchObject({ length: 2, first, second });
+            expect(returnList.selector(evaluated, 1)).toBe(second);
+            expect(() => returnList.handler(3)).toThrow('element number 3 undefined in return list');
+            expect(() => returnList.selector({ length: 3 }, 0)).toThrow('element number 3 undefined in return list');
         });
 
         it('Should create declarations and basic jump nodes.', () => {
@@ -368,6 +413,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const validation = AST.nodeArgumentValidation(name, size, cl, AST.nodeListFirst(validator), dflt);
             const attribute = AST.nodeIdentifier('Output');
             const args = AST.nodeArguments(attribute, AST.nodeListFirst(validation as unknown as NodeInput));
+            const repeatingArgs = AST.nodeArguments(AST.nodeList([AST.nodeIdentifier('Input'), AST.nodeIdentifier('Repeating')]), AST.nodeListFirst());
 
             expect(validation.type).toBe('ARGVALID');
             expect(name.parent).toBe(validation);
@@ -377,7 +423,11 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(dflt.parent).toBe(validation);
             expect(args.type).toBe('ARGS');
             expect(attribute.parent).toBe(args);
+            expect(args.attribute).toBe(attribute);
+            expect(args.attributes).toEqual([attribute]);
             expect(validation.parent).toBe(args);
+            expect(repeatingArgs.attributes.map((node) => node.id)).toEqual(['Input', 'Repeating']);
+            expect(repeatingArgs.attributes.map((node) => node.parent)).toEqual([repeatingArgs, repeatingArgs]);
         });
 
         it('Should reject non-expression values in argument validation factories.', () => {
@@ -539,9 +589,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             ).toEqual([section]);
         });
 
-        it('Should delegate string, number, and row factories after reload.', () => {
-            AST.reload();
-
+        it('Should expose string, number, and row factories before interpreter reload.', () => {
             const text = AST.nodeString('abc', '"');
             const number = AST.nodeNumber('2');
             const row = AST.nodeList([number, Complex.one()] as unknown as NodeInput[]);

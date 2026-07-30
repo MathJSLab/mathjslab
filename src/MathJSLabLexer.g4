@@ -117,6 +117,11 @@ ENUMERATION, ENDENUMERATION, PROPERTIES, ENDPROPERTIES, EVENTS, ENDEVENTS, METHO
      */
     public commandNames: Set<string> = new Set();
     /**
+     * Command names that should remain ordinary identifiers when followed by an
+     * assignment operator.
+     */
+    public assignmentSensitiveCommandNames: Set<string> = new Set();
+    /**
      * Expression marks that indicate non-termination.
      */
     public static readonly nonTerminalSign: Set<number> = new Set([
@@ -177,6 +182,10 @@ ENUMERATION, ENDENUMERATION, PROPERTIES, ENDPROPERTIES, EVENTS, ENDEVENTS, METHO
     public commandContinued: boolean = false;
     /* Matrix reading context stack. */
     public matrixContext: number[] = [];
+    /* Tracks whether each curly brace opened a cell-literal or indexing context. */
+    public curlyBraceIsMatrixContext: boolean[] = [];
+    /* Open cell-indexing brace count. */
+    public indexingBraceCount: number = 0;
     /* String accumulator. */
     public quotedString: string = '';
 
@@ -204,6 +213,26 @@ ENUMERATION, ENDENUMERATION, PROPERTIES, ENDPROPERTIES, EVENTS, ENDEVENTS, METHO
             current = this._input.LA(offset);
         }
         return false;
+    }
+
+    /**
+     * Test whether the next non-space input starts an assignment expression.
+     *
+     * Command-form parsing is only valid when a command name is followed by
+     * literal argument text. Names such as `run` and `source` are still legal
+     * variables, so `source = 10` and `source += 1` must remain expressions
+     * rather than entering the command-word lexer mode.
+     */
+    private commandIsFollowedByAssignment(offset: number): boolean {
+        const first = this._input.LA(offset);
+        if (first === 61) {
+            return true;
+        }
+        const second = this._input.LA(offset + 1);
+        if ([43, 45, 42, 47, 92, 94, 38, 124].includes(first) && second === 61) {
+            return true;
+        }
+        return first === 46 && [42, 47, 92, 94].includes(second) && this._input.LA(offset + 2) === 61;
     }
 }
 
@@ -246,11 +275,28 @@ RBRACKET: ']' {
     this.previousTokenType = MathJSLabLexer.RBRACKET;
 };
 LCURLYBR: '{' {
-    this.matrixContext.push(MathJSLabLexer.LCURLYBR);
+    const isIndexingBrace =
+        this.previousTokenType === MathJSLabLexer.RPAREN ||
+        this.previousTokenType === MathJSLabLexer.RBRACKET ||
+        this.previousTokenType === MathJSLabLexer.RCURLYBR ||
+        this.previousTokenType === MathJSLabLexer.IDENTIFIER ||
+        this.previousTokenType === MathJSLabLexer.FLOAT_NUMBER ||
+        this.previousTokenType === MathJSLabLexer.STRING ||
+        this.previousTokenType === MathJSLabLexer.ENDRANGE;
+    this.curlyBraceIsMatrixContext.push(!isIndexingBrace);
+    if (isIndexingBrace) {
+        this.indexingBraceCount++;
+    } else {
+        this.matrixContext.push(MathJSLabLexer.LCURLYBR);
+    }
     this.previousTokenType = MathJSLabLexer.LCURLYBR;
 };
 RCURLYBR: '}' {
-    this.matrixContext.pop();
+    if (this.curlyBraceIsMatrixContext.pop() ?? true) {
+        this.matrixContext.pop();
+    } else {
+        this.indexingBraceCount = Math.max(0, this.indexingBraceCount - 1);
+    }
     this.previousTokenType = MathJSLabLexer.RCURLYBR;
 };
 LEFTDIV: '\\' { this.previousTokenType = MathJSLabLexer.LEFTDIV; };
@@ -317,7 +363,7 @@ IDENTIFIER
             if (typeof keywordType !== 'undefined') {
                 switch (keywordType) {
                     case MathJSLabLexer.END:
-                        this._type = this.previousTokenType = (this.parenthesisCount > 0 || this.matrixContext.length > 0) ? MathJSLabLexer.ENDRANGE : MathJSLabLexer.END;
+                        this._type = this.previousTokenType = (this.parenthesisCount > 0 || this.matrixContext.length > 0 || this.indexingBraceCount > 0) ? MathJSLabLexer.ENDRANGE : MathJSLabLexer.END;
                         break;
                     default:
                         this._type = this.previousTokenType = keywordType;
@@ -334,7 +380,8 @@ IDENTIFIER
                 while (next === 9 || next === 32) {
                     next = this._input.LA(++offset);
                 }
-                if (isCommandName && isCommandPosition && (next !== 40 || offset > 1)) {
+                const assignmentSensitive = this.assignmentSensitiveCommandNames.has(this.text) && this.commandIsFollowedByAssignment(offset);
+                if (isCommandName && isCommandPosition && (next !== 40 || offset > 1) && !assignmentSensitive) {
                     this.pushMode(MathJSLabLexer.ANY_AS_STRING_UNTIL_END_OF_LINE);
                 }
                 this.previousTokenType = MathJSLabLexer.IDENTIFIER;
@@ -391,7 +438,7 @@ NEWLINE
     : NL {
         if (this.continuedTokenType === this.previousTokenType) {
             this.skip();
-        } else if (this.parenthesisCount > 0) {
+        } else if (this.parenthesisCount > 0 || this.indexingBraceCount > 0) {
             this.skip();
         } else if (this.matrixContext.length > 0 &&
             (this.previousTokenType === MathJSLabLexer.LBRACKET ||

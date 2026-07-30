@@ -48,6 +48,10 @@ class FunctionArity {
                 const params = this.checkedList(callable.node.parameter.list, AST.isNodeFunctionParameter, 'function parameter');
                 return this.identifierListArity(params, 'varargin');
             }
+            case 'STATIC_METHOD': {
+                const params = this.checkedList(callable.node.method.node.parameter.list, AST.isNodeFunctionParameter, 'static method parameter');
+                return this.identifierListArity(params, 'varargin');
+            }
             case 'BUILTIN':
                 return FunctionSignature.declaredArity(FunctionSignature.inputSignatures(callable.node)) ?? callable.node.func.length;
         }
@@ -65,6 +69,10 @@ class FunctionArity {
                 return 1;
             case 'FCNDEF': {
                 const returnNames = this.checkedList(callable.node.return.list, AST.isNodeFunctionReturn, 'function return');
+                return this.identifierListArity(returnNames, 'varargout');
+            }
+            case 'STATIC_METHOD': {
+                const returnNames = this.checkedList(callable.node.method.node.return.list, AST.isNodeFunctionReturn, 'static method return');
                 return this.identifierListArity(returnNames, 'varargout');
             }
             case 'BUILTIN':
