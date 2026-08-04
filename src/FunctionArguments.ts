@@ -18,6 +18,7 @@ import { MultiArray } from './MultiArray';
 import { FunctionValidation } from './FunctionValidation';
 import { RuntimeValue } from './RuntimeValue';
 import { runtimeExpressionValue } from './ExpressionValue';
+import { RuntimeEquality } from './RuntimeEquality';
 
 type ThrowSyntaxError = (message: string) => never;
 type ThrowEvalError = (message: string) => never;
@@ -523,6 +524,20 @@ class FunctionArguments {
     }
 
     /**
+     * Return scalar or array elements using the runtime's value boundaries.
+     */
+    private static membershipElements(value: RuntimeArgumentValue): RuntimeArgumentValue[] {
+        if (MultiArray.isInstanceOf(value)) {
+            return MultiArray.linearize(value).map((item) =>
+                this.runtimeArgumentValue(item, 'mustBeMember element', (message) => {
+                    throw new EvalError(message);
+                }),
+            );
+        }
+        return [value];
+    }
+
+    /**
      * Validate one built-in `mustBe*` function against an evaluated value.
      */
     public static validateArgumentFunction(
@@ -646,6 +661,11 @@ class FunctionArguments {
                     if (!textElements.every((item) => allowedTextElements.includes(item))) {
                         fail();
                     }
+                    return;
+                }
+                const valueElements = this.membershipElements(value);
+                const allowedRuntimeElements = this.membershipElements(bounds[0]);
+                if (valueElements.every((item) => allowedRuntimeElements.some((allowed) => RuntimeEquality.valuesEqual(item, allowed)))) {
                     return;
                 }
                 fail();

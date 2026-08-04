@@ -24,6 +24,10 @@ forms:
 - direct and descriptor-based indexing semantics for arrays, cells, character
   vectors, structures, and class objects, including public `substruct`,
   `subsref`, and `subsasgn` compatibility paths;
+- multidimensional array and cell indexing over the engine's page-stacked
+  storage model, including page slices, N-D expansion, logical subscripts,
+  deletion, comma-separated-list expansion, and structure/cell conversion
+  order;
 - command syntax through word-list command nodes, including continuation lines
   and comments after ellipsis, while keeping command parsing restricted to
   registered command-word names;
@@ -176,7 +180,9 @@ The AST layer normalizes parse output into node contracts exported from
 - `MultiArray.linearize` and related indexing helpers must preserve
   MATLAB/Octave column-major logical order over the engine's page-stacked
   physical storage. Optimizations should stay equivalent to
-  `linearIndexToMultiArrayRowColumn`;
+  `linearIndexToMultiArrayRowColumn`. Conformance coverage should include N-D
+  selection, assignment, expansion, deletion, logical masks, and cells whenever
+  these helpers change;
 - AST factory methods validate expression slots, function signatures,
   `arguments` metadata, class sections, branch/loop bodies, and array elements
   before storing child nodes;

@@ -902,7 +902,7 @@ class MultiArray<ELEMENT = Elements> {
     public static readonly characterVectorFromCharString = (text: CharString): MultiArray => {
         const result = new MultiArray(text.dimension);
         result.array[0] = text.toCharacterScalars();
-        MultiArray.setType(result);
+        result.type = CharString.STRING;
         return result;
     };
 
@@ -915,6 +915,9 @@ class MultiArray<ELEMENT = Elements> {
      */
     public static readonly charStringFromCharacterVectorResult = (value: ElementType, quote: CharString['quote']): CharString => {
         const selected = MultiArray.isInstanceOf(value) ? MultiArray.linearize(value) : [value];
+        if (selected.length === 0) {
+            return CharString.create('', quote);
+        }
         if (!MultiArray.isCharStringList(selected)) {
             throw new EvalError('character string indexing produced a non-character value.');
         }
@@ -1341,6 +1344,7 @@ class MultiArray<ELEMENT = Elements> {
             });
         }
         result.type = M.type;
+        result.isCell = M.isCell;
         MultiArray.removeSingletonTail(result.dimension);
         return result;
     };
@@ -1925,13 +1929,16 @@ class MultiArray<ELEMENT = Elements> {
      * ARRAYN along `dimension` parameter (zero-based).
      * @param dimension Dimension of concatenation.
      * @param fname Function name (for error messages).
+     * Empty arrays are neutral when at least one non-empty operand is present,
+     * matching MATLAB/Octave concatenation such as `[[], 1]`.
      * @param ARRAY Arrays to concatenate.
      * @returns Concatenated arrays along `dimension` parameter.
      */
     public static readonly concatenate = (dimension: number, fname: string, ...ARRAY: MultiArray[]): MultiArray => {
+        const arrays = ARRAY.some((array) => !MultiArray.isEmpty(array)) ? ARRAY.filter((array) => !MultiArray.isEmpty(array)) : ARRAY;
         let classDefinition: { name: string } | undefined;
         let structureFields: string[] | undefined;
-        for (const array of ARRAY) {
+        for (const array of arrays) {
             for (const value of MultiArray.linearize(array)) {
                 const instanceClassDefinition = RuntimeValue.classDefinitionOfInstance(value);
                 if (!classDefinition) {
@@ -1951,7 +1958,7 @@ class MultiArray<ELEMENT = Elements> {
         }
         /* Get all ARRAY dimension and set 0 at dimension[dimension] */
         const catDims: number[] = [];
-        const dims = ARRAY.map((array) => {
+        const dims = arrays.map((array) => {
             const dim = array.dimension.slice();
             MultiArray.appendSingletonTail(dim, dimension + 1);
             catDims.push(dim[dimension]);
@@ -1965,7 +1972,7 @@ class MultiArray<ELEMENT = Elements> {
         const resultDim = dims[0].slice();
         resultDim[dimension] = catDims.reduce((p, c) => p + c, 0);
         const result = new MultiArray(resultDim);
-        ARRAY.forEach((array, a) => {
+        arrays.forEach((array, a) => {
             const shift = catDims.slice(0, a).reduce((p, c) => p + c, 0);
             for (let n = 0; n < MultiArray.linearLength(array); n++) {
                 const arrayDim = array.dimension.slice();
@@ -2009,7 +2016,7 @@ class MultiArray<ELEMENT = Elements> {
      * @param fname Function name (context).
      * @returns Evaluated MultiArray object.
      */
-    private static readonly evaluateRecursive = (M: MultiArray, interpreter: RuntimeEvaluationContext | null | undefined, scope?: unknown): MultiArray => {
+    private static readonly evaluateRecursive = (M: MultiArray, interpreter: RuntimeEvaluationContext | null | undefined, scope?: unknown): ElementType => {
         const evaluateElementValues = (element: ElementType): ElementType[] => {
             if (!interpreter) {
                 return [element];
@@ -2022,20 +2029,36 @@ class MultiArray<ELEMENT = Elements> {
             }
         };
         if (M.dimension.length > 2) {
-            return MultiArray.concatenate(M.dimension.length - 1, 'evaluate', ...MultiArray.splitLastDimension(M).map((S) => MultiArray.evaluateRecursive(S, interpreter, scope)));
-        } else {
             return MultiArray.concatenate(
-                0,
+                M.dimension.length - 1,
                 'evaluate',
-                ...M.array.map((row) => {
-                    const values = row.flatMap((element) => evaluateElementValues(element));
-                    if (MultiArray.isCharStringList(values) && values.every(CharString.isChar)) {
-                        const quote = values[0].quote;
-                        return MultiArray.scalarToMultiArray(CharString.fromCharacterScalars(values, quote));
-                    }
-                    return MultiArray.concatenate(1, 'evaluate', ...values.map((value) => MultiArray.scalarToMultiArray(value)));
-                }),
+                ...MultiArray.splitLastDimension(M).map((S) => MultiArray.scalarToMultiArray(MultiArray.evaluateRecursive(S, interpreter, scope))),
             );
+        } else {
+            const overloadedRows: ElementType[] = [];
+            const rows = M.array.map((row) => {
+                const values = row.flatMap((element) => evaluateElementValues(element));
+                const overloadedRow = values.length > 1 ? interpreter?.concatenateOverload?.('horzcat', values, M) : undefined;
+                if (typeof overloadedRow !== 'undefined') {
+                    overloadedRows.push(overloadedRow as ElementType);
+                    return MultiArray.scalarToMultiArray(overloadedRow as ElementType);
+                }
+                overloadedRows.push(undefined);
+                if (MultiArray.isCharStringList(values) && values.every(CharString.isChar)) {
+                    const quote = values[0].quote;
+                    return MultiArray.scalarToMultiArray(CharString.fromCharacterScalars(values, quote));
+                }
+                return MultiArray.concatenate(1, 'evaluate', ...values.map((value) => MultiArray.scalarToMultiArray(value)));
+            });
+            if (rows.length === 1 && typeof overloadedRows[0] !== 'undefined') {
+                return overloadedRows[0];
+            }
+            const rowValues = rows.map((row) => MultiArray.MultiArrayToScalar(row));
+            const overloadedMatrix = interpreter?.concatenateOverload?.('vertcat', rowValues, M);
+            if (typeof overloadedMatrix !== 'undefined') {
+                return overloadedMatrix as ElementType;
+            }
+            return MultiArray.concatenate(0, 'evaluate', ...rows);
         }
     };
 
@@ -2087,6 +2110,9 @@ class MultiArray<ELEMENT = Elements> {
             return result;
         } else {
             const result = MultiArray.evaluateRecursive(M, interpreter, scope);
+            if (!MultiArray.isInstanceOf(result)) {
+                return result;
+            }
             result.isCell = M.isCell;
             MultiArray.setType(result);
             if (result.dimension.length === 2 && result.dimension[0] === 1 && result.dimension[1] === 1 && CharString.isInstanceOf(result.array[0][0])) {
@@ -2563,6 +2589,23 @@ class MultiArray<ELEMENT = Elements> {
         if (indexList.length === 0) {
             throw new RangeError('invalid empty index list.');
         }
+        const normalizeSubscriptIndex = (index: IndexArgument, dimensionIndex: number): IndexArgument => {
+            if (!MultiArray.isLogicalIndex(index)) {
+                return index;
+            }
+            const mask = MultiArray.logicalMaskFromIndexArgument(index);
+            const values = MultiArray.linearizedLogicalMask(mask);
+            const selected: ComplexType[] = [];
+            for (let n = 0; n < values.length; n++) {
+                if (n >= dimension[dimensionIndex]) {
+                    throw new RangeError(`logical index out of bound ${dimension[dimensionIndex]}.`);
+                }
+                if (Complex.realToNumber(values[n])) {
+                    selected.push(Complex.create(n + 1));
+                }
+            }
+            return MultiArray.toColumnVector(selected);
+        };
         const nd = dimension.length;
         const originalIndexCount = indexList.length;
         /* Linear case */
@@ -2591,7 +2634,7 @@ class MultiArray<ELEMENT = Elements> {
             indexListFull.push(MultiArray.colon(dimension[indexListFull.length]));
         }
         /* Linearize */
-        const args = indexListFull.map((index) => MultiArray.linearize(index));
+        const args = indexListFull.map((index, dimensionIndex) => MultiArray.linearize(normalizeSubscriptIndex(index, dimensionIndex)));
         const argsLength = args.map((arg) => arg.length);
         const total = argsLength.reduce((p, c) => p * c, 1);
         return {
@@ -3416,7 +3459,7 @@ class MultiArray<ELEMENT = Elements> {
         /* N-D */
         const resultFull = new MultiArray(idx.argsLength);
         for (let n = 0; n < selected.length; n++) {
-            const [p, q] = MultiArray.linearIndexToMultiArrayRowColumn(resultFull.dimension[0], resultFull.dimension[1], n);
+            const [p, q] = MultiArray.subscriptToMultiArrayRowColumn(resultFull.dimension, MultiArray.linearIndexToSubscript(resultFull.dimension, n));
             resultFull.array[p][q] = selected[n];
         }
         MultiArray.setType(resultFull);
@@ -3493,24 +3536,14 @@ class MultiArray<ELEMENT = Elements> {
         interpreter?: RuntimeDisplay,
     ): void => {
         const linearizedRight = MultiArray.linearize(right);
+        const assignmentValues = field.length > 0 && linearizedRight.length === 0 ? [right] : linearizedRight;
         /* Deletion (A(I) = []) */
-        if (linearizedRight.length === 0) {
+        if (assignmentValues.length === 0) {
             const entry = scope.resolveName(id);
             if (!entry || !(entry.node instanceof MultiArray)) {
                 throw new RangeError(`A(I) = []: index out of bounds: value ${MultiArray.firstElement(indexList[0])} out of bound 0`);
             }
-            const target = entry.node;
-            let nonColon = 0;
-            for (let i = 0; i < indexList.length; i++) {
-                const linearizedIndex = MultiArray.linearize(indexList[i]);
-                if (Complex.realToNumber(linearizedIndex[0] as ComplexType) !== 1 || linearizedIndex.length !== target.dimension[i]) {
-                    nonColon++;
-                }
-            }
-            if (nonColon !== 1) {
-                throw new RangeError('a null assignment can only have one non-colon index');
-            }
-            MultiArray.deleteElements(target, indexList, input, interpreter);
+            MultiArray.deleteElements(entry.node, indexList, input, interpreter);
             return;
         }
         /* Basic validation */
@@ -3521,8 +3554,8 @@ class MultiArray<ELEMENT = Elements> {
         const originalNode = entryOriginal?.node;
         const idx = MultiArray.computeIndexingStructure(originalNode instanceof MultiArray ? originalNode.dimension : [1], indexList);
         /* RHS compliance */
-        const isScalar = linearizedRight.length === 1;
-        if (!isScalar && linearizedRight.length !== idx.total) {
+        const isScalar = assignmentValues.length === 1;
+        if (!isScalar && assignmentValues.length !== idx.total) {
             throw new RangeError(`=: nonconformant arguments (op1 is ${idx.argsLength.join('x')}, op2 is ${right.dimension.join('x')})`);
         }
         /* Resolve target array (expansion) */
@@ -3534,7 +3567,7 @@ class MultiArray<ELEMENT = Elements> {
                     if (argsMax[0] > MultiArray.linearLength(entry.node)) {
                         if (MultiArray.isEmpty(entry.node)) {
                             const expansionFill =
-                                field.length > 0 ? MultiArray.createStructureValue(field) : entry.node.isCell ? undefined : MultiArray.blankValueForExpansion(linearizedRight[0]);
+                                field.length > 0 ? MultiArray.createStructureValue(field) : entry.node.isCell ? undefined : MultiArray.blankValueForExpansion(assignmentValues[0]);
                             MultiArray.expand(entry.node, [1, argsMax[0]], expansionFill);
                         } else if (MultiArray.arrayIsVector(entry.node)) {
                             if (entry.node.dimension[0] === 1) {
@@ -3565,7 +3598,7 @@ class MultiArray<ELEMENT = Elements> {
         } else {
             const createCellArray = field.length === 0 && right.isCell;
             const blankValue: ElementType =
-                field.length > 0 ? MultiArray.createStructureValue(field) : createCellArray ? MultiArray.emptyArray() : MultiArray.blankValueForExpansion(linearizedRight[0]);
+                field.length > 0 ? MultiArray.createStructureValue(field) : createCellArray ? MultiArray.emptyArray() : MultiArray.blankValueForExpansion(assignmentValues[0]);
             if (idx.isLinear) {
                 entry = scope.defineName(id, new MultiArray([1, argsMax[0]], blankValue, createCellArray));
             } else {
@@ -3583,7 +3616,7 @@ class MultiArray<ELEMENT = Elements> {
         /* Collect linear indices (with `end` support) */
         const indices = MultiArray.collectLinearIndices(idx, dimension, input, interpreter);
         /* Centralized assignment */
-        MultiArray.applyLinearAssignment(M, indices, linearizedRight, field);
+        MultiArray.applyLinearAssignment(M, indices, assignmentValues, field);
     };
 
     /**
@@ -3651,7 +3684,8 @@ class MultiArray<ELEMENT = Elements> {
             }
             const M = entry.node;
             const indices = MultiArray.logicalMaskToIndexList(M, mask, id);
-            const values = MultiArray.linearize(right);
+            const linearizedRight = MultiArray.linearize(right);
+            const values = field.length > 0 && linearizedRight.length === 0 ? [right] : linearizedRight;
             const isDelete = values.length === 0;
             /* Logical deletion */
             if (isDelete) {
@@ -3768,7 +3802,7 @@ class MultiArray<ELEMENT = Elements> {
         const result = new MultiArray(newDimension);
         let k = 0;
         for (let i = 0; i < kept.length; i++) {
-            const [p, q] = MultiArray.linearIndexToMultiArrayRowColumn(result.dimension[0], result.dimension[1], i);
+            const [p, q] = MultiArray.subscriptToMultiArrayRowColumn(result.dimension, MultiArray.linearIndexToSubscript(result.dimension, i));
             result.array[p][q] = kept[k++];
         }
         MultiArray.setType(result);

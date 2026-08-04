@@ -328,6 +328,38 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => localInterpreter.Execute('missing.field += 1')).toThrow('missing.field must be defined first.');
         });
 
+        it('Should assign empty arrays to indexed structure fields without deleting structure elements.', () => {
+            const firstInterpreter = Interpreter.Create();
+            const logicalInterpreter = Interpreter.Create();
+            const rangeInterpreter = Interpreter.Create();
+
+            expect(firstInterpreter.Unparse(firstInterpreter.Execute('S(1).a = 1; S(2).a = 2; S(1).a = []; [S.a]'))).toBe(
+                'S=[struct {\na: 1\n}]\nS=[struct {\na: 1\n},struct {\na: 2\n}]\nS=[struct {\na: [ ](0x0)\n},struct {\na: 2\n}]\n[2]\n',
+            );
+            expect(logicalInterpreter.Unparse(logicalInterpreter.Execute('S(1).a = 1; S(2).a = 2; S([true, false]).a = []; [S.a]'))).toBe(
+                'S=[struct {\na: 1\n}]\nS=[struct {\na: 1\n},struct {\na: 2\n}]\nS=[struct {\na: [ ](0x0)\n},struct {\na: 2\n}]\n[2]\n',
+            );
+            expect(rangeInterpreter.Unparse(rangeInterpreter.Execute('S(1).a = 1; S(2).a = 2; S(1:2).a = []; {S.a}'))).toBe(
+                'S=[struct {\na: 1\n}]\nS=[struct {\na: 1\n},struct {\na: 2\n}]\nS=[struct {\na: [ ](0x0)\n},struct {\na: [ ](0x0)\n}]\n{[ ](0x0),[ ](0x0)}\n',
+            );
+        });
+
+        it('Should delete row-vector and structure-array elements through linear indexing.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('A = [1, 2, 3]; A(1) = []; A'))).toBe('A=[1,2,3]\nA=[2,3]\n[2,3]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('S(1).a = 1; S(2).a = 2; S(1) = []; [S.a]'))).toBe(
+                'S=[struct {\na: 1\n}]\nS=[struct {\na: 1\n},struct {\na: 2\n}]\nS=[struct {\na: 2\n}]\n[2]\n',
+            );
+            expect(() => localInterpreter.Execute('A = [1, 2; 3, 4]; A(:, :) = []')).toThrow('a null assignment can only have one non-colon index');
+        });
+
+        it('Should treat empty arrays as neutral operands in non-empty concatenations.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('A = [[], 2]; B = [1, []]; C = [[], 1; [], 2]'))).toBe('A=[2]\nB=[1]\nC=[1;\n2]\n');
+        });
+
         it('Should apply increment and decrement to assignable targets.', () => {
             const localInterpreter = Interpreter.Create();
 
@@ -588,7 +620,14 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('char(65); char([65, 66, 67]); char("abc"); char(65.9)'))).toBe('A\nABC\nabc\nA\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('text = char([65, 66, 67]); text(2)'))).toBe('text=ABC\nB\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('char("ab", "c")'))).toBe('[a,b;\nc, ]\n');
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute("iscellstr({\"a\"}); iscellstr({'a', 'bc'}); iscellstr({'a', 2}); cellstr(\"abc\"); cellstr([\"a\", \"bc\"]); char({'ab', 'cd'})"),
+                ),
+            ).toBe('false\ntrue\nfalse\n{abc}\n{a,bc}\n[a,b;\nc,d]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('nargin("iscellstr"); nargout("iscellstr"); nargin("cellstr"); nargout("cellstr")'))).toBe('1\n1\n1\n1\n');
             expect(() => localInterpreter.Execute('char({65})')).toThrow('char: invalid conversion input.');
+            expect(() => localInterpreter.Execute('cellstr({1})')).toThrow('cellstr: C must be a cell array of character vectors.');
         });
 
         it('Should convert values with double.', () => {
@@ -2154,7 +2193,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('handles == p'))).toBe('[true,false]\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('p == handles'))).toBe('[true,false]\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('handles ~= q'))).toBe('[true,false]\n');
-            expect(() => localInterpreter.Execute('handles == 1')).toThrow("binary operator 'eq' is not defined for class instance operands.");
+            expect(localInterpreter.Unparse(localInterpreter.Execute('handles == 1'))).toBe('[false,false]\n');
         });
 
         it('Should report objects and compare handles with isequal.', () => {
@@ -6818,7 +6857,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('currentfile()'))).toBe('currentfile\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('currentfilefullpath()'))).toBe('currentfilefullpath\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('mfilename("class")'))).toBe('\n');
-            expect(() => localInterpreter.Execute('mfilename("bad")')).toThrow('Invalid call to mfilename.');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('mfilename("bad")'))).toBe('\n');
         });
 
         it('Should report nested function names with mfilename.', () => {
@@ -8209,9 +8248,23 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                 '1\n1\n-2\n-2\n-2\n-2\n',
             );
             expect(localInterpreter.Unparse(localInterpreter.Execute('nargin("struct"); nargout("struct")'))).toBe('-1\n1\n');
-            expect(localInterpreter.Unparse(localInterpreter.Execute('nargin("eye"); nargin("diag"); nargin("trace"); nargin("det"); nargin("inv"); nargin("gauss")'))).toBe(
-                '-2\n-3\n1\n1\n1\n2\n',
-            );
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute('nargin("eye"); nargin("transpose"); nargin("ctranspose"); nargin("diag"); nargin("trace"); nargin("det"); nargin("inv"); nargin("gauss")'),
+                ),
+            ).toBe('-2\n1\n1\n-3\n1\n1\n1\n2\n');
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'nargin("plus"); nargin("minus"); nargin("times"); nargin("mtimes"); nargin("rdivide"); nargin("mrdivide"); nargin("mldivide"); nargin("mpower"); nargin("lt"); nargin("uplus"); nargin("uminus"); nargin("not")',
+                    ),
+                ),
+            ).toBe('-2\n2\n-2\n-2\n2\n2\n2\n2\n2\n1\n1\n1\n');
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute('mrdivide([2, 4; 6, 8], [2, 0; 0, 4]); mldivide([2, 0; 0, 4], [2, 8; 6, 16]); mpower([1, 1; 0, 1], 3); ctranspose([1+2i, 3])'),
+                ),
+            ).toBe('[1,1;\n3,2]\n[1,4;\n1.5,4]\n[1,3;\n0,1]\n[1-2i;\n3]\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('nargin("lu"); nargin("dot"); nargin("cross"); nargin("kron"); nargin("qr"); nargin("eig")'))).toBe(
                 '1\n-3\n-3\n2\n1\n1\n',
             );
@@ -8455,6 +8508,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => localInterpreter.Execute('diag([1], 0.5)')).toThrow('Invalid call to diag.');
             expect(() => localInterpreter.Execute('diag([1, 2], 2, 1.5)')).toThrow('Invalid call to diag.');
             expect(() => localInterpreter.Execute('diag([1, 2; 3, 4], 2, 2)')).toThrow('Invalid call to diag.');
+            expect(() => localInterpreter.Execute('uplus(1, 2)')).toThrow('Invalid call to uplus.');
             expect(() => localInterpreter.Execute('trace("x")')).toThrow('Invalid call to trace.');
             expect(() => localInterpreter.Execute('trace(reshape(1:8, 2, 2, 2))')).toThrow('Invalid call to trace.');
             expect(() => localInterpreter.Execute('det("x")')).toThrow('Invalid call to det.');
@@ -8542,6 +8596,27 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const localInterpreter = Interpreter.Create();
 
             expect(localInterpreter.Unparse(localInterpreter.Execute('zeros(); ones(2); zeros(2, 3); ones([1, 3])'))).toBe('0\n[1,1;\n1,1]\n[0,0,0;\n0,0,0]\n[1,1,1]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('cell(); cell(1, 2); C = cell(1, 1); C{1} = 5; C; size(cell([2, 0])); nargin("cell"); nargout("cell")'))).toBe(
+                '{ }(0x0)\n{[ ](0x0),[ ](0x0)}\nC=({[ ](0x0)})\nC=({5})\n{5}\n[2,0]\n-1\n1\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('C = num2cell([1, 2; 3, 4]); C; [C{:}]; D = num2cell([1, 2; 3, 4], 1); size(D); D{1}; E = num2cell("ab"); E'))).toBe(
+                'C={1,2;\n3,4}\n{1,2;\n3,4}\n[1,3,2,4]\nD={[1;\n3],[2;\n4]}\n[1,2]\n[1;\n3]\nE={a,b}\n{a,b}\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute("cell2mat(C); cell2mat(D); cell2mat({[1, 2], [3, 4]; [5, 6], [7, 8]}); cell2mat({'ab'; 'cd'})"))).toBe(
+                '[1,2;\n3,4]\n[1,2;\n3,4]\n[1,2,3,4;\n5,6,7,8]\n[a,b;\nc,d]\n',
+            );
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'M = mat2cell([1, 2; 3, 4], [1, 1], [1, 1]); M; M{1, 1}; M{2, 2}; N = mat2cell([1, 2; 3, 4], 2, [1, 1]); N; N{1}; N{2}; T = mat2cell("abcd", 1, [2, 2]); T',
+                    ),
+                ),
+            ).toBe('M={1,2;\n3,4}\n{1,2;\n3,4}\n1\n4\nN={[1;\n3],[2;\n4]}\n{[1;\n3],[2;\n4]}\n[1;\n3]\n[2;\n4]\nT={[a,b],[c,d]}\n{[a,b],[c,d]}\n');
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute('nargin("num2cell"); nargout("num2cell"); nargin("cell2mat"); nargout("cell2mat"); nargin("mat2cell"); nargout("mat2cell")'),
+                ),
+            ).toBe('-2\n1\n1\n1\n-2\n1\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('zeros([2; 1]); size(ones([1; 3])); size(rand([2; 3]))'))).toBe('[0;\n0]\n[1,3]\n[2,3]\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('size(randi(5)); size(randi(5, 2)); size(randi([2, 5], [2; 3])); size(randi([2; 5], 1, 2))'))).toBe(
                 '[1,1]\n[2,2]\n[2,3]\n[1,2]\n',
@@ -8549,10 +8624,91 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('reshape([1, 2, 3, 4], 2, 2); reshape([1, 2, 3, 4], [2, 2]); reshape(1:6, 2, []); reshape(1:6, [], 3)'))).toBe(
                 '[1,3;\n2,4]\n[1,3;\n2,4]\n[1,3,5;\n2,4,6]\n[1,3,5;\n2,4,6]\n',
             );
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'R = reshape({1, 2, 3, 4}, [1, 2, 2]); size(R); R{1, 2, 2}; B = reshape({[1, 2], [3, 4], [5, 6], [7, 8]}, [1, 2, 2]); M = cell2mat(B); size(M); M',
+                    ),
+                ),
+            ).toBe(
+                'R={1,2} (:,:,1)\n{3,4} (:,:,2)\n\n[1,2,2]\n4\nB={[1,2],[3,4]} (:,:,1)\n{[5,6],[7,8]} (:,:,2)\n\nM=[1,2,3,4] (:,:,1)\n[5,6,7,8] (:,:,2)\n\n[1,4,2]\n[1,2,3,4] (:,:,1)\n[5,6,7,8] (:,:,2)\n\n',
+            );
             expect(localInterpreter.Unparse(localInterpreter.Execute('repmat(5, 1, 3); repmat([1, 2], 2, 1); repmat(5, [1; 3]); squeeze(reshape([1, 2], 1, 1, 2))'))).toBe(
                 '[5,5,5]\n[1,2;\n1,2]\n[5,5,5]\n[1;\n2]\n',
             );
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute('C = reshape({1, 2}, [1, 1, 2]); S = squeeze(C); size(S); S; S{2}; D = reshape({1, 2, 3, 4}, [1, 2, 2]); T = squeeze(D); size(T); T; T{2, 2}'),
+                ),
+            ).toBe('C={1} (:,:,1)\n{2} (:,:,2)\n\nS={1;\n2}\n[2,1]\n{1;\n2}\n2\nD={1,2} (:,:,1)\n{3,4} (:,:,2)\n\nT={1,2;\n3,4}\n[2,2]\n{1,2;\n3,4}\n4\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('A = reshape(1:6, [1, 2, 3]); B = permute(A, [2, 1, 3]); size(B); B; C = ipermute(B, [2, 1, 3]); size(C); C'))).toBe(
+                'A=[1,2] (:,:,1)\n[3,4] (:,:,2)\n[5,6] (:,:,3)\n\nB=[1;\n2] (:,:,1)\n[3;\n4] (:,:,2)\n[5;\n6] (:,:,3)\n\n[2,1,3]\n[1;\n2] (:,:,1)\n[3;\n4] (:,:,2)\n[5;\n6] (:,:,3)\n\nC=[1,2] (:,:,1)\n[3,4] (:,:,2)\n[5,6] (:,:,3)\n\n[1,2,3]\n[1,2] (:,:,1)\n[3,4] (:,:,2)\n[5,6] (:,:,3)\n\n',
+            );
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'C = reshape({1, 2, 3, 4}, [1, 2, 2]); P = permute(C, [2, 1, 3]); size(P); P; P{2, 1, 2}; Q = ipermute(P, [2, 1, 3]); size(Q); Q{1, 2, 2}; nargin("permute"); nargout("permute"); nargin("ipermute"); nargout("ipermute")',
+                    ),
+                ),
+            ).toBe(
+                'C={1,2} (:,:,1)\n{3,4} (:,:,2)\n\nP={1;\n2} (:,:,1)\n{3;\n4} (:,:,2)\n\n[2,1,2]\n{1;\n2} (:,:,1)\n{3;\n4} (:,:,2)\n\n4\nQ={1,2} (:,:,1)\n{3,4} (:,:,2)\n\n[1,2,2]\n4\n2\n1\n2\n1\n',
+            );
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'circshift([1, 2, 3, 4], 1); circshift([1, 2; 3, 4], [1, -1]); circshift([1, 2; 3, 4], 1, 2); C = {1, 2; 3, 4}; S = circshift(C, [1, 1]); S; S{1, 1}',
+                    ),
+                ),
+            ).toBe('[4,1,2,3]\n[4,3;\n2,1]\n[2,1;\n4,3]\nC={1,2;\n3,4}\nS={4,3;\n2,1}\n{4,3;\n2,1}\n4\n');
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'A = reshape(1:4, [1, 2, 2]); [B, n] = shiftdim(A); size(B); n; B; E = shiftdim([1, 2; 3, 4], -1); size(E); F = shiftdim(reshape(1:6, [1, 2, 3]), 1); size(F); F',
+                    ),
+                ),
+            ).toBe('A=[1,2] (:,:,1)\n[3,4] (:,:,2)\n\nB=[1,2;\n3,4]\nn=1\n[2,2]\n1\n[1,2;\n3,4]\nE=[1,2] (:,:,1)\n[3,4] (:,:,2)\n\n[1,2,2]\nF=[1,3,5;\n2,4,6]\n[2,3]\n[1,3,5;\n2,4,6]\n');
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'C = reshape({1, 2, 3, 4}, [1, 2, 2]); [D, n] = shiftdim(C); size(D); n; D; D{2, 2}; nargin("circshift"); nargout("circshift"); nargin("shiftdim"); nargout("shiftdim")',
+                    ),
+                ),
+            ).toBe('C={1,2} (:,:,1)\n{3,4} (:,:,2)\n\nD={1,2;\n3,4}\nn=1\n[2,2]\n1\n{1,2;\n3,4}\n4\n-3\n1\n-2\n-2\n');
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'flip([1, 2, 3]); flip([1, 2; 3, 4]); flip([1, 2; 3, 4], 2); fliplr([1, 2; 3, 4]); flipud([1, 2; 3, 4]); rot90([1, 2; 3, 4]); rot90([1, 2; 3, 4], -1)',
+                    ),
+                ),
+            ).toBe('[3,2,1]\n[3,4;\n1,2]\n[2,1;\n4,3]\n[2,1;\n4,3]\n[3,4;\n1,2]\n[2,4;\n1,3]\n[3,1;\n4,2]\n');
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'C = reshape({1, 2, 3, 4}, [1, 2, 2]); F = flip(C, 3); F; F{1, 2, 1}; R = rot90(C); size(R); R; R{2, 1, 2}; nargin("flip"); nargout("flip"); nargin("rot90"); nargout("rot90")',
+                    ),
+                ),
+            ).toBe(
+                'C={1,2} (:,:,1)\n{3,4} (:,:,2)\n\nF={3,4} (:,:,1)\n{1,2} (:,:,2)\n\n{3,4} (:,:,1)\n{1,2} (:,:,2)\n\n4\nR={2;\n1} (:,:,1)\n{4;\n3} (:,:,2)\n\n[2,1,2]\n{2;\n1} (:,:,1)\n{4;\n3} (:,:,2)\n\n3\n-2\n1\n-2\n1\n',
+            );
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'C = {1, 2}; R = repmat(C, 2, 1); R; R{2, 2}; G = {1, 2; 3, 4}; H = repmat(G, 1, 2); H; H{2, 4}; P = reshape({1, 2, 3, 4}, [1, 2, 2]); Q = repmat(P, 1, 1, 2); size(Q); Q{1, 2, 4}',
+                    ),
+                ),
+            ).toBe(
+                'C={1,2}\nR={1,2;\n1,2}\n{1,2;\n1,2}\n2\nG={1,2;\n3,4}\nH={1,2,1,2;\n3,4,3,4}\n{1,2,1,2;\n3,4,3,4}\n4\nP={1,2} (:,:,1)\n{3,4} (:,:,2)\n\nQ={1,2} (:,:,1)\n{3,4} (:,:,2)\n{1,2} (:,:,3)\n{3,4} (:,:,4)\n\n[1,2,4]\n4\n',
+            );
             expect(localInterpreter.Unparse(localInterpreter.Execute('size(rand(2, 3)); size(randi(5, 2, 3)); size(randi([2, 5], [2, 3]))'))).toBe('[2,3]\n[2,3]\n[2,3]\n');
+            expect(() => localInterpreter.Execute('num2cell([1, 2], 3)')).toThrow('num2cell: DIM must be between 1 and ndims(A).');
+            expect(() => localInterpreter.Execute('cell2mat({{1, 2}})')).toThrow('cell2mat: nested cell contents are not supported.');
+            expect(() => localInterpreter.Execute('mat2cell([1, 2; 3, 4], [1, 2], [1, 1])')).toThrow('mat2cell: argument 2 dimensions do not sum to input size.');
+            expect(() => localInterpreter.Execute('mat2cell([1, 2; 3, 4], [1, 1])')).toThrow('mat2cell: number of dimension vectors must match ndims(A).');
+            expect(() => localInterpreter.Execute('permute([1, 2], [1, 1])')).toThrow('permute: ORDER must be a permutation vector.');
+            expect(() => localInterpreter.Execute('circshift([1, 2], [1, 2, 3])')).toThrow('circshift: SHIFTS vector must not be longer than ndims(A).');
+            expect(() => localInterpreter.Execute('shiftdim([1, 2], 1.5)')).toThrow('Invalid call to shiftdim.');
+            expect(() => localInterpreter.Execute('flip([1, 2], 1.5)')).toThrow('Invalid call to flip.');
+            expect(() => localInterpreter.Execute('rot90([1, 2], 1.5)')).toThrow('Invalid call to rot90.');
         });
 
         it('Should use core function signatures for sequence and concatenation helpers.', () => {
@@ -8611,7 +8767,32 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('u = struct(t); u.a; u.b'))).toBe('u=struct {\na: 1\nb: [2,3]\n}\n1\n[2,3]\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('nargin("struct"); nargout("struct")'))).toBe('-1\n1\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('nargin("isfield"); nargout("isfield")'))).toBe('2\n1\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('S.a.b = 5; getfield(S, "a", "b"); T = setfield(S, "c", 7); T.c; isfield(S, "c")'))).toBe(
+                'S=struct {\na: struct {\nb: 5\n}\n}\n5\nT=struct {\na: struct {\nb: 5\n}\nc: 7\n}\n7\nfalse\n',
+            );
+            expect(
+                localInterpreter.Unparse(localInterpreter.Execute('R = rmfield(T, {"a"}); isfield(R, "a"); R.c; O = orderfields(struct("b", 2, "a", 1)); fieldnames(O); numfields(O)')),
+            ).toBe('R=struct {\nc: 7\n}\nfalse\n7\nO=struct {\na: 1\nb: 2\n}\n{a;\nb}\n2\n');
+            const structureArrayInterpreter = Interpreter.Create();
+            expect(structureArrayInterpreter.Unparse(structureArrayInterpreter.Execute('S(1).x = 1; S(2).x = 2; [getfield(S, "x")]'))).toBe(
+                'S=[struct {\nx: 1\n}]\nS=[struct {\nx: 1\n},struct {\nx: 2\n}]\n[1,2]\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('C = struct2cell(struct("a", 1, "b", 2)); C; size(C); U = cell2struct({1, 2}, {"a", "b"}, 2); U.a; U.b'))).toBe(
+                'C={1;\n2}\n{1;\n2}\n[2,1]\nU=struct {\na: 1\nb: 2\n}\n1\n2\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('C = {1, 2; 3, 4}; V = cell2struct(C, {"a", "b"}, 2); [V.a]; [V.b]; W = struct2cell(V); size(W)'))).toBe(
+                'C={1,2;\n3,4}\nV=[struct {\na: 1\nb: 2\n};\nstruct {\na: 3\nb: 4\n}]\n[1,3]\n[2,4]\nW={1,3;\n2,4}\n[2,2]\n',
+            );
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'nargin("getfield"); nargin("setfield"); nargin("rmfield"); nargin("orderfields"); nargin("numfields"); nargin("struct2cell"); nargin("cell2struct")',
+                    ),
+                ),
+            ).toBe('-2\n-3\n2\n1\n1\n1\n3\n');
             expect(() => localInterpreter.Execute('struct(@sin)')).toThrow('Invalid call to struct.');
+            expect(() => localInterpreter.Execute('getfield(S, 1)')).toThrow('getfield: argument 2 must be a string.');
+            expect(() => localInterpreter.Execute('cell2struct({1, 2, 3}, {"a", "b"}, 2)')).toThrow('cell2struct: number of fields does not match dimension.');
         });
 
         it('Should expose core type predicate functions.', () => {
@@ -8635,10 +8816,19 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(
                 localInterpreter.Unparse(
                     localInterpreter.Execute(
-                        'A = [1, 2; 3, 4]; eye(); eye(2); eye(2, 3); eye([1; 2]); diag([1, 2, 3]); diag([1, 2, 3], 1); diag([1, 2], 2, 3); diag(A); trace(A); det(A); inv(A)',
+                        'A = [1, 2; 3, 4]; eye(); eye(2); eye(2, 3); eye([1; 2]); transpose(A); ctranspose(1 + 2i); transpose("ab"); diag([1, 2, 3]); diag([1, 2, 3], 1); diag([1, 2], 2, 3); diag(A); trace(A); det(A); inv(A)',
                     ),
                 ),
-            ).toBe('A=[1,2;\n3,4]\n1\n[1,0;\n0,1]\n[1,0,0;\n0,1,0]\n[1,0]\n[1,0,0;\n0,2,0;\n0,0,3]\n[0,1,0;\n0,0,2;\n0,0,0]\n[1,0,0;\n0,2,0]\n[1;\n4]\n5\n-2\n[-2,1;\n1.5,-0.5]\n');
+            ).toBe(
+                'A=[1,2;\n3,4]\n1\n[1,0;\n0,1]\n[1,0,0;\n0,1,0]\n[1,0]\n[1,3;\n2,4]\n1-2i\n[a;\nb]\n[1,0,0;\n0,2,0;\n0,0,3]\n[0,1,0;\n0,0,2;\n0,0,0]\n[1,0,0;\n0,2,0]\n[1;\n4]\n5\n-2\n[-2,1;\n1.5,-0.5]\n',
+            );
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'plus(1, 2, 3); minus(5, 2); times([1, 2], [3, 4]); mtimes([1, 2; 3, 4], [1; 1]); rdivide([2, 4], 2); ldivide(2, [2, 4]); power([2, 3], 2); lt([1, 2], [2, 1]); uplus(-3); uminus(3); not([true, false])',
+                    ),
+                ),
+            ).toBe('6\n3\n[3,8]\n[3;\n7]\n[1,2]\n[1,2]\n[4,9]\n[true,false]\n-3\n-3\n[false,true]\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('A = [1, 2; 3, 4]; [L, U, P] = lu(A); L; U; P'))).toBe(
                 'A=[1,2;\n3,4]\nL=[1,0;\n0.333333333333333333,1]\nU=[3,4;\n0,0.666666666666666666]\nP=[0,1;\n1,0]\n[1,0;\n0.333333333333333333,1]\n[3,4;\n0,0.666666666666666666]\n[0,1;\n1,0]\n',
             );

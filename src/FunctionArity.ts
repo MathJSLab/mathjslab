@@ -5,7 +5,7 @@ import { MultiArray } from './MultiArray';
 import type { Callable as ArityCallable } from './Callable';
 import { FunctionSignature } from './FunctionSignature';
 
-type ArityCheckName = 'narginchk' | 'nargoutchk';
+type ArityCheckName = 'nargchk' | 'narginchk' | 'nargoutchk';
 
 /** Error callback used by arity helpers. */
 type ThrowError = (message: string) => never;
@@ -81,7 +81,7 @@ class FunctionArity {
     }
 
     /**
-     * Validate and convert a `narginchk`/`nargoutchk` bound.
+     * Validate and convert a `nargchk`/`narginchk`/`nargoutchk` bound.
      *
      * @param name Built-in name used in diagnostics.
      * @param bound Evaluated bound value.
@@ -118,7 +118,7 @@ class FunctionArity {
             throwSyntaxError(`${name}: maximum count must be greater than or equal to minimum count.`);
         }
         if (count < minimum || count > maximum) {
-            throwEvalError(`${name}: invalid number of ${name === 'narginchk' ? 'input' : 'output'} arguments.`);
+            throwEvalError(`${name}: invalid number of ${name === 'nargoutchk' ? 'output' : 'input'} arguments.`);
         }
     }
 

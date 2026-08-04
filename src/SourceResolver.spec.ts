@@ -87,6 +87,11 @@ describe('SourceResolver', () => {
             expect(resolver.resolve('script', 'namedstartup')?.sourceName).toBe('cache/namedstartup.001.m');
             expect(resolver.resolve('script', 'urlstartup')?.name).toBe('https://host.test/scripts/urlstartup.m?raw=1#section');
             expect(resolver.resolve('script', 'urlstartup')?.sourceName).toBe('https://host.test/scripts/urlstartup.m?raw=1#section');
+            expect(resolver.hasDirectory('pkg')).toBe(true);
+            expect(resolver.hasDirectory('+pkg')).toBe(true);
+            expect(resolver.hasDirectory('ordinary')).toBe(true);
+            expect(resolver.hasDirectory('folder')).toBe(true);
+            expect(resolver.hasDirectory('missing')).toBe(false);
         });
     });
 
@@ -149,6 +154,12 @@ describe('SourceResolver', () => {
             expect(resolver.resolve('script', 'https://mirror.test/scripts/bundledurlscript.m#alt')?.name).toBe('bundledurlscript');
             expect(resolver.resolve('script', 'namedfromtablescript')?.name).toBe('namedfromtablescript');
             expect(resolver.resolve('script', 'namedfromtablescript')?.sourceName).toBe('cache/script-001.m');
+            expect(resolver.hasDirectory('pkg')).toBe(true);
+            expect(resolver.hasDirectory('ordinary')).toBe(true);
+            expect(resolver.hasDirectory('folder')).toBe(true);
+            expect(resolver.hasDirectory('scripts')).toBe(true);
+            expect(resolver.hasDirectory('https://host.test/m-files/+pkg')).toBe(true);
+            expect(resolver.hasDirectory('missing')).toBe(false);
         });
 
         it('Should prefetch manifest files and resolve package names.', async () => {
@@ -217,6 +228,11 @@ describe('SourceResolver', () => {
             expect(resolver.resolve('script', 'https://mirror.test/scripts/remotestartup.m#alt')?.name).toBe('remotestartup');
             expect(resolver.resolve('script', 'fetchedstable')?.name).toBe('fetchedstable');
             expect(resolver.resolve('script', 'fetchedstable')?.sourceName).toBe('scripts/fetchedstable.m');
+            expect(resolver.hasDirectory('pkg')).toBe(true);
+            expect(resolver.hasDirectory('+pkg')).toBe(true);
+            expect(resolver.hasDirectory('scripts')).toBe(true);
+            expect(resolver.hasDirectory('https://cdn.test/m-files/+pkg')).toBe(true);
+            expect(resolver.hasDirectory('missing')).toBe(false);
         });
 
         it('Should report failed manifest fetches.', async () => {

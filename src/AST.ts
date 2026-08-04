@@ -1731,6 +1731,119 @@ abstract class AST {
     private static readonly assignmentNodeOperation = new Set<NodeType | number>(['=', '+=', '-=', '*=', '/=', '\\=', '^=', '**=', '.*=', './=', '.\\=', '.^=', '.**=', '&=', '|=']);
 
     /**
+     * Operations that MATLAB/Octave reject inside anonymous function bodies.
+     */
+    private static readonly anonymousFunctionForbiddenOperation = new Set<NodeType | number>([
+        '=',
+        '+=',
+        '-=',
+        '*=',
+        '/=',
+        '\\=',
+        '^=',
+        '**=',
+        '.*=',
+        './=',
+        '.\\=',
+        '.^=',
+        '.**=',
+        '&=',
+        '|=',
+        '++_',
+        '--_',
+        '_++',
+        '_--',
+    ]);
+
+    /**
+     * Validate the complete expression subtree of an anonymous function body.
+     */
+    private static readonly assertAnonymousFunctionExpression = (value: unknown): void | never => {
+        if (AST.isNodeOperation(value) && AST.anonymousFunctionForbiddenOperation.has(value.type)) {
+            throw new SyntaxError('anonymous function bodies cannot contain assignment, increment, or decrement operators.');
+        }
+
+        if (AST.isNodeBinaryOperation(value)) {
+            AST.assertAnonymousFunctionExpression(value.left);
+            AST.assertAnonymousFunctionExpression(value.right);
+        } else if (AST.isNodePrefixOperation(value)) {
+            AST.assertAnonymousFunctionExpression(value.right);
+        } else if (AST.isNodePostfixOperation(value)) {
+            AST.assertAnonymousFunctionExpression(value.left);
+        } else if (AST.isNodeIndexExpr(value)) {
+            AST.assertAnonymousFunctionExpression(value.expr);
+            value.args.forEach(AST.assertAnonymousFunctionExpression);
+        } else if (AST.isNodeSuperclassConstructor(value)) {
+            AST.assertAnonymousFunctionExpression(value.instance);
+            value.args.forEach(AST.assertAnonymousFunctionExpression);
+        } else if (AST.isNodeRange(value)) {
+            AST.assertAnonymousFunctionExpression(value.start_);
+            AST.assertAnonymousFunctionExpression(value.stop_);
+            if (value.stride_) {
+                AST.assertAnonymousFunctionExpression(value.stride_);
+            }
+        } else if (AST.isNodeIndirectRef(value)) {
+            AST.assertAnonymousFunctionExpression(value.obj);
+            value.field.forEach((field) => {
+                if (typeof field !== 'string') {
+                    AST.assertAnonymousFunctionExpression(field);
+                }
+            });
+        } else if (AST.isNodeList(value)) {
+            value.list.forEach(AST.assertAnonymousFunctionExpression);
+        } else if (MultiArray.isInstanceOf(value)) {
+            MultiArray.linearize(value).forEach(AST.assertAnonymousFunctionExpression);
+        } else if (FunctionHandle.isInstanceOf(value) && value.expression) {
+            AST.assertAnonymousFunctionExpression(value.expression);
+        }
+    };
+
+    /**
+     * Validate anonymous function parameters at the AST construction boundary.
+     */
+    private static readonly assertFunctionSignatureList = <NODE extends NodeFunctionParameter | NodeFunctionReturn>(
+        nodes: readonly NODE[],
+        variadicName: 'varargin' | 'varargout',
+        listKind: 'parameter' | 'return',
+        functionDisplayName: string,
+    ): void | never => {
+        const seen = new Set<string>();
+        nodes.forEach((node, index) => {
+            if (AST.isNodeIgnoredTarget(node)) {
+                return;
+            }
+            let name: string;
+            if (AST.isNodeDefaultedParameter(node)) {
+                if (listKind !== 'parameter' || functionDisplayName === 'anonymous function') {
+                    throw new SyntaxError(`invalid ${listKind} list in ${functionDisplayName}.`);
+                }
+                name = node.left.id;
+            } else if (AST.isNodeIdentifier(node)) {
+                name = node.id;
+            } else {
+                throw new SyntaxError(`invalid ${listKind} list in ${functionDisplayName}.`);
+            }
+            if (seen.has(name)) {
+                throw new SyntaxError(`duplicate ${listKind} name '${name}' in ${functionDisplayName}.`);
+            }
+            seen.add(name);
+            if (name === variadicName && index !== nodes.length - 1) {
+                throw new SyntaxError(`${variadicName} must be the last ${listKind} in ${functionDisplayName}.`);
+            }
+            if (AST.isNodeDefaultedParameter(node) && name === variadicName) {
+                throw new SyntaxError(`${variadicName} default value is not supported in ${functionDisplayName}.`);
+            }
+        });
+    };
+
+    /**
+     * Validate anonymous function parameters at the AST construction boundary.
+     */
+    private static readonly assertAnonymousFunctionParameters = (parameters: readonly NodeFunctionParameter[]): void | never => {
+        AST.assertFunctionSignatureList(parameters, 'varargin', 'parameter', 'anonymous function');
+    };
+
+    /**
      * Create operator node.
      * @param op
      * @param data1
@@ -2074,7 +2187,14 @@ abstract class AST {
      */
     public static readonly nodeFunctionHandle = (id: NodeIdentifier | null = null, parameter_list: NodeList | null = null, expression: NodeExpr | null = null): FunctionHandle => {
         const parameters = parameter_list ? AST.factoryNodeList(parameter_list, AST.isNodeFunctionParameter, 'function handle parameter ') : [];
-        const result = FunctionHandle.create(id ? id.id : undefined, parameters, expression ? AST.factoryExpression(expression, 'function handle expression') : null);
+        const body = expression ? AST.factoryExpression(expression, 'function handle expression') : null;
+        if (!id) {
+            AST.assertAnonymousFunctionParameters(parameters);
+            if (body) {
+                AST.assertAnonymousFunctionExpression(body);
+            }
+        }
+        const result = FunctionHandle.create(id ? id.id : undefined, parameters, body);
         result.parameter.forEach((node) => {
             node.parent = result;
         });

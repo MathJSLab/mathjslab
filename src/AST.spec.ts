@@ -384,9 +384,47 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(definition.statements.list[0].parent).toBe(definition);
         });
 
+        it('Should create anonymous function handles with validated signatures.', () => {
+            const ignored = AST.nodeIgnoredTarget();
+            const named = AST.nodeIdentifier('x');
+            const variadic = AST.nodeIdentifier('varargin');
+            const body = AST.nodeIdentifier('x');
+            const handle = AST.nodeFunctionHandle(null, AST.nodeList([ignored, named, variadic]), body);
+
+            expect(handle).toBeInstanceOf(FunctionHandle);
+            expect(handle.id).toBeUndefined();
+            expect(handle.parameter).toEqual([ignored, named, variadic]);
+            expect(ignored.parent).toBe(handle);
+            expect(named.parent).toBe(handle);
+            expect(variadic.parent).toBe(handle);
+            expect(body.parent).toBe(handle);
+        });
+
         it('Should reject non-expression values in function handle factories.', () => {
             expect(() => AST.nodeFunctionHandle(null, AST.nodeListFirst(AST.nodeReturn()), null)).toThrow('function handle parameter 1 has invalid node type.');
             expect(() => AST.nodeFunctionHandle(null, AST.nodeListFirst(), AST.nodeReturn() as NodeExpr)).toThrow('function handle expression is not an expression node.');
+        });
+
+        it('Should reject invalid anonymous function signatures and bodies.', () => {
+            const defaulted = AST.nodeDefaultedParameter(AST.nodeIdentifier('x'), AST.nodeNumber('1') as NodeExpr);
+            const duplicateParameters = AST.nodeList([AST.nodeIdentifier('x'), AST.nodeIdentifier('x')]);
+            const misplacedVarargin = AST.nodeList([AST.nodeIdentifier('varargin'), AST.nodeIdentifier('x')]);
+            const assignmentBody = AST.nodeOperation('=', AST.nodeIdentifier('x'), AST.nodeNumber('1') as NodeExpr);
+            const incrementBody = AST.nodeOperation('_++', AST.nodeIdentifier('x'));
+            const nestedAssignmentBody = AST.nodeIndexExpr(AST.nodeIdentifier('f'), AST.nodeListFirst(AST.nodeOperation('+=', AST.nodeIdentifier('x'), AST.nodeNumber('1') as NodeExpr)));
+
+            expect(() => AST.nodeFunctionHandle(null, AST.nodeListFirst(defaulted), AST.nodeIdentifier('x'))).toThrow('invalid parameter list in anonymous function.');
+            expect(() => AST.nodeFunctionHandle(null, duplicateParameters, AST.nodeIdentifier('x'))).toThrow("duplicate parameter name 'x' in anonymous function.");
+            expect(() => AST.nodeFunctionHandle(null, misplacedVarargin, AST.nodeIdentifier('x'))).toThrow('varargin must be the last parameter in anonymous function.');
+            expect(() => AST.nodeFunctionHandle(null, AST.nodeListFirst(AST.nodeIdentifier('x')), assignmentBody)).toThrow(
+                'anonymous function bodies cannot contain assignment, increment, or decrement operators.',
+            );
+            expect(() => AST.nodeFunctionHandle(null, AST.nodeListFirst(AST.nodeIdentifier('x')), incrementBody)).toThrow(
+                'anonymous function bodies cannot contain assignment, increment, or decrement operators.',
+            );
+            expect(() => AST.nodeFunctionHandle(null, AST.nodeListFirst(AST.nodeIdentifier('x')), nestedAssignmentBody)).toThrow(
+                'anonymous function bodies cannot contain assignment, increment, or decrement operators.',
+            );
         });
 
         it('Should reject invalid node types in function definition lists.', () => {

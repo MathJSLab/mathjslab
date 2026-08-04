@@ -46,12 +46,56 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(LinearAlgebra.trace).toBeDefined();
             expect(LinearAlgebra.transpose).toBeDefined();
             expect(LinearAlgebra.ctranspose).toBeDefined();
+            expect(LinearAlgebra.functions.transpose.func).toBe(LinearAlgebra.transpose);
+            expect(LinearAlgebra.functions.ctranspose.func).toBe(LinearAlgebra.ctranspose);
             expect(BLAS.gemm).toBeDefined();
             expect(LinearAlgebra.det).toBeDefined();
             expect(LinearAlgebra.inv).toBeDefined();
             expect(LinearAlgebra.gauss).toBeDefined();
             expect(LinearAlgebra.lu).toBeDefined();
             expect(LinearAlgebra.dot).toBeDefined();
+        });
+
+        it('LinearAlgebra.transpose and ctranspose should accept scalars, matrices, and character vectors.', () => {
+            const matrix = createRealMatrix([
+                [1, 2],
+                [3, 4],
+            ]);
+            const complex = Complex.create(1, 2);
+            const charVector = new CharString('ab', "'");
+
+            expectRealMatrix(LinearAlgebra.transpose(matrix), [
+                [1, 3],
+                [2, 4],
+            ]);
+            expect(Complex.realToNumber(LinearAlgebra.transpose(complex) as ComplexType)).toBe(1);
+            expect(Complex.imagToNumber(LinearAlgebra.transpose(complex) as ComplexType)).toBe(2);
+            expect(Complex.realToNumber(LinearAlgebra.ctranspose(complex) as ComplexType)).toBe(1);
+            expect(Complex.imagToNumber(LinearAlgebra.ctranspose(complex) as ComplexType)).toBe(-2);
+            expect((LinearAlgebra.transpose(charVector) as MultiArray).array.map((row) => (row[0] as CharString).str)).toEqual(['a', 'b']);
+            expect((LinearAlgebra.ctranspose(charVector) as MultiArray).array.map((row) => (row[0] as CharString).str)).toEqual(['a', 'b']);
+        });
+
+        it('LinearAlgebra.transpose and ctranspose should preserve cell arrays without conjugating cell contents.', () => {
+            const cells = new MultiArray(
+                [2, 2],
+                [
+                    [Complex.create(1, 2), Complex.create(2)],
+                    [Complex.create(3), Complex.create(4, -5)],
+                ],
+                true,
+            );
+
+            const transposed = LinearAlgebra.transpose(cells) as MultiArray;
+            const conjugateTransposed = LinearAlgebra.ctranspose(cells) as MultiArray;
+
+            expect(transposed.isCell).toBe(true);
+            expect(conjugateTransposed.isCell).toBe(true);
+            expect(transposed.dimension).toEqual([2, 2]);
+            expect(conjugateTransposed.dimension).toEqual([2, 2]);
+            expect(Complex.imagToNumber(transposed.array[0][0] as ComplexType)).toBe(2);
+            expect(Complex.imagToNumber(conjugateTransposed.array[0][0] as ComplexType)).toBe(2);
+            expect(Complex.realToNumber(conjugateTransposed.array[0][1] as ComplexType)).toBe(3);
         });
 
         it('Interpreter should be instatiated and should parse, evaluate and unparse a simple real expression (interpreter test).', () => {

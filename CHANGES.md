@@ -3,6 +3,27 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 2.4.0
+
+- Expanded MATLAB/Octave conformance coverage across parser, AST, dispatch, and
+  runtime semantics, including command-form parsing, source resolution,
+  function-call defaults, return-list handling, `arguments` validation,
+  object/class dispatch, and native helper behavior.
+- Strengthened multidimensional array compatibility over MathJSLab's
+  page-stacked storage model, covering N-D slicing, assignment, expansion,
+  deletion, logical subscripts, cell contents, comma-separated lists, and
+  structure/cell conversion order.
+- Broadened core runtime and built-in helper semantics for dimension metadata,
+  sparse API placeholders, structure helpers, indexing helpers, and
+  MATLAB/Octave-compatible validation paths while keeping sparse storage itself
+  intentionally virtual.
+- Tightened runtime/AST type boundaries and module architecture, keeping
+  parser-only carriers out of runtime storage, preserving source metadata for
+  browser-hosted `.m` files, and maintaining the no-circular-dependency release
+  gate.
+- Refreshed focused JSDoc comments, parser/AST compatibility notes, language
+  subset documentation, and release-facing conformance fixtures.
+
 ## 2.3.0
 
 - Tightened generated parser return types for identifiers, function

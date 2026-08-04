@@ -138,6 +138,48 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             }
         });
 
+        it('subscript indexing should preserve selected N-D slices in page storage.', () => {
+            const array = new MultiArray([2, 2, 2], (...subscript) => Complex.create(MultiArray.subscriptToLinearIndex([2, 2, 2], subscript) + 1));
+            const colon = MultiArray.toColumnVector([Complex.one(), Complex.two()]);
+            const firstPage = MultiArray.getElements(array, 'array', [], [colon, colon, Complex.one()]);
+            const secondPage = MultiArray.getElements(array, 'array', [], [colon, colon, Complex.create(2)]);
+
+            expect(firstPage).toBeInstanceOf(MultiArray);
+            expect(secondPage).toBeInstanceOf(MultiArray);
+            expect((firstPage as MultiArray).dimension).toEqual([2, 2]);
+            expect((secondPage as MultiArray).dimension).toEqual([2, 2]);
+            expect(MultiArray.linearize(firstPage as MultiArray).map(realScalar)).toEqual([1, 2, 3, 4]);
+            expect(MultiArray.linearize(secondPage as MultiArray).map(realScalar)).toEqual([5, 6, 7, 8]);
+        });
+
+        it('subscript deletion should preserve N-D storage after removing one dimension slice.', () => {
+            const array = new MultiArray([2, 2, 3], (...subscript) => Complex.create(MultiArray.subscriptToLinearIndex([2, 2, 3], subscript) + 1));
+            const colon = MultiArray.toColumnVector([Complex.one(), Complex.two()]);
+
+            MultiArray.deleteElements(array, [colon, colon, Complex.create(2)]);
+
+            expect(array.dimension).toEqual([2, 2, 2]);
+            expect(MultiArray.linearize(array).map(realScalar)).toEqual([1, 2, 3, 4, 9, 10, 11, 12]);
+        });
+
+        it('N-D expansion should preserve existing elements in logical column-major order.', () => {
+            const array = new MultiArray([2, 2, 2], (...subscript) => Complex.create(MultiArray.subscriptToLinearIndex([2, 2, 2], subscript) + 1));
+
+            MultiArray.expand(array, [2, 2, 3]);
+
+            expect(array.dimension).toEqual([2, 2, 3]);
+            expect(MultiArray.linearize(array).map(realScalar)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0]);
+        });
+
+        it('reshape should preserve cell-array semantics when rebuilding storage.', () => {
+            const cells = MultiArray.firstRow([Complex.one(), Complex.two(), Complex.create(3), Complex.create(4)], true);
+            const reshaped = MultiArray.reshape(cells, [1, 2, 2]);
+
+            expect(reshaped.isCell).toBe(true);
+            expect(reshaped.dimension).toEqual([1, 2, 2]);
+            expect(MultiArray.linearize(reshaped).map(realScalar)).toEqual([1, 2, 3, 4]);
+        });
+
         it('The determinant must be correctly calculated', () => {
             expect(executeList(interpreter, 'det([1:3;4:6;7:9])').list[0].re.toNumber()).toBe(-0);
             expect(executeList(interpreter, 'det([2,1,-3; 3,2,4; 2,5,-2])').list[0].re.toNumber()).toBe(-67);

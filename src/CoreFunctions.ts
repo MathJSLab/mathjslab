@@ -443,6 +443,70 @@ abstract class CoreFunctions {
         return value && FunctionValidation.matchesClass(value, 'string') ? Complex.true() : Complex.false();
     };
 
+    /** Signature metadata for `iscellstr`. */
+    public static readonly iscellstrSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
+
+    /**
+     * Test whether a value is a cell array of character vectors.
+     *
+     * Empty cell arrays are accepted, matching MATLAB/Octave's structural
+     * interpretation of cellstr arrays.
+     */
+    public static readonly iscellstr = (X?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('iscellstr', !(typeof X !== 'undefined' && rest.length === 0));
+        return CoreFunctions.cellStringElements(X).accepted ? Complex.true() : Complex.false();
+    };
+
+    /** Signature metadata for `cellstr`. */
+    public static readonly cellstrSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
+
+    /**
+     * Convert char arrays and string arrays to cell arrays of character
+     * vectors.
+     */
+    public static readonly cellstr = (X?: ElementType, ...rest: unknown[]): MultiArray => {
+        AST.throwInvalidCallError('cellstr', !(typeof X !== 'undefined' && rest.length === 0));
+        if (CharString.isInstanceOf(X)) {
+            const result = MultiArray.toColumnVector([new CharString(X.str, "'")]);
+            result.isCell = true;
+            return result;
+        }
+        if (MultiArray.isInstanceOf(X) && X.isCell) {
+            if (!CoreFunctions.cellStringElements(X).accepted) {
+                throw new EvalError('cellstr: C must be a cell array of character vectors.');
+            }
+            return RuntimeValue.copy(X) as MultiArray;
+        }
+        if (MultiArray.isInstanceOf(X) && !X.isCell) {
+            if (MultiArray.linearLength(X) === 0) {
+                return MultiArray.emptyArray(true);
+            }
+            const elements = MultiArray.linearize(X);
+            if (elements.every(CharString.isString)) {
+                const result = MultiArray.rawMap(X, (value: ElementType) => new CharString((value as CharString).str, "'"));
+                result.isCell = true;
+                return result;
+            }
+            if (X.dimension.length === 2 && elements.every(CharString.isChar)) {
+                const result = MultiArray.toColumnVector(
+                    X.array.map(
+                        (row) =>
+                            new CharString(
+                                row
+                                    .map((value) => (value as CharString).str)
+                                    .join('')
+                                    .trimEnd(),
+                                "'",
+                            ),
+                    ),
+                );
+                result.isCell = true;
+                return result;
+            }
+        }
+        throw new EvalError('cellstr: input must be a string, character array, or cell array of character vectors.');
+    };
+
     /** Signature metadata for `char`. */
     public static readonly charSignature: BuiltInFunctionSignature = {
         inputs: { arity: -1, min: 1, parameters: [{ name: 'value', variadic: true }] },
@@ -459,6 +523,9 @@ abstract class CoreFunctions {
     public static readonly char = (...args: ElementType[]): ElementType => {
         AST.throwInvalidCallError('char', args.length === 0);
         const rows = args.flatMap((arg) => CoreFunctions.charRows(arg));
+        if (rows.length === 0) {
+            return MultiArray.emptyArray();
+        }
         if (rows.length === 1) {
             return CharString.fromCharacterScalars(rows[0]);
         }
@@ -510,7 +577,22 @@ abstract class CoreFunctions {
         if (MultiArray.isInstanceOf(value) && !value.isCell && value.dimension.length === 2) {
             return value.array.map((row) => row.map((element) => CoreFunctions.charElement(element)));
         }
+        const cellStringElements = CoreFunctions.cellStringElements(value);
+        if (cellStringElements.accepted) {
+            return cellStringElements.values.map((text) => text.toCharacterScalars());
+        }
         throw new Error('char: invalid conversion input.');
+    };
+
+    /**
+     * Extract cellstr contents if the value is a cell array of char vectors.
+     */
+    private static readonly cellStringElements = (value: ElementType): { accepted: boolean; values: CharString[] } => {
+        if (!MultiArray.isInstanceOf(value) || !value.isCell) {
+            return { accepted: false, values: [] };
+        }
+        const values = MultiArray.linearize(value);
+        return values.every(CharString.isChar) ? { accepted: true, values } : { accepted: false, values: [] };
     };
 
     /** Signature metadata for `double`. */
@@ -927,6 +1009,149 @@ abstract class CoreFunctions {
         return hasField(fieldName);
     };
 
+    /** Signature metadata for `numfields`. */
+    public static readonly numfieldsSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'structure' }] }, outputs: { arity: 1 } };
+
+    /** Count fields in a structure scalar or array. */
+    public static readonly numfields = (X?: ElementType, ...rest: unknown[]): ComplexType => {
+        AST.throwInvalidCallError('numfields', !(typeof X !== 'undefined' && rest.length === 0 && Structure.isStructure(X)));
+        return Complex.create(Structure.fieldNames(X).length);
+    };
+
+    /** Signature metadata for `getfield`. */
+    public static readonly getfieldSignature: BuiltInFunctionSignature = {
+        inputs: { arity: -2, min: 2, parameters: [{ name: 'structure' }, { name: 'field', variadic: true }] },
+        outputs: { arity: 1 },
+    };
+
+    /**
+     * Get a nested structure field using string field names.
+     */
+    public static readonly getfield = (X?: ElementType, ...fields: ElementType[]): ElementType => {
+        AST.throwInvalidCallError('getfield', !(typeof X !== 'undefined' && fields.length > 0 && Structure.isStructure(X)));
+        return Structure.getField(
+            X,
+            fields.map((field, index) => CoreFunctions.stringArgument(field, 'getfield', index + 2)),
+        );
+    };
+
+    /** Signature metadata for `setfield`. */
+    public static readonly setfieldSignature: BuiltInFunctionSignature = {
+        inputs: { arity: -3, min: 3, parameters: [{ name: 'structure' }, { name: 'fieldOrValue', variadic: true }] },
+        outputs: { arity: 1 },
+    };
+
+    /**
+     * Return a copy of a structure with a nested field assigned.
+     */
+    public static readonly setfield = (X?: ElementType, ...fieldsAndValue: ElementType[]): ElementType => {
+        AST.throwInvalidCallError('setfield', !(typeof X !== 'undefined' && fieldsAndValue.length >= 2 && Structure.isStructure(X)));
+        const result = Structure.isInstanceOf(X) ? Structure.copy(X) : MultiArray.copy(X as MultiArray);
+        const fields = fieldsAndValue.slice(0, -1).map((field, index) => CoreFunctions.stringArgument(field, 'setfield', index + 2));
+        Structure.setNewField(result, fields, fieldsAndValue[fieldsAndValue.length - 1] as StructureFieldValue);
+        return result;
+    };
+
+    /** Signature metadata for `rmfield`. */
+    public static readonly rmfieldSignature: BuiltInFunctionSignature = { inputs: { arity: 2, parameters: [{ name: 'structure' }, { name: 'fields' }] }, outputs: { arity: 1 } };
+
+    /**
+     * Return a copy of a structure with top-level fields removed.
+     */
+    public static readonly rmfield = (X?: ElementType, fields?: ElementType, ...rest: unknown[]): ElementType => {
+        AST.throwInvalidCallError('rmfield', !(typeof X !== 'undefined' && typeof fields !== 'undefined' && rest.length === 0 && Structure.isStructure(X)));
+        return Structure.removeFields(CoreFunctions.structureArgument(X, 'rmfield'), CoreFunctions.fieldNameArguments(fields, 'rmfield', 2));
+    };
+
+    /** Signature metadata for `orderfields`. */
+    public static readonly orderfieldsSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'structure' }] }, outputs: { arity: 1 } };
+
+    /**
+     * Return a copy of a structure with alphabetically ordered top-level fields.
+     */
+    public static readonly orderfields = (X?: ElementType, ...rest: unknown[]): ElementType => {
+        AST.throwInvalidCallError('orderfields', !(typeof X !== 'undefined' && rest.length === 0 && Structure.isStructure(X)));
+        return Structure.orderFields(CoreFunctions.structureArgument(X, 'orderfields'));
+    };
+
+    /** Signature metadata for `struct2cell`. */
+    public static readonly struct2cellSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'structure' }] }, outputs: { arity: 1 } };
+
+    /**
+     * Convert a structure scalar or array into a cell array of field values.
+     *
+     * The first dimension of the result enumerates fields; remaining
+     * dimensions mirror the structure array dimensions.
+     */
+    public static readonly struct2cell = (X?: ElementType, ...rest: unknown[]): MultiArray => {
+        AST.throwInvalidCallError('struct2cell', !(typeof X !== 'undefined' && rest.length === 0 && Structure.isStructure(X)));
+        const structureValue = CoreFunctions.structureArgument(X, 'struct2cell');
+        const fields = Structure.fieldNames(structureValue);
+        const elements = Structure.structureElements(structureValue);
+        const structureDimensions = Structure.isInstanceOf(structureValue) ? [1, 1] : structureValue.dimension;
+        const result = new MultiArray([fields.length, ...structureDimensions], undefined, true);
+        for (let elementIndex = 0; elementIndex < elements.length; elementIndex++) {
+            const structureSubscript = MultiArray.linearIndexToSubscript(structureDimensions, elementIndex);
+            for (let fieldIndex = 0; fieldIndex < fields.length; fieldIndex++) {
+                const [row, column] = MultiArray.subscriptToMultiArrayRowColumn(result.dimension, [fieldIndex + 1, ...structureSubscript]);
+                result.array[row][column] = RuntimeValue.copy(elements[elementIndex].field[fields[fieldIndex]]);
+            }
+        }
+        MultiArray.setType(result);
+        result.isCell = true;
+        return result;
+    };
+
+    /** Signature metadata for `cell2struct`. */
+    public static readonly cell2structSignature: BuiltInFunctionSignature = {
+        inputs: {
+            arity: 3,
+            parameters: [{ name: 'cellArray', classes: ['cell'] }, { name: 'fields' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] }],
+        },
+        outputs: { arity: 1 },
+    };
+
+    /**
+     * Convert a cell array into a structure array using one dimension as field
+     * names.
+     */
+    public static readonly cell2struct = (C?: ElementType, fields?: ElementType, dimension?: ElementType, ...rest: unknown[]): ElementType => {
+        AST.throwInvalidCallError('cell2struct', !(MultiArray.isInstanceOf(C) && C.isCell && typeof fields !== 'undefined' && typeof dimension !== 'undefined' && rest.length === 0));
+        const cellArray = C as MultiArray;
+        const fieldNames = CoreFunctions.fieldNameArguments(fields, 'cell2struct', 2);
+        const dim = Complex.realToNumber(MultiArray.firstElement(dimension) as ComplexType);
+        const dimIndex = dim - 1;
+        const cellDimensions = cellArray.dimension.slice();
+        MultiArray.appendSingletonTail(cellDimensions, dimIndex + 1);
+        if (fieldNames.length !== cellDimensions[dimIndex]) {
+            throw new EvalError('cell2struct: number of fields does not match dimension.');
+        }
+        const resultDimensions = cellDimensions.filter((_dimension: number, index: number) => index !== dimIndex);
+        const normalizedResultDimensions = resultDimensions.length === 0 ? [1, 1] : resultDimensions;
+        const result = new MultiArray(normalizedResultDimensions);
+        for (let resultIndex = 0; resultIndex < MultiArray.linearLength(result); resultIndex++) {
+            const resultSubscript = MultiArray.linearIndexToSubscript(normalizedResultDimensions, resultIndex);
+            const structure = new Structure({});
+            for (let fieldIndex = 0; fieldIndex < fieldNames.length; fieldIndex++) {
+                const cellSubscript: number[] = [];
+                let resultDimensionIndex = 0;
+                for (let index = 0; index < cellDimensions.length; index++) {
+                    if (index === dimIndex) {
+                        cellSubscript[index] = fieldIndex + 1;
+                    } else {
+                        cellSubscript[index] = resultSubscript[resultDimensionIndex++] ?? 1;
+                    }
+                }
+                const [cellRow, cellColumn] = MultiArray.subscriptToMultiArrayRowColumn(cellArray.dimension, cellSubscript.slice(0, cellArray.dimension.length));
+                structure.field[fieldNames[fieldIndex]] = RuntimeValue.copy(cellArray.array[cellRow][cellColumn]) as StructureFieldValue;
+            }
+            const [row, column] = MultiArray.linearIndexToMultiArrayRowColumn(result.dimension[0], result.dimension[1], resultIndex);
+            result.array[row][column] = structure;
+        }
+        MultiArray.setType(result);
+        return MultiArray.MultiArrayToScalar(result);
+    };
+
     public static readonly methodsSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'object' }] }, outputs: { arity: 1 } };
     public static readonly methods = (X?: ElementType, ...rest: unknown[]): MultiArray => {
         AST.throwInvalidCallError('methods', !(typeof X !== 'undefined' && rest.length === 0));
@@ -960,6 +1185,35 @@ abstract class CoreFunctions {
             throw new EvalError(`${name}: argument ${index} must be a string.`);
         }
         return value.str;
+    };
+
+    /**
+     * Normalize a single field name or cellstr list for field-list functions.
+     *
+     * @param value Runtime field-name argument.
+     * @param name Function name used in diagnostics.
+     * @param index One-based argument index used in diagnostics.
+     * @returns Field names in linear order.
+     */
+    private static readonly fieldNameArguments = (value: ElementType, name: string, index: number): string[] => {
+        if (CharString.isInstanceOf(value)) {
+            return [value.str];
+        }
+        if (MultiArray.isInstanceOf(value) && value.isCell) {
+            return MultiArray.linearize(value).map((field) => CoreFunctions.stringArgument(field, name, index));
+        }
+        throw new EvalError(`${name}: argument ${index} must be a string or cell array of strings.`);
+    };
+
+    /**
+     * Narrow a value to the concrete structure representations accepted by
+     * field-manipulation helpers.
+     */
+    private static readonly structureArgument = (value: ElementType, name: string): Structure | MultiArray => {
+        if (Structure.isInstanceOf(value) || (MultiArray.isInstanceOf(value) && Structure.isStructure(value))) {
+            return value;
+        }
+        throw new EvalError(`${name}: argument 1 must be a structure.`);
     };
 
     public static readonly ispropSignature: BuiltInFunctionSignature = {
@@ -1027,9 +1281,14 @@ abstract class CoreFunctions {
 
     public static readonly ndimsSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
     /**
-     * Return the number of dimensions of M.
-     * @param M
-     * @returns
+     * Return the number of logical dimensions of a runtime value.
+     *
+     * Scalars and text values use their MATLAB-compatible array dimensions,
+     * while arrays preserve their stored rank after singleton-tail
+     * normalization.
+     *
+     * @param M Value whose dimensions should be inspected.
+     * @returns Number of dimensions as a complex scalar.
      */
     public static readonly ndims = (M?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('ndims', !(typeof M !== 'undefined' && rest.length === 0));
@@ -1038,9 +1297,10 @@ abstract class CoreFunctions {
 
     public static readonly rowsSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
     /**
-     * eturn the number of rows of M.
-     * @param M
-     * @returns
+     * Return the first logical dimension of a runtime value.
+     *
+     * @param M Value whose row count should be inspected.
+     * @returns Row count as a complex scalar.
      */
     public static readonly rows = (M?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('rows', !(typeof M !== 'undefined' && rest.length === 0));
@@ -1049,9 +1309,10 @@ abstract class CoreFunctions {
 
     public static readonly columnsSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
     /**
-     * Return the number of columns of M.
-     * @param M
-     * @returns
+     * Return the second logical dimension of a runtime value.
+     *
+     * @param M Value whose column count should be inspected.
+     * @returns Column count as a complex scalar.
      */
     public static readonly columns = (M?: ElementType, ...rest: unknown[]): ComplexType => {
         AST.throwInvalidCallError('columns', !(typeof M !== 'undefined' && rest.length === 0));
@@ -1062,8 +1323,9 @@ abstract class CoreFunctions {
     /**
      * Return the length of the object M. The length is the number of elements
      * along the largest dimension.
-     * @param M
-     * @returns
+     *
+     * @param M Value whose largest dimension should be inspected.
+     * @returns Largest dimension as a complex scalar.
      */
     public static readonly Length = (M?: ElementType, ...rest: unknown[]): ComplexType => {
         /* Capitalized name so as not to conflict with the built-in 'Function.length' property. */
@@ -1076,10 +1338,17 @@ abstract class CoreFunctions {
         outputs: { arity: 1 },
     };
     /**
+     * Return the number of selected elements.
      *
-     * @param M
-     * @param IDX
-     * @returns
+     * With no index arguments this is the product of the runtime dimensions.
+     * With index arguments it follows MATLAB's `numel(A, idx...)` contract used
+     * by comma-separated-list expansion and overloaded indexing: `":"` selects
+     * the corresponding dimension length, vector indices contribute their
+     * number of elements, and scalar-like indices contribute one element.
+     *
+     * @param M Value being indexed.
+     * @param IDX Optional indexing arguments.
+     * @returns Element count as a complex scalar.
      */
     public static readonly numel = (M: ElementType, ...IDX: ElementType[]): ComplexType => {
         const dimensions = RuntimeValue.dimensions(M);
@@ -1727,12 +1996,34 @@ abstract class CoreFunctions {
                 throw new Error('repmat: all input arguments must be scalar.');
             }
         }
-        return MultiArray.evaluate(
-            new MultiArray(
-                dimension.map((value) => Complex.realToNumber(value as ComplexType)),
-                A,
-            ),
-        );
+        const repeats = dimension.map((value) => Complex.realToNumber(value as ComplexType));
+        if (MultiArray.isInstanceOf(A) && A.isCell) {
+            return CoreFunctions.repmatCellArray(A, repeats);
+        }
+        return MultiArray.evaluate(new MultiArray(repeats, A));
+    };
+
+    /**
+     * Repeat a cell array without reducing it through ordinary concatenation.
+     */
+    private static readonly repmatCellArray = (A: MultiArray, repeats: number[]): MultiArray => {
+        const rank = Math.max(A.dimension.length, repeats.length, 2);
+        const sourceDimensions = A.dimension.slice();
+        const repeatDimensions = repeats.slice();
+        MultiArray.appendSingletonTail(sourceDimensions, rank);
+        MultiArray.appendSingletonTail(repeatDimensions, rank);
+        const resultDimensions = sourceDimensions.map((dimension, index) => dimension * repeatDimensions[index]);
+        const result = new MultiArray(resultDimensions, undefined, true);
+        for (let resultIndex = 0; resultIndex < MultiArray.linearLength(result); resultIndex++) {
+            const resultSubscript = MultiArray.linearIndexToSubscript(result.dimension, resultIndex);
+            const sourceSubscript = resultSubscript.map((subscript, index) => ((subscript - 1) % sourceDimensions[index]) + 1);
+            const sourceLinear = MultiArray.subscriptToLinearIndex(sourceDimensions, sourceSubscript);
+            const [sourceRow, sourceColumn] = MultiArray.linearIndexToMultiArrayRowColumn(A.dimension[0], A.dimension[1], sourceLinear);
+            const [resultRow, resultColumn] = MultiArray.linearIndexToMultiArrayRowColumn(result.dimension[0], result.dimension[1], resultIndex);
+            result.array[resultRow][resultColumn] = RuntimeValue.copy(A.array[sourceRow][sourceColumn]);
+        }
+        result.isCell = true;
+        return result;
     };
 
     public static readonly reshapeSignature: BuiltInFunctionSignature = {
@@ -1767,7 +2058,7 @@ abstract class CoreFunctions {
         if (dimension.length < 1) {
             throw new Error('invalid call to reshape');
         }
-        const m = MultiArray.scalarToMultiArray(M);
+        const m = MultiArray.scalarOrCellToMultiArray(M);
         let d: number = -1;
         if (dimension.length === 1 && MultiArray.isInstanceOf(dimension[0])) {
             dimension = MultiArray.linearize(dimension[0]);
@@ -1795,18 +2086,385 @@ abstract class CoreFunctions {
      */
     public static readonly squeeze = (...args: ElementType[]): ElementType => {
         AST.throwInvalidCallError('squeeze', args.length !== 1);
-        if (MultiArray.isInstanceOf(args[0]) && !(args[0] as MultiArray).isCell) {
-            if ((args[0] as MultiArray).dimension.length > 2) {
-                return MultiArray.reshape(
-                    args[0] as MultiArray,
-                    (args[0] as MultiArray).dimension.filter((value) => value !== 1),
-                );
-            } else {
-                return args[0];
-            }
-        } else {
+        if (!MultiArray.isInstanceOf(args[0])) {
             return args[0];
         }
+        const value = args[0] as MultiArray;
+        if (value.dimension.length <= 2) {
+            return value;
+        }
+        const dimension = value.dimension.filter((size) => size !== 1);
+        while (dimension.length < 2) {
+            dimension.push(1);
+        }
+        return MultiArray.reshape(value, dimension);
+    };
+
+    public static readonly flipSignature: BuiltInFunctionSignature = {
+        inputs: [
+            { arity: 1, parameters: [{ name: 'array' }] },
+            { arity: 2, parameters: [{ name: 'array' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] }] },
+        ],
+        outputs: { arity: 1 },
+    };
+
+    /**
+     * Reverse array elements along the first non-singleton dimension, or along
+     * the explicit one-based dimension.
+     */
+    public static readonly flip = (A?: ElementType, dimension?: ElementType, ...rest: unknown[]): ElementType => {
+        AST.throwInvalidCallError('flip', !(typeof A !== 'undefined' && rest.length === 0));
+        const source = CharString.isInstanceOf(A) ? MultiArray.characterVectorFromCharString(A) : MultiArray.scalarOrCellToMultiArray(A);
+        const dim = typeof dimension === 'undefined' ? MultiArray.firstNonSingleDimension(source) + 1 : CoreFunctions.positiveIntegerScalar(dimension, 'flip', 'DIM');
+        return CoreFunctions.flipArray(source, dim);
+    };
+
+    public static readonly fliplrSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'array' }] }, outputs: { arity: 1 } };
+
+    /**
+     * Reverse array columns on each page.
+     */
+    public static readonly fliplr = (A?: ElementType, ...rest: unknown[]): ElementType => {
+        AST.throwInvalidCallError('fliplr', !(typeof A !== 'undefined' && rest.length === 0));
+        const source = CharString.isInstanceOf(A) ? MultiArray.characterVectorFromCharString(A) : MultiArray.scalarOrCellToMultiArray(A);
+        return CoreFunctions.flipArray(source, 2);
+    };
+
+    public static readonly flipudSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'array' }] }, outputs: { arity: 1 } };
+
+    /**
+     * Reverse array rows on each page.
+     */
+    public static readonly flipud = (A?: ElementType, ...rest: unknown[]): ElementType => {
+        AST.throwInvalidCallError('flipud', !(typeof A !== 'undefined' && rest.length === 0));
+        const source = CharString.isInstanceOf(A) ? MultiArray.characterVectorFromCharString(A) : MultiArray.scalarOrCellToMultiArray(A);
+        return CoreFunctions.flipArray(source, 1);
+    };
+
+    /**
+     * Shared implementation for dimension-wise flips.
+     */
+    private static readonly flipArray = (source: MultiArray, dimension: number): ElementType => {
+        const rank = Math.max(source.dimension.length, dimension, 2);
+        const sourceDimensions = source.dimension.slice();
+        MultiArray.appendSingletonTail(sourceDimensions, rank);
+        const result = new MultiArray(sourceDimensions, undefined, source.isCell);
+        for (let sourceIndex = 0; sourceIndex < MultiArray.linearLength(source); sourceIndex++) {
+            const sourceSubscript = MultiArray.linearIndexToSubscript(sourceDimensions, sourceIndex);
+            const resultSubscript = sourceSubscript.slice();
+            resultSubscript[dimension - 1] = sourceDimensions[dimension - 1] - sourceSubscript[dimension - 1] + 1;
+            const [sourceRow, sourceColumn] = MultiArray.linearIndexToMultiArrayRowColumn(source.dimension[0], source.dimension[1], sourceIndex);
+            const [resultRow, resultColumn] = MultiArray.subscriptToMultiArrayRowColumn(result.dimension, resultSubscript);
+            result.array[resultRow][resultColumn] = RuntimeValue.copy(source.array[sourceRow][sourceColumn]);
+        }
+        result.isCell = source.isCell;
+        result.type = source.type;
+        MultiArray.removeSingletonTail(result.dimension);
+        return MultiArray.MultiArrayToScalar(result);
+    };
+
+    public static readonly rot90Signature: BuiltInFunctionSignature = {
+        inputs: [
+            { arity: 1, parameters: [{ name: 'array' }] },
+            { arity: 2, parameters: [{ name: 'array' }, { name: 'k', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer'] }] },
+        ],
+        outputs: { arity: 1 },
+    };
+
+    /**
+     * Rotate arrays counterclockwise by K quarter-turns in the first two dimensions.
+     */
+    public static readonly rot90 = (A?: ElementType, k?: ElementType, ...rest: unknown[]): ElementType => {
+        AST.throwInvalidCallError('rot90', !(typeof A !== 'undefined' && rest.length === 0));
+        const source = CharString.isInstanceOf(A) ? MultiArray.characterVectorFromCharString(A) : MultiArray.scalarOrCellToMultiArray(A);
+        const turns = typeof k === 'undefined' ? 1 : CoreFunctions.integerScalar(k, 'rot90', 'K');
+        const normalizedTurns = ((turns % 4) + 4) % 4;
+        if (normalizedTurns === 0) {
+            return source;
+        }
+        const sourceDimensions = source.dimension.slice();
+        MultiArray.appendSingletonTail(sourceDimensions, 2);
+        const resultDimensions = sourceDimensions.slice();
+        if (normalizedTurns % 2 === 1) {
+            [resultDimensions[0], resultDimensions[1]] = [resultDimensions[1], resultDimensions[0]];
+        }
+        const result = new MultiArray(resultDimensions, undefined, source.isCell);
+        for (let sourceIndex = 0; sourceIndex < MultiArray.linearLength(source); sourceIndex++) {
+            const sourceSubscript = MultiArray.linearIndexToSubscript(sourceDimensions, sourceIndex);
+            const resultSubscript = sourceSubscript.slice();
+            if (normalizedTurns === 1) {
+                resultSubscript[0] = sourceDimensions[1] - sourceSubscript[1] + 1;
+                resultSubscript[1] = sourceSubscript[0];
+            } else if (normalizedTurns === 2) {
+                resultSubscript[0] = sourceDimensions[0] - sourceSubscript[0] + 1;
+                resultSubscript[1] = sourceDimensions[1] - sourceSubscript[1] + 1;
+            } else {
+                resultSubscript[0] = sourceSubscript[1];
+                resultSubscript[1] = sourceDimensions[0] - sourceSubscript[0] + 1;
+            }
+            const [sourceRow, sourceColumn] = MultiArray.linearIndexToMultiArrayRowColumn(source.dimension[0], source.dimension[1], sourceIndex);
+            const [resultRow, resultColumn] = MultiArray.subscriptToMultiArrayRowColumn(result.dimension, resultSubscript);
+            result.array[resultRow][resultColumn] = RuntimeValue.copy(source.array[sourceRow][sourceColumn]);
+        }
+        result.isCell = source.isCell;
+        result.type = source.type;
+        MultiArray.removeSingletonTail(result.dimension);
+        return MultiArray.MultiArrayToScalar(result);
+    };
+
+    public static readonly permuteSignature: BuiltInFunctionSignature = {
+        inputs: { arity: 2, parameters: [{ name: 'array' }, { name: 'order', classes: ['double'], validators: ['dimensionVector'] }] },
+        outputs: { arity: 1 },
+    };
+
+    /**
+     * Rearrange array dimensions according to a one-based permutation vector.
+     */
+    public static readonly permute = (A?: ElementType, order?: ElementType, ...rest: unknown[]): ElementType => {
+        AST.throwInvalidCallError('permute', !(typeof A !== 'undefined' && typeof order !== 'undefined' && rest.length === 0));
+        return CoreFunctions.permuteArray(A, order, false, 'permute');
+    };
+
+    public static readonly ipermuteSignature: BuiltInFunctionSignature = {
+        inputs: { arity: 2, parameters: [{ name: 'array' }, { name: 'order', classes: ['double'], validators: ['dimensionVector'] }] },
+        outputs: { arity: 1 },
+    };
+
+    /**
+     * Inverse operation of `permute` for a one-based permutation vector.
+     */
+    public static readonly ipermute = (A?: ElementType, order?: ElementType, ...rest: unknown[]): ElementType => {
+        AST.throwInvalidCallError('ipermute', !(typeof A !== 'undefined' && typeof order !== 'undefined' && rest.length === 0));
+        return CoreFunctions.permuteArray(A, order, true, 'ipermute');
+    };
+
+    /**
+     * Shared implementation for `permute` and `ipermute`.
+     */
+    private static readonly permuteArray = (value: ElementType, order: ElementType, inverse: boolean, functionName: 'permute' | 'ipermute'): ElementType => {
+        const source = CharString.isInstanceOf(value) ? MultiArray.characterVectorFromCharString(value) : MultiArray.scalarOrCellToMultiArray(value);
+        const orderValues = CoreFunctions.permutationOrder(order, source.dimension.length, functionName);
+        const effectiveOrder = inverse ? CoreFunctions.inversePermutation(orderValues) : orderValues;
+        const rank = Math.max(source.dimension.length, effectiveOrder.length, 2);
+        const sourceDimensions = source.dimension.slice();
+        MultiArray.appendSingletonTail(sourceDimensions, rank);
+        const resultDimensions = effectiveOrder.map((axis) => sourceDimensions[axis - 1]);
+        MultiArray.appendSingletonTail(resultDimensions, rank);
+        const result = new MultiArray(resultDimensions, undefined, source.isCell);
+        for (let resultIndex = 0; resultIndex < MultiArray.linearLength(result); resultIndex++) {
+            const resultSubscript = MultiArray.linearIndexToSubscript(result.dimension, resultIndex);
+            const sourceSubscript = new Array<number>(rank).fill(1);
+            effectiveOrder.forEach((axis, resultAxis) => {
+                sourceSubscript[axis - 1] = resultSubscript[resultAxis];
+            });
+            const sourceLinear = MultiArray.subscriptToLinearIndex(sourceDimensions, sourceSubscript);
+            const [sourceRow, sourceColumn] = MultiArray.linearIndexToMultiArrayRowColumn(source.dimension[0], source.dimension[1], sourceLinear);
+            const [resultRow, resultColumn] = MultiArray.linearIndexToMultiArrayRowColumn(result.dimension[0], result.dimension[1], resultIndex);
+            result.array[resultRow][resultColumn] = RuntimeValue.copy(source.array[sourceRow][sourceColumn]);
+        }
+        result.isCell = source.isCell;
+        result.type = source.type;
+        MultiArray.removeSingletonTail(result.dimension);
+        return MultiArray.MultiArrayToScalar(result);
+    };
+
+    /**
+     * Validate and normalize the dimension order argument for permutation.
+     */
+    private static readonly permutationOrder = (order: ElementType, sourceRank: number, functionName: 'permute' | 'ipermute'): number[] => {
+        const values = MultiArray.linearize(MultiArray.scalarToMultiArray(order)).map((value) => {
+            if (!Complex.isInstanceOf(value)) {
+                throw new EvalError(`${functionName}: ORDER must be a permutation vector.`);
+            }
+            const dimension = Complex.realToNumber(value);
+            if (!Number.isInteger(dimension) || dimension < 1 || Complex.imagToNumber(value) !== 0) {
+                throw new EvalError(`${functionName}: ORDER must be a permutation vector.`);
+            }
+            return dimension;
+        });
+        const rank = Math.max(sourceRank, values.length, 2);
+        const sorted = values.slice().sort((left, right) => left - right);
+        if (values.length !== rank || sorted.some((value, index) => value !== index + 1)) {
+            throw new EvalError(`${functionName}: ORDER must be a permutation vector.`);
+        }
+        return values;
+    };
+
+    /**
+     * Return the inverse permutation that maps input axes back to source axes.
+     */
+    private static readonly inversePermutation = (order: number[]): number[] => {
+        const inverse = new Array<number>(order.length);
+        order.forEach((axis, index) => {
+            inverse[axis - 1] = index + 1;
+        });
+        return inverse;
+    };
+
+    public static readonly circshiftSignature: BuiltInFunctionSignature = {
+        inputs: [
+            { arity: 2, parameters: [{ name: 'array' }, { name: 'shifts', classes: ['double'] }] },
+            {
+                arity: 3,
+                parameters: [
+                    { name: 'array' },
+                    { name: 'shift', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer'] },
+                    { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
+                ],
+            },
+        ],
+        outputs: { arity: 1 },
+    };
+
+    /**
+     * Circularly shift array elements along one or more dimensions.
+     */
+    public static readonly circshift = (A?: ElementType, shifts?: ElementType, dimension?: ElementType, ...rest: unknown[]): ElementType => {
+        AST.throwInvalidCallError('circshift', !(typeof A !== 'undefined' && typeof shifts !== 'undefined' && rest.length === 0));
+        const source = CharString.isInstanceOf(A) ? MultiArray.characterVectorFromCharString(A) : MultiArray.scalarOrCellToMultiArray(A);
+        const shiftValues = CoreFunctions.integerVector(shifts, 'circshift', 'SHIFTS');
+        if (typeof dimension !== 'undefined') {
+            const dim = CoreFunctions.positiveIntegerScalar(dimension, 'circshift', 'DIM');
+            if (shiftValues.length !== 1) {
+                throw new EvalError('circshift: SHIFT must be a scalar when DIM is specified.');
+            }
+            return CoreFunctions.circularShiftArray(source, [shiftValues[0]], dim);
+        }
+        if (shiftValues.length === 1) {
+            return CoreFunctions.circularShiftArray(source, shiftValues, MultiArray.firstNonSingleDimension(source) + 1);
+        }
+        if (shiftValues.length > source.dimension.length) {
+            throw new EvalError('circshift: SHIFTS vector must not be longer than ndims(A).');
+        }
+        return CoreFunctions.circularShiftArray(source, shiftValues);
+    };
+
+    /**
+     * Apply circular shifts to an ordinary or cell array.
+     */
+    private static readonly circularShiftArray = (source: MultiArray, shifts: number[], explicitDimension?: number): ElementType => {
+        const rank = Math.max(source.dimension.length, explicitDimension ?? 0, shifts.length, 2);
+        const sourceDimensions = source.dimension.slice();
+        MultiArray.appendSingletonTail(sourceDimensions, rank);
+        const effectiveShifts = new Array<number>(rank).fill(0);
+        if (typeof explicitDimension === 'number') {
+            effectiveShifts[explicitDimension - 1] = shifts[0];
+        } else {
+            shifts.forEach((shift, index) => {
+                effectiveShifts[index] = shift;
+            });
+        }
+        const result = new MultiArray(sourceDimensions, undefined, source.isCell);
+        for (let sourceIndex = 0; sourceIndex < MultiArray.linearLength(source); sourceIndex++) {
+            const sourceSubscript = MultiArray.linearIndexToSubscript(sourceDimensions, sourceIndex);
+            const resultSubscript = sourceSubscript.map((subscript, index) => {
+                const dimension = sourceDimensions[index];
+                return ((((subscript - 1 + effectiveShifts[index]) % dimension) + dimension) % dimension) + 1;
+            });
+            const [sourceRow, sourceColumn] = MultiArray.linearIndexToMultiArrayRowColumn(source.dimension[0], source.dimension[1], sourceIndex);
+            const [resultRow, resultColumn] = MultiArray.subscriptToMultiArrayRowColumn(result.dimension, resultSubscript);
+            result.array[resultRow][resultColumn] = RuntimeValue.copy(source.array[sourceRow][sourceColumn]);
+        }
+        result.isCell = source.isCell;
+        result.type = source.type;
+        MultiArray.removeSingletonTail(result.dimension);
+        return MultiArray.MultiArrayToScalar(result);
+    };
+
+    public static readonly shiftdimSignature: BuiltInFunctionSignature = {
+        inputs: [
+            { arity: 1, parameters: [{ name: 'array' }] },
+            { arity: 2, parameters: [{ name: 'array' }, { name: 'shift', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer'] }] },
+        ],
+        outputs: { arity: -2 },
+    };
+
+    /**
+     * Shift array dimensions left or right.
+     *
+     * With one input, leading singleton dimensions are removed and a second
+     * output reports how many were removed. With two inputs, positive `N`
+     * rotates dimensions left and negative `N` prepends singleton dimensions.
+     */
+    public static readonly shiftdim = (A?: ElementType, n?: ElementType, ...rest: unknown[]): ElementType | NodeReturnList => {
+        AST.throwInvalidCallError('shiftdim', !(typeof A !== 'undefined' && rest.length === 0));
+        const source = MultiArray.scalarOrCellToMultiArray(A);
+        if (typeof n === 'undefined') {
+            const removed = CoreFunctions.leadingSingletonDimensions(source.dimension);
+            const shifted = CoreFunctions.shiftDimensions(source, removed);
+            return AST.nodeBoundedReturnList(2, (_evaluated: ReturnHandlerResult, index: number): ElementType => (index === 0 ? shifted : Complex.create(removed)));
+        }
+        const shift = CoreFunctions.integerScalar(n, 'shiftdim', 'N');
+        return CoreFunctions.shiftDimensions(source, shift);
+    };
+
+    /**
+     * Count removable leading singleton dimensions using MATLAB's two-minimum
+     * dimension convention.
+     */
+    private static readonly leadingSingletonDimensions = (dimensions: number[]): number => {
+        let count = 0;
+        while (count < dimensions.length - 2 && dimensions[count] === 1) {
+            count++;
+        }
+        return count;
+    };
+
+    /**
+     * Shift dimensions left or prepend singleton dimensions for `shiftdim`.
+     */
+    private static readonly shiftDimensions = (source: MultiArray, shift: number): ElementType => {
+        if (shift === 0) {
+            return source;
+        }
+        const dimensions = source.dimension.slice();
+        const normalizedShift = dimensions.length === 0 ? 0 : shift % dimensions.length;
+        const shiftedDimensions = shift > 0 ? dimensions.slice(normalizedShift).concat(dimensions.slice(0, normalizedShift)) : new Array<number>(-shift).fill(1).concat(dimensions);
+        while (shiftedDimensions.length < 2) {
+            shiftedDimensions.push(1);
+        }
+        return MultiArray.reshape(source, shiftedDimensions);
+    };
+
+    /**
+     * Extract an integer vector from a runtime value.
+     */
+    private static readonly integerVector = (value: ElementType, functionName: string, argumentName: string): number[] =>
+        MultiArray.linearize(MultiArray.scalarToMultiArray(value)).map((item) => {
+            if (!Complex.isInstanceOf(item)) {
+                throw new EvalError(`${functionName}: ${argumentName} must contain integer values.`);
+            }
+            const number = Complex.realToNumber(item);
+            if (!Number.isInteger(number) || Complex.imagToNumber(item) !== 0 || !Number.isFinite(number)) {
+                throw new EvalError(`${functionName}: ${argumentName} must contain integer values.`);
+            }
+            return number;
+        });
+
+    /**
+     * Extract an integer scalar from a runtime value.
+     */
+    private static readonly integerScalar = (value: ElementType, functionName: string, argumentName: string): number => {
+        const scalar = MultiArray.MultiArrayToScalar(value);
+        if (!Complex.isInstanceOf(scalar)) {
+            throw new EvalError(`${functionName}: ${argumentName} must be an integer scalar.`);
+        }
+        const number = Complex.realToNumber(scalar);
+        if (!Number.isInteger(number) || Complex.imagToNumber(scalar) !== 0 || !Number.isFinite(number)) {
+            throw new EvalError(`${functionName}: ${argumentName} must be an integer scalar.`);
+        }
+        return number;
+    };
+
+    /**
+     * Extract a positive integer scalar from a runtime value.
+     */
+    private static readonly positiveIntegerScalar = (value: ElementType, functionName: string, argumentName: string): number => {
+        const number = CoreFunctions.integerScalar(value, functionName, argumentName);
+        if (number < 1) {
+            throw new EvalError(`${functionName}: ${argumentName} must be a positive integer scalar.`);
+        }
+        return number;
     };
 
     /**
@@ -1927,6 +2585,300 @@ abstract class CoreFunctions {
      */
     public static readonly ones = (...dimension: ElementType[]): ElementType => {
         return CoreFunctions.newFilled(Complex.one(), 'ones', ...dimension);
+    };
+
+    /** Signature metadata for `cell`. */
+    public static readonly cellSignature: BuiltInFunctionSignature = {
+        inputs: [
+            { arity: 0 },
+            {
+                arity: 1,
+                parameters: [
+                    {
+                        name: 'dimension',
+                        classes: ['double'],
+                        validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'],
+                        alternatives: [{ name: 'dimensions', validators: ['numeric', 'vector', 'real', 'finite', 'integer', 'nonnegative'] }],
+                    },
+                ],
+            },
+            {
+                arity: -2,
+                min: 2,
+                parameters: [{ name: 'dimension', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'], variadic: true }],
+            },
+        ],
+        outputs: { arity: 1 },
+    };
+
+    /**
+     * Create a cell array whose cells are initialized with empty arrays.
+     *
+     * Unlike numeric constructors, a 1-by-1 cell remains a cell array rather
+     * than reducing to the contained empty value.
+     *
+     * @param dimension Cell array dimensions.
+     * @returns Cell array filled with empty arrays.
+     */
+    public static readonly cell = (...dimension: ElementType[]): MultiArray => {
+        let dims: number[];
+        if (dimension.length === 0) {
+            return MultiArray.emptyArray(true);
+        }
+        if (dimension.length === 1) {
+            const m = MultiArray.scalarToMultiArray(dimension[0]);
+            if (!MultiArray.isVector(m)) {
+                throw new Error('cell (A): use cell (size (A)) instead.');
+            }
+            dims = (MultiArray.linearize(m) as ComplexType[]).map((data) => Complex.realToNumber(data));
+            if (dims.length === 1) {
+                dims[dims.length] = dims[0];
+            }
+        } else {
+            dims = (dimension as (MultiArray | ComplexType)[]).map((dim) => {
+                if (MultiArray.isInstanceOf(dim)) {
+                    throw new Error('cell: dimensions must be scalars.');
+                }
+                return Complex.realToNumber(dim as ComplexType);
+            });
+        }
+        return new MultiArray(dims, () => MultiArray.emptyArray(), true);
+    };
+
+    /** Signature metadata for `num2cell`. */
+    public static readonly num2cellSignature: BuiltInFunctionSignature = {
+        inputs: [
+            { arity: 1, parameters: [{ name: 'value' }] },
+            {
+                arity: 2,
+                parameters: [
+                    { name: 'value' },
+                    {
+                        name: 'dimensions',
+                        classes: ['double'],
+                        validators: ['numeric', 'vector', 'real', 'finite', 'integer', 'positive'],
+                        alternatives: [{ name: 'dimension', validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'positive'] }],
+                    },
+                ],
+            },
+        ],
+        outputs: { arity: 1 },
+    };
+
+    /**
+     * Convert an array into a cell array, optionally grouping selected
+     * dimensions into each cell.
+     *
+     * @param value Source value.
+     * @param dimensions Dimensions to keep inside each cell.
+     * @returns Cell array containing scalar elements or grouped subarrays.
+     */
+    public static readonly num2cell = (value?: ElementType, dimensions?: ElementType, ...rest: unknown[]): MultiArray => {
+        AST.throwInvalidCallError('num2cell', !(typeof value !== 'undefined' && rest.length === 0));
+        const source = CharString.isInstanceOf(value) ? MultiArray.characterVectorFromCharString(value) : MultiArray.isInstanceOf(value) ? value : MultiArray.scalarToMultiArray(value);
+        if (typeof dimensions === 'undefined') {
+            const result = new MultiArray(source.dimension, undefined, true);
+            for (let index = 0; index < MultiArray.linearLength(source); index++) {
+                const [row, column] = MultiArray.linearIndexToMultiArrayRowColumn(source.dimension[0], source.dimension[1], index);
+                result.array[row][column] = RuntimeValue.copy(source.array[row][column]);
+            }
+            result.isCell = true;
+            return result;
+        }
+        const dims = [...new Set((MultiArray.linearize(MultiArray.scalarToMultiArray(dimensions)) as ComplexType[]).map((dim) => Complex.realToNumber(dim) - 1))].sort(
+            (left, right) => left - right,
+        );
+        if (dims.some((dim) => dim >= source.dimension.length)) {
+            throw new EvalError('num2cell: DIM must be between 1 and ndims(A).');
+        }
+        const sourceDimensions = source.dimension.slice();
+        MultiArray.appendSingletonTail(sourceDimensions, Math.max(...dims) + 1);
+        const resultDimensions = sourceDimensions.map((dim, index) => (dims.includes(index) ? 1 : dim));
+        const sliceDimensions = sourceDimensions.map((dim, index) => (dims.includes(index) ? dim : 1));
+        const result = new MultiArray(resultDimensions, undefined, true);
+        for (let resultIndex = 0; resultIndex < MultiArray.linearLength(result); resultIndex++) {
+            const baseSubscript = MultiArray.linearIndexToSubscript(resultDimensions, resultIndex);
+            const cellValue = new MultiArray(sliceDimensions, undefined, source.isCell);
+            for (let sliceIndex = 0; sliceIndex < MultiArray.linearLength(cellValue); sliceIndex++) {
+                const sliceSubscript = MultiArray.linearIndexToSubscript(sliceDimensions, sliceIndex);
+                const sourceSubscript = sourceDimensions.map((_, index) => (dims.includes(index) ? sliceSubscript[index] : baseSubscript[index]));
+                const sourceLinear = MultiArray.subscriptToLinearIndex(sourceDimensions, sourceSubscript);
+                const [sourceRow, sourceColumn] = MultiArray.linearIndexToMultiArrayRowColumn(source.dimension[0], source.dimension[1], sourceLinear);
+                const [sliceRow, sliceColumn] = MultiArray.linearIndexToMultiArrayRowColumn(cellValue.dimension[0], cellValue.dimension[1], sliceIndex);
+                cellValue.array[sliceRow][sliceColumn] = RuntimeValue.copy(source.array[sourceRow][sourceColumn]);
+            }
+            MultiArray.setType(cellValue);
+            const [row, column] = MultiArray.linearIndexToMultiArrayRowColumn(result.dimension[0], result.dimension[1], resultIndex);
+            result.array[row][column] = source.isCell ? cellValue : MultiArray.MultiArrayToScalar(cellValue);
+        }
+        result.isCell = true;
+        return result;
+    };
+
+    /** Signature metadata for `cell2mat`. */
+    public static readonly cell2matSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'cellArray', classes: ['cell'] }] }, outputs: { arity: 1 } };
+
+    /**
+     * Convert a cell array of ordinary arrays into one concatenated array.
+     *
+     * This mirrors MATLAB/Octave's common `cell2mat` path for numeric,
+     * character, logical, structure, and object contents. Nested cell contents
+     * are rejected because the result must be an ordinary array.
+     */
+    public static readonly cell2mat = (C?: ElementType, ...rest: unknown[]): ElementType => {
+        AST.throwInvalidCallError('cell2mat', !(MultiArray.isInstanceOf(C) && C.isCell && rest.length === 0));
+        const cellArray = C as MultiArray;
+        if (MultiArray.isEmpty(cellArray)) {
+            return MultiArray.emptyArray();
+        }
+        return MultiArray.MultiArrayToScalar(CoreFunctions.cell2matCompose(cellArray));
+    };
+
+    /**
+     * Convert a cell element to the ordinary block consumed by `cell2mat`.
+     */
+    private static readonly cell2matBlock = (value: ElementType): MultiArray => {
+        if (MultiArray.isInstanceOf(value) && value.isCell) {
+            throw new EvalError('cell2mat: nested cell contents are not supported.');
+        }
+        return CharString.isInstanceOf(value) ? MultiArray.characterVectorFromCharString(value) : MultiArray.scalarToMultiArray(value);
+    };
+
+    /**
+     * Compose N-D cell blocks into one ordinary array.
+     *
+     * Block sizes may vary along the corresponding cell-array dimension, but
+     * must be consistent across all other dimensions.
+     */
+    private static readonly cell2matCompose = (cellArray: MultiArray): MultiArray => {
+        const blocks: MultiArray[] = [];
+        const rank = Math.max(cellArray.dimension.length, 2);
+        const cellDimensions = cellArray.dimension.slice();
+        MultiArray.appendSingletonTail(cellDimensions, rank);
+        const axisBlockSizes = cellDimensions.map((length) => new Array<number | undefined>(length));
+        for (let index = 0; index < MultiArray.linearLength(cellArray); index++) {
+            const [row, column] = MultiArray.linearIndexToMultiArrayRowColumn(cellArray.dimension[0], cellArray.dimension[1], index);
+            const block = CoreFunctions.cell2matBlock(cellArray.array[row][column]);
+            blocks[index] = block;
+            const blockDimensions = block.dimension.slice();
+            MultiArray.appendSingletonTail(blockDimensions, rank);
+            const cellSubscript = MultiArray.linearIndexToSubscript(cellDimensions, index);
+            for (let axis = 0; axis < rank; axis++) {
+                const slot = cellSubscript[axis] - 1;
+                const expected = axisBlockSizes[axis][slot];
+                if (typeof expected === 'undefined') {
+                    axisBlockSizes[axis][slot] = blockDimensions[axis];
+                } else if (expected !== blockDimensions[axis]) {
+                    throw new EvalError('cell2mat: dimension mismatch');
+                }
+            }
+        }
+        const resultDimension = axisBlockSizes.map((sizes) => {
+            let total = 0;
+            sizes.forEach((size) => {
+                total += size ?? 0;
+            });
+            return total;
+        });
+        const offsets = axisBlockSizes.map((sizes) => {
+            let offset = 0;
+            return sizes.map((size) => {
+                const start = offset;
+                offset += size ?? 0;
+                return start;
+            });
+        });
+        const result = new MultiArray(resultDimension);
+        for (let cellIndex = 0; cellIndex < blocks.length; cellIndex++) {
+            const block = blocks[cellIndex];
+            const blockDimensions = block.dimension.slice();
+            MultiArray.appendSingletonTail(blockDimensions, rank);
+            const cellSubscript = MultiArray.linearIndexToSubscript(cellDimensions, cellIndex);
+            for (let blockIndex = 0; blockIndex < MultiArray.linearLength(block); blockIndex++) {
+                const blockSubscript = MultiArray.linearIndexToSubscript(blockDimensions, blockIndex);
+                const resultSubscript = blockSubscript.map((subscript, axis) => offsets[axis][cellSubscript[axis] - 1] + subscript);
+                const [sourceRow, sourceColumn] = MultiArray.linearIndexToMultiArrayRowColumn(block.dimension[0], block.dimension[1], blockIndex);
+                const [resultRow, resultColumn] = MultiArray.subscriptToMultiArrayRowColumn(result.dimension, resultSubscript);
+                result.array[resultRow][resultColumn] = RuntimeValue.copy(block.array[sourceRow][sourceColumn]);
+            }
+        }
+        MultiArray.setType(result);
+        return result;
+    };
+
+    /** Signature metadata for `mat2cell`. */
+    public static readonly mat2cellSignature: BuiltInFunctionSignature = {
+        inputs: { arity: -2, min: 2, parameters: [{ name: 'array' }, { name: 'dimensionSizes', classes: ['double'], variadic: true }] },
+        outputs: { arity: 1 },
+    };
+
+    /**
+     * Convert an ordinary array into a cell array of blocks.
+     *
+     * Each dimension-size vector partitions the matching source dimension.
+     * The number of partition arguments must match the source dimensionality.
+     */
+    public static readonly mat2cell = (value?: ElementType, ...dimensionSizes: ElementType[]): MultiArray => {
+        AST.throwInvalidCallError('mat2cell', !(typeof value !== 'undefined' && dimensionSizes.length > 0));
+        const source = CharString.isInstanceOf(value) ? MultiArray.characterVectorFromCharString(value) : MultiArray.scalarToMultiArray(value);
+        if (source.isCell) {
+            throw new EvalError('mat2cell: input must not be a cell array.');
+        }
+        if (dimensionSizes.length !== source.dimension.length) {
+            throw new EvalError('mat2cell: number of dimension vectors must match ndims(A).');
+        }
+        const partitions = dimensionSizes.map((partition, index) => CoreFunctions.mat2cellPartition(partition, source.dimension[index], index + 2));
+        const result = new MultiArray(
+            partitions.map((partition) => partition.length),
+            undefined,
+            true,
+        );
+        const offsets = partitions.map((partition) => {
+            let offset = 0;
+            return partition.map((length) => {
+                const start = offset;
+                offset += length;
+                return start;
+            });
+        });
+        for (let resultIndex = 0; resultIndex < MultiArray.linearLength(result); resultIndex++) {
+            const resultSubscript = MultiArray.linearIndexToSubscript(result.dimension, resultIndex);
+            const blockDimensions = resultSubscript.map((subscript, index) => partitions[index][subscript - 1]);
+            const block = new MultiArray(blockDimensions);
+            for (let blockIndex = 0; blockIndex < MultiArray.linearLength(block); blockIndex++) {
+                const blockSubscript = MultiArray.linearIndexToSubscript(block.dimension, blockIndex);
+                const sourceSubscript = blockSubscript.map((subscript, index) => offsets[index][resultSubscript[index] - 1] + subscript);
+                const sourceLinear = MultiArray.subscriptToLinearIndex(source.dimension, sourceSubscript);
+                const [sourceRow, sourceColumn] = MultiArray.linearIndexToMultiArrayRowColumn(source.dimension[0], source.dimension[1], sourceLinear);
+                const [blockRow, blockColumn] = MultiArray.linearIndexToMultiArrayRowColumn(block.dimension[0], block.dimension[1], blockIndex);
+                block.array[blockRow][blockColumn] = RuntimeValue.copy(source.array[sourceRow][sourceColumn]);
+            }
+            MultiArray.setType(block);
+            const [row, column] = MultiArray.linearIndexToMultiArrayRowColumn(result.dimension[0], result.dimension[1], resultIndex);
+            result.array[row][column] = MultiArray.MultiArrayToScalar(block);
+        }
+        result.isCell = true;
+        return result;
+    };
+
+    /**
+     * Normalize one `mat2cell` partition vector and validate its sum.
+     */
+    private static readonly mat2cellPartition = (value: ElementType, expectedTotal: number, argumentIndex: number): number[] => {
+        const partition = MultiArray.linearize(MultiArray.scalarToMultiArray(value)).map((item) => {
+            if (!Complex.isInstanceOf(item)) {
+                throw new EvalError(`mat2cell: argument ${argumentIndex} must contain nonnegative integer sizes.`);
+            }
+            const size = Complex.realToNumber(item);
+            if (!Number.isInteger(size) || size < 0 || Complex.imagToNumber(item) !== 0) {
+                throw new EvalError(`mat2cell: argument ${argumentIndex} must contain nonnegative integer sizes.`);
+            }
+            return size;
+        });
+        if (partition.reduce((sum, size) => sum + size, 0) !== expectedTotal) {
+            throw new EvalError(`mat2cell: argument ${argumentIndex} dimensions do not sum to input size.`);
+        }
+        return partition;
     };
 
     public static readonly randSignature: BuiltInFunctionSignature = {
@@ -2639,6 +3591,8 @@ abstract class CoreFunctions {
         nonzeros: { func: CoreFunctions.nonzeros, signature: CoreFunctions.nonzerosSignature },
         ischar: { func: CoreFunctions.ischar, signature: CoreFunctions.ischarSignature },
         isstring: { func: CoreFunctions.isstring, signature: CoreFunctions.isstringSignature },
+        iscellstr: { func: CoreFunctions.iscellstr, signature: CoreFunctions.iscellstrSignature },
+        cellstr: { func: CoreFunctions.cellstr, signature: CoreFunctions.cellstrSignature },
         char: { func: CoreFunctions.char, signature: CoreFunctions.charSignature },
         double: { func: CoreFunctions.double, signature: CoreFunctions.doubleSignature },
         logical: { func: CoreFunctions.logical, signature: CoreFunctions.logicalSignature },
@@ -2680,8 +3634,20 @@ abstract class CoreFunctions {
         repmat: { func: CoreFunctions.repmat, signature: CoreFunctions.repmatSignature },
         reshape: { func: CoreFunctions.reshape, signature: CoreFunctions.reshapeSignature },
         squeeze: { func: CoreFunctions.squeeze, signature: CoreFunctions.squeezeSignature },
+        flip: { func: CoreFunctions.flip, signature: CoreFunctions.flipSignature },
+        fliplr: { func: CoreFunctions.fliplr, signature: CoreFunctions.fliplrSignature },
+        flipud: { func: CoreFunctions.flipud, signature: CoreFunctions.flipudSignature },
+        rot90: { func: CoreFunctions.rot90, signature: CoreFunctions.rot90Signature },
+        permute: { func: CoreFunctions.permute, signature: CoreFunctions.permuteSignature },
+        ipermute: { func: CoreFunctions.ipermute, signature: CoreFunctions.ipermuteSignature },
+        circshift: { func: CoreFunctions.circshift, signature: CoreFunctions.circshiftSignature },
+        shiftdim: { func: CoreFunctions.shiftdim, signature: CoreFunctions.shiftdimSignature },
         zeros: { func: CoreFunctions.zeros, signature: CoreFunctions.zerosSignature },
         ones: { func: CoreFunctions.ones, signature: CoreFunctions.onesSignature },
+        cell: { func: CoreFunctions.cell, signature: CoreFunctions.cellSignature },
+        num2cell: { func: CoreFunctions.num2cell, signature: CoreFunctions.num2cellSignature },
+        cell2mat: { func: CoreFunctions.cell2mat, signature: CoreFunctions.cell2matSignature },
+        mat2cell: { func: CoreFunctions.mat2cell, signature: CoreFunctions.mat2cellSignature },
         rand: { func: CoreFunctions.rand, signature: CoreFunctions.randSignature },
         randi: { func: CoreFunctions.randi, signature: CoreFunctions.randiSignature },
         cat: { func: CoreFunctions.cat, signature: CoreFunctions.catSignature },
@@ -2702,6 +3668,13 @@ abstract class CoreFunctions {
         var: { func: CoreFunctions.variance, signature: CoreFunctions.varianceSignature },
         std: { func: CoreFunctions.std, signature: CoreFunctions.stdSignature },
         struct: { func: CoreFunctions.struct, signature: CoreFunctions.structSignature },
+        getfield: { func: CoreFunctions.getfield, signature: CoreFunctions.getfieldSignature },
+        setfield: { func: CoreFunctions.setfield, signature: CoreFunctions.setfieldSignature },
+        rmfield: { func: CoreFunctions.rmfield, signature: CoreFunctions.rmfieldSignature },
+        orderfields: { func: CoreFunctions.orderfields, signature: CoreFunctions.orderfieldsSignature },
+        numfields: { func: CoreFunctions.numfields, signature: CoreFunctions.numfieldsSignature },
+        struct2cell: { func: CoreFunctions.struct2cell, signature: CoreFunctions.struct2cellSignature },
+        cell2struct: { func: CoreFunctions.cell2struct, signature: CoreFunctions.cell2structSignature },
         substruct: { func: CoreFunctions.substruct, signature: CoreFunctions.substructSignature },
         norm: { func: CoreFunctions.norm, signature: CoreFunctions.normSignature },
     };

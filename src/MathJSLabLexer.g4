@@ -130,6 +130,7 @@ ENUMERATION, ENDENUMERATION, PROPERTIES, ENDPROPERTIES, EVENTS, ENDEVENTS, METHO
         MathJSLabLexer.MUL,
         MathJSLabLexer.DIV,
         MathJSLabLexer.EQ,
+        MathJSLabLexer.COLON,
         MathJSLabLexer.DOT,
         MathJSLabLexer.TILDE,
         MathJSLabLexer.EXCLAMATION,
@@ -234,6 +235,60 @@ ENUMERATION, ENDENUMERATION, PROPERTIES, ENDPROPERTIES, EVENTS, ENDEVENTS, METHO
         }
         return first === 46 && [42, 47, 92, 94].includes(second) && this._input.LA(offset + 2) === 61;
     }
+
+    /**
+     * Test whether whitespace inside a matrix literal should be an element separator.
+     *
+     * Octave treats `[1 - 1]` as a single binary expression and `[1 -1]` as
+     * two elements.  When whitespace is followed by `+` or `-`, the spacing
+     * after the sign is the contextual cue that distinguishes those cases.
+     * Other binary operators keep the whitespace as ordinary expression
+     * whitespace, not as a matrix element separator.
+     */
+    private matrixWhitespaceIsSeparator(skipLeadingSpace = false): boolean {
+        let offset = 1;
+        if (skipLeadingSpace) {
+            while (this._input.LA(offset) === 9 || this._input.LA(offset) === 32) {
+                offset++;
+            }
+        }
+        const next = this._input.LA(offset);
+        if (next !== 43 && next !== 45) {
+            return !this.matrixWhitespaceBeforeBinaryOperator(offset);
+        }
+        const afterSign = this._input.LA(offset + 1);
+        return afterSign !== 9 && afterSign !== 32;
+    }
+
+    private matrixWhitespaceBeforeBinaryOperator(offset: number): boolean {
+        const next = this._input.LA(offset);
+        const afterNext = this._input.LA(offset + 1);
+        if ([38, 42, 47, 58, 60, 62, 92, 94, 124].includes(next)) {
+            return true;
+        }
+        if (next === 46) {
+            return [42, 47, 92, 94].includes(afterNext);
+        }
+        return (next === 61 && afterNext === 61) || (next === 126 && afterNext === 61);
+    }
+
+    /**
+     * Clear logical-line continuation state when a real token after `...` is
+     * emitted.  Comments and whitespace immediately after a continuation still
+     * need the marker so they can be skipped as part of the same logical line.
+     */
+    public override emit(): Token {
+        const token = super.emit();
+        if (
+            this.continuedTokenType !== null &&
+            token.type !== Token.EOF &&
+            token.type !== MathJSLabLexer.NEWLINE &&
+            token.type !== MathJSLabLexer.WSPACE
+        ) {
+            this.continuedTokenType = null;
+        }
+        return token;
+    }
 }
 
 /**
@@ -336,7 +391,9 @@ HERMITIAN: '\'' {
         this.previousTokenType === MathJSLabLexer.RBRACKET ||
         this.previousTokenType === MathJSLabLexer.RCURLYBR ||
         this.previousTokenType === MathJSLabLexer.IDENTIFIER ||
-        this.previousTokenType === MathJSLabLexer.FLOAT_NUMBER
+        this.previousTokenType === MathJSLabLexer.FLOAT_NUMBER ||
+        this.previousTokenType === MathJSLabLexer.STRING ||
+        this.previousTokenType === MathJSLabLexer.ENDRANGE
     ) {
         this.previousTokenType = MathJSLabLexer.HERMITIAN;
     } else {
@@ -416,7 +473,7 @@ LINE_CONTINUATION
     ;
 
 SPACE_OR_CONTINUATION
-    : SPACE ( '...' ~[\r\n]* NL )? {
+    : SPACE ( '...' ~[\r\n]* NL SPACE? )? {
         if (this.text.includes('...')) {
             this.continuedTokenType = this.previousTokenType;
         }
@@ -425,7 +482,8 @@ SPACE_OR_CONTINUATION
             this.previousTokenType !== MathJSLabLexer.COMMA &&
             this.previousTokenType !== MathJSLabLexer.SEMICOLON &&
             this.matrixContext[this.matrixContext.length-1] !== MathJSLabLexer.LPAREN &&
-            !MathJSLabLexer.nonTerminalSign.has(this.previousTokenType)
+            !MathJSLabLexer.nonTerminalSign.has(this.previousTokenType) &&
+            this.matrixWhitespaceIsSeparator(this.text.includes('...'))
         ) {
             this._type = this.previousTokenType = MathJSLabLexer.WSPACE;
         } else {
@@ -453,9 +511,15 @@ NEWLINE
     ;
 
 BLOCK_COMMENT_START
-    : SPACE? CCHAR '{' SPACE? NL {
+    : {this.column === 0}? SPACE? CCHAR '{' SPACE? NL {
         this.pushMode(MathJSLabLexer.BLOCK_COMMENT);
         if (this.continuedTokenType === this.previousTokenType || this.parenthesisCount > 0) {
+            this.skip();
+        } else if (this.matrixContext.length > 0 &&
+            (this.previousTokenType === MathJSLabLexer.LBRACKET ||
+            this.previousTokenType === MathJSLabLexer.COMMA ||
+            this.previousTokenType === MathJSLabLexer.SEMICOLON)
+        ) {
             this.skip();
         } else {
             this._type = this.previousTokenType = MathJSLabLexer.NEWLINE;
@@ -579,14 +643,14 @@ DOUBLEQ_END
 mode BLOCK_COMMENT;
 
 BLOCK_COMMENT_START_AGAIN
-    : SPACE? CCHAR '{' SPACE? NL {
+    : {this.column === 0}? SPACE? CCHAR '{' SPACE? NL {
         this.pushMode(MathJSLabLexer.BLOCK_COMMENT);
         this.skip();
     }
     ;
 
 BLOCK_COMMENT_END
-    :  SPACE? CCHAR '}' SPACE? NL? {
+    : {this.column === 0}? SPACE? CCHAR '}' SPACE? NL? {
         this.popMode();
         this.skip();
     }
@@ -751,19 +815,19 @@ fragment INTEGER_DIGITS
     ;
 
 fragment DECIMAL_DIGITS
-    : [0-9] [0-9_]*
+    : [0-9] ('_'? [0-9])*
     ;
 
 fragment BINARY_DIGITS
-    : [01] [01_]*
+    : [01] ('_'? [01])*
     ;
 
 fragment OCTAL_DIGITS
-    : [0-7] [0-7_]*
+    : [0-7] ('_'? [0-7])*
     ;
 
 fragment HEXADECIMAL_DIGITS
-    : [0-9a-fA-F] [0-9a-fA-F_]*
+    : [0-9a-fA-F] ('_'? [0-9a-fA-F])*
     ;
 
 fragment EXPONENT

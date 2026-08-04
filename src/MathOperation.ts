@@ -9,7 +9,6 @@ import type { TUnaryOperationLeftName, TBinaryOperationName } from './ComplexInt
 import { type ComplexType, Complex } from './Complex';
 import { type ElementType, MultiArray } from './MultiArray';
 import { Structure } from './Structure';
-import { FunctionHandle } from './FunctionHandle';
 import { ClassInstance } from './ClassInstance';
 import { LinearAlgebra } from './LinearAlgebra';
 import { RuntimeValue } from './RuntimeValue';
@@ -96,9 +95,10 @@ abstract class MathOperation {
             right = MultiArray.fromCharString(right as CharString);
         }
         MathOperation.throwIfStructureBinaryOperand(MathOperation.elementWiseOperatorSymbols[op], left, right);
-        if (op === 'eq' || op === 'ne') {
+        MathOperation.throwIfCellBinaryOperand(MathOperation.elementWiseOperatorSymbols[op], left, right);
+        if (op === 'lt' || op === 'le' || op === 'eq' || op === 'ge' || op === 'gt' || op === 'ne') {
             if (MathOperation.hasClassInstanceOperand(left) || MathOperation.hasClassInstanceOperand(right)) {
-                return MathOperation.classInstanceEqualityOperation(op, left, right);
+                return MathOperation.classInstanceRelationalOperation(op, left, right);
             }
         }
         if (Complex.isInstanceOf(left) && Complex.isInstanceOf(right)) {
@@ -116,9 +116,23 @@ abstract class MathOperation {
 
     private static readonly hasStructureOperand = (value: MathObject): boolean => Structure.isInstanceOf(value) || (MultiArray.isInstanceOf(value) && Structure.isStructure(value));
 
+    private static readonly hasCellOperand = (value: MathObject): boolean => MultiArray.isInstanceOf(value) && value.isCell;
+
+    private static readonly throwIfCellBinaryOperand = (operator: string, left: MathObject, right: MathObject): void => {
+        if (MathOperation.hasCellOperand(left) || MathOperation.hasCellOperand(right)) {
+            throw new EvalError(`operator ${operator} is not defined for cell operands.`);
+        }
+    };
+
     private static readonly throwIfStructureBinaryOperand = (operator: string, left: MathObject, right: MathObject): void => {
         if (MathOperation.hasStructureOperand(left) || MathOperation.hasStructureOperand(right)) {
             throw new EvalError(`operator ${operator} is not defined for struct operands.`);
+        }
+    };
+
+    private static readonly throwIfCellUnaryOperand = (operator: string, value: MathObject): void => {
+        if (MathOperation.hasCellOperand(value)) {
+            throw new EvalError(`operator ${operator} is not defined for cell operands.`);
         }
     };
 
@@ -131,6 +145,19 @@ abstract class MathOperation {
     private static readonly hasClassInstanceOperand = (value: MathObject): boolean =>
         ClassInstance.isInstanceOf(value) || (MultiArray.isInstanceOf(value) && MultiArray.linearize(value).some((element) => ClassInstance.isInstanceOf(element)));
 
+    private static readonly handleComparisonOrder = new WeakMap<ClassInstance, number>();
+
+    private static nextHandleComparisonOrder = 1;
+
+    private static readonly handleOrder = (instance: ClassInstance): number => {
+        let order = MathOperation.handleComparisonOrder.get(instance);
+        if (typeof order === 'undefined') {
+            order = MathOperation.nextHandleComparisonOrder++;
+            MathOperation.handleComparisonOrder.set(instance, order);
+        }
+        return order;
+    };
+
     private static readonly numericScalarValue = (value: MathObject): ComplexType | undefined => {
         if (Complex.isInstanceOf(value)) {
             return value as ComplexType;
@@ -142,16 +169,34 @@ abstract class MathOperation {
         return undefined;
     };
 
-    private static readonly classInstanceEqualityOperation = (op: 'eq' | 'ne', left: MathObject, right: MathObject): MathObject => {
+    private static readonly classInstanceRelationalOperation = (op: 'lt' | 'le' | 'eq' | 'ge' | 'gt' | 'ne', left: MathObject, right: MathObject): MathObject => {
         const compare = (leftValue: ElementType, rightValue: ElementType): ComplexType => {
-            if (!ClassInstance.isInstanceOf(leftValue) || !ClassInstance.isInstanceOf(rightValue)) {
-                throw new EvalError(`binary operator '${op}' is not defined for class instance operands.`);
+            const leftIsClassInstance = ClassInstance.isInstanceOf(leftValue);
+            const rightIsClassInstance = ClassInstance.isInstanceOf(rightValue);
+            if (!leftIsClassInstance || !rightIsClassInstance) {
+                return Complex.false();
             }
             if (!leftValue.classDefinition.isHandleClass() || !rightValue.classDefinition.isHandleClass()) {
                 throw new EvalError(`binary operator '${op}' is not defined for value class operands.`);
             }
-            const same = leftValue === rightValue;
-            return (op === 'eq' ? same : !same) ? Complex.true() : Complex.false();
+            if (leftValue.classDefinition.name !== rightValue.classDefinition.name) {
+                return Complex.false();
+            }
+            const leftOrder = MathOperation.handleOrder(leftValue);
+            const rightOrder = MathOperation.handleOrder(rightValue);
+            const result =
+                op === 'lt'
+                    ? leftOrder < rightOrder
+                    : op === 'le'
+                      ? leftOrder <= rightOrder
+                      : op === 'eq'
+                        ? leftValue === rightValue
+                        : op === 'ge'
+                          ? leftOrder >= rightOrder
+                          : op === 'gt'
+                            ? leftOrder > rightOrder
+                            : leftValue !== rightValue;
+            return result ? Complex.true() : Complex.false();
         };
         const leftArray = MultiArray.scalarToMultiArray(left);
         const rightArray = MultiArray.scalarToMultiArray(right);
@@ -212,6 +257,7 @@ abstract class MathOperation {
             right = MultiArray.fromCharString(right as CharString);
         }
         MathOperation.throwIfStructureUnaryOperand(MathOperation.unaryOperatorSymbols[op], right);
+        MathOperation.throwIfCellUnaryOperand(MathOperation.unaryOperatorSymbols[op], right);
         if (Complex.isInstanceOf(right)) {
             return Complex[op](right as ComplexType);
         } else if (MultiArray.isInstanceOf(right)) {
@@ -409,7 +455,7 @@ abstract class MathOperation {
      */
     public static readonly transpose: UnaryMathOperation = (left: MathObject): MathObject => {
         if (CharString.isInstanceOf(left)) {
-            left = MultiArray.fromCharString(left as CharString);
+            left = MultiArray.characterVectorFromCharString(left as CharString);
         }
         if (MultiArray.isInstanceOf(left)) {
             return LinearAlgebra.transpose(left as MultiArray);
@@ -425,7 +471,7 @@ abstract class MathOperation {
      */
     public static readonly ctranspose: UnaryMathOperation = (left: MathObject): MathObject => {
         if (CharString.isInstanceOf(left)) {
-            left = MultiArray.fromCharString(left as CharString);
+            left = MultiArray.characterVectorFromCharString(left as CharString);
         }
         if (Complex.isInstanceOf(left)) {
             return Complex.conj(left as ComplexType);
@@ -485,10 +531,15 @@ abstract class MathOperation {
     public static readonly ne: BinaryMathOperation = (left: MathObject, right: MathObject): MathObject => MathOperation.elementWiseOperation('ne', left, right);
 
     /**
+     * Scalar logical `&&` helper.
      *
-     * @param left
-     * @param right
-     * @returns
+     * Public expression evaluation short-circuits before this helper is called.
+     * When it is reached directly, both operands are reduced with the
+     * MATLAB/Octave condition rule: non-empty and all elements logically true.
+     *
+     * @param left Left logical operand.
+     * @param right Right logical operand.
+     * @returns Logical scalar result.
      */
     public static readonly mand: BinaryMathOperation = (left: MathObject, right: MathObject): MathObject => {
         if (CharString.isInstanceOf(left)) {
@@ -509,10 +560,15 @@ abstract class MathOperation {
     };
 
     /**
+     * Scalar logical `||` helper.
      *
-     * @param left
-     * @param right
-     * @returns
+     * Public expression evaluation short-circuits before this helper is called.
+     * When it is reached directly, both operands are reduced with the
+     * MATLAB/Octave condition rule: non-empty and all elements logically true.
+     *
+     * @param left Left logical operand.
+     * @param right Right logical operand.
+     * @returns Logical scalar result.
      */
     public static readonly mor: BinaryMathOperation = (left: MathObject, right: MathObject): MathObject => {
         if (CharString.isInstanceOf(left)) {
@@ -533,23 +589,28 @@ abstract class MathOperation {
     };
 
     /**
+     * Logical negation (`~` and Octave `!`) for numeric, logical, and
+     * character-vector values.
      *
-     * @param right
-     * @returns
+     * Structures, function handles, and other runtime-only objects are not
+     * implicitly coerced here; MATLAB/Octave require logical operations to be
+     * defined by the operand type itself.
+     *
+     * @param right Operand to negate.
+     * @returns Element-wise logical negation of the operand.
      */
     public static readonly not: UnaryMathOperation = (right: MathObject): MathObject => {
         if (CharString.isInstanceOf(right)) {
             right = MultiArray.fromCharString(right as CharString);
         }
+        MathOperation.throwIfStructureUnaryOperand(MathOperation.unaryOperatorSymbols.not, right);
+        MathOperation.throwIfCellUnaryOperand(MathOperation.unaryOperatorSymbols.not, right);
         if (Complex.isInstanceOf(right)) {
             return Complex.not(right as ComplexType);
         } else if (MultiArray.isInstanceOf(right)) {
-            return Complex.not(MultiArray.toLogical(right as MultiArray));
-        } else if (Structure.isInstanceOf(right)) {
-            return Complex.not(Structure.toLogical(right as Structure));
-        } else {
-            return Complex.not(FunctionHandle.toLogical(right as FunctionHandle));
+            return MultiArray.leftOperation('not', right as MultiArray);
         }
+        throw new EvalError(`operator ${MathOperation.unaryOperatorSymbols.not} is not defined for this operand.`);
     };
 
     /**
@@ -604,6 +665,7 @@ abstract class MathOperation {
         mldivide: MathOperation.mldivide,
         power: MathOperation.power,
         mpower: MathOperation.mpower,
+        lt: MathOperation.lt,
         le: MathOperation.le,
         ge: MathOperation.ge,
         gt: MathOperation.gt,

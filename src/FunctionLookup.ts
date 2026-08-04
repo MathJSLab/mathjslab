@@ -107,6 +107,17 @@ class FunctionLookup {
         const scriptDefined = resolved?.kind === 'script';
         const sourceFunctionDefined = resolved?.kind === 'function' && !resolved.functionDefinition;
         const sourceClassDefined = resolved?.kind === 'class' && !resolved.classDefinition;
+        if (resolved?.kind === 'directory') {
+            const normalizedKind = kind?.trim().toLowerCase();
+            switch (normalizedKind) {
+                case undefined:
+                case 'dir':
+                case 'file':
+                    return 7;
+                default:
+                    return 0;
+            }
+        }
         if (sourceFunctionDefined) {
             const normalizedKind = kind?.trim().toLowerCase();
             switch (normalizedKind) {
@@ -197,6 +208,9 @@ class FunctionLookup {
     ): CharString {
         if (resolved?.kind === 'function' && !resolved.functionDefinition) {
             return new CharString(`${name} is a user-defined function`);
+        }
+        if (resolved?.kind === 'directory') {
+            return new CharString(`${name} is a folder`);
         }
         const variable = resolved?.kind === 'variable' ? resolved.entry : undefined;
         const func = resolved?.kind === 'function' || resolved?.kind === 'builtin' ? resolved.functionDefinition : undefined;

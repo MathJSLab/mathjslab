@@ -557,6 +557,17 @@ class FunctionCall {
     }
 
     /**
+     * Runtime placeholder returned when a function declares an ignored output.
+     *
+     * MATLAB/Octave permit `~` in a function output list. The function body has
+     * no variable to assign for that position, but callers that request the
+     * corresponding output still receive an ordinary empty array.
+     */
+    private static ignoredReturnValue(): MultiArray {
+        return MultiArray.emptyArray();
+    }
+
+    /**
      * Create the lazy return list read by assignment and display code.
      *
      * Values are pulled from the function workspace only when requested. This is
@@ -576,7 +587,7 @@ class FunctionCall {
                 if (hasVariableOutput) {
                     if (index < fixedReturnCount) {
                         if (names[index] === '~') {
-                            throwEvalError(`Undefined return value '~'`);
+                            return this.ignoredReturnValue();
                         }
                         const value = evaluated[names[index]];
                         if (value === undefined) {
@@ -593,7 +604,7 @@ class FunctionCall {
                 }
                 const key = names[index];
                 if (key === '~') {
-                    throwEvalError(`Undefined return value '~'`);
+                    return this.ignoredReturnValue();
                 }
                 const value = evaluated[key];
                 if (value === undefined) {

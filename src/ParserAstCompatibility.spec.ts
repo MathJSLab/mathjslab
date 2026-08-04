@@ -14,6 +14,7 @@ import {
     type NodeList,
     type NodeOperation,
     type NodeSpmd,
+    type NodeTry,
 } from './AST';
 import { Complex, type ComplexType } from './Complex';
 import { Interpreter } from './Interpreter';
@@ -245,6 +246,17 @@ describe('Parser AST compatibility fixtures.', () => {
         expect(qualified.parent).toBe(methods);
     });
 
+    it('Should expose classdef attributes before separated class names structurally.', () => {
+        const classDef = parseClass(['classdef (Sealed)', 'SeparatedClassAttributes', 'end'].join('\n'));
+        const sealed = classDef.attributeTable.Sealed[0];
+
+        expect(classDef.id).toBe('SeparatedClassAttributes');
+        expect(classDef.attributes).toHaveLength(1);
+        expect(sealed.id).toBe('Sealed');
+        expect(sealed.parent).toBe(classDef);
+        expect(classDef.sections).toEqual([]);
+    });
+
     it('Should expose classdef property validation declarations structurally.', () => {
         const classDef = parseClass(['classdef ValidatedProperties', '  properties', '    x (1,1) double {mustBePositive} = 1', '  end', 'end'].join('\n'));
         const properties = classDef.sections[0] as NodeClassSection;
@@ -363,6 +375,40 @@ describe('Parser AST compatibility fixtures.', () => {
         expect(block.workers!.parent).toBe(block);
         expect(block.workers!.list.map((node) => node.parent)).toEqual([block.workers, block.workers]);
         expect(block.body.parent).toBe(block);
+    });
+
+    it('Should expose catch identifiers only for simple first body statements.', () => {
+        const withIdentifier = firstParsedNode(
+            ['try', '  x = 1;', 'catch ME', '  y = 2;', '  z = 3;', 'end'].join('\n'),
+            (node): node is NodeTry => AST.isNodeBase(node) && node.type === 'TRY',
+            'try block',
+        );
+        const indexedExpression = firstParsedNode(
+            ['try', '  x = 1;', 'catch ME(1)', '  y = 2;', 'end'].join('\n'),
+            (node): node is NodeTry => AST.isNodeBase(node) && node.type === 'TRY',
+            'try block',
+        );
+        const dottedExpression = firstParsedNode(
+            ['try', '  x = 1;', 'catch ME.message', '  y = 2;', 'end'].join('\n'),
+            (node): node is NodeTry => AST.isNodeBase(node) && node.type === 'TRY',
+            'try block',
+        );
+
+        expect(identifierNode(withIdentifier.catchIdentifier).id).toBe('ME');
+        expect(withIdentifier.catchIdentifier!.parent).toBe(withIdentifier);
+        expect(withIdentifier.catchBody!.list).toHaveLength(2);
+        expect(withIdentifier.catchBody!.parent).toBe(withIdentifier);
+        expect(withIdentifier.catchBody!.list.map((node) => node.parent)).toEqual([withIdentifier.catchBody, withIdentifier.catchBody]);
+        expect(withIdentifier.catchBody!.list.map((node) => node.index)).toEqual([0, 1]);
+        expect(identifierNode(binaryOperationNode(withIdentifier.catchBody!.list[0]).left).id).toBe('y');
+
+        expect(indexedExpression.catchIdentifier).toBeNull();
+        expect(indexNode(indexedExpression.catchBody!.list[0]).expr).toMatchObject({ id: 'ME' });
+        expect(indexedExpression.catchBody!.list[0].parent).toBe(indexedExpression.catchBody);
+
+        expect(dottedExpression.catchIdentifier).toBeNull();
+        expect(indirectRefNode(dottedExpression.catchBody!.list[0]).field).toEqual(['message']);
+        expect(dottedExpression.catchBody!.list[0].parent).toBe(dottedExpression.catchBody);
     });
 
     it('Should expose declaration initializers structurally.', () => {

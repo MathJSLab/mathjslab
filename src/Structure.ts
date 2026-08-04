@@ -247,6 +247,68 @@ class Structure {
     };
 
     /**
+     * Return a copy of a structure scalar or structure array without selected
+     * fields.
+     *
+     * @param obj Structure scalar or structure array.
+     * @param fields Field names to remove from every structure element.
+     * @returns Copied structure value with the requested fields removed.
+     * @throws EvalError when `obj` is not a structure.
+     */
+    public static removeFields = (obj: Structure | MultiArray, fields: string[]): Structure | MultiArray => {
+        if (obj instanceof Structure) {
+            const result = Structure.copy(obj);
+            fields.forEach((field) => {
+                delete result.field[field];
+            });
+            return result;
+        }
+        const elements = Structure.structureElements(obj);
+        if (elements.length === 0) {
+            throw new EvalError(Structure.invalidReferenceMessage);
+        }
+        const result = MultiArray.copy(obj);
+        Structure.structureElements(result).forEach((structure) => {
+            fields.forEach((field) => {
+                delete structure.field[field];
+            });
+        });
+        return result;
+    };
+
+    /**
+     * Return a copy of a structure scalar or structure array with fields sorted
+     * alphabetically.
+     *
+     * @param obj Structure scalar or structure array.
+     * @returns Copied structure value with deterministic top-level field order.
+     * @throws EvalError when `obj` is not a structure.
+     */
+    public static orderFields = (obj: Structure | MultiArray): Structure | MultiArray => {
+        const orderScalar = (structure: Structure): Structure => {
+            const result = new Structure({});
+            for (const name of Object.keys(structure.field).sort()) {
+                result.field[name] = RuntimeValue.copy(structure.field[name]);
+            }
+            return result;
+        };
+        if (obj instanceof Structure) {
+            return orderScalar(obj);
+        }
+        const elements = Structure.structureElements(obj);
+        if (elements.length === 0) {
+            throw new EvalError(Structure.invalidReferenceMessage);
+        }
+        const result = MultiArray.copy(obj);
+        const ordered = elements.map(orderScalar);
+        for (let index = 0; index < ordered.length; index++) {
+            const [row, column] = MultiArray.linearIndexToMultiArrayRowColumn(result.dimension[0], result.dimension[1], index);
+            result.array[row][column] = ordered[index];
+        }
+        return result;
+    };
+
+    /**
      * Render a structure as source-like text.
      *
      * @param S Structure to render.

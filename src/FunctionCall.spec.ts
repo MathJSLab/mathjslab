@@ -17,8 +17,8 @@ const functionDefinition = (parameterNames: string[], returnNames: string[]): No
         mapper: false,
         ev: [],
         func: () => undefined,
-        return: AST.nodeList(returnNames.map((name) => AST.nodeIdentifier(name))),
-        parameter: AST.nodeList(parameterNames.map((name) => AST.nodeIdentifier(name))),
+        return: AST.nodeList(returnNames.map((name) => (name === '~' ? AST.nodeIgnoredTarget() : AST.nodeIdentifier(name)))),
+        parameter: AST.nodeList(parameterNames.map((name) => (name === '~' ? AST.nodeIgnoredTarget() : AST.nodeIdentifier(name)))),
         arguments: AST.nodeList([]),
         statements: AST.nodeList([]),
         omitAnswer: false,
@@ -341,6 +341,19 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
             expect(AST.isNodeReturnList(returnList)).toBe(true);
             expect(() => returnList.handler(1)).toThrow("Return variable 'y' is not an expression.");
+        });
+
+        it('Should materialize ignored function returns as empty arrays when requested.', () => {
+            const returnLayout = FunctionCall.returnLayout(functionDefinition([], ['x', '~', 'z']));
+            const returnList = FunctionCall.createReturnList(returnLayout, { x: { node: Complex.create(1) }, z: { node: Complex.create(3) } } as NameTable, (message) => {
+                throw new Error(message);
+            });
+
+            const returned = returnList.handler(3);
+
+            expect(Complex.realToNumber(returnList.selector(returned, 0) as NodeExpr)).toBe(1);
+            expect(returnList.selector(returned, 1)).toEqual(MultiArray.emptyArray());
+            expect(Complex.realToNumber(returnList.selector(returned, 2) as NodeExpr)).toBe(3);
         });
 
         it('Should build return lists from named repeating output cells.', () => {

@@ -14,6 +14,7 @@
 [![ISBN](https://img.shields.io/badge/ISBN-978--65--00--82338--7-green?style=flat&link=https://grp.isbn-international.org/search/piid_solr?keys=978-65-00-82338-7)](https://grp.isbn-international.org/search/piid_solr?keys=978-65-00-82338-7)
 [![OpenAIRE](https://img.shields.io/badge/OpenAIRE-blue?style=flat&link=https://explore.openaire.eu/search/advanced/research-outcomes?f0=q&fv0=MathJSLab)](https://explore.openaire.eu/search/advanced/research-outcomes?f0=q&fv0=MathJSLab)
 [![NPM Downloads](https://img.shields.io/npm/d18m/mathjslab)](https://www.npmjs.com/package/mathjslab)
+[![NPM Downloads per week](https://img.shields.io/npm/dw/mathjslab)](https://www.npmjs.com/package/mathjslab)
 [![jsDelivr hits (npm)](https://img.shields.io/jsdelivr/npm/hy/mathjslab)](https://www.jsdelivr.com/package/npm/mathjslab)
 [![Libraries.io SourceRank](https://img.shields.io/librariesio/sourcerank/npm/mathjslab)](https://libraries.io/npm/mathjslab/sourcerank)
 [![NPM Unpacked Size](https://img.shields.io/npm/unpacked-size/mathjslab)](https://www.npmjs.com/package/mathjslab)
@@ -348,7 +349,9 @@ descriptor-based indexing with `substruct`/`subsref`/`subsasgn`, browser-hosted
 properties, methods, events, enumerations, listeners, accessors, SetGet mixins,
 common static/instance dispatch paths, and stricter AST/runtime expression
 boundary validation. Runtime array helpers preserve MATLAB/Octave column-major
-logical semantics over MathJSLab's page-stacked internal storage.
+logical semantics over MathJSLab's page-stacked internal storage, including N-D
+slicing, expansion, logical indexing, deletion, cells, structures, and
+comma-separated-list expansion.
 
 The main remaining limitations are general external filesystem access,
 incomplete MATLAB/Octave library and toolbox coverage, and less common class

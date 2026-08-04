@@ -27,6 +27,8 @@ type RuntimeEvaluationContext = RuntimeDisplay & {
         popCommaListExpansion(): void;
         expandCommaSeparatedList(value: unknown): unknown[];
     };
+    /** Optional class-aware concatenation hook used by array literals. */
+    concatenateOverload?(name: 'horzcat' | 'vertcat', values: unknown[], parent: unknown): unknown | undefined;
 };
 
 export type { RuntimeDisplay, RuntimeEvaluationContext };

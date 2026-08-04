@@ -35,6 +35,8 @@ import type {
     PrefixUnaryOperation,
     PostfixUnaryOperation,
     BuiltInFunctionSignature,
+    BuiltInFunctionParameterValidator,
+    NodeBuiltInFunction,
     NameEntry,
     AliasNameTable,
     BuiltInFunctionTable,
@@ -91,6 +93,7 @@ import { BreakSignal, Context, ContinueSignal, ReturnSignal } from './Context';
 import type { SymbolResolution, SymbolResolutionOptions } from './Context';
 import { CircularReferenceError, EvalError, InterpreterError, ReferenceError, SyntaxError, UndefinedReferenceError } from './InterpreterError';
 import { expressionValue, runtimeExpressionValue } from './ExpressionValue';
+import type { CallArgumentValue } from './FunctionCall';
 
 /**
  * Numeric exit status used by the public `exitStatus` property.
@@ -141,6 +144,16 @@ type ClearCommandOptions = {
     regexp: boolean;
     /** Whether matching patterns are keep-patterns instead of clear-patterns. */
     exclusive: boolean;
+    /** Non-option patterns remaining after option normalization. */
+    patterns: string[];
+};
+
+/** Normalized workspace listing options for `who` and `whos`. */
+type WorkspaceListingOptions = {
+    /** Whether only global variables should be listed. */
+    globalOnly: boolean;
+    /** Whether patterns are JavaScript regular expressions. */
+    regexp: boolean;
     /** Non-option patterns remaining after option normalization. */
     patterns: string[];
 };
@@ -321,6 +334,55 @@ interface InterpreterInterface {
  * class coordinates them around one active `Context`.
  */
 class Interpreter implements InterpreterInterface {
+    /** MATLAB-compatible maximum identifier length exposed by `namelengthmax`. */
+    private static readonly nameLengthMax = 63;
+    /** Sorted language keywords as recognized by the lexer. */
+    private static readonly keywordNames = MathJSLabLexer.keywordNames.filter((name): name is string => typeof name === 'string' && name.length > 0).sort();
+    /** Keyword lookup set used by `iskeyword` and `isvarname`. */
+    private static readonly keywordNameSet = new Set(Interpreter.keywordNames);
+    /** Public MATLAB validator functions backed by the `arguments` validator engine. */
+    private static readonly publicArgumentValidators = [
+        'mustBeNumeric',
+        'mustBeFloat',
+        'mustBeNumericOrLogical',
+        'mustBeText',
+        'mustBeTextScalar',
+        'mustBeNonzeroLengthText',
+        'mustBeValidVariableName',
+        'mustBeFile',
+        'mustBeFolder',
+        'mustBeScalarOrEmpty',
+        'mustBeScalar',
+        'mustBeMatrix',
+        'mustBeSquare',
+        'mustBeVector',
+        'mustBeRow',
+        'mustBeColumn',
+        'mustBeNonempty',
+        'mustBePositive',
+        'mustBeNonnegative',
+        'mustBeNegative',
+        'mustBeNonpositive',
+        'mustBeNonzero',
+        'mustBeNonNan',
+        'mustBeNonmissing',
+        'mustBeNonsparse',
+        'mustBeSparse',
+        'mustBeInteger',
+        'mustBeOdd',
+        'mustBeFinite',
+        'mustBeReal',
+        'mustBeGreaterThan',
+        'mustBeGreaterThanOrEqual',
+        'mustBeLessThan',
+        'mustBeLessThanOrEqual',
+        'mustBeInRange',
+        'mustBeBetween',
+        'mustBeMember',
+        'mustBeA',
+        'mustBeUnderlyingType',
+    ] as const;
+
     /**
      * After run `Evaluate` method, the `exitStatus` property will contains
      * exit state of evaluation.
@@ -411,6 +473,18 @@ class Interpreter implements InterpreterInterface {
                 return new CharString(args.map((name) => this.whichResult(name).str).join('\n'));
             },
         },
+        who: {
+            func: (...args: string[]): MultiArray => this.whoResultFromPatterns(args),
+        },
+        whos: {
+            func: (...args: string[]): MultiArray => this.whosResultFromPatterns(args),
+        },
+        isglobal: {
+            func: (...args: string[]): NodeInput => {
+                AST.throwInvalidCallError('isglobal', args.length !== 1, (message) => this.context.throwSyntaxError(message));
+                return this.isGlobalName(args[0]) ? Complex.true() : Complex.false();
+            },
+        },
         dbstack: {
             func: (...args: string[]): MultiArray => {
                 const values = args.map((arg) => (/^\d+$/.test(arg) ? Complex.create(Number(arg)) : new CharString(arg)));
@@ -427,7 +501,7 @@ class Interpreter implements InterpreterInterface {
             },
         },
         error: {
-            func: (...args: string[]): never => this.errorResult(this.diagnosticCommandArguments(args)),
+            func: (...args: string[]): NodeInput => this.errorResult(this.diagnosticCommandArguments(args)),
         },
         /* Debug purpose commands */
         __operators__: {
@@ -728,16 +802,27 @@ class Interpreter implements InterpreterInterface {
     /**
      * Parse or resolve a textual function-handle source.
      */
-    private functionHandleFromString(sourceValue: CharString): FunctionHandle {
+    private functionHandleFromString(sourceValue: CharString, useGlobalScope = false): FunctionHandle {
+        const globalScope = this.context.globalScope ?? this.context.currentScope;
+        const lookupScope = useGlobalScope ? globalScope : this.context.currentScope;
         const handle = FunctionLookup.str2func(
             sourceValue.str,
             (source) => {
-                const evaluated = this.evaluatedExecutionResult(this.Parse(source), this.context.currentScope);
+                const evaluated = this.evaluatedExecutionResult(this.Parse(source), globalScope);
                 return evaluated.type === 'LIST' && evaluated.list.length === 1 ? evaluated.list[0] : evaluated;
             },
             (message) => this.context.throwEvalError(message),
         );
-        return handle.id && !handle.closure ? this.createResolvedFunctionHandle(handle.id, this.context.currentScope, handle, true) : handle;
+        if (!handle.id || handle.closure) {
+            return handle;
+        }
+        if (!useGlobalScope) {
+            const imported = this.createResolvedFunctionHandle(handle.id, lookupScope, handle, 'importsOnly');
+            if (imported.closure) {
+                return imported;
+            }
+        }
+        return this.createResolvedFunctionHandle(handle.id, globalScope, handle, 'global');
     }
 
     /**
@@ -781,7 +866,12 @@ class Interpreter implements InterpreterInterface {
      * @param captureLexical Whether to capture a lexical overlay for user functions.
      * @returns Named function handle.
      */
-    private createResolvedFunctionHandle(name: string, scope: Scope = this.context.currentScope, parent?: NodeInput, captureLexical = false): FunctionHandle {
+    private createResolvedFunctionHandle(
+        name: string,
+        scope: Scope = this.context.currentScope,
+        parent?: NodeInput,
+        captureLexical: boolean | 'importsOnly' | 'global' = false,
+    ): FunctionHandle {
         const resolved = this.resolveRuntimeFunction(name, scope, { loadFunctions: false });
         const sourceResolved = resolved?.functionDefinition ? undefined : this.lookupFunctionSourceResolution(name, scope);
         const effectiveResolved = resolved ?? sourceResolved;
@@ -790,11 +880,18 @@ class Interpreter implements InterpreterInterface {
         const handle = FunctionHandle.create(handleName);
         handle.parent = parent;
         handle.sourceName = sourceResolved?.sourceName;
-        if (
-            captureLexical &&
-            (resolved?.functionDefinition?.type === 'FCNDEF' || sourceResolved?.source === 'import' || (!name.includes('.') && this.resolveImportedStaticMethod(name, scope)))
-        ) {
+        const importedStaticMethod = !name.includes('.') && this.resolveImportedStaticMethod(name, scope);
+        const shouldCapture =
+            captureLexical === true
+                ? resolved?.functionDefinition?.type === 'FCNDEF' || sourceResolved?.source === 'import' || importedStaticMethod
+                : captureLexical === 'importsOnly'
+                  ? sourceResolved?.source === 'import' || importedStaticMethod
+                  : false;
+        if (shouldCapture) {
             handle.closure = scope.capture((node) => MathOperation.copy(node), this.context.allowForwardReference);
+        }
+        if (captureLexical === 'global') {
+            handle.closure = scope;
         }
         return handle;
     }
@@ -840,8 +937,13 @@ class Interpreter implements InterpreterInterface {
             : undefined;
     }
 
-    private dbstackResult(args: NodeInput[]): MultiArray {
-        return FunctionIntrospection.dbstackResult(args, this.context.callStack, (message) => this.context.throwSyntaxError(message));
+    private dbstackResult(args: NodeInput[]): NodeInput {
+        const stack = FunctionIntrospection.dbstackResult(args, this.context.callStack, (message) => this.context.throwSyntaxError(message));
+        if (this.context.requestedOutputCount > 1) {
+            const workspaceIndex = MultiArray.linearLength(stack) > 0 ? 1 : 0;
+            return this.valueReturnList([stack, Complex.create(workspaceIndex)]);
+        }
+        return stack;
     }
 
     /**
@@ -852,12 +954,24 @@ class Interpreter implements InterpreterInterface {
      * `mfilename("fullpath")` keeps the complete virtual identity.
      */
     private currentMFilename(): string {
-        const sourceName = this.context.currentFunctionSourceName();
+        const sourceName = this.currentHandleSourceName();
         if (!sourceName) {
             return this.context.currentFunctionName();
         }
         const basename = sourceName.replace(/\\/g, '/').split(/[?#]/, 1)[0].split('/').pop()?.replace(/\.m$/i, '');
         return basename || this.context.currentFunctionName();
+    }
+
+    /**
+     * Return the MATLAB/Octave `mfilename("fullpath")` identity.
+     *
+     * For browser-hosted code, "fullpath" means the complete virtual source
+     * identity supplied by the host resolver. Unlike plain `mfilename`, this
+     * intentionally keeps the configured `.m`-like suffix because source
+     * metadata, `functions`, and stack display share that identity.
+     */
+    private currentMFilenameFullPath(): string {
+        return this.currentHandleSourceName() || this.context.currentFunctionName();
     }
 
     /**
@@ -1222,8 +1336,26 @@ class Interpreter implements InterpreterInterface {
      *
      * @param args Evaluated error arguments.
      */
-    private errorResult(args: NodeInput[]): never {
+    private errorResult(args: NodeInput[]): NodeInput {
+        if (args.length === 1 && Structure.isInstanceOf(args[0])) {
+            const message = this.charControlArgument(args[0].field.message ?? new CharString(''), 'error structure message').str;
+            const identifier = this.charControlArgument(args[0].field.identifier ?? new CharString(''), 'error structure identifier').str;
+            if (!message) {
+                return AST.nodeVoid();
+            }
+            try {
+                this.context.throwEvalError(message);
+            } catch (error) {
+                if (identifier) {
+                    (error as Error & { identifier?: string }).identifier = identifier;
+                }
+                throw error;
+            }
+        }
         const { identifier, message } = this.diagnosticMessageParts(args, 'error');
+        if (!identifier && !message) {
+            return AST.nodeVoid();
+        }
         try {
             this.context.throwEvalError(message);
         } catch (error) {
@@ -1232,6 +1364,611 @@ class Interpreter implements InterpreterInterface {
             }
             throw error;
         }
+    }
+
+    /**
+     * Decide whether an `assert` call is the condition/message form.
+     */
+    private assertUsesDiagnosticForm(args: NodeInput[]): boolean {
+        return args.length === 1 || (args.length >= 2 && CharString.isInstanceOf(args[1]) && !CharString.isInstanceOf(args[0]));
+    }
+
+    /**
+     * Extract numeric elements for tolerance-based `assert` comparison.
+     */
+    private assertNumericElements(value: NodeInput, name: string): { dimensions: number[]; elements: ComplexType[] } {
+        const array = MultiArray.scalarToMultiArray(value as ElementType);
+        const elements = MultiArray.linearize(array);
+        if (array.isCell || !elements.every(Complex.isInstanceOf)) {
+            this.context.throwEvalError(`assert: ${name} must be numeric when tolerance is specified.`);
+        }
+        return { dimensions: array.dimension.slice(), elements: elements as ComplexType[] };
+    }
+
+    /**
+     * Test numerical equality using Octave-style absolute/relative tolerance.
+     */
+    private assertValuesEqualWithinTolerance(actual: NodeInput, expected: NodeInput, tolerance: NodeInput): boolean {
+        const actualValues = this.assertNumericElements(actual, 'actual value');
+        const expectedValues = this.assertNumericElements(expected, 'expected value');
+        if (actualValues.dimensions.length !== expectedValues.dimensions.length || actualValues.dimensions.some((dimension, index) => dimension !== expectedValues.dimensions[index])) {
+            return false;
+        }
+        const toleranceValue = this.validateattributesNumericScalar(tolerance, 'assert tolerance');
+        const absoluteTolerance = Math.abs(toleranceValue);
+        const relative = toleranceValue < 0;
+        return actualValues.elements.every((actualElement, index) => {
+            const expectedElement = expectedValues.elements[index];
+            const delta = Complex.abs(Complex.sub(actualElement, expectedElement));
+            const deltaValue = Complex.realToNumber(delta);
+            const limit = relative ? absoluteTolerance * Complex.realToNumber(Complex.abs(expectedElement)) : absoluteTolerance;
+            return deltaValue <= limit;
+        });
+    }
+
+    /**
+     * Split comparison-form `assert` arguments into comparison and diagnostic
+     * parts.
+     */
+    private assertComparisonParts(args: NodeInput[]): { tolerance?: NodeInput; diagnostic: NodeInput[] } {
+        if (args.length <= 2) {
+            return { diagnostic: [] };
+        }
+        if (CharString.isInstanceOf(args[2])) {
+            return { diagnostic: args.slice(2) };
+        }
+        return { tolerance: args[2], diagnostic: args.slice(3) };
+    }
+
+    /**
+     * Implement `assert(actual, expected[, tolerance][, message...])`.
+     */
+    private assertComparisonResult(args: NodeInput[]): NodeInput {
+        AST.throwInvalidCallError('assert', args.length < 2, (message) => this.context.throwEvalError(message));
+        const actual = this.expressionValue(args[0], 'assert actual value');
+        const expected = this.expressionValue(args[1], 'assert expected value');
+        const parts = this.assertComparisonParts(args);
+        const matches = parts.tolerance ? this.assertValuesEqualWithinTolerance(actual, expected, parts.tolerance) : RuntimeEquality.valuesEqual(actual, expected);
+        if (matches) {
+            return AST.nodeVoid();
+        }
+        if (parts.diagnostic.length > 0) {
+            return this.errorResult(parts.diagnostic);
+        }
+        this.context.throwEvalError('assertion failed: observed value does not match expected value.');
+    }
+
+    /**
+     * Implement the public `assert` built-in subset.
+     *
+     * MATLAB/Octave treat a false condition as an error and pass the remaining
+     * arguments through the same identifier/format pipeline used by `error`.
+     */
+    private assertResult(args: NodeInput[]): NodeInput {
+        AST.throwInvalidCallError('assert', args.length === 0, (message) => this.context.throwEvalError(message));
+        if (!this.assertUsesDiagnosticForm(args)) {
+            return this.assertComparisonResult(args);
+        }
+        if (this.toBoolean(this.expressionValue(args[0], 'assert condition'))) {
+            return AST.nodeVoid();
+        }
+        if (args.length === 1) {
+            this.context.throwEvalError('assertion failed.');
+        }
+        return this.errorResult(args.slice(1));
+    }
+
+    /**
+     * Extract MATLAB text-list arguments accepted by validation functions.
+     *
+     * The documented APIs accept a character vector, string scalar, string
+     * array, or cell array of character vectors. The interpreter stores each as
+     * `CharString` elements, so this helper normalizes the public forms without
+     * losing order.
+     */
+    private validationTextList(value: NodeInput, functionName: string, argumentName: string): string[] {
+        if (CharString.isInstanceOf(value)) {
+            return [value.str];
+        }
+        if (MultiArray.isInstanceOf(value)) {
+            const elements = MultiArray.linearize(value);
+            if (elements.every(CharString.isInstanceOf)) {
+                return elements.map((item) => item.str);
+            }
+        }
+        this.context.throwEvalError(`${functionName}: ${argumentName} must be a string or cell array of strings.`);
+    }
+
+    /**
+     * Extract one text item from a mixed MATLAB validation cell array.
+     */
+    private validationTextItem(value: NodeInput, functionName: string, argumentName: string): string {
+        if (CharString.isInstanceOf(value)) {
+            return value.str;
+        }
+        this.context.throwEvalError(`${functionName}: ${argumentName} must be a string.`);
+    }
+
+    /**
+     * Return raw validation-list items, preserving non-text parameters.
+     */
+    private validationListItems(value: NodeInput, functionName: string, argumentName: string): NodeInput[] {
+        if (CharString.isInstanceOf(value)) {
+            return [value];
+        }
+        if (MultiArray.isInstanceOf(value)) {
+            return MultiArray.linearize(value);
+        }
+        this.context.throwEvalError(`${functionName}: ${argumentName} must be a string or cell array.`);
+    }
+
+    /**
+     * Implement MATLAB's unique-prefix, case-insensitive `validatestring`.
+     */
+    private validatestringResult(args: NodeInput[]): CharString {
+        const candidate = this.charControlArgument(args[0], 'validatestring string').str;
+        const allowed = this.validationTextList(args[1], 'validatestring', 'valid strings');
+        const lowerCandidate = candidate.toLowerCase();
+        const prefix = this.validatestringDiagnosticPrefix(args);
+        const exactMatches = allowed.filter((item) => item.toLowerCase() === lowerCandidate);
+        if (exactMatches.length > 0) {
+            return new CharString(exactMatches[0]);
+        }
+        const matches = allowed.filter((item) => item.toLowerCase().startsWith(lowerCandidate));
+        if (matches.length === 1) {
+            return new CharString(matches[0]);
+        }
+        if (matches.length > 1) {
+            this.context.throwEvalError(`${prefix} ambiguous string '${candidate}'.`);
+        }
+        this.context.throwEvalError(`${prefix} expected one of: ${allowed.join(', ')}.`);
+    }
+
+    /**
+     * Build the optional function/variable context used by `validatestring`.
+     */
+    private validatestringDiagnosticPrefix(args: NodeInput[]): string {
+        if (args.length < 3) {
+            return 'validatestring:';
+        }
+        const functionName = this.charControlArgument(args[2], 'validatestring function name').str;
+        if (args.length < 4) {
+            return `validatestring: input for function '${functionName}'`;
+        }
+        const variableName = this.charControlArgument(args[3], 'validatestring variable name').str;
+        if (args.length < 5) {
+            return `validatestring: variable '${variableName}' for function '${functionName}'`;
+        }
+        const position = this.validateattributesNumericScalar(args[4], 'validatestring argument position');
+        return `validatestring: argument ${position} '${variableName}' for function '${functionName}'`;
+    }
+
+    /**
+     * Map public `validateattributes` attribute names to shared validator keys.
+     */
+    private validateattributesValidator(attribute: string): BuiltInFunctionParameterValidator | undefined {
+        switch (attribute.toLowerCase()) {
+            case 'scalar':
+                return 'scalar';
+            case 'vector':
+                return 'vector';
+            case 'row':
+                return 'rowVector';
+            case 'column':
+                return 'columnVector';
+            case '2d':
+                return 'matrix2d';
+            case 'square':
+                return 'squareMatrix';
+            case 'nonempty':
+                return 'nonempty';
+            case 'empty':
+                return 'empty';
+            case 'real':
+                return 'real';
+            case 'finite':
+                return 'finite';
+            case 'nonnan':
+                return 'nonnan';
+            case 'positive':
+                return 'positive';
+            case 'nonnegative':
+                return 'nonnegative';
+            case 'negative':
+                return 'negative';
+            case 'nonpositive':
+                return 'nonpositive';
+            case 'nonzero':
+                return 'nonzero';
+            case 'integer':
+                return 'integer';
+            case 'nonsparse':
+                return 'nonsparse';
+            case 'sparse':
+                return 'sparse';
+            default:
+                return undefined;
+        }
+    }
+
+    /**
+     * Return dimensions as `validateattributes` should see them.
+     *
+     * The runtime stores both character vectors and string scalars in
+     * `CharString`; MATLAB treats string scalars as `1x1`, while character
+     * vectors remain `1xN`.
+     */
+    private validateattributesDimensions(value: NodeInput): number[] {
+        return CharString.isString(value) ? [1, 1] : RuntimeValue.dimensions(value);
+    }
+
+    /**
+     * Return real numeric elements for attributes that inspect values directly.
+     */
+    private validateattributesRealNumericElements(value: NodeInput, attribute: string): ComplexType[] {
+        const elements = MultiArray.linearize(MultiArray.scalarToMultiArray(value as ElementType));
+        if (!elements.every((item) => Complex.isInstanceOf(item) && Complex.imagIsZero(item))) {
+            this.context.throwEvalError(`validateattributes: ${attribute} requires real numeric input.`);
+        }
+        return elements as ComplexType[];
+    }
+
+    /**
+     * Extract a real numeric scalar used as a `validateattributes` parameter.
+     */
+    private validateattributesNumericScalar(value: NodeInput, attribute: string): number {
+        const scalar = MultiArray.isInstanceOf(value) && RuntimeValue.isScalar(value) ? MultiArray.firstElement(value) : value;
+        if (!Complex.isInstanceOf(scalar) || !Complex.imagIsZero(scalar)) {
+            this.context.throwEvalError(`validateattributes: attribute '${attribute}' parameter must be a real numeric scalar.`);
+        }
+        return Complex.realToNumber(scalar);
+    }
+
+    /**
+     * Extract a real numeric vector used by `validateattributes('size', ...)`.
+     */
+    private validateattributesNumericVector(value: NodeInput, attribute: string): number[] {
+        const array = MultiArray.scalarToMultiArray(value as ElementType);
+        const elements = MultiArray.linearize(array);
+        if (array.isCell || !RuntimeValue.isVector(array) || !elements.every((item) => Complex.isInstanceOf(item) && Complex.imagIsZero(item))) {
+            this.context.throwEvalError(`validateattributes: attribute '${attribute}' parameter must be a real numeric vector.`);
+        }
+        return elements.map((item) => Complex.realToNumber(item as ComplexType));
+    }
+
+    /**
+     * Test all numeric elements of a value against a scalar comparison.
+     */
+    private validateattributesNumericComparison(value: NodeInput, attribute: string, limit: number): boolean {
+        const elements = this.validateattributesRealNumericElements(value, attribute);
+        switch (attribute) {
+            case '>':
+                return elements.every((item) => Complex.realGreaterThan(item, limit));
+            case '>=':
+                return elements.every((item) => Complex.realGreaterThanOrEqualTo(item, limit));
+            case '<':
+                return elements.every((item) => Complex.realLessThan(item, limit));
+            case '<=':
+                return elements.every((item) => Complex.realLessThanOrEqualTo(item, limit));
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Test MATLAB/Octave monotonic attributes independently for each stored
+     * column.  `MultiArray` stacks pages in the physical row axis, so each
+     * page-stride row group represents the rows of one logical page.
+     */
+    private validateattributesMonotonicColumns(value: NodeInput, attribute: string): boolean {
+        const array = MultiArray.scalarToMultiArray(value as ElementType);
+        if (array.isCell) {
+            this.context.throwEvalError(`validateattributes: ${attribute} requires real numeric input.`);
+        }
+        for (let pageRow = 0; pageRow < array.array.length; pageRow += array.dimension[0]) {
+            for (let column = 0; column < array.dimension[1]; column++) {
+                for (let row = 1; row < array.dimension[0]; row++) {
+                    const previous = array.array[pageRow + row - 1][column];
+                    const current = array.array[pageRow + row][column];
+                    if (!Complex.isInstanceOf(previous) || !Complex.imagIsZero(previous) || !Complex.isInstanceOf(current) || !Complex.imagIsZero(current)) {
+                        this.context.throwEvalError(`validateattributes: ${attribute} requires real numeric input.`);
+                    }
+                    const ok =
+                        attribute === 'increasing'
+                            ? Complex.realGreaterThan(current, Complex.realToNumber(previous))
+                            : attribute === 'decreasing'
+                              ? Complex.realLessThan(current, Complex.realToNumber(previous))
+                              : attribute === 'nondecreasing'
+                                ? Complex.realGreaterThanOrEqualTo(current, Complex.realToNumber(previous))
+                                : Complex.realLessThanOrEqualTo(current, Complex.realToNumber(previous));
+                    if (!ok) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Test non-parameterized `validateattributes` attributes not covered by the
+     * shared validator table.
+     */
+    private validateattributesSpecialAttribute(value: NodeInput, attribute: string): boolean | undefined {
+        const lowerAttribute = attribute.toLowerCase();
+        switch (lowerAttribute) {
+            case '3d':
+                return this.validateattributesDimensions(value).length <= 3;
+            case 'scalartext':
+                return (
+                    CharString.isInstanceOf(value) ||
+                    (MultiArray.isInstanceOf(value) && !value.isCell && RuntimeValue.isScalar(value) && CharString.isInstanceOf(MultiArray.firstElement(value)))
+                );
+            case 'even':
+            case 'odd': {
+                const elements = this.validateattributesRealNumericElements(value, attribute);
+                return elements.every((item) => Complex.realIsInteger(item) && Math.abs(Complex.realToNumber(item) % 2) === (lowerAttribute === 'odd' ? 1 : 0));
+            }
+            case 'binary': {
+                const elements = this.validateattributesRealNumericElements(value, attribute);
+                return elements.every((item) => Complex.realEquals(item, 0) || Complex.realEquals(item, 1));
+            }
+            case 'diag':
+            case 'diagonal': {
+                const dimensions = this.validateattributesDimensions(value);
+                if (dimensions.length !== 2 || dimensions[0] !== dimensions[1]) {
+                    return false;
+                }
+                const array = MultiArray.scalarToMultiArray(value as ElementType);
+                if (array.isCell) {
+                    this.context.throwEvalError(`validateattributes: ${attribute} requires real numeric input.`);
+                }
+                for (let row = 0; row < dimensions[0]; row++) {
+                    for (let column = 0; column < dimensions[1]; column++) {
+                        const item = array.array[row][column];
+                        if (!Complex.isInstanceOf(item) || !Complex.imagIsZero(item)) {
+                            this.context.throwEvalError(`validateattributes: ${attribute} requires real numeric input.`);
+                        }
+                        if (row !== column && !Complex.realEquals(item, 0)) {
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            }
+            case 'increasing':
+            case 'decreasing':
+            case 'nondecreasing':
+            case 'nonincreasing':
+                return this.validateattributesMonotonicColumns(value, lowerAttribute);
+            default:
+                return undefined;
+        }
+    }
+
+    /**
+     * Test one shared `validateattributes` validator with public string-scalar
+     * shape semantics.
+     */
+    private validateattributesMatchesValidator(value: NodeInput, validator: BuiltInFunctionParameterValidator): boolean {
+        if (validator === 'scalar' && CharString.isString(value)) {
+            return true;
+        }
+        return FunctionValidation.matchesBuiltInValidator(value as RuntimeExpressionValue, validator);
+    }
+
+    /**
+     * Apply one parameterized `validateattributes` attribute.
+     */
+    private validateattributesParameterizedAttribute(value: NodeInput, attribute: string, parameter: NodeInput, subject: string): void {
+        const dimensions = this.validateattributesDimensions(value);
+        const lowerAttribute = attribute.toLowerCase();
+        switch (lowerAttribute) {
+            case 'size': {
+                const expected = this.validateattributesNumericVector(parameter, attribute);
+                const matches =
+                    expected.length <= dimensions.length &&
+                    expected.every((dimension, index) => Number.isNaN(dimension) || dimensions[index] === dimension) &&
+                    dimensions.slice(expected.length).every((dimension) => dimension === 1);
+                if (!matches) {
+                    this.context.throwEvalError(`validateattributes: ${subject} must have size ${expected.join('x')}.`);
+                }
+                return;
+            }
+            case 'numel': {
+                const expected = this.validateattributesNumericVector(parameter, attribute);
+                if (!expected.includes(RuntimeValue.elementCount(value))) {
+                    this.context.throwEvalError(`validateattributes: ${subject} must have ${expected.join(' or ')} elements.`);
+                }
+                return;
+            }
+            case 'numrows':
+            case 'nrows': {
+                const expected = this.validateattributesNumericScalar(parameter, attribute);
+                if (dimensions[0] !== expected) {
+                    this.context.throwEvalError(`validateattributes: ${subject} must have ${expected} rows.`);
+                }
+                return;
+            }
+            case 'numcols':
+            case 'ncols': {
+                const expected = this.validateattributesNumericScalar(parameter, attribute);
+                if (dimensions[1] !== expected) {
+                    this.context.throwEvalError(`validateattributes: ${subject} must have ${expected} columns.`);
+                }
+                return;
+            }
+            case 'ndims': {
+                const expected = this.validateattributesNumericScalar(parameter, attribute);
+                if (dimensions.length !== expected) {
+                    this.context.throwEvalError(`validateattributes: ${subject} must have ${expected} dimensions.`);
+                }
+                return;
+            }
+            case '>':
+            case '>=':
+            case '<':
+            case '<=': {
+                const limit = this.validateattributesNumericScalar(parameter, attribute);
+                if (!this.validateattributesNumericComparison(value, attribute, limit)) {
+                    this.context.throwEvalError(`validateattributes: ${subject} must be ${attribute} ${limit}.`);
+                }
+                return;
+            }
+            default:
+                this.context.throwEvalError(`validateattributes: unsupported attribute '${attribute}'.`);
+        }
+    }
+
+    /**
+     * Build the subject text used by `validateattributes` diagnostics.
+     */
+    private validateattributesSubject(args: NodeInput[]): string {
+        if (args.length >= 6) {
+            const functionName = this.charControlArgument(args[3], 'validateattributes function name').str;
+            const variableName = this.charControlArgument(args[4], 'validateattributes variable name').str;
+            const position = this.validateattributesNumericScalar(args[5], 'validateattributes argument position');
+            return `argument ${position} '${variableName}' for function '${functionName}'`;
+        }
+        if (args.length >= 5) {
+            return this.charControlArgument(args[4], 'validateattributes variable name').str;
+        }
+        if (args.length >= 4) {
+            if (!CharString.isInstanceOf(args[3])) {
+                const position = this.validateattributesNumericScalar(args[3], 'validateattributes argument position');
+                return `argument ${position}`;
+            }
+            return `input for function '${this.charControlArgument(args[3], 'validateattributes function name').str}'`;
+        }
+        return 'input';
+    }
+
+    /**
+     * Test a `validateattributes` class constraint against runtime values.
+     */
+    private validateattributesMatchesClass(value: NodeInput, className: string): boolean {
+        switch (className.toLowerCase()) {
+            case 'numeric':
+                return FunctionValidation.matchesBuiltInValidator(value as RuntimeExpressionValue, 'numeric');
+            case 'float':
+                return FunctionValidation.matchesBuiltInValidator(value as RuntimeExpressionValue, 'float');
+            case 'integer':
+                return FunctionValidation.matchesBuiltInValidator(value as RuntimeExpressionValue, 'integer');
+            case 'object':
+                return ClassInstance.isInstanceOf(value) || (MultiArray.isInstanceOf(value) && MultiArray.linearize(value).some(ClassInstance.isInstanceOf));
+            default:
+                return FunctionValidation.matchesClass(value as RuntimeExpressionValue, className) || this.valueIsRuntimeClass(value, className);
+        }
+    }
+
+    /**
+     * Implement the common MATLAB/Octave `validateattributes` forms.
+     *
+     * The browser runtime has no sparse storage type; sparse-compatible APIs are
+     * kept explicit through the shared validator, where `sparse` always fails
+     * and `nonsparse` always succeeds.
+     */
+    private validateattributesResult(args: NodeInput[]): NodeInput {
+        const value = this.expressionValue(args[0], 'validateattributes value');
+        const classNames = this.validationTextList(args[1], 'validateattributes', 'class list');
+        const attributes = this.validationListItems(args[2], 'validateattributes', 'attribute list');
+        const subject = this.validateattributesSubject(args);
+        if (classNames.length > 0 && !classNames.some((className) => this.validateattributesMatchesClass(value, className))) {
+            this.context.throwEvalError(`validateattributes: ${subject} must be one of: ${classNames.join(', ')}.`);
+        }
+        for (let index = 0; index < attributes.length; index++) {
+            const attribute = this.validationTextItem(attributes[index], 'validateattributes', 'attribute');
+            const validator = this.validateattributesValidator(attribute);
+            if (!validator) {
+                const specialMatch = this.validateattributesSpecialAttribute(value, attribute);
+                if (typeof specialMatch !== 'undefined') {
+                    if (!specialMatch) {
+                        this.context.throwEvalError(`validateattributes: ${subject} must be ${attribute}.`);
+                    }
+                    continue;
+                }
+                if (index + 1 >= attributes.length) {
+                    this.context.throwEvalError(`validateattributes: attribute '${attribute}' requires a parameter.`);
+                }
+                this.validateattributesParameterizedAttribute(value, attribute, attributes[++index], subject);
+                continue;
+            }
+            if (!this.validateattributesMatchesValidator(value, validator)) {
+                this.context.throwEvalError(`validateattributes: ${subject} must be ${attribute}.`);
+            }
+        }
+        return AST.nodeVoid();
+    }
+
+    /**
+     * Return supported public `mustBe*` call arity limits.
+     */
+    private mustBeArity(validator: string): { min: number; max: number } {
+        switch (validator) {
+            case 'mustBeGreaterThan':
+            case 'mustBeGreaterThanOrEqual':
+            case 'mustBeLessThan':
+            case 'mustBeLessThanOrEqual':
+            case 'mustBeMember':
+            case 'mustBeA':
+            case 'mustBeUnderlyingType':
+                return { min: 2, max: 2 };
+            case 'mustBeInRange':
+            case 'mustBeBetween':
+                return { min: 3, max: 4 };
+            default:
+                return { min: 1, max: 1 };
+        }
+    }
+
+    /**
+     * Implement public MATLAB `mustBe*` validator functions.
+     */
+    private mustBeResult(validator: string, args: NodeInput[]): NodeInput {
+        const arity = this.mustBeArity(validator);
+        AST.throwInvalidCallError(validator, args.length < arity.min || args.length > arity.max, (message) => this.context.throwEvalError(message));
+        const value = this.runtimeExpressionValue(args[0], `${validator} value`);
+        const bounds = args.slice(1).map((arg, index) => this.runtimeExpressionValue(arg, `${validator} bound ${index + 1}`));
+        if (validator === 'mustBeA') {
+            const classNames = this.validationTextList(bounds[0], validator, 'class list');
+            if (!classNames.some((className) => this.valueMatchesValidationClass(value, className, this.context.currentScope))) {
+                this.context.throwEvalError(`${validator} validation failed for 'input': ${validator}.`);
+            }
+            return AST.nodeVoid();
+        }
+        if (validator === 'mustBeUnderlyingType') {
+            const classNames = this.validationTextList(bounds[0], validator, 'type list');
+            if (!classNames.includes(FunctionValidation.underlyingType(value))) {
+                this.context.throwEvalError(`${validator} validation failed for 'input': ${validator}.`);
+            }
+            return AST.nodeVoid();
+        }
+        FunctionArguments.validateArgumentFunction(
+            'input',
+            value,
+            validator,
+            bounds,
+            (message) => this.context.throwEvalError(message),
+            (message) => this.context.throwSyntaxError(message),
+            this.pathValidationCallbacks,
+            validator,
+        );
+        return AST.nodeVoid();
+    }
+
+    /**
+     * Build registry entries for public `mustBe*` validators.
+     */
+    private mustBeFunctionEntries(): Record<string, FunctionSignatureEntry> {
+        return Object.fromEntries(
+            Interpreter.publicArgumentValidators.map((validator) => [
+                validator,
+                {
+                    func: (...args: NodeInput[]): NodeInput => this.mustBeResult(validator, args),
+                    signature: { inputs: { arity: -1, min: 1, parameters: [{ name: 'argument', variadic: true }] }, outputs: { arity: 0 } },
+                },
+            ]),
+        );
     }
 
     /**
@@ -3170,17 +3907,82 @@ class Interpreter implements InterpreterInterface {
         );
     }
 
+    /**
+     * Return the MATLAB diagnostic for one argument-count mismatch.
+     */
+    private functionCountMessage(name: 'nargchk' | 'narginchk' | 'nargoutchk', kind: 'low' | 'high'): { message: string; identifier: string } {
+        if (name === 'nargchk') {
+            return kind === 'low'
+                ? { message: 'Not enough input arguments.', identifier: 'MATLAB:nargchk:notEnoughInputs' }
+                : { message: 'Too many input arguments.', identifier: 'MATLAB:nargchk:tooManyInputs' };
+        }
+        if (name === 'narginchk') {
+            return kind === 'low'
+                ? { message: 'Not enough input arguments.', identifier: 'MATLAB:narginchk:notEnoughInputs' }
+                : { message: 'Too many input arguments.', identifier: 'MATLAB:narginchk:tooManyInputs' };
+        }
+        return kind === 'low'
+            ? { message: 'Not enough output arguments.', identifier: 'MATLAB:nargoutchk:notEnoughOutputs' }
+            : { message: 'Too many output arguments.', identifier: 'MATLAB:nargoutchk:tooManyOutputs' };
+    }
+
+    /**
+     * Classify an argument-count check without deciding how to report it.
+     */
+    private functionCountStatus(name: 'nargchk' | 'narginchk' | 'nargoutchk', min: NodeInput, max: NodeInput, count: number): 'ok' | 'low' | 'high' {
+        const minimum = FunctionArity.countBound(name, min, false, (message) => this.context.throwSyntaxError(message));
+        const maximum = FunctionArity.countBound(name, max, true, (message) => this.context.throwSyntaxError(message));
+        if (maximum < minimum) {
+            this.context.throwSyntaxError(`${name}: maximum count must be greater than or equal to minimum count.`);
+        }
+        return count < minimum ? 'low' : count > maximum ? 'high' : 'ok';
+    }
+
+    /**
+     * Implement `narginchk` and the throwing two-argument form of `nargoutchk`.
+     */
     private checkFunctionCount(name: 'narginchk' | 'nargoutchk', min: NodeInput, max: NodeInput): NodeInput {
         const count = name === 'narginchk' ? Complex.realToNumber(this.context.currentFunctionArgumentCountOrZero()) : Complex.realToNumber(this.context.currentFunctionOutputCountOrZero());
-        FunctionArity.checkFunctionCount(
-            name,
-            min,
-            max,
-            count,
-            (message) => this.context.throwSyntaxError(message),
-            (message) => this.context.throwEvalError(message),
-        );
+        const status = this.functionCountStatus(name, min, max, count);
+        if (status !== 'ok') {
+            this.context.throwEvalError(`${name}: invalid number of ${name === 'narginchk' ? 'input' : 'output'} arguments.`);
+        }
         return AST.nodeVoid();
+    }
+
+    /**
+     * Build the message-return forms shared by `nargchk` and `nargoutchk`.
+     */
+    private functionCountMessageResult(name: 'nargchk' | 'nargoutchk', args: NodeInput[]): NodeInput {
+        const count = FunctionArity.countBound(name, args[2], false, (message) => this.context.throwSyntaxError(message));
+        const status = this.functionCountStatus(name, args[0], args[1], count);
+        if (args.length === 4) {
+            const outputKind = this.charControlArgument(args[3], `${name} output kind`).str;
+            AST.throwInvalidCallError(name, outputKind !== 'struct' && outputKind !== 'string', (message) => this.context.throwSyntaxError(message));
+            if (outputKind === 'string') {
+                return status === 'ok' ? new CharString('') : CharString.create(this.functionCountMessage(name, status).message, "'");
+            }
+            if (status === 'ok') {
+                return new Structure({});
+            }
+            const diagnostic = this.functionCountMessage(name, status);
+            return new Structure({ message: CharString.create(diagnostic.message, "'"), identifier: CharString.create(diagnostic.identifier, "'") });
+        }
+        return status === 'ok' ? new CharString('') : CharString.create(this.functionCountMessage(name, status).message, "'");
+    }
+
+    /**
+     * Implement all supported `nargoutchk` forms.
+     */
+    private nargoutchkResult(args: NodeInput[]): NodeInput {
+        return args.length === 2 ? this.checkFunctionCount('nargoutchk', args[0], args[1]) : this.functionCountMessageResult('nargoutchk', args);
+    }
+
+    /**
+     * Implement legacy MATLAB/Octave `nargchk`.
+     */
+    private nargchkResult(args: NodeInput[]): NodeInput {
+        return this.functionCountMessageResult('nargchk', args);
     }
 
     private lookupImportedSourceResolution(
@@ -3235,8 +4037,19 @@ class Interpreter implements InterpreterInterface {
         return undefined;
     }
 
+    /**
+     * Resolve browser-hosted virtual source directories for `exist`/`which`.
+     */
+    private lookupDirectorySourceResolution(name: string): SymbolResolution | undefined {
+        const canonical = this.context.aliasNameFunction(name);
+        return this.sourceResolver.hasDirectory(canonical) ? { kind: 'directory', name, resolvedName: canonical, source: 'local' } : undefined;
+    }
+
     private resolveLookupSymbol(name: string, kind?: string, scope: Scope = this.context.currentScope): SymbolResolution | undefined {
         const normalizedKind = kind?.trim().toLowerCase();
+        if (normalizedKind === 'dir') {
+            return this.lookupDirectorySourceResolution(name);
+        }
         if (normalizedKind === 'builtin') {
             const canonical = this.context.aliasNameFunction(name);
             const builtin = this.context.builtInFunctionTable[canonical];
@@ -3265,7 +4078,8 @@ class Interpreter implements InterpreterInterface {
         return (
             (functions ? this.lookupFunctionSourceResolution(name, scope) : undefined) ??
             (classSources ? this.lookupClassSourceResolution(name, scope) : undefined) ??
-            (scripts ? this.lookupScriptSourceResolution(name) : undefined)
+            (scripts ? this.lookupScriptSourceResolution(name) : undefined) ??
+            (normalizedKind === 'file' || typeof normalizedKind === 'undefined' ? this.lookupDirectorySourceResolution(name) : undefined)
         );
     }
 
@@ -3867,6 +4681,33 @@ class Interpreter implements InterpreterInterface {
             },
             signature: { inputs: { arity: -1, min: 0, parameters: [{ name: 'name', classes: ['char', 'string'], variadic: true }] }, outputs: { arity: 0 } },
         },
+        who: {
+            func: (...args: NodeInput[]): MultiArray => this.whoResult(args),
+            signature: { inputs: { arity: -1, min: 0, parameters: [{ name: 'pattern', classes: ['char', 'string'], variadic: true }] }, outputs: { arity: 1 } },
+        },
+        whos: {
+            func: (...args: NodeInput[]): MultiArray => this.whosResult(args),
+            signature: { inputs: { arity: -1, min: 0, parameters: [{ name: 'pattern', classes: ['char', 'string'], variadic: true }] }, outputs: { arity: 1 } },
+        },
+        iskeyword: {
+            func: (...args: NodeInput[]): NodeInput => this.isKeywordResult(args),
+            signature: { inputs: { arity: -1, min: 0, max: 1, parameters: [{ name: 'name', classes: ['char', 'string', 'cell'], optional: true }] }, outputs: { arity: 1 } },
+        },
+        isvarname: {
+            func: (...args: NodeInput[]): NodeInput => this.isVarNameResult(args),
+            signature: { inputs: { arity: 1, parameters: [{ name: 'name', classes: ['char', 'string', 'cell'] }] }, outputs: { arity: 1 } },
+        },
+        isglobal: {
+            func: (...args: NodeInput[]): NodeInput => this.isGlobalResult(args),
+            signature: { inputs: { arity: 1, parameters: [{ name: 'name', classes: ['char', 'string', 'cell'] }] }, outputs: { arity: 1 } },
+        },
+        namelengthmax: {
+            func: (...args: NodeInput[]): ComplexType => {
+                AST.throwInvalidCallError('namelengthmax', args.length !== 0, (message) => this.context.throwEvalError(message));
+                return Complex.create(Interpreter.nameLengthMax);
+            },
+            signature: { inputs: { arity: 0 }, outputs: { arity: 1 } },
+        },
         class: {
             func: (...args: NodeInput[]): CharString => {
                 return new CharString(this.getValueClassName(args[0]));
@@ -3966,12 +4807,12 @@ class Interpreter implements InterpreterInterface {
                     return new CharString(this.context.currentClassAccessName());
                 }
                 if (option === 'fullpath') {
-                    return new CharString(this.context.currentFunctionSourceName() || this.context.currentFunctionName());
+                    return new CharString(this.currentMFilenameFullPath());
                 }
                 return new CharString(this.currentMFilename());
             },
             signature: {
-                inputs: { arity: -1, min: 0, max: 1, parameters: [{ name: 'option', classes: ['char', 'string'], allowedStrings: ['fullpath', 'class'], optional: true }] },
+                inputs: { arity: -1, min: 0, max: 1, parameters: [{ name: 'option', classes: ['char', 'string'], optional: true }] },
                 outputs: { arity: -1 },
             },
         },
@@ -4103,9 +4944,10 @@ class Interpreter implements InterpreterInterface {
             },
         },
         error: {
-            func: (...args: NodeInput[]): never => this.errorResult(args),
+            func: (...args: NodeInput[]): NodeInput => this.errorResult(args),
             signature: {
                 inputs: [
+                    { arity: 1, parameters: [{ name: 'errorStruct', classes: ['struct'] }] },
                     {
                         arity: -1,
                         min: 1,
@@ -4124,6 +4966,13 @@ class Interpreter implements InterpreterInterface {
                         ],
                     },
                 ],
+                outputs: { arity: 0 },
+            },
+        },
+        assert: {
+            func: (...args: NodeInput[]): NodeInput => this.assertResult(args),
+            signature: {
+                inputs: { arity: -1, min: 1, parameters: [{ name: 'argument', variadic: true }] },
                 outputs: { arity: 0 },
             },
         },
@@ -4161,6 +5010,44 @@ class Interpreter implements InterpreterInterface {
             },
             signature: { inputs: { arity: 1, parameters: [{ name: 'name', classes: ['char', 'string', 'function_handle'] }] }, outputs: { arity: 1 } },
         },
+        validatestring: {
+            func: (...args: NodeInput[]): CharString => this.validatestringResult(args),
+            signature: {
+                inputs: {
+                    arity: -1,
+                    min: 2,
+                    max: 5,
+                    parameters: [
+                        { name: 'string', classes: ['char', 'string'] },
+                        { name: 'validStrings', classes: ['char', 'string', 'cell'] },
+                        { name: 'functionName', classes: ['char', 'string'], optional: true },
+                        { name: 'variableName', classes: ['char', 'string'], optional: true },
+                        { name: 'argumentPosition', optional: true },
+                    ],
+                },
+                outputs: { arity: 1 },
+            },
+        },
+        validateattributes: {
+            func: (...args: NodeInput[]): NodeInput => this.validateattributesResult(args),
+            signature: {
+                inputs: {
+                    arity: -1,
+                    min: 3,
+                    max: 6,
+                    parameters: [
+                        { name: 'value' },
+                        { name: 'classes', classes: ['char', 'string', 'cell'] },
+                        { name: 'attributes', classes: ['char', 'string', 'cell'] },
+                        { name: 'functionNameOrArgumentPosition', optional: true },
+                        { name: 'variableName', classes: ['char', 'string'], optional: true },
+                        { name: 'argumentPosition', optional: true },
+                    ],
+                },
+                outputs: { arity: 0 },
+            },
+        },
+        ...this.mustBeFunctionEntries(),
         func2str: {
             func: (...args: NodeInput[]): CharString => {
                 return FunctionLookup.func2str(this.functionHandleControlArgument(args[0], 'function handle'), (handle) => FunctionHandle.unparse(handle, this));
@@ -4169,9 +5056,21 @@ class Interpreter implements InterpreterInterface {
         },
         str2func: {
             func: (...args: NodeInput[]): FunctionHandle => {
-                return this.functionHandleFromString(this.charControlArgument(args[0], 'source'));
+                const scopeMode = args.length > 1 ? this.charControlArgument(args[1], 'scope').str.trim().toLowerCase() : '';
+                return this.functionHandleFromString(this.charControlArgument(args[0], 'source'), scopeMode === 'global');
             },
-            signature: { inputs: { arity: 1, parameters: [{ name: 'source', classes: ['char', 'string'] }] }, outputs: { arity: 1 } },
+            signature: {
+                inputs: {
+                    arity: -1,
+                    min: 1,
+                    max: 2,
+                    parameters: [
+                        { name: 'source', classes: ['char', 'string'] },
+                        { name: 'scope', classes: ['char', 'string'], allowedStrings: ['global'], optional: true },
+                    ],
+                },
+                outputs: { arity: 1 },
+            },
         },
         builtin: {
             func: (...args: NodeInput[]): NodeExpr => {
@@ -4314,6 +5213,25 @@ class Interpreter implements InterpreterInterface {
                 outputs: { arity: 0 },
             },
         },
+        nargchk: {
+            func: (...args: NodeInput[]): NodeInput => {
+                return this.nargchkResult(args);
+            },
+            signature: {
+                inputs: {
+                    arity: -1,
+                    min: 3,
+                    max: 4,
+                    parameters: [
+                        { name: 'min', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
+                        { name: 'max', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'integer', 'nonnegative'], allowInfinity: true },
+                        { name: 'inputCount', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
+                        { name: 'outputKind', classes: ['char', 'string'], allowedStrings: ['struct', 'string'], optional: true },
+                    ],
+                },
+                outputs: { arity: 1 },
+            },
+        },
         nargout: {
             func: (...args: NodeInput[]): ComplexType => {
                 return args.length === 0 ? this.context.currentFunctionOutputCount('nargout') : Complex.create(this.functionOutputArity(this.functionArityCallable('nargout', args[0])));
@@ -4331,17 +5249,21 @@ class Interpreter implements InterpreterInterface {
         },
         nargoutchk: {
             func: (...args: NodeInput[]): NodeInput => {
-                return this.checkFunctionCount('nargoutchk', args[0], args[1]);
+                return this.nargoutchkResult(args);
             },
             signature: {
                 inputs: {
-                    arity: 2,
+                    arity: -1,
+                    min: 2,
+                    max: 4,
                     parameters: [
                         { name: 'min', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'] },
                         { name: 'max', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'integer', 'nonnegative'], allowInfinity: true },
+                        { name: 'outputCount', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'integer', 'nonnegative'], optional: true },
+                        { name: 'outputKind', classes: ['char', 'string'], allowedStrings: ['struct', 'string'], optional: true },
                     ],
                 },
-                outputs: { arity: 0 },
+                outputs: { arity: 1 },
             },
         },
         nthargout: {
@@ -4548,16 +5470,6 @@ class Interpreter implements InterpreterInterface {
         for (const func in this.functions) {
             this.context.defineBuiltInFunction(func, this.functions[func].func, false, [], this.functions[func].signature);
         }
-        /* Define function operators */
-        for (const func in MathOperation.leftAssociativeMultipleOperations) {
-            this.context.defineLeftAssociativeMultipleOperationFunction(func as KeyOfTypeOfMathOperation, MathOperation.leftAssociativeMultipleOperations[func as KeyOfTypeOfMathOperation]!);
-        }
-        for (const func in MathOperation.binaryOperations) {
-            this.context.defineBinaryOperatorFunction(func as KeyOfTypeOfMathOperation, MathOperation.binaryOperations[func as KeyOfTypeOfMathOperation]!);
-        }
-        for (const func in MathOperation.unaryOperations) {
-            this.context.defineUnaryOperatorFunction(func as KeyOfTypeOfMathOperation, MathOperation.unaryOperations[func as KeyOfTypeOfMathOperation]!);
-        }
         /* Define function mappers */
         const complexMapFunctionSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value', classes: ['double'] }] }, outputs: { arity: 1 } };
         for (const func in Complex.mapFunction) {
@@ -4603,6 +5515,18 @@ class Interpreter implements InterpreterInterface {
         /* Define LinearAlgebra functions */
         for (const func in LinearAlgebra.functions) {
             this.context.defineBuiltInFunction(func, LinearAlgebra.functions[func].func, false, [], LinearAlgebra.functions[func].signature);
+        }
+        /* Define operator functions after numeric helpers so names such as
+         * power, transpose, and not keep their MATLAB/Octave operator
+         * semantics when called in function form. */
+        for (const func in MathOperation.leftAssociativeMultipleOperations) {
+            this.context.defineLeftAssociativeMultipleOperationFunction(func as KeyOfTypeOfMathOperation, MathOperation.leftAssociativeMultipleOperations[func as KeyOfTypeOfMathOperation]!);
+        }
+        for (const func in MathOperation.binaryOperations) {
+            this.context.defineBinaryOperatorFunction(func as KeyOfTypeOfMathOperation, MathOperation.binaryOperations[func as KeyOfTypeOfMathOperation]!);
+        }
+        for (const func in MathOperation.unaryOperations) {
+            this.context.defineUnaryOperatorFunction(func as KeyOfTypeOfMathOperation, MathOperation.unaryOperations[func as KeyOfTypeOfMathOperation]!);
         }
         /* Load UnparserMathML for special functions */
         for (const func in this.unparseMathMLFunctions) {
@@ -4716,7 +5640,7 @@ class Interpreter implements InterpreterInterface {
         }
 
         /* Parse input and return AST. */
-        return parser.input().node;
+        return parser.input().node ?? AST.nodeVoid();
     }
 
     /**
@@ -5031,6 +5955,224 @@ class Interpreter implements InterpreterInterface {
     }
 
     /**
+     * Return ordinary variables visible to workspace-introspection commands.
+     *
+     * `who` and `whos` report variables from the active workspace. Class
+     * definitions are stored in the same low-level table, so they are filtered
+     * out to keep the result aligned with MATLAB/Octave user variables.
+     */
+    private visibleWorkspaceVariableEntries(): [string, NameEntry][] {
+        return Object.entries(this.context.currentScope.nameTable)
+            .filter(([name, entry]) => !this.context.nativeNameSet.has(name) && !ClassDefinition.isInstanceOf(entry?.node))
+            .sort(([left], [right]) => left.localeCompare(right));
+    }
+
+    /**
+     * Normalize MATLAB/Octave workspace listing options.
+     */
+    private workspaceListingOptions(patterns: string[], commandName: 'who' | 'whos'): WorkspaceListingOptions {
+        const result: WorkspaceListingOptions = { globalOnly: false, regexp: false, patterns: [] };
+        for (let i = 0; i < patterns.length; i++) {
+            const pattern = patterns[i];
+            const option = pattern.toLowerCase();
+            if (option === 'global' || option === '-global') {
+                result.globalOnly = true;
+            } else if (option === '-regexp' || option === '-r' || option === 'regexp') {
+                result.regexp = true;
+            } else if (option === '-file' || option === 'file') {
+                this.context.throwEvalError(`${commandName}: MAT-file workspace listing is not supported in the browser runtime.`);
+            } else {
+                result.patterns.push(pattern);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Select workspace variable names by MATLAB/Octave wildcard or regexp patterns.
+     */
+    private workspaceVariableNamesByPatterns(patterns: string[], commandName: 'who' | 'whos'): string[] {
+        const options = this.workspaceListingOptions(patterns, commandName);
+        const candidates = this.visibleWorkspaceVariableEntries()
+            .filter(([name]) => !options.globalOnly || this.context.globalNameSet.has(name))
+            .map(([name]) => name);
+        if (options.patterns.length === 0) {
+            return options.regexp ? [] : candidates;
+        }
+        const result: string[] = [];
+        const append = (name: string): void => {
+            if (!result.includes(name)) {
+                result.push(name);
+            }
+        };
+        for (const pattern of options.patterns) {
+            const hasWildcards = this.clearPatternHasWildcards(pattern);
+            candidates.filter((candidate) => (options.regexp || hasWildcards ? this.clearPatternMatches(candidate, pattern, options.regexp) : candidate === pattern)).forEach(append);
+        }
+        return result;
+    }
+
+    /**
+     * Build a MATLAB-like cellstr column vector for `who`.
+     */
+    private whoResult(args: NodeInput[]): MultiArray {
+        const patterns = args.map((arg) => this.charControlArgument(arg, 'who pattern').str);
+        return this.whoResultFromPatterns(patterns);
+    }
+
+    /**
+     * Build `who` output from already-normalized command or function patterns.
+     */
+    private whoResultFromPatterns(patterns: string[]): MultiArray {
+        const result = MultiArray.toColumnVector(this.workspaceVariableNamesByPatterns(patterns, 'who').map((name) => CharString.create(name, "'")));
+        result.isCell = true;
+        return result;
+    }
+
+    /**
+     * Return dimensions reported by `whos` for a runtime value.
+     */
+    private whosValueSize(value: NodeInput): number[] {
+        if (MultiArray.isInstanceOf(value)) {
+            return value.dimension;
+        }
+        if (CharString.isChar(value)) {
+            return [1, value.str.length];
+        }
+        return [1, 1];
+    }
+
+    /**
+     * Return a stable, approximate byte count for `whos` metadata.
+     */
+    private whosValueBytes(value: NodeInput): number {
+        if (Complex.isInstanceOf(value)) {
+            return 16;
+        }
+        if (CharString.isInstanceOf(value)) {
+            return value.str.length * 2;
+        }
+        if (MultiArray.isInstanceOf(value)) {
+            return MultiArray.linearize(value).reduce((sum, item) => sum + this.whosValueBytes(this.expressionValue(item, 'whos element')), 0);
+        }
+        if (Structure.isInstanceOf(value)) {
+            return Object.values(value.field).reduce((sum, item) => sum + this.whosValueBytes(this.expressionValue(item, 'whos field')), 0);
+        }
+        return 0;
+    }
+
+    /**
+     * Test whether a value contains complex numeric data for `whos`.
+     */
+    private whosValueIsComplex(value: NodeInput): boolean {
+        if (Complex.isInstanceOf(value)) {
+            return !Complex.isRealValue(value);
+        }
+        return MultiArray.isInstanceOf(value) && MultiArray.linearize(value).some((item) => Complex.isInstanceOf(item) && !Complex.isRealValue(item));
+    }
+
+    /**
+     * Build a struct array describing current workspace variables.
+     */
+    private whosResult(args: NodeInput[]): MultiArray {
+        const patterns = args.map((arg) => this.charControlArgument(arg, 'whos pattern').str);
+        return this.whosResultFromPatterns(patterns);
+    }
+
+    /**
+     * Build `whos` output from already-normalized command or function patterns.
+     */
+    private whosResultFromPatterns(patterns: string[]): MultiArray {
+        const names = new Set(this.workspaceVariableNamesByPatterns(patterns, 'whos'));
+        const entries = this.visibleWorkspaceVariableEntries().filter(([name]) => names.has(name));
+        const result = MultiArray.toColumnVector(
+            entries.map(([name, entry]) => {
+                const value = this.expressionValue(entry.node, `workspace variable ${name}`);
+                return new Structure({
+                    name: CharString.create(name, "'"),
+                    size: MultiArray.toRowVector(this.whosValueSize(value).map((dimension) => Complex.create(dimension))),
+                    bytes: Complex.create(this.whosValueBytes(value)),
+                    class: CharString.create(this.getValueClassName(value), "'"),
+                    global: this.context.globalNameSet.has(name) ? Complex.true() : Complex.false(),
+                    sparse: Complex.false(),
+                    complex: this.whosValueIsComplex(value) ? Complex.true() : Complex.false(),
+                    nesting: new Structure({ function: CharString.create('', "'"), level: Complex.create(0) }),
+                    persistent: Complex.false(),
+                });
+            }),
+        );
+        MultiArray.setType(result);
+        return result;
+    }
+
+    /**
+     * Build a cell column vector with the current lexer keyword list.
+     */
+    private keywordListResult(): MultiArray {
+        const result = MultiArray.toColumnVector(Interpreter.keywordNames.map((name) => CharString.create(name, "'")));
+        result.isCell = true;
+        return result;
+    }
+
+    /**
+     * Apply a scalar text predicate to a scalar string or text array.
+     */
+    private textNamePredicateResult(value: NodeInput, functionName: 'iskeyword' | 'isvarname' | 'isglobal', predicate: (name: string) => boolean): NodeInput {
+        if (CharString.isInstanceOf(value)) {
+            return predicate(value.str) ? Complex.true() : Complex.false();
+        }
+        if (!MultiArray.isInstanceOf(value)) {
+            AST.throwInvalidCallError(functionName, true, (message) => this.context.throwEvalError(message));
+        }
+        const result = new MultiArray(value.dimension);
+        for (let n = 0; n < MultiArray.linearLength(value); n++) {
+            const [row, column] = MultiArray.linearIndexToMultiArrayRowColumn(value.dimension[0], value.dimension[1], n);
+            const item = value.array[row][column];
+            result.array[row][column] = CharString.isInstanceOf(item) && predicate(item.str) ? Complex.true() : Complex.false();
+        }
+        MultiArray.setType(result);
+        return MultiArray.MultiArrayToScalar(result);
+    }
+
+    /**
+     * MATLAB/Octave language keyword predicate.
+     */
+    private isKeywordResult(args: NodeInput[]): NodeInput {
+        AST.throwInvalidCallError('iskeyword', args.length > 1, (message) => this.context.throwEvalError(message));
+        if (args.length === 0) {
+            return this.keywordListResult();
+        }
+        return this.textNamePredicateResult(args[0], 'iskeyword', (name) => Interpreter.keywordNameSet.has(name));
+    }
+
+    /**
+     * MATLAB-compatible variable-name predicate.
+     */
+    private isVarNameResult(args: NodeInput[]): NodeInput {
+        AST.throwInvalidCallError('isvarname', args.length !== 1, (message) => this.context.throwEvalError(message));
+        return this.textNamePredicateResult(
+            args[0],
+            'isvarname',
+            (name) => /^[A-Za-z][A-Za-z0-9_]*$/.test(name) && name.length <= Interpreter.nameLengthMax && !Interpreter.keywordNameSet.has(name),
+        );
+    }
+
+    /**
+     * Test whether a name is currently declared global.
+     */
+    private isGlobalName(name: string): boolean {
+        return this.context.globalNameSet.has(name);
+    }
+
+    /**
+     * MATLAB/Octave workspace global-name predicate.
+     */
+    private isGlobalResult(args: NodeInput[]): NodeInput {
+        AST.throwInvalidCallError('isglobal', args.length !== 1, (message) => this.context.throwEvalError(message));
+        return this.textNamePredicateResult(args[0], 'isglobal', (name) => this.isGlobalName(name));
+    }
+
+    /**
      * Return user-defined function names that can be matched by clear patterns.
      */
     private clearFunctionCandidates(): string[] {
@@ -5310,12 +6452,95 @@ class Interpreter implements InterpreterInterface {
      * @returns Boolean truth value.
      */
     private toBoolean(tree: NodeExpr): boolean {
-        const value = MultiArray.isInstanceOf(tree) ? MultiArray.toLogical(tree) : tree;
-        if (Complex.isInstanceOf(value)) {
-            return Boolean(Complex.realToNumber(value) || Complex.imagToNumber(value));
-        } else {
-            return !!value.str;
+        if (MultiArray.isInstanceOf(tree)) {
+            if (tree.isCell) {
+                this.context.throwEvalError('invalid conversion from cell to logical.');
+            }
+            if (this.hasClassInstanceElement(tree)) {
+                const converted = this.classUnaryOperatorArray(tree, 'logical', AST.nodeIdentifier('logical'));
+                if (converted) {
+                    return this.toBoolean(this.expressionValue(converted, 'logical conversion'));
+                }
+                this.context.throwEvalError(`invalid conversion from ${this.getValueClassName(tree)} to logical.`);
+            }
+            return this.complexConditionValue(MultiArray.toLogical(tree));
         }
+        if (Complex.isInstanceOf(tree)) {
+            return this.complexConditionValue(tree);
+        }
+        if (CharString.isInstanceOf(tree)) {
+            return !!tree.str;
+        }
+        if (ClassInstance.isInstanceOf(tree)) {
+            const overload = this.classUnaryOperatorMethod(tree, 'logical');
+            if (overload) {
+                return this.toBoolean(this.expressionValue(this.reducedClassMethodResult(overload.receiver, overload.method, [], AST.nodeIdentifier('logical')), 'logical conversion'));
+            }
+        }
+        this.context.throwEvalError(`invalid conversion from ${this.getValueClassName(tree)} to logical.`);
+    }
+
+    /**
+     * Convert a scalar complex/logical value to a JavaScript condition flag.
+     *
+     * @param value Numeric or logical scalar.
+     * @returns `true` when either numeric component is nonzero.
+     */
+    private complexConditionValue(value: ComplexType): boolean {
+        return Boolean(Complex.realToNumber(value) || Complex.imagToNumber(value));
+    }
+
+    /**
+     * Evaluate a control-flow condition using MATLAB/Octave truth rules.
+     *
+     * In condition contexts, MATLAB treats `&` and `|` as short-circuit
+     * operators, matching `&&` and `||`. Ordinary expression evaluation keeps
+     * `&` and `|` element-wise, so the special handling stays local to control
+     * predicates.
+     *
+     * @param tree Condition expression.
+     * @param scope Scope used while evaluating operands.
+     * @param name Human-readable expression name for diagnostics.
+     * @returns Boolean condition value.
+     */
+    private evaluatedCondition(tree: NodeExpr, scope: Scope, name: string): boolean {
+        return this.toBoolean(this.evaluatedConditionExpression(tree, scope, name));
+    }
+
+    /**
+     * Evaluate a condition expression, preserving conditional short-circuiting.
+     *
+     * @param tree Condition expression.
+     * @param scope Scope used while evaluating operands.
+     * @param name Human-readable expression name for diagnostics.
+     * @returns Evaluated condition value.
+     */
+    private evaluatedConditionExpression(tree: NodeExpr, scope: Scope, name: string): NodeExpr {
+        if (AST.isNodeBinaryOperation(tree) && (tree.type === '&' || tree.type === '|' || tree.type === '&&' || tree.type === '||')) {
+            return this.evaluateConditionalLogicalOperation(tree, scope);
+        }
+        return this.evaluatedExpressionValue(tree, scope, name);
+    }
+
+    /**
+     * Evaluate a logical operator inside a control-flow condition.
+     *
+     * @param tree Logical binary operation.
+     * @param scope Scope used while evaluating operands.
+     * @returns Logical scalar result.
+     */
+    private evaluateConditionalLogicalOperation(tree: BinaryOperation, scope: Scope): NodeExpr {
+        const leftValue = this.evaluatedCondition(tree.left, scope, 'left condition operand');
+        if (tree.type === '&' || tree.type === '&&') {
+            if (!leftValue) {
+                return Complex.false();
+            }
+            return this.evaluatedCondition(tree.right, scope, 'right condition operand') ? Complex.true() : Complex.false();
+        }
+        if (leftValue) {
+            return Complex.true();
+        }
+        return this.evaluatedCondition(tree.right, scope, 'right condition operand') ? Complex.true() : Complex.false();
     }
 
     private switchComparableValue(value: NodeInput): NodeInput {
@@ -5336,7 +6561,13 @@ class Interpreter implements InterpreterInterface {
     }
 
     private switchCandidateMatches(switchValue: NodeInput, candidate: NodeInput): boolean {
-        return RuntimeEquality.valuesEqual(this.switchComparableValue(switchValue), this.switchComparableValue(candidate));
+        const left = this.switchComparableValue(candidate);
+        const right = this.switchComparableValue(switchValue);
+        const overload = this.classBinaryOperatorMethod(left, right, 'eq');
+        if (overload) {
+            return this.toBoolean(this.expressionValue(this.reducedClassMethodResult(overload.receiver, overload.method, overload.args, AST.nodeIdentifier('switch')), 'switch case'));
+        }
+        return RuntimeEquality.valuesEqual(right, left);
     }
 
     private classDefinitionForOperatorValue(value: NodeInput): ClassDefinition | undefined {
@@ -5452,6 +6683,152 @@ class Interpreter implements InterpreterInterface {
         return MultiArray.MultiArrayToScalar(result);
     }
 
+    private evaluateBinaryOperatorWithClassDispatch(left: NodeInput, right: NodeInput, methodName: string, operationName: string, parent: NodeInput): NodeInput {
+        const arrayOverload = this.classBinaryOperatorArray(left, right, methodName, parent);
+        if (arrayOverload) {
+            return arrayOverload;
+        }
+        const overload = this.classBinaryOperatorMethod(left, right, methodName);
+        if (overload) {
+            return this.context.callClassInstanceMethod(overload.receiver, overload.method, overload.args, parent);
+        }
+        return (MathOperation[operationName as KeyOfTypeOfMathOperation] as BinaryMathOperation)(left, right);
+    }
+
+    private classVariadicOperatorMethod(values: NodeInput[], methodName: string): { receiver: ClassInstance; method: ClassMethodDefinition; args: ExpressionBoundaryValue[] } | undefined {
+        for (let receiverIndex = 0; receiverIndex < values.length; receiverIndex++) {
+            const value = values[receiverIndex];
+            if (!ClassInstance.isInstanceOf(value)) {
+                continue;
+            }
+            const method = value.classDefinition.findMethod(methodName, (item) => !item.isStatic);
+            if (!method) {
+                continue;
+            }
+            if (!this.context.canAccessClassMember(method.classDefinition, method.access)) {
+                this.context.throwEvalError(`method '${methodName}' has ${method.access} access for class ${value.classDefinition.name}.`);
+            }
+            return {
+                receiver: value,
+                method,
+                args: this.classMethodArgumentValues(
+                    values.filter((_item, index) => index !== receiverIndex),
+                    'operator',
+                ),
+            };
+        }
+        return undefined;
+    }
+
+    private evaluateColonWithClassDispatch(values: NodeInput[], parent: NodeInput): NodeInput | undefined {
+        if (!values.some((value) => this.hasClassInstanceElement(value))) {
+            return undefined;
+        }
+        const overload = this.classVariadicOperatorMethod(values, 'colon');
+        if (overload) {
+            return this.context.callClassInstanceMethod(overload.receiver, overload.method, overload.args, parent);
+        }
+        this.context.throwEvalError('operator colon is not defined for class operands.');
+    }
+
+    /**
+     * Dispatch MATLAB/Octave concatenation overloads for class operands.
+     *
+     * Used both by function-form calls (`horzcat(a,b)`) and by array literals
+     * (`[a,b]`, `[a;b]`) through the runtime container hook.
+     */
+    public concatenateOverload(name: 'cat' | 'horzcat' | 'vertcat', values: unknown[], parent: NodeInput): NodeInput | undefined {
+        const expressions = values.map((value, index) => this.expressionValue(value, `${name} argument ${index + 1}`));
+        if (!expressions.some((value) => this.hasClassInstanceElement(value))) {
+            return undefined;
+        }
+        const overload = this.classVariadicOperatorMethod(expressions, name);
+        if (overload) {
+            return this.reducedClassMethodResult(overload.receiver, overload.method, overload.args, parent);
+        }
+        return undefined;
+    }
+
+    /**
+     * Dispatch a functional operator call such as `plus(a,b)` or `colon(a,b)`.
+     *
+     * Function-form operator calls use the same overload opportunity as their
+     * symbolic counterparts. The method also performs the native fallback with
+     * the already evaluated arguments, avoiding duplicate evaluation for calls
+     * such as `plus(f(), g())`.
+     */
+    public callFunctionalOperatorOverload(node: NodeBuiltInFunction, args: CallArgumentValue[], parent: NodeInput): NodeInput | undefined {
+        const name = node.id;
+        const unaryOperation = MathOperation.unaryOperations[name as KeyOfTypeOfMathOperation];
+        const binaryOperation = MathOperation.binaryOperations[name as KeyOfTypeOfMathOperation];
+        const leftAssociativeOperation = MathOperation.leftAssociativeMultipleOperations[name as KeyOfTypeOfMathOperation];
+        const isColon = name === 'colon';
+        const isCat = name === 'cat';
+        const isConcatenation = name === 'horzcat' || name === 'vertcat';
+        if (!unaryOperation && !binaryOperation && !leftAssociativeOperation && !isColon && !isCat && !isConcatenation) {
+            return undefined;
+        }
+        const evaluatedArgs = this.context.evaluateBuiltInArgs(node, args, parent).map((value, index) => this.expressionValue(value, `operator argument ${index + 1}`));
+        this.context.validateBuiltInInputArity(node, evaluatedArgs.length);
+        const hasClassOperand = evaluatedArgs.some((value) => this.hasClassInstanceElement(value));
+        if (!hasClassOperand || isCat || isConcatenation) {
+            this.context.validateBuiltInInputParameters(node, evaluatedArgs);
+        }
+        if (isColon) {
+            if (evaluatedArgs.length !== 2 && evaluatedArgs.length !== 3) {
+                AST.throwInvalidCallError(name, false, (message) => this.context.throwEvalError(message));
+            }
+            return this.evaluateColonWithClassDispatch(evaluatedArgs, parent) ?? CoreFunctions.colon(...(evaluatedArgs as ElementType[]));
+        }
+        if (isCat) {
+            const overload = this.concatenateOverload(name, evaluatedArgs, parent);
+            if (overload) {
+                return overload;
+            }
+            const [dimension, ...arrays] = evaluatedArgs as ElementType[];
+            return CoreFunctions.cat(dimension, ...arrays);
+        }
+        if (isConcatenation) {
+            const overload = this.concatenateOverload(name, evaluatedArgs, parent);
+            if (overload) {
+                return overload;
+            }
+            return (name === 'horzcat' ? CoreFunctions.horzcat : CoreFunctions.vertcat)(...(evaluatedArgs as ElementType[]));
+        }
+        if (unaryOperation) {
+            if (evaluatedArgs.length !== 1) {
+                AST.throwInvalidCallError(name, false, (message) => this.context.throwEvalError(message));
+            }
+            const value = evaluatedArgs[0];
+            const arrayOverload = this.classUnaryOperatorArray(value, name, parent);
+            if (arrayOverload) {
+                return arrayOverload;
+            }
+            const overload = this.classUnaryOperatorMethod(value, name);
+            if (overload) {
+                return this.context.callClassInstanceMethod(overload.receiver, overload.method, [], parent);
+            }
+            return unaryOperation(value as MathObject);
+        }
+        if (binaryOperation) {
+            if (evaluatedArgs.length !== 2) {
+                AST.throwInvalidCallError(name, false, (message) => this.context.throwEvalError(message));
+            }
+            return this.evaluateBinaryOperatorWithClassDispatch(evaluatedArgs[0], evaluatedArgs[1], name, name, parent);
+        }
+        if (leftAssociativeOperation) {
+            if (evaluatedArgs.length < 2) {
+                AST.throwInvalidCallError(name, false, (message) => this.context.throwEvalError(message));
+            }
+            let result = this.evaluateBinaryOperatorWithClassDispatch(evaluatedArgs[0], evaluatedArgs[1], name, name, parent);
+            for (let i = 2; i < evaluatedArgs.length; i++) {
+                result = this.evaluateBinaryOperatorWithClassDispatch(result, evaluatedArgs[i], name, name, parent);
+            }
+            return result;
+        }
+        return undefined;
+    }
+
     private requireBinaryOperation(tree: NodeInput): BinaryOperation {
         if (AST.isNodeBinaryOperation(tree)) {
             return tree;
@@ -5478,14 +6855,7 @@ class Interpreter implements InterpreterInterface {
         const right = this.evaluatedExpressionValue(tree.right, scope, 'right operand');
         const methodName = Interpreter.binaryOperatorMethodTable[tree.type];
         if (methodName) {
-            const arrayOverload = this.classBinaryOperatorArray(left, right, methodName, tree);
-            if (arrayOverload) {
-                return arrayOverload;
-            }
-            const overload = this.classBinaryOperatorMethod(left, right, methodName);
-            if (overload) {
-                return this.context.callClassInstanceMethod(overload.receiver, overload.method, overload.args, tree);
-            }
+            return this.evaluateBinaryOperatorWithClassDispatch(left, right, methodName, methodName, tree);
         }
         return (this.opTable[tree.type] as BinaryMathOperation)(left, right);
     }
@@ -5859,7 +7229,7 @@ class Interpreter implements InterpreterInterface {
      */
     private evaluatedIndexArguments(index: ExpressionBoundaryValue[], scope: Scope): IndexArgument[] {
         return MultiArray.indexArguments(
-            index.map((arg: NodeExpr, itemIndex) => this.evaluatedExpressionValue(arg, scope, `index${itemIndex + 1}`)),
+            index.map((arg: NodeExpr, itemIndex) => this.convertIndexArgument(this.evaluatedExpressionValue(arg, scope, `index${itemIndex + 1}`), arg)),
             'index',
         );
     }
@@ -6744,10 +8114,11 @@ class Interpreter implements InterpreterInterface {
             if (CharString.isInstanceOf(subscript) && subscript.str === ':') {
                 return descriptor.subs.length === 1 ? MultiArray.expandColon(MultiArray.linearLength(target)) : MultiArray.expandColon(MultiArray.getDimension(target, index));
             }
-            if (!MultiArray.isIndexArgument(subscript)) {
+            const converted = this.convertIndexArgument(subscript, AST.nodeIdentifier('subsindex'));
+            if (!MultiArray.isIndexArgument(converted)) {
                 this.context.throwEvalError(`subscript${index + 1}: invalid subscript type.`);
             }
-            return subscript;
+            return converted;
         });
     }
 
@@ -6952,6 +8323,75 @@ class Interpreter implements InterpreterInterface {
             this.context.throwEvalError(`method 'end' has ${method.access} access for class ${instance.classDefinition.name}.`);
         }
         return this.reducedClassMethodResult(instance, method, this.classMethodArgumentValues([Complex.create(indexPosition), Complex.create(indexCount)], 'end'), parent);
+    }
+
+    private callClassSubsindex(instance: ClassInstance, parent: NodeInput): NodeInput {
+        const method = instance.classDefinition.findMethod('subsindex', (item) => !item.isStatic);
+        if (!method) {
+            this.context.throwEvalError(`object of class ${instance.classDefinition.name} cannot be used as an index without a subsindex method.`);
+        }
+        if (!this.context.canAccessClassMember(method.classDefinition, method.access)) {
+            this.context.throwEvalError(`method 'subsindex' has ${method.access} access for class ${instance.classDefinition.name}.`);
+        }
+        return this.reducedClassMethodResult(instance, method, [], parent);
+    }
+
+    private zeroBasedSubsindexValue(value: NodeInput, parent: NodeInput, label: string): NodeInput {
+        const scalarIndex = (item: NodeInput, itemLabel: string): ComplexType => {
+            const indexValue = this.expressionValue(item, itemLabel);
+            if (!Complex.isInstanceOf(indexValue) || !Complex.imagIsZero(indexValue)) {
+                this.context.throwEvalError('subsindex must return zero-based real integer indices.');
+            }
+            const index = Complex.realToNumber(indexValue);
+            if (!Number.isInteger(index) || index < 0) {
+                this.context.throwEvalError('subsindex must return zero-based real integer indices.');
+            }
+            return Complex.create(index + 1);
+        };
+        const rawValue = this.expressionValue(value, label);
+        if (MultiArray.isInstanceOf(rawValue)) {
+            const result = new MultiArray(rawValue.dimension, undefined, false);
+            for (let n = 0; n < MultiArray.linearLength(rawValue); n++) {
+                const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(rawValue.dimension[0], rawValue.dimension[1], n);
+                result.array[i][j] = scalarIndex(this.expressionValue(rawValue.array[i][j], `${label}${n + 1}`), `${label}${n + 1}`);
+            }
+            MultiArray.setType(result);
+            result.parent = parent;
+            return result;
+        }
+        return scalarIndex(rawValue, label);
+    }
+
+    /**
+     * Convert class objects used as native array indices through `subsindex`.
+     *
+     * MATLAB/Octave `subsindex` returns zero-based indices; MathJSLab's native
+     * indexing core consumes ordinary one-based MATLAB indices, so this helper
+     * validates the method result and shifts it by one at the boundary.
+     */
+    public convertIndexArgument(value: NodeInput, parent: NodeInput): NodeInput {
+        if (ClassInstance.isInstanceOf(value)) {
+            return this.zeroBasedSubsindexValue(this.callClassSubsindex(value, parent), parent, 'subsindex');
+        }
+        if (MultiArray.isInstanceOf(value) && this.hasClassInstanceElement(value)) {
+            const result = new MultiArray(value.dimension, undefined, false);
+            for (let n = 0; n < MultiArray.linearLength(value); n++) {
+                const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(value.dimension[0], value.dimension[1], n);
+                const item = value.array[i][j];
+                if (!ClassInstance.isInstanceOf(item)) {
+                    this.context.throwEvalError('object index arrays must contain class instance elements.');
+                }
+                const converted = this.zeroBasedSubsindexValue(this.callClassSubsindex(item, parent), parent, `subsindex${n + 1}`);
+                if (!Complex.isInstanceOf(converted)) {
+                    this.context.throwEvalError('subsindex for object index arrays must return scalar indices.');
+                }
+                result.array[i][j] = converted;
+            }
+            MultiArray.setType(result);
+            result.parent = parent;
+            return result;
+        }
+        return value;
     }
 
     /**
@@ -7737,6 +9177,8 @@ class Interpreter implements InterpreterInterface {
                 return MultiArray.evaluate(tree, this, scope);
             } else {
                 switch (tree.type) {
+                    case 'VOID':
+                        return tree;
                     case '+':
                     case '-':
                     case '.*':
@@ -8397,12 +9839,16 @@ class Interpreter implements InterpreterInterface {
                         }
                         return result;
                     }
-                    case 'RANGE':
-                        return MultiArray.expandRange(
-                            this.evaluatedExpressionValue(tree.start_, scope, 'range start'),
-                            this.evaluatedExpressionValue(tree.stop_, scope, 'range stop'),
-                            tree.stride_ ? this.evaluatedExpressionValue(tree.stride_, scope, 'range stride') : null,
-                        );
+                    case 'RANGE': {
+                        const start = this.evaluatedExpressionValue(tree.start_, scope, 'range start');
+                        const stop = this.evaluatedExpressionValue(tree.stop_, scope, 'range stop');
+                        const stride = tree.stride_ ? this.evaluatedExpressionValue(tree.stride_, scope, 'range stride') : null;
+                        const overload = this.evaluateColonWithClassDispatch(stride ? [start, stride, stop] : [start, stop], tree);
+                        if (overload) {
+                            return overload;
+                        }
+                        return MultiArray.expandRange(start, stop, stride);
+                    }
                     case 'ENDRANGE': {
                         let parent = tree.parent;
                         let index = tree.index;
@@ -8486,7 +9932,7 @@ class Interpreter implements InterpreterInterface {
                     }
                     case 'IF': {
                         for (let ifTest = 0; ifTest < tree.expression.length; ifTest++) {
-                            if (this.toBoolean(this.evaluatedExpressionValue(tree.expression[ifTest], scope, 'if condition'))) {
+                            if (this.evaluatedCondition(tree.expression[ifTest], scope, 'if condition')) {
                                 return this.evaluatedExecutionResult(tree.then[ifTest], scope);
                             }
                         }
@@ -8525,7 +9971,7 @@ class Interpreter implements InterpreterInterface {
                             parent: tree,
                         };
                         while (true) {
-                            if (!this.toBoolean(this.evaluatedExpressionValue(tree.expression, scope, 'while condition'))) {
+                            if (!this.evaluatedCondition(tree.expression, scope, 'while condition')) {
                                 return result;
                             }
                             try {
@@ -8558,7 +10004,7 @@ class Interpreter implements InterpreterInterface {
                                     throw e;
                                 }
                             }
-                            if (this.toBoolean(this.evaluatedExpressionValue(tree.expression, scope, 'until condition'))) {
+                            if (this.evaluatedCondition(tree.expression, scope, 'until condition')) {
                                 return result;
                             }
                         }
@@ -8792,6 +10238,17 @@ class Interpreter implements InterpreterInterface {
             const rightUnparse = this.Unparse(tree.right, precedence);
             return type + (this.nodePrecedence(tree.right) < precedence ? '(' + rightUnparse + ')' : rightUnparse);
         };
+        const isPrefixUnaryOperation = (node: NodeInput): boolean => AST.isNodeOperation(node) && typeof node.type === 'string' && ['!', '~', '+_', '-_', '++_', '--_'].includes(node.type);
+        const isParenthesizedPrefixUnaryOperation = (node: NodeInput): boolean =>
+            AST.isNodeOperation(node) && node.type === '()' && isPrefixUnaryOperation(this.requirePrefixOperation(node).right);
+        const binaryLeftNeedsParentheses = (operation: BinaryOperation): boolean => {
+            const precedence = this.nodePrecedence(operation);
+            return (
+                this.nodePrecedence(operation.left) < precedence ||
+                ((operation.type === '^' || operation.type === '.^' || operation.type === '**' || operation.type === '.**') &&
+                    (isPrefixUnaryOperation(operation.left) || isParenthesizedPrefixUnaryOperation(operation.left)))
+            );
+        };
         try {
             if (tree) {
                 if (tree === undefined) {
@@ -8871,7 +10328,7 @@ class Interpreter implements InterpreterInterface {
                             const leftUnparse = this.Unparse(operation.left, precedence);
                             const rightUnparse = this.Unparse(operation.right, precedence);
                             return (
-                                (this.nodePrecedence(operation.left) < precedence ? '(' + leftUnparse + ')' : leftUnparse) +
+                                (binaryLeftNeedsParentheses(operation) ? '(' + leftUnparse + ')' : leftUnparse) +
                                 tree.type +
                                 (this.nodePrecedence(operation.right) < precedence ? '(' + rightUnparse + ')' : rightUnparse)
                             );

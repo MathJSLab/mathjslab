@@ -1,6 +1,8 @@
 /// <reference types="jest" />
 import path from 'node:path';
+import { CharString } from './CharString';
 import { Complex, type ComplexType } from './Complex';
+import { FunctionHandle } from './FunctionHandle';
 import { MathOperation } from './MathOperation';
 import { MultiArray } from './MultiArray';
 import { Structure } from './Structure';
@@ -58,6 +60,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(MathOperation.mldivide).toBeDefined();
             expect(MathOperation.power).toBeDefined();
             expect(MathOperation.mpower).toBeDefined();
+            expect(MathOperation.lt).toBeDefined();
             expect(MathOperation.le).toBeDefined();
             expect(MathOperation.ge).toBeDefined();
             expect(MathOperation.gt).toBeDefined();
@@ -112,6 +115,18 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => MathOperation.mldivide(createRealMatrix([[1, 2, 3]]), createRealMatrix([[1], [2], [3]]))).toThrow('operator \\: nonconformant arguments');
         });
 
+        it('MathOperation transpose should preserve character vector elements.', () => {
+            const transpose = MathOperation.transpose(new CharString('ab', "'")) as MultiArray;
+            const ctranspose = MathOperation.ctranspose(new CharString('ab', '"')) as MultiArray;
+
+            expect(transpose.dimension).toEqual([2, 1]);
+            expect(transpose.array.map((row) => (row[0] as CharString).str)).toEqual(['a', 'b']);
+            expect(transpose.array.map((row) => (row[0] as CharString).quote)).toEqual(["'", "'"]);
+            expect(ctranspose.dimension).toEqual([2, 1]);
+            expect(ctranspose.array.map((row) => (row[0] as CharString).str)).toEqual(['a', 'b']);
+            expect(ctranspose.array.map((row) => (row[0] as CharString).quote)).toEqual(['"', '"']);
+        });
+
         it('MathOperation dispatchers should reject structure operands explicitly.', () => {
             const scalarStruct = new Structure({ x: Complex.create(1) });
             const structArray = MultiArray.firstRow([scalarStruct, Structure.copy(scalarStruct)], false);
@@ -123,6 +138,23 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => MathOperation.mldivide(scalarStruct, Complex.create(2))).toThrow('operator \\ is not defined for struct operands.');
             expect(() => MathOperation.mpower(scalarStruct, Complex.create(2))).toThrow('operator ^ is not defined for struct operands.');
             expect(() => MathOperation.uminus(structArray)).toThrow('operator - is not defined for struct operands.');
+            expect(() => MathOperation.not(scalarStruct)).toThrow('operator ~ is not defined for struct operands.');
+            expect(() => MathOperation.not(structArray)).toThrow('operator ~ is not defined for struct operands.');
+        });
+
+        it('MathOperation.not should reject function handles instead of applying truthiness.', () => {
+            expect(() => MathOperation.not(FunctionHandle.create('sqrt'))).toThrow('operator ~ is not defined for this operand.');
+        });
+
+        it('MathOperation dispatchers should reject cell-array operands explicitly.', () => {
+            const cellArray = MultiArray.firstRow([Complex.create(1), Complex.create(2)], true);
+
+            expect(() => MathOperation.plus(cellArray, Complex.create(1))).toThrow('operator + is not defined for cell operands.');
+            expect(() => MathOperation.times(Complex.create(2), cellArray)).toThrow('operator .* is not defined for cell operands.');
+            expect(() => MathOperation.eq(cellArray, cellArray)).toThrow('operator == is not defined for cell operands.');
+            expect(() => MathOperation.lt(cellArray, Complex.create(2))).toThrow('operator < is not defined for cell operands.');
+            expect(() => MathOperation.and(cellArray, Complex.true())).toThrow('operator & is not defined for cell operands.');
+            expect(() => MathOperation.not(cellArray)).toThrow('operator ~ is not defined for cell operands.');
         });
 
         it('MathOperation.mpower should accept numeric scalar values stored in 1x1 matrices', () => {

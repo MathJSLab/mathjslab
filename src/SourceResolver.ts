@@ -51,6 +51,18 @@ interface SourceResolver {
      * @returns Source entry, if available.
      */
     resolve(kind: SourceKind, name: string): SourceEntry | undefined;
+
+    /**
+     * Test whether a virtual source directory is known.
+     *
+     * Browser hosts cannot expose arbitrary filesystem traversal, but source
+     * tables and prefetched manifests still define stable virtual directories
+     * such as `+pkg`, `scripts`, or URL-like folders.
+     *
+     * @param name Directory name or package-style path.
+     * @returns `true` when a known source path is contained by that directory.
+     */
+    hasDirectory(name: string): boolean;
 }
 
 /**
@@ -156,6 +168,84 @@ const canonicalNameFromPath = (path: string): string => {
         }
     }
     return canonical.join('.');
+};
+
+/**
+ * Normalize a virtual directory path for prefix matching.
+ */
+const virtualDirectoryPath = (name: string): string => sourceLookupPath(name).replace(/^\.\//, '').replace(/\/+$/g, '');
+
+/**
+ * Candidate virtual directory spellings for a MATLAB/Octave directory query.
+ */
+const virtualDirectoryCandidates = (name: string): string[] => {
+    const normalized = virtualDirectoryPath(name);
+    const candidates = [normalized];
+    if (!/[\\/]/.test(normalized) && !normalized.startsWith('+') && !normalized.startsWith('@')) {
+        const packagePath = normalized
+            .split('.')
+            .filter(Boolean)
+            .map((part) => `+${part}`)
+            .join('/');
+        if (packagePath) {
+            candidates.push(packagePath);
+        }
+    }
+    return [...new Set(candidates)];
+};
+
+/**
+ * Approximate a source path from a canonical dotted language name.
+ */
+const sourcePathFromCanonicalName = (name: string): string | undefined => {
+    if (!name.includes('.') || /[\\/]/.test(name)) {
+        return undefined;
+    }
+    const parts = name.split('.').filter(Boolean);
+    const fileName = parts.pop();
+    if (!fileName) {
+        return undefined;
+    }
+    return `${parts.map((part) => `+${part}`).join('/')}/${fileName}.m`;
+};
+
+/**
+ * Source-like path candidates exposed by one table entry.
+ */
+const sourcePathCandidates = (key: string, entry: string | SourceEntry): string[] => {
+    const candidates = [key];
+    const keyCanonicalPath = sourcePathFromCanonicalName(key);
+    if (keyCanonicalPath) {
+        candidates.push(keyCanonicalPath);
+    }
+    if (typeof entry !== 'string') {
+        if (entry.name) {
+            candidates.push(entry.name);
+            const namedPath = sourcePathFromCanonicalName(entry.name);
+            if (namedPath) {
+                candidates.push(namedPath);
+            }
+        }
+        if (entry.sourceName) {
+            candidates.push(entry.sourceName);
+        }
+    }
+    return candidates.map(virtualDirectoryPath);
+};
+
+/**
+ * Test directory membership against one or more virtual source tables.
+ */
+const sourceTablesHaveDirectory = (name: string, tables: (SourceTable | undefined)[]): boolean => {
+    const directories = virtualDirectoryCandidates(name);
+    return tables.some((table) =>
+        Boolean(
+            table &&
+            Object.entries(table).some(([key, entry]) =>
+                sourcePathCandidates(key, entry).some((path) => directories.some((directory) => path !== directory && path.startsWith(`${directory}/`))),
+            ),
+        ),
+    );
 };
 
 /**
@@ -290,6 +380,16 @@ class TableSourceResolver implements SourceResolver {
             }
         }
     }
+
+    /**
+     * Test whether any configured source table contains a virtual directory.
+     *
+     * Lazy providers cannot be enumerated synchronously, so only eager table
+     * entries participate in directory discovery.
+     */
+    public hasDirectory(name: string): boolean {
+        return sourceTablesHaveDirectory(name, [this.config.functionSourceTable, this.config.scriptSourceTable, this.config.classSourceTable]);
+    }
 }
 
 /**
@@ -389,6 +489,11 @@ class ManifestSourceResolver implements SourceResolver {
             return resolveManifestEntry(scriptSourceNameCandidates(name), this.sources.script);
         }
         return resolveManifestEntry(canonicalSourceNameCandidates(name), this.sources[kind]);
+    }
+
+    /** Test whether the prefetched manifest contains a virtual directory. */
+    public hasDirectory(name: string): boolean {
+        return sourceTablesHaveDirectory(name, [this.sources.function, this.sources.script, this.sources.class]);
     }
 }
 

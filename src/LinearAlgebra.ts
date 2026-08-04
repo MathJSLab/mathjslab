@@ -263,7 +263,7 @@ abstract class LinearAlgebra {
      */
     private static readonly applyTranspose = (M: MultiArray, func: Function = (value: ElementType) => value): MultiArray => {
         if (M.dimension.length === 2) {
-            const result = new MultiArray([M.dimension[1], M.dimension[0]]);
+            const result = new MultiArray([M.dimension[1], M.dimension[0]], undefined, M.isCell);
             for (let i = 0; i < M.dimension[1]; i++) {
                 result.array[i] = new Array(M.dimension[0]);
                 for (let j = 0; j < M.dimension[0]; j++) {
@@ -271,6 +271,7 @@ abstract class LinearAlgebra {
                 }
             }
             result.type = M.type;
+            result.isCell = M.isCell;
             return result;
         } else {
             throw new Error('transpose not defined for N-D objects');
@@ -278,29 +279,37 @@ abstract class LinearAlgebra {
     };
 
     public static readonly transposeSignature: BuiltInFunctionSignature = {
-        inputs: { arity: 1, parameters: [{ name: 'value', classes: ['double'] }] },
+        inputs: { arity: 1, parameters: [{ name: 'value' }] },
         outputs: { arity: 1 },
     };
     /**
-     * Transpose.
-     * @param M Matrix.
-     * @returns Transpose matrix.
+     * Transpose scalar, character, or matrix values.
+     * @param M Value to transpose.
+     * @returns Transposed value.
      */
-    public static readonly transpose = <T extends MultiArray | ComplexType>(M: T): T => {
-        return (Complex.isInstanceOf(M) ? Complex.copy(M as ComplexType) : LinearAlgebra.applyTranspose(M as MultiArray)) as T;
+    public static readonly transpose = <T extends ElementType>(M: T): T extends CharString ? MultiArray : T => {
+        const value = CharString.isInstanceOf(M) ? MultiArray.characterVectorFromCharString(M) : M;
+        return (Complex.isInstanceOf(value) ? Complex.copy(value) : LinearAlgebra.applyTranspose(value as MultiArray)) as T extends CharString ? MultiArray : T;
     };
 
     public static readonly ctransposeSignature: BuiltInFunctionSignature = {
-        inputs: { arity: 1, parameters: [{ name: 'value', classes: ['double'] }] },
+        inputs: { arity: 1, parameters: [{ name: 'value' }] },
         outputs: { arity: 1 },
     };
     /**
-     * Complex conjugate transpose.
-     * @param M Matrix.
-     * @returns Complex conjugate transpose matrix.
+     * Complex conjugate transpose scalar, character, or matrix values.
+     * @param M Value to conjugate-transpose.
+     * @returns Complex conjugate transpose value.
      */
-    public static readonly ctranspose = <T extends MultiArray | ComplexType>(M: T): T => {
-        return (Complex.isInstanceOf(M) ? Complex.conj(M as ComplexType) : LinearAlgebra.applyTranspose(M as MultiArray, (value: ComplexType) => Complex.conj(value))) as T;
+    public static readonly ctranspose = <T extends ElementType>(M: T): T extends CharString ? MultiArray : T => {
+        const value = CharString.isInstanceOf(M) ? MultiArray.characterVectorFromCharString(M) : M;
+        return (
+            Complex.isInstanceOf(value)
+                ? Complex.conj(value)
+                : LinearAlgebra.applyTranspose(value as MultiArray, (element: ElementType) =>
+                      (value as MultiArray).isCell || !Complex.isInstanceOf(element) ? element : Complex.conj(element),
+                  )
+        ) as T extends CharString ? MultiArray : T;
     };
 
     public static readonly mulSignature: BuiltInFunctionSignature = {
@@ -1843,6 +1852,8 @@ abstract class LinearAlgebra {
      */
     public static readonly functions: { [F in keyof LinearAlgebra | string]: FunctionSignatureEntry } = {
         eye: { func: LinearAlgebra.eye, signature: LinearAlgebra.eyeSignature },
+        transpose: { func: LinearAlgebra.transpose, signature: LinearAlgebra.transposeSignature },
+        ctranspose: { func: LinearAlgebra.ctranspose, signature: LinearAlgebra.ctransposeSignature },
         diag: { func: LinearAlgebra.diag, signature: LinearAlgebra.diagSignature },
         trace: { func: LinearAlgebra.trace, signature: LinearAlgebra.traceSignature },
         det: { func: LinearAlgebra.det, signature: LinearAlgebra.detSignature },

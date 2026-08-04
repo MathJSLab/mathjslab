@@ -85,6 +85,10 @@ interface ContextInterpreter {
     loadClassMethodDefinition(className: string, methodName: string, scope: Scope): NodeFunctionDefinition | undefined;
     /** Resolve a static class method selected by qualified name or visible imports. */
     resolveStaticMethod(name: string, scope: Scope): ClassStaticMethod | undefined;
+    /** Dispatch a functional operator call through class overload semantics, when applicable. */
+    callFunctionalOperatorOverload(node: NodeBuiltInFunction, args: CallArgumentValue[], parent: NodeInput): NodeExpr | undefined;
+    /** Convert object values used as native array indices through `subsindex`. */
+    convertIndexArgument(value: NodeInput, parent: NodeInput): NodeInput;
 }
 
 /** Structural node shape used when walking parent links for diagnostics. */
@@ -101,7 +105,7 @@ type IdentifierLikeNode = {
 /**
  * Kinds of MATLAB/Octave symbols that can be resolved from a name.
  */
-type SymbolResolutionKind = 'variable' | 'class' | 'function' | 'builtin' | 'script';
+type SymbolResolutionKind = 'variable' | 'class' | 'function' | 'builtin' | 'script' | 'directory';
 
 /**
  * Source tier that produced a resolved symbol.
@@ -213,6 +217,152 @@ class ContinueSignal extends Error {
 class Context {
     /** Built-ins that MATLAB/Octave users commonly invoke without parentheses. */
     private static readonly bareZeroArgumentBuiltins = new Set(['lastwarn', 'lasterr', 'lasterror', 'localfunctions', 'mfilename']);
+
+    /**
+     * Built-in function names that are also operator method names.
+     *
+     * Direct calls such as `lt(a,b)` and handles such as `f = @plus; f(a,b)`
+     * must give class operands the same overload opportunity as symbolic
+     * operators (`a < b`, `a + b`). Keeping the list here avoids importing
+     * `MathOperation` as a runtime value into `Context`.
+     */
+    private static readonly operatorFunctionNames = new Set([
+        'uplus',
+        'uminus',
+        'not',
+        'transpose',
+        'ctranspose',
+        'minus',
+        'mod',
+        'rem',
+        'rdivide',
+        'mrdivide',
+        'ldivide',
+        'mldivide',
+        'power',
+        'mpower',
+        'lt',
+        'le',
+        'ge',
+        'gt',
+        'eq',
+        'ne',
+        'plus',
+        'times',
+        'mtimes',
+        'and',
+        'or',
+        'xor',
+        'colon',
+        'cat',
+        'horzcat',
+        'vertcat',
+    ]);
+
+    /**
+     * Built-ins whose MATLAB class implementations are ordinary instance
+     * methods when the first argument is an object.
+     */
+    private static readonly classBuiltinMethodFunctionNames = new Set([
+        'size',
+        'numel',
+        'length',
+        'ndims',
+        'rows',
+        'columns',
+        'isempty',
+        'isequal',
+        'double',
+        'char',
+        'logical',
+        'cell',
+        'cellstr',
+        'num2cell',
+        'cell2mat',
+        'cell2struct',
+        'mat2cell',
+        'isscalar',
+        'ismatrix',
+        'isvector',
+        'isrow',
+        'iscolumn',
+        'iscell',
+        'iscellstr',
+        'isstruct',
+        'struct',
+        'fieldnames',
+        'properties',
+        'methods',
+        'events',
+        'enumeration',
+        'superclasses',
+        'isfield',
+        'isprop',
+        'ismethod',
+        'numfields',
+        'getfield',
+        'setfield',
+        'rmfield',
+        'orderfields',
+        'struct2cell',
+        'ischar',
+        'isstring',
+        'issparse',
+        'full',
+        'sparse',
+        'spalloc',
+        'nnz',
+        'nzmax',
+        'nonzeros',
+        'isnan',
+        'isinf',
+        'isfinite',
+        'isfloat',
+        'isinteger',
+        'isnumeric',
+        'islogical',
+        'isreal',
+        'isobject',
+        'isvalid',
+        'find',
+        'ind2sub',
+        'sub2ind',
+        'sort',
+        'all',
+        'any',
+        'sum',
+        'prod',
+        'sumsq',
+        'cumsum',
+        'cumprod',
+        'min',
+        'max',
+        'cummin',
+        'cummax',
+        'mean',
+        'var',
+        'std',
+        'linspace',
+        'logspace',
+        'meshgrid',
+        'ndgrid',
+        'zeros',
+        'ones',
+        'rand',
+        'randi',
+        'repmat',
+        'reshape',
+        'squeeze',
+        'flip',
+        'fliplr',
+        'flipud',
+        'rot90',
+        'permute',
+        'ipermute',
+        'circshift',
+        'shiftdim',
+        'norm',
+    ]);
 
     /**
      * Function call stack.
@@ -1083,7 +1233,7 @@ class Context {
      * @param parent Call-site node used for diagnostics.
      * @returns Evaluated argument values.
      */
-    private evaluateBuiltInArgs(node: NodeBuiltInFunction, args: CallArgumentValue[], parent: NodeInput): ExpressionBoundaryValue[] {
+    public evaluateBuiltInArgs(node: NodeBuiltInFunction, args: CallArgumentValue[], parent: NodeInput): ExpressionBoundaryValue[] {
         if (node.id === 'feval' || node.id === 'builtin') {
             return args.length > 0 ? [this.evaluateArgs([args[0]], parent, 'all')[0], ...args.slice(1)] : [];
         }
@@ -1264,10 +1414,9 @@ class Context {
         };
         if (MultiArray.isInstanceOf(indexNode)) {
             const result = new MultiArray(indexNode.dimension, undefined, false);
-            for (let row = 0; row < indexNode.dimension[0]; row++) {
-                for (let column = 0; column < indexNode.dimension[1]; column++) {
-                    result.array[row][column] = evaluateIndex(indexNode.array[row][column]);
-                }
+            for (let n = 0; n < MultiArray.linearLength(indexNode); n++) {
+                const [row, column] = MultiArray.linearIndexToMultiArrayRowColumn(indexNode.dimension[0], indexNode.dimension[1], n);
+                result.array[row][column] = evaluateIndex(indexNode.array[row][column]);
             }
             MultiArray.setType(result);
             return result;
@@ -1434,11 +1583,11 @@ class Context {
         return FunctionSignature.declaredArity(signatures);
     }
 
-    private validateBuiltInInputArity(node: NodeBuiltInFunction, argCount: number): void {
+    public validateBuiltInInputArity(node: NodeBuiltInFunction, argCount: number): void {
         AST.throwInvalidCallError(node.id, !FunctionSignature.inputArityIsValid(node, argCount), (message) => this.throwSyntaxError(message));
     }
 
-    private validateBuiltInInputParameters(node: NodeBuiltInFunction, args: NodeInput[]): void {
+    public validateBuiltInInputParameters(node: NodeBuiltInFunction, args: NodeInput[]): void {
         AST.throwInvalidCallError(node.id, !FunctionSignature.inputParametersAreValid(node, args), (message) => this.throwSyntaxError(message));
     }
 
@@ -1472,6 +1621,38 @@ class Context {
                 return out;
             },
         );
+    }
+
+    /**
+     * Give scalar class objects the normal MATLAB overload opportunity for
+     * selected built-ins before the native implementation runs.
+     *
+     * @param node Built-in function node being invoked.
+     * @param evaluatedArgs Already evaluated call arguments.
+     * @param parent Call-site node used for diagnostics.
+     * @returns Class method result when an accessible overload exists.
+     */
+    private callClassBuiltinMethod(node: NodeBuiltInFunction, evaluatedArgs: ExpressionBoundaryValue[], parent: NodeInput): NodeExpr | undefined {
+        const name = this.aliasNameFunction(node.id);
+        if (AST.isNodeIdentifier(parent) && parent.id === 'builtin') {
+            return undefined;
+        }
+        if (!Context.classBuiltinMethodFunctionNames.has(name) || evaluatedArgs.length === 0) {
+            return undefined;
+        }
+        const receiver = evaluatedArgs[0];
+        if (!ClassInstance.isInstanceOf(receiver)) {
+            return undefined;
+        }
+        const method = receiver.classDefinition.findMethod(name, (item) => !item.isStatic);
+        if (!method) {
+            return undefined;
+        }
+        if (!this.canAccessClassMember(method.classDefinition, method.access)) {
+            this.throwEvalError(`method '${name}' has ${method.access} access for class ${receiver.classDefinition.name}.`);
+        }
+        const methodArgs = evaluatedArgs.slice(1).map((arg, index) => expressionValue(arg, `argument ${index + 2}`, 'Argument value', (message) => this.throwEvalError(message)));
+        return this.callClassInstanceMethod(receiver, method, methodArgs, parent);
     }
 
     private callFunctionDefinition(callable: FunctionDefinitionCallable, args: CallArgumentValue[], parent: NodeInput, requestedOutputCount: number): NodeExpr {
@@ -2026,11 +2207,19 @@ class Context {
             case 'BUILTIN': {
                 const node = callable.node;
                 const alias = this.aliasNameFunction(node.id);
+                const operatorOverload = this.callCallableFunctionalOperatorOverload(node, args, parent);
+                if (operatorOverload) {
+                    return operatorOverload;
+                }
                 const evaluatedArgs = this.evaluateBuiltInArgs(node, args, parent);
                 this.validateBuiltInInputArity(node, evaluatedArgs.length);
                 /* Push a frame before entering the built-in so errors can capture this call. */
                 this.pushCallStackFrame(new CallFrame(this.currentScope, callable, this.resolveCallSite(parent), node.id, evaluatedArgs.length, requestedOutputCount, args));
                 try {
+                    const classMethodResult = this.callClassBuiltinMethod(node, evaluatedArgs, parent);
+                    if (typeof classMethodResult !== 'undefined') {
+                        return classMethodResult;
+                    }
                     this.validateBuiltInInputParameters(node, evaluatedArgs);
                     if (node.mapper && evaluatedArgs.length !== 1) {
                         this.throwEvalError(`Invalid call to ${alias}.`);
@@ -2126,6 +2315,24 @@ class Context {
         );
     }
 
+    private callFunctionalOperatorOverload(dispatch: CallDispatch, parent: NodeInput, args: CallArgumentValue[]): NodeExpr | undefined {
+        if (parent.delim !== '()' || dispatch.kind !== 'callable' || !Callables.isBuiltin(dispatch.callable) || !Context.operatorFunctionNames.has(dispatch.callable.node.id)) {
+            return undefined;
+        }
+        return this.interpreter?.callFunctionalOperatorOverload(dispatch.callable.node, args, parent);
+    }
+
+    /**
+     * Dispatch built-in operator functions reached without an index-expression
+     * wrapper, such as `feval('plus', obj, obj)`.
+     */
+    private callCallableFunctionalOperatorOverload(node: NodeBuiltInFunction, args: CallArgumentValue[], parent: NodeInput): NodeExpr | undefined {
+        if ((AST.isNodeIdentifier(parent) && parent.id === 'builtin') || !Context.operatorFunctionNames.has(node.id)) {
+            return undefined;
+        }
+        return this.interpreter?.callFunctionalOperatorOverload(node, args, parent);
+    }
+
     /**
      * Classify an evaluated expression before applying call/index syntax.
      *
@@ -2211,12 +2418,16 @@ class Context {
      * @returns Indexed value or comma-separated return list.
      */
     private applyNativeIndexing(expr: NodeExpr, args: CallArgumentValue[], parent: NodeInput): NodeExpr {
+        const evaluatedIndexArguments = (): ReturnType<typeof MultiArray.indexArguments> => {
+            const values = this.evaluateArgs(args, parent, 'all').map((value) => this.interpreter?.convertIndexArgument(value, parent) ?? value);
+            return MultiArray.indexArguments(values);
+        };
         if (CharString.isInstanceOf(expr)) {
             if (parent.delim === '{}') {
                 this.throwEvalError('matrix cannot be indexed with {');
             }
             const array = MultiArray.characterVectorFromCharString(expr);
-            const evaluatedArgs = MultiArray.indexArguments(this.evaluateArgs(args, parent, 'all'));
+            const evaluatedArgs = evaluatedIndexArguments();
             const result = MultiArray.getElements(array, parent.expr.id, [], evaluatedArgs);
             result!.parent = parent;
             return MultiArray.charStringFromCharacterVectorResult(result, expr.quote);
@@ -2225,7 +2436,7 @@ class Context {
             this.throwEvalError('matrix cannot be indexed with {');
         }
         const array = MultiArray.scalarOrCellToMultiArray(expr);
-        const evaluatedArgs = MultiArray.indexArguments(this.evaluateArgs(args, parent, 'all'));
+        const evaluatedArgs = evaluatedIndexArguments();
         const result = MultiArray.getElements(array, parent.expr.id, [], evaluatedArgs);
         result!.parent = parent;
         if (array.isCell && parent.delim === '()') {
@@ -2268,6 +2479,10 @@ class Context {
             });
         }
         const dispatch = this.resolveCallDispatch(expr, parent, args);
+        const operatorOverload = this.callFunctionalOperatorOverload(dispatch, parent, args);
+        if (operatorOverload) {
+            return operatorOverload;
+        }
         if (this.interpreter!.debug) {
             console.log('[DISPATCH]', dispatch.kind, dispatch.kind === 'callable' ? dispatch.callable.type : '');
         }
@@ -2323,7 +2538,7 @@ class Context {
                 if (operand.length === 1) {
                     return func(operand[0]);
                 } else {
-                    this.throwEvalError(`Invalid call to ${name}. Type 'help ${name}' to see correct usage.`);
+                    this.throwEvalError(`Invalid call to ${id}. Type 'help ${id}' to see correct usage.`);
                 }
             },
             definingScope: this.globalScope!,

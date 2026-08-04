@@ -155,14 +155,14 @@ list returns [node: NodeList]
     ;
 
 statement returns [node: NodeInput]
-    : expression {
-        localctx.node = localctx.expression().node;
-    }
-    | command {
+    : command {
         localctx.node = localctx.command().node;
     }
     | word_list_cmd {
         localctx.node = localctx.word_list_cmd().node;
+    }
+    | expression {
+        localctx.node = localctx.expression().node;
     }
     ;
 
@@ -778,13 +778,15 @@ try_command returns [node: NodeTry]
     ;
 
 catch_clause returns [body: NodeList, identifierNode: NodeIdentifier | null]
-    : CATCH identifier sep? list? {
-        localctx.identifierNode = localctx.identifier().node;
-        localctx.body = localctx.list() ? localctx.list().node : AST.nodeListFirst();
-    }
-    | CATCH sep? list? {
+    : CATCH sep? list? {
         localctx.identifierNode = null;
         localctx.body = localctx.list() ? localctx.list().node : AST.nodeListFirst();
+        if (!localctx.sep() && localctx.body.list.length > 0 && AST.isNodeIdentifier(localctx.body.list[0])) {
+            localctx.identifierNode = localctx.body.list.shift() as NodeIdentifier;
+            localctx.body.list.forEach((node, index) => {
+                node.index = index;
+            });
+        }
     }
     ;
 
@@ -896,7 +898,7 @@ class_attribute_list returns [node: NodeList]
         localctx.node = AST.appendNodeList(localctx.node, localctx.class_attribute(localctx.i++).node);
     } (COMMA class_attribute {
         localctx.node = AST.appendNodeList(localctx.node, localctx.class_attribute(localctx.i++).node);
-    })*)? RPAREN
+    })*)? RPAREN sep?
     ;
 
 class_attribute returns [node: NodeClassAttribute]

@@ -17,11 +17,73 @@ describe('Parser compatibility fixtures.', () => {
         expect(() => interpreter.Parse('@')).toThrow("syntax error at 1:2: no viable alternative at input '@'\n@\n ^");
     });
 
+    it('Should reject assignments and increments inside anonymous function bodies.', () => {
+        const interpreter = Interpreter.Create();
+        const expectedError = 'anonymous function bodies cannot contain assignment, increment, or decrement operators.';
+
+        expect(interpreter.Unparse(interpreter.Parse('@(x) x + 1'))).toBe('@(x) x+1\n');
+        expect(() => interpreter.Parse('@(x) x = 1')).toThrow(expectedError);
+        expect(() => interpreter.Parse('@(x) x += 1')).toThrow(expectedError);
+        expect(() => interpreter.Parse('@(x) x++')).toThrow(expectedError);
+        expect(() => interpreter.Parse('@(x) ++x')).toThrow(expectedError);
+        expect(() => interpreter.Parse('@(x) (x = 1)')).toThrow(expectedError);
+        expect(() => interpreter.Parse('@(x) f(1, x += 1)')).toThrow(expectedError);
+    });
+
+    it('Should reject invalid anonymous function parameter lists while parsing.', () => {
+        const interpreter = Interpreter.Create();
+
+        expect(interpreter.Unparse(interpreter.Parse('@(~, x, varargin) x'))).toBe('@(~,x,varargin) x\n');
+        expect(() => interpreter.Parse('@(x = 1) x')).toThrow('invalid parameter list in anonymous function.');
+        expect(() => interpreter.Parse('@(x, x) x')).toThrow("duplicate parameter name 'x' in anonymous function.");
+        expect(() => interpreter.Parse('@(varargin, x) x')).toThrow('varargin must be the last parameter in anonymous function.');
+    });
+
+    it('Should parse direct transpose operators after double-quoted strings.', () => {
+        const interpreter = Interpreter.Create();
+
+        expect(interpreter.Unparse(interpreter.Parse('"abc"\''))).toBe("abc'\n");
+        expect(interpreter.Unparse(interpreter.Parse('("abc")\''))).toBe("abc'\n");
+        expect(interpreter.Unparse(interpreter.Parse('"abc".\''))).toBe("abc.'\n");
+        expect(interpreter.Unparse(interpreter.Parse('("abc").\''))).toBe("abc.'\n");
+    });
+
+    it('Should parse direct transpose operators after end range markers.', () => {
+        const interpreter = Interpreter.Create();
+
+        expect(interpreter.Unparse(interpreter.Parse("A = [1 2 3]; A(1:end')"))).toBe("A=[1,2,3]\nA(1:end')\n");
+        expect(interpreter.Unparse(interpreter.Parse("A = [1 2 3]; A(end')"))).toBe("A=[1,2,3]\nA(end')\n");
+        expect(interpreter.Unparse(interpreter.Parse("A = [1 2 3]; A(1:end.')"))).toBe("A=[1,2,3]\nA(1:end.')\n");
+        expect(interpreter.Unparse(interpreter.Parse("A = [1 2 3]; A(end.')"))).toBe("A=[1,2,3]\nA(end.')\n");
+    });
+
+    it('Should recognize catch identifiers only for simple identifier statements without separators.', () => {
+        const interpreter = Interpreter.Create();
+
+        expect(interpreter.Unparse(interpreter.Parse(['try', '  x = 1;', 'catch ME', '  x = 2;', 'end'].join('\n')))).toBe('TRY\nx=1\n\nCATCH ME\nx=2\n\nEND_TRY_CATCH\n');
+        expect(interpreter.Unparse(interpreter.Parse(['try', '  x = 1;', 'catch', '  ME', '  x = 2;', 'end'].join('\n')))).toBe('TRY\nx=1\n\nCATCH\nME\nx=2\n\nEND_TRY_CATCH\n');
+        expect(interpreter.Unparse(interpreter.Parse(['try', '  x = 1;', 'catch ME(1)', '  x = 2;', 'end'].join('\n')))).toBe('TRY\nx=1\n\nCATCH\nME(1)\nx=2\n\nEND_TRY_CATCH\n');
+        expect(interpreter.Unparse(interpreter.Parse(['try', '  x = 1;', 'catch ME.message', '  x = 2;', 'end'].join('\n')))).toBe('TRY\nx=1\n\nCATCH\nME.message\nx=2\n\nEND_TRY_CATCH\n');
+    });
+
     it('Should execute script-like separators, continuations, and comments together.', () => {
         const interpreter = Interpreter.Create();
         const source = ['x = 1+...', '% comment', '2;', 'y = (x', '%{', 'block', '%}', '+ 3);', 'z = y'].join('\n');
 
         expect(interpreter.Unparse(interpreter.Execute(source))).toBe('x=3\ny=6\nz=6\n');
+    });
+
+    it('Should parse word-list command continuations without stealing assignments.', () => {
+        const interpreter = Interpreter.Create();
+
+        expect(interpreter.Unparse(interpreter.Parse(['clear ...', ' x'].join('\n')))).toBe('clear x\n');
+        expect(interpreter.Unparse(interpreter.Parse(['clear ... % comment', ' x'].join('\n')))).toBe('clear x\n');
+        expect(interpreter.Unparse(interpreter.Parse(['clear ...', '%{', 'comment', '%}', ' x'].join('\n')))).toBe('clear x\n');
+        expect(interpreter.Unparse(interpreter.Parse(['clear "a ...', ' b"'].join('\n')))).toBe('clear "a b"\n');
+        expect(interpreter.Unparse(interpreter.Parse('clear x; y=1'))).toBe('clear x\ny=1\n');
+        expect(interpreter.Unparse(interpreter.Parse('clear x, y=1'))).toBe('clear x\ny=1\n');
+        expect(interpreter.Unparse(interpreter.Parse(['source = 1 ...', ' + 2'].join('\n')))).toBe('source=1+2\n');
+        expect(interpreter.Unparse(interpreter.Parse(['source ...', ' file.m'].join('\n')))).toBe('source file.m\n');
     });
 
     it('Should parse MATLAB package imports as no-op declarations.', () => {
@@ -166,6 +228,13 @@ describe('Parser compatibility fixtures.', () => {
         expect(interpreter.Unparse(interpreter.Execute(source))).toBe('A=[1]\nB=[1;\n2]\nC={3}\nD={4;\n5}\nE=[ ](0x0)\n');
     });
 
+    it('Should distinguish binary signs from signed elements in matrix literals like Octave.', () => {
+        const interpreter = Interpreter.Create();
+        const source = ['binaryMinus = [1 - 1];', 'signedMinus = [1 -1];', 'binaryPlusComplex = [1 + 2i, 3];', 'signedPlusComplex = [1 +2i, 3];'].join('\n');
+
+        expect(interpreter.Unparse(interpreter.Execute(source))).toBe('binaryMinus=[0]\nsignedMinus=[1,-1]\nbinaryPlusComplex=[1+2i,3]\nsignedPlusComplex=[1,2i,3]\n');
+    });
+
     it('Should keep MATLAB command syntax intact across continuation comments.', () => {
         const interpreter = Interpreter.Create({
             externalCmdWListTable: {
@@ -290,6 +359,17 @@ describe('Parser compatibility fixtures.', () => {
         expect(interpreter.Unparse(interpreter.Parse(source))).toBe(
             'CLASSDEF PrototypeClass\nPROPERTIES (~Dependent,!Hidden)\nx\nENDPROPERTIES\nMETHODS (Abstract)\ny=foo(obj,x)\nbar(obj)\nENDMETHODS\nENDCLASSDEF\n',
         );
+    });
+
+    it('Should parse classdef attribute lists followed by statement separators.', () => {
+        const interpreter = Interpreter.Create();
+        const newlineSource = ['classdef (Sealed)', 'SeparatedClassAttributes', 'end'].join('\n');
+        const commaSource = ['classdef (Hidden), CommaSeparatedClassAttributes', 'end'].join('\n');
+        const semicolonSource = ['classdef (ConstructOnLoad); SemicolonSeparatedClassAttributes', 'end'].join('\n');
+
+        expect(interpreter.Unparse(interpreter.Parse(newlineSource))).toBe('CLASSDEF (Sealed) SeparatedClassAttributes\nENDCLASSDEF\n');
+        expect(interpreter.Unparse(interpreter.Parse(commaSource))).toBe('CLASSDEF (Hidden) CommaSeparatedClassAttributes\nENDCLASSDEF\n');
+        expect(interpreter.Unparse(interpreter.Parse(semicolonSource))).toBe('CLASSDEF (ConstructOnLoad) SemicolonSeparatedClassAttributes\nENDCLASSDEF\n');
     });
 
     it('Should parse MATLAB/Octave ampersand superclass lists.', () => {
