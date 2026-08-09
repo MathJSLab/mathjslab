@@ -339,7 +339,7 @@ class ClassMetaClass extends ClassMetaObject {
             case 'ConstructOnLoad':
                 return bool(this.definition.isConstructOnLoad);
             case 'HandleCompatible':
-                return bool(this.definition.isHandleClass() || this.definition.isHandleCompatible);
+                return bool(this.definition.isHandleCompatibleClass());
             case 'InferiorClasses':
                 return stringArray(this.definition.inferiorClasses);
             case 'AllowedSubclasses':
@@ -415,6 +415,14 @@ abstract class ClassMetaMember extends ClassMetaObject {
 class ClassMetaProperty extends ClassMetaMember {
     /** MATLAB-like meta object kind. */
     public readonly kind = 'meta.property';
+
+    /**
+     * Test whether a value is a property meta object.
+     *
+     * @param obj Value to test.
+     * @returns `true` when `obj` is a `ClassMetaProperty`.
+     */
+    public static readonly isInstanceOf = (obj: unknown): obj is ClassMetaProperty => obj instanceof ClassMetaProperty;
 
     /**
      * Create a property meta object.

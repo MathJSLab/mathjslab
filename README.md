@@ -348,10 +348,13 @@ descriptor-based indexing with `substruct`/`subsref`/`subsasgn`, browser-hosted
 `.m` sources, and substantial `classdef` support, including class metadata,
 properties, methods, events, enumerations, listeners, accessors, SetGet mixins,
 common static/instance dispatch paths, and stricter AST/runtime expression
-boundary validation. Runtime array helpers preserve MATLAB/Octave column-major
-logical semantics over MathJSLab's page-stacked internal storage, including N-D
-slicing, expansion, logical indexing, deletion, cells, structures, and
-comma-separated-list expansion.
+boundary validation. Parser/AST metadata preserves statement source ranges and
+semicolon output suppression for diagnostics and round trips. Descriptor
+indexing covers chained native and object paths with scalar broadcast,
+deletion, implicit path creation, and comma-separated-list expansion. Runtime
+array helpers preserve MATLAB/Octave column-major logical semantics over
+MathJSLab's page-stacked internal storage, including N-D slicing, expansion,
+logical indexing, deletion, cells, and structures.
 
 The main remaining limitations are general external filesystem access,
 incomplete MATLAB/Octave library and toolbox coverage, and less common class

@@ -38,6 +38,18 @@ describe('Scope', () => {
             expect(child.hasLocalName('x')).toBe(false);
         });
 
+        it('Should reject dynamic names outside static-workspace allowlists.', () => {
+            const scope = Scope.create();
+
+            scope.allowStaticWorkspaceName('declared');
+            scope.rejectDynamicNameCreation = true;
+            scope.assignName('declared', Complex.create(3));
+
+            expect(Complex.realToNumber(scope.resolveName('declared')?.node)).toBe(3);
+            expect(() => scope.assignName('dynamic', Complex.create(5))).toThrow("Attempt to add variable 'dynamic' to a static workspace.");
+            expect(() => scope.defineName('dynamic', Complex.create(7))).toThrow("Attempt to add variable 'dynamic' to a static workspace.");
+        });
+
         it('Should define name tables from own bindings only.', () => {
             const inherited = { inherited: Complex.one() };
             const table = Object.create(inherited) as Record<string, typeof inherited.inherited>;

@@ -423,6 +423,87 @@ describe('Parser conformance fixtures.', () => {
 
         expect(interpreter.Unparse(interpreter.Execute(source))).toBe('x=1\ny=2\nz=41\ncaptured=shown=5\n6\n\ncallerValue=3\nbaseResult=1\n2\n41\nshown=5\n6\n\n3\n1\n44\n');
         expect(() => interpreter.Execute("eval('missingPrimary', 'missingCatch')")).toThrow("'missingCatch' undefined.");
+        expect(() =>
+            interpreter.Execute(
+                [
+                    'function y = evalCallerLocalFunctionProbe()',
+                    '  y = helper();',
+                    '  inner();',
+                    '  function z = helper()',
+                    '    z = 9;',
+                    '  end',
+                    '  function z = inner()',
+                    "    z = evalin('caller', 'helper()');",
+                    '  end',
+                    'end',
+                    'evalCallerLocalFunctionProbe();',
+                ].join('\n'),
+            ),
+        ).toThrow("'helper' undefined.");
+        interpreter.Execute('function clearCallerConformance(), evalin("caller", "clear evalinClearTarget"); end');
+        expect(interpreter.Unparse(interpreter.Execute('evalinClearTarget = 99; clearCallerConformance(); exist("evalinClearTarget", "var")'))).toBe('evalinClearTarget=99\n0\n');
+        interpreter.Execute(
+            [
+                'function [xCount, helperCount] = evalinWhoConformance()',
+                '  x = 1;',
+                '  [xCount, helperCount] = inner();',
+                '  function [a, b] = inner()',
+                "    a = evalin('caller', 'numel(who(''x''))');",
+                "    b = evalin('caller', 'numel(who(''helper''))');",
+                '  end',
+                '  function z = helper()',
+                '    z = 2;',
+                '  end',
+                'end',
+            ].join('\n'),
+        );
+        expect(interpreter.Unparse(interpreter.Execute('[xCount, helperCount] = evalinWhoConformance(); [xCount, helperCount]'))).toBe('xCount=1\nhelperCount=0\n[1,0]\n');
+        interpreter.Execute(
+            [
+                'function setEvalinGlobalConformance()',
+                "  evalin('caller', 'global evalinGlobalConformance; evalinGlobalConformance = 123');",
+                'end',
+                'function [value, flag] = evalinGlobalConformanceProbe()',
+                '  setEvalinGlobalConformance();',
+                '  value = evalinGlobalConformance;',
+                "  info = whos('evalinGlobalConformance');",
+                '  flag = info.global;',
+                'end',
+            ].join('\n'),
+        );
+        expect(interpreter.Unparse(interpreter.Execute('[value, flag] = evalinGlobalConformanceProbe(); [value, flag]'))).toBe('value=123\nflag=true\n[123,true]\n');
+        interpreter.Execute(['function y = evalcStaticConformance()', '  declared = [];', '  evalc("declared = 9");', '  y = declared;', '  function inner()', '  end', 'end'].join('\n'));
+        expect(interpreter.Unparse(interpreter.Execute('evalcStaticConformance()'))).toBe('9\n');
+        expect(() => interpreter.Execute('anonEvalcDynamic = @() evalc("createdByAnonEvalc = 1"); anonEvalcDynamic()')).toThrow(
+            "Attempt to add variable 'createdByAnonEvalc' to a static workspace.",
+        );
+    });
+
+    it('Should keep source caller compatible with real caller workspaces.', () => {
+        const interpreter = Interpreter.Create({
+            scriptSourceTable: {
+                sourceCallerScript: 'sourceCallerValue = sourceCallerSeed + 3;',
+                sourceCallerCommandScript: 'sourceCallerCommandValue = sourceCallerCommandSeed + 4;',
+            },
+        });
+        interpreter.Execute(
+            [
+                'function [a, b] = sourceCallerConformance()',
+                '  sourceCallerSeed = 20;',
+                '  sourceCallerCommandSeed = 30;',
+                '  sourceCallerConformanceHelper();',
+                '  a = sourceCallerValue;',
+                '  b = sourceCallerCommandValue;',
+                'end',
+                'function sourceCallerConformanceHelper()',
+                '  source("sourceCallerScript", "caller");',
+                '  source sourceCallerCommandScript caller',
+                'end',
+            ].join('\n'),
+        );
+
+        expect(interpreter.Unparse(interpreter.Execute('[a, b] = sourceCallerConformance(); [a, b]'))).toBe('a=23\nb=34\n[23,34]\n');
+        expect(interpreter.Unparse(interpreter.Execute('exist("sourceCallerValue", "var") + exist("sourceCallerCommandValue", "var")'))).toBe('0\n');
     });
 
     it('Should preserve diagnostic state across warnings, promoted warnings, catch, lasterr, lasterror, and rethrow.', () => {
@@ -883,6 +964,7 @@ describe('Parser conformance fixtures.', () => {
             'A = [10, 20, 30, 40];',
             'idx2 = PublicSubsindexProbe(1);',
             'idxVec = PublicSubsindexProbe([0, 2]);',
+            'idxPair = PublicSubsindexProbe([0, 1]);',
             'readScalar = subsref(A, substruct("()", {idx2}));',
             'readVector = subsref(A, substruct("()", {idxVec}));',
             'updated = subsasgn(A, substruct("()", {idxVec}), [99, 77]);',
@@ -890,12 +972,46 @@ describe('Parser conformance fixtures.', () => {
             'textUpdated = subsasgn("abcd", substruct("()", {idxVec}), "XY");',
             'C = {10, 20, 30};',
             'cellRead = subsref(C, substruct("{}", {idxVec}));',
-            'readScalar; readVector; updated; textRead; textUpdated; cellRead',
+            'classdef PublicSubsindexBox',
+            '  properties',
+            '    Payload = [];',
+            '  end',
+            '  methods',
+            '    function obj = PublicSubsindexBox(value)',
+            '      obj.Payload = value;',
+            '    end',
+            '  end',
+            'end',
+            'boxes = [PublicSubsindexBox([1, 2, 3]), PublicSubsindexBox([4, 5, 6])];',
+            'boxCells = {PublicSubsindexBox([7, 8, 9]), PublicSubsindexBox([10, 11, 12])};',
+            '[boxLeft, boxRight] = subsref(boxes, substruct(".", "Payload", "()", {idx2}));',
+            'boxUpdated = subsasgn(boxes, substruct(".", "Payload", "()", {idxVec}), [90, 70]);',
+            '[cellBoxLeft, cellBoxRight] = subsref(boxCells, substruct("{}", {idxPair}, ".", "Payload", "()", {idx2}));',
+            'cellBoxUpdated = subsasgn(boxCells, substruct("{}", {idxPair}, ".", "Payload", "()", {idx2}), [80, 110]);',
+            'boxRead = [boxLeft, boxRight];',
+            'cellBoxRead = [cellBoxLeft, cellBoxRight];',
+            'boxUpdatedFirst = boxUpdated(1).Payload;',
+            'boxUpdatedSecond = boxUpdated(2).Payload;',
+            'cellBoxUpdatedFirst = cellBoxUpdated{1}.Payload;',
+            'cellBoxUpdatedSecond = cellBoxUpdated{2}.Payload;',
+            'readScalar; readVector; updated; textRead; textUpdated; cellRead; boxRead; boxUpdatedFirst; boxUpdatedSecond; cellBoxRead; cellBoxUpdatedFirst; cellBoxUpdatedSecond',
         ].join('\n');
 
-        expect(interpreter.Unparse(interpreter.Execute(source))).toBe(
-            'A=[10,20,30,40]\nidx2=PublicSubsindexProbe object with properties: Values\nidxVec=PublicSubsindexProbe object with properties: Values\nreadScalar=20\nreadVector=[10,30]\nupdated=[99,20,77,40]\ntextRead=ac\ntextUpdated=XbYd\nC={10,20,30}\ncellRead=10\n20\n[10,30]\n[99,20,77,40]\nac\nXbYd\n10\n',
-        );
+        const [readScalar, readVector, updated, textRead, textUpdated, cellRead, boxRead, boxUpdatedFirst, boxUpdatedSecond, cellBoxRead, cellBoxUpdatedFirst, cellBoxUpdatedSecond] =
+            executeList(interpreter, source).list.slice(-12) as unknown[];
+
+        expect(realScalar(readScalar)).toBe(20);
+        expect(MultiArray.linearize(readVector as MultiArray).map(realScalar)).toEqual([10, 30]);
+        expect(MultiArray.linearize(updated as MultiArray).map(realScalar)).toEqual([99, 20, 77, 40]);
+        expect((textRead as CharString).str).toBe('ac');
+        expect((textUpdated as CharString).str).toBe('XbYd');
+        expect(realScalar(cellRead)).toBe(10);
+        expect(MultiArray.linearize(boxRead as MultiArray).map(realScalar)).toEqual([2, 5]);
+        expect(MultiArray.linearize(boxUpdatedFirst as MultiArray).map(realScalar)).toEqual([90, 2, 90]);
+        expect(MultiArray.linearize(boxUpdatedSecond as MultiArray).map(realScalar)).toEqual([70, 5, 70]);
+        expect(MultiArray.linearize(cellBoxRead as MultiArray).map(realScalar)).toEqual([8, 11]);
+        expect(MultiArray.linearize(cellBoxUpdatedFirst as MultiArray).map(realScalar)).toEqual([7, 80, 9]);
+        expect(MultiArray.linearize(cellBoxUpdatedSecond as MultiArray).map(realScalar)).toEqual([10, 110, 12]);
         expect(() =>
             interpreter.Execute(['classdef MissingPublicSubsindexProbe', 'end', 'A = 1:3;', 'idx = MissingPublicSubsindexProbe();', 'subsref(A, substruct("()", {idx}))'].join('\n')),
         ).toThrow('object of class MissingPublicSubsindexProbe cannot be used as an index without a subsindex method.');
@@ -921,6 +1037,633 @@ describe('Parser conformance fixtures.', () => {
             'S=struct {\na: {10,20}\n}\nidx=[struct {\ntype: .\nsubs: a\n},struct {\ntype: {}\nsubs: {2}\n}]\nreadCell=20\nT=struct {\na: {10,99}\n}\nA=[1,2;\n3,4]\nreadColumn=[2;\n4]\nupdatedRow=[7,8;\n3,4]\ntxt=abcd\nreadText=db\nupdatedText=XbcY\n20\n99\n[2;\n4]\n[7,8;\n3,4]\ndb\nXbcY\n',
         );
         expect(() => interpreter.Execute("subsref([1, 2], struct('type', 'bad', 'subs', {1}))")).toThrow('invalid subsref descriptor.');
+    });
+
+    it('Should preserve mixed nested native indexing chains with dynamic fields, cells, and end.', () => {
+        const interpreter = Interpreter.Create();
+        const source = [
+            'field = "payload";',
+            'leaf = "values";',
+            'S(1).payload = {struct("values", [10, 20, 30]), struct("values", [40, 50, 60])};',
+            'S(2).payload = {struct("values", [70, 80, 90]), struct("values", [100, 110, 120])};',
+            'picked = S(end).(field){end}.(leaf)([1, end]);',
+            'S(1).(field){1}.(leaf)(end) = 33;',
+            'S(2).(field){2}.(leaf)([1, end]) = [101, 121];',
+            '[left, right] = deal(S(1).payload{1}.values(2), S(2).payload{2}.values(end));',
+            '[S(1).payload{2}.values(1), S(2).payload{1}.values(3)] = deal(44, 99);',
+            'picked; S(1).payload{1}.values; S(2).payload{2}.values; left; right; S(1).payload{2}.values; S(2).payload{1}.values;',
+        ].join('\n');
+
+        const [picked, firstValues, secondValues, left, right, assignedFirstCell, assignedSecondCell] = executeList(interpreter, source).list.slice(-7) as MultiArray[];
+
+        expect(MultiArray.linearize(picked).map(realScalar)).toEqual([100, 120]);
+        expect(MultiArray.linearize(firstValues).map(realScalar)).toEqual([10, 20, 33]);
+        expect(MultiArray.linearize(secondValues).map(realScalar)).toEqual([101, 110, 121]);
+        expect([left, right].map(realScalar)).toEqual([20, 121]);
+        expect(MultiArray.linearize(assignedFirstCell).map(realScalar)).toEqual([44, 50, 60]);
+        expect(MultiArray.linearize(assignedSecondCell).map(realScalar)).toEqual([70, 80, 99]);
+    });
+
+    it('Should preserve mixed nested descriptor chains through subsref and subsasgn.', () => {
+        const interpreter = Interpreter.Create();
+        const source = [
+            'S(1).payload = {struct("values", [10, 20, 30]), struct("values", [40, 50, 60])};',
+            'S(2).payload = {struct("values", [70, 80, 90]), struct("values", [100, 110, 120])};',
+            "readDescriptor = substruct('()', {2}, '.', 'payload', '{}', {2}, '.', 'values', '()', {[1, 3]});",
+            'readValues = subsref(S, readDescriptor);',
+            "writeDescriptor = substruct('()', {1}, '.', 'payload', '{}', {2}, '.', 'values', '()', {[2, 3]});",
+            'T = subsasgn(S, writeDescriptor, [55, 66]);',
+            "dynamicDescriptor = substruct('.', 'payload', '{}', {1}, '.', 'values', '()', {2});",
+            'dynamicRead = subsref(T(1), dynamicDescriptor);',
+            'readValues; T(1).payload{2}.values; dynamicRead; S(1).payload{2}.values;',
+        ].join('\n');
+
+        const [readValues, updatedValues, dynamicRead, originalValues] = executeList(interpreter, source).list.slice(-4) as MultiArray[];
+
+        expect(MultiArray.linearize(readValues).map(realScalar)).toEqual([100, 120]);
+        expect(MultiArray.linearize(updatedValues).map(realScalar)).toEqual([40, 55, 66]);
+        expect(realScalar(dynamicRead)).toBe(20);
+        expect(MultiArray.linearize(originalValues).map(realScalar)).toEqual([40, 50, 60]);
+    });
+
+    it('Should preserve mixed nested read chains through public object properties.', () => {
+        const interpreter = Interpreter.Create();
+        const source = [
+            'classdef NestedIndexObject',
+            '  properties',
+            '    Payload = {};',
+            '  end',
+            '  methods',
+            '    function obj = NestedIndexObject(payload)',
+            '      if nargin > 0',
+            '        obj.Payload = payload;',
+            '      end',
+            '    end',
+            '  end',
+            'end',
+            'firstObj = NestedIndexObject({struct("values", [1, 2, 3]), struct("values", [4, 5, 6])});',
+            'secondObj = NestedIndexObject({struct("values", [7, 8, 9]), struct("values", [10, 11, 12])});',
+            'objs = [firstObj, secondObj];',
+            'selected = objs(end).Payload{end}.values([1, end]);',
+            'firstValues = objs(1).Payload{1}.values;',
+            'secondValues = objs(2).Payload{2}.values;',
+            'firstTail = objs(1).Payload{end}.values(end);',
+            'secondHead = objs(end).Payload{1}.values(1);',
+            'selected; firstValues; secondValues; firstTail; secondHead;',
+        ].join('\n');
+
+        const [selected, firstValues, secondValues, firstTail, secondHead] = executeList(interpreter, source).list.slice(-5) as MultiArray[];
+
+        expect(MultiArray.linearize(selected).map(realScalar)).toEqual([10, 12]);
+        expect(MultiArray.linearize(firstValues).map(realScalar)).toEqual([1, 2, 3]);
+        expect(MultiArray.linearize(secondValues).map(realScalar)).toEqual([10, 11, 12]);
+        expect(realScalar(firstTail)).toBe(6);
+        expect(realScalar(secondHead)).toBe(7);
+    });
+
+    it('Should assign through mixed nested public object property chains and descriptors.', () => {
+        const interpreter = Interpreter.Create();
+        const source = [
+            'classdef NestedAssignObject',
+            '  properties',
+            '    Payload = {};',
+            '  end',
+            '  methods',
+            '    function obj = NestedAssignObject(payload)',
+            '      if nargin > 0',
+            '        obj.Payload = payload;',
+            '      end',
+            '    end',
+            '  end',
+            'end',
+            'firstObj = NestedAssignObject({struct("values", [1, 2, 3]), struct("values", [4, 5, 6])});',
+            'secondObj = NestedAssignObject({struct("values", [7, 8, 9]), struct("values", [10, 11, 12])});',
+            'objs = [firstObj, secondObj];',
+            'objs(1).Payload{1}.values(3) = 30;',
+            'objs(2).Payload{2}.values([1, 3]) = [100, 120];',
+            "descriptorRead = subsref(objs, substruct('()', {2}, '.', 'Payload', '{}', {2}, '.', 'values', '()', {[1, 3]}));",
+            "descriptorUpdated = subsasgn(objs, substruct('()', {1}, '.', 'Payload', '{}', {1}, '.', 'values', '()', {[1, 2]}), [10, 20]);",
+            'objs(1).Payload{1}.values; objs(2).Payload{2}.values; descriptorRead; descriptorUpdated(1).Payload{1}.values; descriptorUpdated(2).Payload{2}.values;',
+        ].join('\n');
+
+        const [firstValues, secondValues, descriptorRead, descriptorUpdatedFirst, descriptorUpdatedSecond] = executeList(interpreter, source).list.slice(-5) as MultiArray[];
+
+        expect(MultiArray.linearize(firstValues).map(realScalar)).toEqual([1, 2, 30]);
+        expect(MultiArray.linearize(secondValues).map(realScalar)).toEqual([100, 11, 120]);
+        expect(MultiArray.linearize(descriptorRead).map(realScalar)).toEqual([100, 120]);
+        expect(MultiArray.linearize(descriptorUpdatedFirst).map(realScalar)).toEqual([10, 20, 30]);
+        expect(MultiArray.linearize(descriptorUpdatedSecond).map(realScalar)).toEqual([100, 11, 120]);
+    });
+
+    it('Should expand object arrays and resolve end in nested public property assignments.', () => {
+        const interpreter = Interpreter.Create();
+        const source = [
+            'classdef ObjectExpansionAssign',
+            '  properties',
+            '    Payload = {struct("values", [0, 0, 0])};',
+            '    Tag = 0;',
+            '  end',
+            '  methods',
+            '    function obj = ObjectExpansionAssign(tag, payload)',
+            '      if nargin > 0',
+            '        obj.Tag = tag;',
+            '      end',
+            '      if nargin > 1',
+            '        obj.Payload = payload;',
+            '      end',
+            '    end',
+            '  end',
+            'end',
+            'objs = ObjectExpansionAssign(1, {struct("values", [1, 2, 3]), struct("values", [4, 5, 6])});',
+            'objs(3) = ObjectExpansionAssign(3, {struct("values", [7, 8, 9]), struct("values", [10, 11, 12])});',
+            'objs(2).Tag = 2;',
+            'objs(1).Payload{end}.values(end) = 60;',
+            'objs(end).Payload{end}.values(end) = 120;',
+            "updated = subsasgn(objs, substruct('()', {3}, '.', 'Payload', '{}', {2}, '.', 'values', '()', {3}), 121);",
+            'tags = [objs.Tag];',
+            'firstValues = objs(1).Payload{2}.values;',
+            'lastValues = objs(end).Payload{end}.values;',
+            'updatedLastValues = updated(end).Payload{end}.values;',
+            'tags; firstValues; lastValues; updatedLastValues;',
+        ].join('\n');
+
+        const [tags, firstValues, lastValues, updatedLastValues] = executeList(interpreter, source).list.slice(-4) as MultiArray[];
+
+        expect(MultiArray.linearize(tags).map(realScalar)).toEqual([1, 2, 3]);
+        expect(MultiArray.linearize(firstValues).map(realScalar)).toEqual([4, 5, 60]);
+        expect(MultiArray.linearize(lastValues).map(realScalar)).toEqual([10, 11, 120]);
+        expect(MultiArray.linearize(updatedLastValues).map(realScalar)).toEqual([10, 11, 121]);
+    });
+
+    it('Should distribute multiple assignment across chained indexed struct and object properties.', () => {
+        const interpreter = Interpreter.Create();
+        const source = [
+            'classdef ChainedCommaLeaf',
+            '  properties',
+            '    values = [1, 2, 3];',
+            '  end',
+            'end',
+            'classdef ChainedCommaBox',
+            '  properties',
+            '    child = ChainedCommaLeaf();',
+            '  end',
+            'end',
+            'classdef ChainedCommaCellObject',
+            '  properties',
+            '    x = 0;',
+            '    child = ChainedCommaLeaf();',
+            '  end',
+            'end',
+            'a = ChainedCommaBox();',
+            'b = ChainedCommaBox();',
+            'c = ChainedCommaBox();',
+            'objs = [a, b, c];',
+            '[objs.child.values(2)] = deal(20, 50, 80);',
+            'idx = [3, 1];',
+            '[objs(idx).child.values(3)] = deal(300, 100);',
+            'S(1).child.values = [1, 2, 3];',
+            'S(2).child.values = [4, 5, 6];',
+            '[S.child.values(2)] = deal(200, 500);',
+            'C = {struct("x", 1, "values", [1, 2, 3]), struct("x", 2, "values", [4, 5, 6])};',
+            '[C{:}.x] = deal(7, 8);',
+            '[C{:}.values(2)] = deal(20, 50);',
+            'fieldName = "values";',
+            '[objs.child.values(end)] = deal(101, 53, 303);',
+            '[S.child.(fieldName)(end)] = deal(30, 60);',
+            '[C{:}.(fieldName)(end)] = deal(300, 600);',
+            'OC = {ChainedCommaCellObject(), ChainedCommaCellObject()};',
+            '[OC{:}.x] = deal(17, 18);',
+            '[OC{:}.child.(fieldName)(end)] = deal(130, 160);',
+            "OD = subsasgn(OC, substruct('{}', {':'}, '.', 'x'), [27, 28]);",
+            "[descriptorCellLeft, descriptorCellRight] = subsref(OC, substruct('{}', {':'}, '.', 'x'));",
+            "[descriptorTailLeft, descriptorTailRight] = subsref(OC, substruct('{}', {':'}, '.', 'child', '.', 'values', '()', {3}));",
+            "[parenDescriptorLeft, parenDescriptorRight] = subsref(OC, substruct('()', {':'}, '{}', {':'}, '.', 'x'));",
+            "OE = subsasgn(OC, substruct('()', {':'}, '{}', {':'}, '.', 'child', '.', 'values', '()', {2}), [230, 260]);",
+            '[OC(:){:}.x] = deal(37, 38);',
+            '[OC(:){:}.child.values(end)] = deal(330, 360);',
+            '[objFirst, objSecond, objThird] = objs.child.values;',
+            '[structFirst, structSecond] = S.child.values;',
+            'cellX = [C{1}.x, C{2}.x];',
+            'cellFirst = C{1}.values;',
+            'cellSecond = C{2}.values;',
+            'objectCellX = [OC{1}.x, OC{2}.x];',
+            'objectCellFirst = OC{1}.child.values;',
+            'objectCellSecond = OC{2}.child.values;',
+            'descriptorCellX = [OD{1}.x, OD{2}.x];',
+            'descriptorCellRead = [descriptorCellLeft, descriptorCellRight];',
+            'descriptorTailRead = [descriptorTailLeft, descriptorTailRight];',
+            'parenDescriptorRead = [parenDescriptorLeft, parenDescriptorRight];',
+            'parenDescriptorFirst = OE{1}.child.values;',
+            'parenDescriptorSecond = OE{2}.child.values;',
+            'objFirst; objSecond; objThird; structFirst; structSecond; cellX; cellFirst; cellSecond; objectCellX; objectCellFirst; objectCellSecond; descriptorCellX; descriptorCellRead; descriptorTailRead; parenDescriptorRead; parenDescriptorFirst; parenDescriptorSecond;',
+        ].join('\n');
+
+        const [
+            objFirst,
+            objSecond,
+            objThird,
+            structFirst,
+            structSecond,
+            cellX,
+            cellFirst,
+            cellSecond,
+            objectCellX,
+            objectCellFirst,
+            objectCellSecond,
+            descriptorCellX,
+            descriptorCellRead,
+            descriptorTailRead,
+            parenDescriptorRead,
+            parenDescriptorFirst,
+            parenDescriptorSecond,
+        ] = executeList(interpreter, source).list.slice(-17) as MultiArray[];
+
+        expect(MultiArray.linearize(objFirst).map(realScalar)).toEqual([1, 20, 101]);
+        expect(MultiArray.linearize(objSecond).map(realScalar)).toEqual([1, 50, 53]);
+        expect(MultiArray.linearize(objThird).map(realScalar)).toEqual([1, 80, 303]);
+        expect(MultiArray.linearize(structFirst).map(realScalar)).toEqual([1, 200, 30]);
+        expect(MultiArray.linearize(structSecond).map(realScalar)).toEqual([4, 500, 60]);
+        expect(MultiArray.linearize(cellX).map(realScalar)).toEqual([7, 8]);
+        expect(MultiArray.linearize(cellFirst).map(realScalar)).toEqual([1, 20, 300]);
+        expect(MultiArray.linearize(cellSecond).map(realScalar)).toEqual([4, 50, 600]);
+        expect(MultiArray.linearize(objectCellX).map(realScalar)).toEqual([37, 38]);
+        expect(MultiArray.linearize(objectCellFirst).map(realScalar)).toEqual([1, 2, 330]);
+        expect(MultiArray.linearize(objectCellSecond).map(realScalar)).toEqual([1, 2, 360]);
+        expect(MultiArray.linearize(descriptorCellX).map(realScalar)).toEqual([27, 28]);
+        expect(MultiArray.linearize(descriptorCellRead).map(realScalar)).toEqual([17, 18]);
+        expect(MultiArray.linearize(descriptorTailRead).map(realScalar)).toEqual([130, 160]);
+        expect(MultiArray.linearize(parenDescriptorRead).map(realScalar)).toEqual([17, 18]);
+        expect(MultiArray.linearize(parenDescriptorFirst).map(realScalar)).toEqual([1, 230, 130]);
+        expect(MultiArray.linearize(parenDescriptorSecond).map(realScalar)).toEqual([1, 260, 160]);
+        expect(() => interpreter.Execute('[objs.child.values(1)] = deal(1, 2)')).toThrow('deal: nargin and nargout must match unless there is exactly one input.');
+    });
+
+    it('Should distribute chained calls and indexed fields over comma-separated receivers.', () => {
+        const interpreter = Interpreter.Create();
+        const source = [
+            'classdef ChainedCallChild',
+            '  properties',
+            '    values = [];',
+            '  end',
+            '  methods',
+            '    function obj = ChainedCallChild(varargin)',
+            '      if nargin > 0, obj.values = varargin{1}; end',
+            '    end',
+            '  end',
+            'end',
+            'classdef ChainedCallObject',
+            '  properties',
+            '    x = 0;',
+            '    child = ChainedCallChild();',
+            '  end',
+            '  methods',
+            '    function obj = ChainedCallObject(varargin)',
+            '      if nargin > 0, obj.x = varargin{1}; end',
+            '      if nargin > 1, obj.child = ChainedCallChild(varargin{2}); end',
+            '    end',
+            '    function y = plusone(obj)',
+            '      y = obj.x + 1;',
+            '    end',
+            '  end',
+            'end',
+            'C = {ChainedCallObject(1, [10, 20, 30]), ChainedCallObject(2, [40, 50, 60]), ChainedCallObject(3, [70, 80, 90])};',
+            '[cellMethodLeft, cellMethodRight] = C{1:2}.plusone();',
+            'S(1).obj = ChainedCallObject(3);',
+            'S(2).obj = ChainedCallObject(4);',
+            '[structMethodLeft, structMethodRight] = S.obj.plusone();',
+            'V = {struct("values", [10, 20, 30]), struct("values", [40, 50, 60])};',
+            '[fieldLeft, fieldRight] = V{:}.values(2);',
+            '[orderedLeft, orderedRight] = C{[3, 1]}.x;',
+            '[C{[3, 1]}.child.values(end)] = deal(900, 100);',
+            '[logicalLeft, logicalRight] = C{[true, false, true]}.x;',
+            '[C{[true, false, true]}.child.values(2)] = deal(200, 600);',
+            "D = subsasgn(C, substruct('{}', {[3, 1]}, '.', 'child', '.', 'values', '()', {1}), [700, 100]);",
+            "E = subsasgn(C, substruct('()', {[3, 1]}, '{}', {':'}, '.', 'child', '.', 'values', '()', {3}), [901, 301]);",
+            'cellMethod = [cellMethodLeft, cellMethodRight];',
+            'structMethod = [structMethodLeft, structMethodRight];',
+            'fieldIndex = [fieldLeft, fieldRight];',
+            'ordered = [orderedLeft, orderedRight];',
+            'logicalRead = [logicalLeft, logicalRight];',
+            'firstValues = C{1}.child.values;',
+            'thirdValues = C{3}.child.values;',
+            'descriptorFirst = D{1}.child.values;',
+            'descriptorThird = D{3}.child.values;',
+            'parenDescriptorFirst = E{1}.child.values;',
+            'parenDescriptorThird = E{3}.child.values;',
+            'cellMethod; structMethod; fieldIndex; ordered; logicalRead; firstValues; thirdValues; descriptorFirst; descriptorThird; parenDescriptorFirst; parenDescriptorThird;',
+        ].join('\n');
+
+        const [cellMethod, structMethod, fieldIndex, ordered, logicalRead, firstValues, thirdValues, descriptorFirst, descriptorThird, parenDescriptorFirst, parenDescriptorThird] =
+            executeList(interpreter, source).list.slice(-11) as MultiArray[];
+
+        expect(MultiArray.linearize(cellMethod).map(realScalar)).toEqual([2, 3]);
+        expect(MultiArray.linearize(structMethod).map(realScalar)).toEqual([4, 5]);
+        expect(MultiArray.linearize(fieldIndex).map(realScalar)).toEqual([20, 50]);
+        expect(MultiArray.linearize(ordered).map(realScalar)).toEqual([3, 1]);
+        expect(MultiArray.linearize(logicalRead).map(realScalar)).toEqual([1, 3]);
+        expect(MultiArray.linearize(firstValues).map(realScalar)).toEqual([10, 200, 100]);
+        expect(MultiArray.linearize(thirdValues).map(realScalar)).toEqual([70, 600, 900]);
+        expect(MultiArray.linearize(descriptorFirst).map(realScalar)).toEqual([100, 200, 100]);
+        expect(MultiArray.linearize(descriptorThird).map(realScalar)).toEqual([700, 600, 900]);
+        expect(MultiArray.linearize(parenDescriptorFirst).map(realScalar)).toEqual([10, 200, 301]);
+        expect(MultiArray.linearize(parenDescriptorThird).map(realScalar)).toEqual([70, 600, 901]);
+    });
+
+    it('Should preserve empty assignments through object property indexing paths.', () => {
+        const interpreter = Interpreter.Create();
+        const source = [
+            'classdef EmptyPathBox',
+            '  properties',
+            '    Payload = {};',
+            '  end',
+            '  methods',
+            '    function obj = EmptyPathBox(varargin)',
+            '      if nargin > 0, obj.Payload = varargin{1}; end',
+            '    end',
+            '  end',
+            'end',
+            'obj = EmptyPathBox({10, 20, 30});',
+            'obj.Payload(2) = [];',
+            'scalarParen = obj.Payload;',
+            'objBrace = EmptyPathBox({10, 20, 30});',
+            'objBrace.Payload{2} = [];',
+            'scalarBrace = objBrace.Payload;',
+            'objs = [EmptyPathBox({10, 20, 30}), EmptyPathBox({40, 50, 60})];',
+            'arrayUpdated = subsasgn(objs, substruct(".", "Payload", "()", {2}), []);',
+            'arrayFirst = arrayUpdated(1).Payload;',
+            'arraySecond = arrayUpdated(2).Payload;',
+            'C = {EmptyPathBox({10, 20, 30}), EmptyPathBox({40, 50, 60})};',
+            'cellUpdated = subsasgn(C, substruct("{}", {":"}, ".", "Payload", "()", {2}), []);',
+            'cellFirst = cellUpdated{1}.Payload;',
+            'cellSecond = cellUpdated{2}.Payload;',
+            'braceUpdated = subsasgn(C, substruct("{}", {":"}, ".", "Payload", "{}", {2}), []);',
+            'braceFirst = braceUpdated{1}.Payload;',
+            'braceSecond = braceUpdated{2}.Payload;',
+            'field = "Payload";',
+            'dynamicObj = EmptyPathBox({70, 80, 90});',
+            'dynamicObj.(field)(end) = [];',
+            'dynamicValues = dynamicObj.Payload;',
+            'scalarParen; scalarBrace; arrayFirst; arraySecond; cellFirst; cellSecond; braceFirst; braceSecond; dynamicValues;',
+        ].join('\n');
+
+        const [scalarParen, scalarBrace, arrayFirst, arraySecond, cellFirst, cellSecond, braceFirst, braceSecond, dynamicValues] = executeList(interpreter, source).list.slice(
+            -9,
+        ) as MultiArray[];
+
+        expect(MultiArray.linearize(scalarParen).map(realScalar)).toEqual([10, 30]);
+        expect(scalarBrace.isCell).toBe(true);
+        expect(MultiArray.linearize(scalarBrace).map((value) => (MultiArray.isInstanceOf(value) && MultiArray.isEmpty(value) ? 'empty' : realScalar(value)))).toEqual([10, 'empty', 30]);
+        expect(MultiArray.linearize(arrayFirst).map(realScalar)).toEqual([10, 30]);
+        expect(MultiArray.linearize(arraySecond).map(realScalar)).toEqual([40, 60]);
+        expect(MultiArray.linearize(cellFirst).map(realScalar)).toEqual([10, 30]);
+        expect(MultiArray.linearize(cellSecond).map(realScalar)).toEqual([40, 60]);
+        expect(MultiArray.linearize(braceFirst).map((value) => (MultiArray.isInstanceOf(value) && MultiArray.isEmpty(value) ? 'empty' : realScalar(value)))).toEqual([10, 'empty', 30]);
+        expect(MultiArray.linearize(braceSecond).map((value) => (MultiArray.isInstanceOf(value) && MultiArray.isEmpty(value) ? 'empty' : realScalar(value)))).toEqual([40, 'empty', 60]);
+        expect(MultiArray.linearize(dynamicValues).map(realScalar)).toEqual([70, 80]);
+    });
+
+    it('Should distribute public descriptor assignment through native structure and cell chains.', () => {
+        const interpreter = Interpreter.Create();
+        const source = [
+            'S(1).payload = {struct("v", [1, 2, 3]), struct("v", [4, 5, 6])};',
+            'S(2).payload = {struct("v", [7, 8, 9]), struct("v", [10, 11, 12])};',
+            'field = "payload";',
+            'leaf = "v";',
+            '[structReadLeft, structReadRight] = subsref(S, substruct("()", {[2, 1]}, ".", field, "{}", {2}, ".", leaf, "()", {3}));',
+            'T = subsasgn(S, substruct("()", {[2, 1]}, ".", field, "{}", {1}, ".", leaf, "()", {2}), [80, 20]);',
+            'U = subsasgn(S, substruct(".", "payload", "{}", {1}, ".", "v", "()", {2}), []);',
+            'C = {S(1), S(2)};',
+            '[cellReadLeft, cellReadRight] = subsref(C, substruct("{}", {[2, 1]}, ".", "payload", "{}", {1}, ".", "v", "()", {3}));',
+            'D = subsasgn(C, substruct("{}", {[2, 1]}, ".", "payload", "{}", {1}, ".", "v", "()", {2}), [50, 20]);',
+            'structRead = [structReadLeft, structReadRight];',
+            'structAssignedSecond = T(2).payload{1}.v;',
+            'structAssignedFirst = T(1).payload{1}.v;',
+            'structDeletedFirst = U(1).payload{1}.v;',
+            'structDeletedSecond = U(2).payload{1}.v;',
+            'cellRead = [cellReadLeft, cellReadRight];',
+            'cellAssignedSecond = D{2}.payload{1}.v;',
+            'cellAssignedFirst = D{1}.payload{1}.v;',
+            'structRead; structAssignedSecond; structAssignedFirst; structDeletedFirst; structDeletedSecond; cellRead; cellAssignedSecond; cellAssignedFirst;',
+        ].join('\n');
+
+        const [structRead, structAssignedSecond, structAssignedFirst, structDeletedFirst, structDeletedSecond, cellRead, cellAssignedSecond, cellAssignedFirst] = executeList(
+            interpreter,
+            source,
+        ).list.slice(-8) as MultiArray[];
+
+        expect(MultiArray.linearize(structRead).map(realScalar)).toEqual([12, 6]);
+        expect(MultiArray.linearize(structAssignedSecond).map(realScalar)).toEqual([7, 80, 9]);
+        expect(MultiArray.linearize(structAssignedFirst).map(realScalar)).toEqual([1, 20, 3]);
+        expect(MultiArray.linearize(structDeletedFirst).map(realScalar)).toEqual([1, 3]);
+        expect(MultiArray.linearize(structDeletedSecond).map(realScalar)).toEqual([7, 9]);
+        expect(MultiArray.linearize(cellRead).map(realScalar)).toEqual([9, 3]);
+        expect(MultiArray.linearize(cellAssignedSecond).map(realScalar)).toEqual([7, 50, 9]);
+        expect(MultiArray.linearize(cellAssignedFirst).map(realScalar)).toEqual([1, 20, 3]);
+    });
+
+    it('Should apply public descriptor chains across object arrays and object cells.', () => {
+        const interpreter = Interpreter.Create();
+        const source = [
+            'classdef PublicDescriptorBox',
+            '  properties',
+            '    Payload = [];',
+            '  end',
+            '  methods',
+            '    function obj = PublicDescriptorBox(value)',
+            '      obj.Payload = value;',
+            '    end',
+            '    function y = read(obj, index)',
+            '      y = obj.Payload(index);',
+            '    end',
+            '    function [first, second] = pair(obj, index)',
+            '      first = obj.Payload(index);',
+            '      second = obj.Payload(index) + 100;',
+            '    end',
+            '  end',
+            'end',
+            'objs = [PublicDescriptorBox([1, 2, 3]), PublicDescriptorBox([4, 5, 6])];',
+            'scalar = PublicDescriptorBox([13, 14, 15]);',
+            'cells = {PublicDescriptorBox([7, 8, 9]), PublicDescriptorBox([10, 11, 12])};',
+            '[propLeft, propRight] = subsref(objs, substruct(".", "Payload", "()", {2}));',
+            '[selectedLeft, selectedRight] = subsref(objs, substruct("()", {[2, 1]}, ".", "Payload", "()", {3}));',
+            '[cellLeft, cellRight] = subsref(cells, substruct("{}", {[2, 1]}, ".", "Payload", "()", {1}));',
+            '[methodLeft, methodRight] = subsref(objs, substruct(".", "read", "()", {3}));',
+            '[scalarFirst, scalarSecond] = subsref(scalar, substruct(".", "pair", "()", {2}));',
+            '[arrayPairLeft, arrayPairRight] = subsref(objs, substruct(".", "pair", "()", {2}));',
+            'updated = subsasgn(objs, substruct("()", {[2, 1]}, ".", "Payload", "()", {2}), [50, 20]);',
+            'updatedCell = subsasgn(cells, substruct("{}", {[2, 1]}, ".", "Payload", "()", {3}), [120, 90]);',
+            'propValues = [propLeft, propRight];',
+            'selectedValues = [selectedLeft, selectedRight];',
+            'cellValues = [cellLeft, cellRight];',
+            'methodValues = [methodLeft, methodRight];',
+            'scalarPairValues = [scalarFirst, scalarSecond];',
+            'arrayPairValues = [arrayPairLeft, arrayPairRight];',
+            'updatedFirst = updated(1).Payload;',
+            'updatedSecond = updated(2).Payload;',
+            'updatedCellFirst = updatedCell{1}.Payload;',
+            'updatedCellSecond = updatedCell{2}.Payload;',
+            'propValues; selectedValues; cellValues; methodValues; scalarPairValues; arrayPairValues; updatedFirst; updatedSecond; updatedCellFirst; updatedCellSecond;',
+        ].join('\n');
+
+        const [propValues, selectedValues, cellValues, methodValues, scalarPairValues, arrayPairValues, updatedFirst, updatedSecond, updatedCellFirst, updatedCellSecond] = executeList(
+            interpreter,
+            source,
+        ).list.slice(-10) as MultiArray[];
+
+        expect(MultiArray.linearize(propValues).map(realScalar)).toEqual([2, 5]);
+        expect(MultiArray.linearize(selectedValues).map(realScalar)).toEqual([6, 3]);
+        expect(MultiArray.linearize(cellValues).map(realScalar)).toEqual([10, 7]);
+        expect(MultiArray.linearize(methodValues).map(realScalar)).toEqual([3, 6]);
+        expect(MultiArray.linearize(scalarPairValues).map(realScalar)).toEqual([14, 114]);
+        expect(MultiArray.linearize(arrayPairValues).map(realScalar)).toEqual([2, 5]);
+        expect(MultiArray.linearize(updatedFirst).map(realScalar)).toEqual([1, 20, 3]);
+        expect(MultiArray.linearize(updatedSecond).map(realScalar)).toEqual([4, 50, 6]);
+        expect(MultiArray.linearize(updatedCellFirst).map(realScalar)).toEqual([7, 8, 90]);
+        expect(MultiArray.linearize(updatedCellSecond).map(realScalar)).toEqual([10, 11, 120]);
+    });
+
+    it('Should apply public descriptor assignment through class property accessors.', () => {
+        const interpreter = Interpreter.Create();
+        const source = [
+            'classdef PublicDescriptorAccessorBox',
+            '  properties',
+            '    Storage = [0, 0, 0];',
+            '  end',
+            '  properties (Dependent)',
+            '    Dep',
+            '  end',
+            '  properties (GetMethod = readValue, SetMethod = writeValue)',
+            '    Value',
+            '  end',
+            '  methods',
+            '    function obj = PublicDescriptorAccessorBox(value)',
+            '      obj.Storage = value;',
+            '    end',
+            '    function y = get.Dep(obj)',
+            '      y = obj.Storage + 10;',
+            '    end',
+            '    function obj = set.Dep(obj, value)',
+            '      obj.Storage = value - 10;',
+            '    end',
+            '    function y = readValue(obj)',
+            '      y = obj.Storage + 100;',
+            '    end',
+            '    function obj = writeValue(obj, value)',
+            '      obj.Storage = value - 100;',
+            '    end',
+            '  end',
+            'end',
+            'objs = [PublicDescriptorAccessorBox([1, 2, 3]), PublicDescriptorAccessorBox([4, 5, 6])];',
+            'cells = {PublicDescriptorAccessorBox([7, 8, 9]), PublicDescriptorAccessorBox([10, 11, 12])};',
+            '[depLeft, depRight] = subsref(objs, substruct(".", "Dep", "()", {2}));',
+            '[valueLeft, valueRight] = subsref(objs, substruct(".", "Value", "()", {3}));',
+            'depUpdated = subsasgn(objs, substruct("()", {[2, 1]}, ".", "Dep", "()", {2}), [70, 40]);',
+            'valueUpdated = subsasgn(objs, substruct(".", "Value", "()", {3}), [160, 130]);',
+            'cellDepUpdated = subsasgn(cells, substruct("{}", {[2, 1]}, ".", "Dep", "()", {1}), [90, 60]);',
+            'cellValueUpdated = subsasgn(cells, substruct("{}", {[2, 1]}, ".", "Value", "()", {2}), [210, 180]);',
+            'depRead = [depLeft, depRight];',
+            'valueRead = [valueLeft, valueRight];',
+            'depUpdatedFirst = depUpdated(1).Storage;',
+            'depUpdatedSecond = depUpdated(2).Storage;',
+            'valueUpdatedFirst = valueUpdated(1).Storage;',
+            'valueUpdatedSecond = valueUpdated(2).Storage;',
+            'cellDepFirst = cellDepUpdated{1}.Storage;',
+            'cellDepSecond = cellDepUpdated{2}.Storage;',
+            'cellValueFirst = cellValueUpdated{1}.Storage;',
+            'cellValueSecond = cellValueUpdated{2}.Storage;',
+            'originalFirst = objs(1).Storage;',
+            'depRead; valueRead; depUpdatedFirst; depUpdatedSecond; valueUpdatedFirst; valueUpdatedSecond; cellDepFirst; cellDepSecond; cellValueFirst; cellValueSecond; originalFirst;',
+        ].join('\n');
+
+        const [depRead, valueRead, depUpdatedFirst, depUpdatedSecond, valueUpdatedFirst, valueUpdatedSecond, cellDepFirst, cellDepSecond, cellValueFirst, cellValueSecond, originalFirst] =
+            executeList(interpreter, source).list.slice(-11) as MultiArray[];
+
+        expect(MultiArray.linearize(depRead).map(realScalar)).toEqual([12, 15]);
+        expect(MultiArray.linearize(valueRead).map(realScalar)).toEqual([103, 106]);
+        expect(MultiArray.linearize(depUpdatedFirst).map(realScalar)).toEqual([1, 30, 3]);
+        expect(MultiArray.linearize(depUpdatedSecond).map(realScalar)).toEqual([4, 60, 6]);
+        expect(MultiArray.linearize(valueUpdatedFirst).map(realScalar)).toEqual([1, 2, 60]);
+        expect(MultiArray.linearize(valueUpdatedSecond).map(realScalar)).toEqual([4, 5, 30]);
+        expect(MultiArray.linearize(cellDepFirst).map(realScalar)).toEqual([50, 8, 9]);
+        expect(MultiArray.linearize(cellDepSecond).map(realScalar)).toEqual([80, 11, 12]);
+        expect(MultiArray.linearize(cellValueFirst).map(realScalar)).toEqual([7, 80, 9]);
+        expect(MultiArray.linearize(cellValueSecond).map(realScalar)).toEqual([10, 110, 12]);
+        expect(MultiArray.linearize(originalFirst).map(realScalar)).toEqual([1, 2, 3]);
+    });
+
+    it('Should create missing public descriptor paths through native and object containers.', () => {
+        const interpreter = Interpreter.Create();
+        const source = [
+            'classdef CreatedPathBox',
+            '  properties',
+            '    Payload = {};',
+            '  end',
+            '  methods',
+            '    function obj = CreatedPathBox(varargin)',
+            '      if nargin > 0, obj.Payload = varargin{1}; end',
+            '    end',
+            '  end',
+            'end',
+            'S(1).base = 1;',
+            'S(2).base = 2;',
+            'nativeBroadcast = subsasgn(S, substruct(".", "missing", ".", "values", "()", {2}), 9);',
+            'nativeDistributed = subsasgn(S, substruct(".", "missing", ".", "values", "()", {2}), [90, 80]);',
+            'S(3).base = 3;',
+            'selectedDistributed = subsasgn(S, substruct("()", {[3, 1]}, ".", "created", ".", "values", "()", {2}), [30, 10]);',
+            'C = {struct("base", 1), struct("base", 2)};',
+            'cellDistributed = subsasgn(C, substruct("{}", {[2, 1]}, ".", "created", ".", "values", "()", {2}), [20, 10]);',
+            'obj = CreatedPathBox({});',
+            'objectScalar = subsasgn(obj, substruct(".", "Payload", "{}", {2}, ".", "v", "()", {2}), 8);',
+            'objs = [CreatedPathBox({}), CreatedPathBox({})];',
+            'objectArray = subsasgn(objs, substruct(".", "Payload", "{}", {2}, ".", "v", "()", {2}), [8, 9]);',
+            'OC = {CreatedPathBox({}), CreatedPathBox({})};',
+            'objectCell = subsasgn(OC, substruct("{}", {":"}, ".", "Payload", "{}", {2}, ".", "v", "()", {2}), [18, 19]);',
+            'nativeBroadcastFirst = nativeBroadcast(1).missing.values;',
+            'nativeBroadcastSecond = nativeBroadcast(2).missing.values;',
+            'nativeDistributedFirst = nativeDistributed(1).missing.values;',
+            'nativeDistributedSecond = nativeDistributed(2).missing.values;',
+            'selectedThird = selectedDistributed(3).created.values;',
+            'selectedFirst = selectedDistributed(1).created.values;',
+            'cellSecond = cellDistributed{2}.created.values;',
+            'cellFirst = cellDistributed{1}.created.values;',
+            'objectScalarValues = objectScalar.Payload{2}.v;',
+            'objectArrayFirst = objectArray(1).Payload{2}.v;',
+            'objectArraySecond = objectArray(2).Payload{2}.v;',
+            'objectCellFirst = objectCell{1}.Payload{2}.v;',
+            'objectCellSecond = objectCell{2}.Payload{2}.v;',
+            'nativeBroadcastFirst; nativeBroadcastSecond; nativeDistributedFirst; nativeDistributedSecond; selectedThird; selectedFirst; cellSecond; cellFirst; objectScalarValues; objectArrayFirst; objectArraySecond; objectCellFirst; objectCellSecond;',
+        ].join('\n');
+
+        const [
+            nativeBroadcastFirst,
+            nativeBroadcastSecond,
+            nativeDistributedFirst,
+            nativeDistributedSecond,
+            selectedThird,
+            selectedFirst,
+            cellSecond,
+            cellFirst,
+            objectScalarValues,
+            objectArrayFirst,
+            objectArraySecond,
+            objectCellFirst,
+            objectCellSecond,
+        ] = executeList(interpreter, source).list.slice(-13) as MultiArray[];
+
+        expect(MultiArray.linearize(nativeBroadcastFirst).map(realScalar)).toEqual([0, 9]);
+        expect(MultiArray.linearize(nativeBroadcastSecond).map(realScalar)).toEqual([0, 9]);
+        expect(MultiArray.linearize(nativeDistributedFirst).map(realScalar)).toEqual([0, 90]);
+        expect(MultiArray.linearize(nativeDistributedSecond).map(realScalar)).toEqual([0, 80]);
+        expect(MultiArray.linearize(selectedThird).map(realScalar)).toEqual([0, 30]);
+        expect(MultiArray.linearize(selectedFirst).map(realScalar)).toEqual([0, 10]);
+        expect(MultiArray.linearize(cellSecond).map(realScalar)).toEqual([0, 20]);
+        expect(MultiArray.linearize(cellFirst).map(realScalar)).toEqual([0, 10]);
+        expect(MultiArray.linearize(objectScalarValues).map(realScalar)).toEqual([0, 8]);
+        expect(MultiArray.linearize(objectArrayFirst).map(realScalar)).toEqual([0, 8]);
+        expect(MultiArray.linearize(objectArraySecond).map(realScalar)).toEqual([0, 9]);
+        expect(MultiArray.linearize(objectCellFirst).map(realScalar)).toEqual([0, 18]);
+        expect(MultiArray.linearize(objectCellSecond).map(realScalar)).toEqual([0, 19]);
+        expect(() => interpreter.Execute('obj = CreatedPathBox({1}); subsasgn(obj, substruct(".", "Payload", "()", {2}), 7);')).toThrow('cell array assignment requires a cell array value.');
     });
 
     it('Should evaluate switch object cases through case-side eq overloads.', () => {
@@ -1605,14 +2348,35 @@ describe('Parser conformance fixtures.', () => {
             '  protectedMessage = protectedError.message;',
             '  protectedId = protectedError.identifier;',
             'end',
-            'inlineMessage; inlineId; plainError.message; plainError.identifier; cleanup; protectedMessage; protectedId',
+            'function y = cleanupReturnProbe()',
+            '  y = 0;',
+            '  unwind_protect',
+            '    y = 1;',
+            '    error("mathjslab:body", "body failed");',
+            '  unwind_protect_cleanup',
+            '    y = 2;',
+            '    return',
+            '  end',
+            '  y = 3;',
+            'end',
+            'cleanupReturn = cleanupReturnProbe();',
+            'cleanupBreak = 0;',
+            'for k = 1:2',
+            '  unwind_protect',
+            '    error("mathjslab:breakBody", "break body failed");',
+            '  unwind_protect_cleanup',
+            '    cleanupBreak = k;',
+            '    break',
+            '  end',
+            'end',
+            'inlineMessage; inlineId; plainError.message; plainError.identifier; cleanup; protectedMessage; protectedId; cleanupReturn; cleanupBreak',
         ].join('\n');
 
         expect(interpreter.Unparse(interpreter.Parse(source))).toBe(
-            'TRY\nerror(mathjslab:inline,inline failed)\n\nCATCH ME\ninlineMessage=ME.message\ninlineId=ME.identifier\n\nEND_TRY_CATCH\nTRY\nerror(mathjslab:plain,plain failed)\n\nCATCH\nplainError=lasterror()\n\nEND_TRY_CATCH\ncleanup=0\nUNWIND_PROTECT\ncleanup+=1\n\nUNWIND_PROTECT_CLEANUP\ncleanup+=10\n\nEND_UNWIND_PROTECT\nTRY\nUNWIND_PROTECT\ncleanup+=100\nerror(mathjslab:protected,protected failed)\n\nUNWIND_PROTECT_CLEANUP\ncleanup+=1000\n\nEND_UNWIND_PROTECT\n\nCATCH protectedError\nprotectedMessage=protectedError.message\nprotectedId=protectedError.identifier\n\nEND_TRY_CATCH\ninlineMessage\ninlineId\nplainError.message\nplainError.identifier\ncleanup\nprotectedMessage\nprotectedId\n',
+            'TRY\nerror(mathjslab:inline,inline failed)\n\nCATCH ME\ninlineMessage=ME.message\ninlineId=ME.identifier\n\nEND_TRY_CATCH\nTRY\nerror(mathjslab:plain,plain failed)\n\nCATCH\nplainError=lasterror()\n\nEND_TRY_CATCH\ncleanup=0\nUNWIND_PROTECT\ncleanup+=1\n\nUNWIND_PROTECT_CLEANUP\ncleanup+=10\n\nEND_UNWIND_PROTECT\nTRY\nUNWIND_PROTECT\ncleanup+=100\nerror(mathjslab:protected,protected failed)\n\nUNWIND_PROTECT_CLEANUP\ncleanup+=1000\n\nEND_UNWIND_PROTECT\n\nCATCH protectedError\nprotectedMessage=protectedError.message\nprotectedId=protectedError.identifier\n\nEND_TRY_CATCH\nFUNCTION y=cleanupReturnProbe()\ny=0\nUNWIND_PROTECT\ny=1\nerror(mathjslab:body,body failed)\n\nUNWIND_PROTECT_CLEANUP\ny=2\nreturn\n\nEND_UNWIND_PROTECT\ny=3\nENDFUNCTION\ncleanupReturn=cleanupReturnProbe()\ncleanupBreak=0\nFOR k=1:2\nUNWIND_PROTECT\nerror(mathjslab:breakBody,break body failed)\n\nUNWIND_PROTECT_CLEANUP\ncleanupBreak=k\nbreak\n\nEND_UNWIND_PROTECT\n\nENDFOR\ninlineMessage\ninlineId\nplainError.message\nplainError.identifier\ncleanup\nprotectedMessage\nprotectedId\ncleanupReturn\ncleanupBreak\n',
         );
         expect(interpreter.Unparse(interpreter.Execute(source))).toBe(
-            'inline failed\nmathjslab:inline\nstruct {\nmessage: plain failed\nidentifier: mathjslab:plain\nstack: [ ](0x1)\n}\ncleanup=0\n1\nprotected failed\nmathjslab:protected\ninline failed\nmathjslab:inline\nplain failed\nmathjslab:plain\n1111\nprotected failed\nmathjslab:protected\n',
+            'inline failed\nmathjslab:inline\nstruct {\nmessage: plain failed\nidentifier: mathjslab:plain\nstack: [ ](0x1)\n}\ncleanup=0\n1\nprotected failed\nmathjslab:protected\ncleanupReturn=2\ncleanupBreak=0\ninline failed\nmathjslab:inline\nplain failed\nmathjslab:plain\n1111\nprotected failed\nmathjslab:protected\n2\n1\n',
         );
     });
 
@@ -1832,6 +2596,48 @@ describe('Parser conformance fixtures.', () => {
 
         expect(interpreter.Unparse(interpreter.Execute(source))).toBe(
             'x=1\nf=@sin\ncodes=[1,1,5,5,0]\nwhichF=sin is a built-in function\nwhichBuiltin=sin is a built-in function\nisglobal is a built-in function\n1\n1\n5\n[1,1,5,5,0]\nsin is a built-in function\nsin is a built-in function\n',
+        );
+    });
+
+    it('Should keep command-form built-ins compatible with raw word-list arguments.', () => {
+        const interpreter = Interpreter.Create({
+            scriptSourceTable: {
+                'scripts/commandformscript.m': 'commandRunValue = commandRunSeed + 1;',
+                commandSourceScript: 'commandSourceValue = commandSourceSeed + 2;',
+            },
+        });
+        const source = [
+            'commandRunSeed = 10;',
+            'run scripts/commandformscript.m',
+            'function y = commandSourceOuter()',
+            '  commandSourceSeed = 20;',
+            '  commandSourceHelper();',
+            '  y = commandSourceValue;',
+            'end',
+            'function commandSourceHelper()',
+            '  source commandSourceScript caller',
+            'end',
+            'sourceValue = commandSourceOuter();',
+            'alphaCmd = 1; betaCmd = 2; global commandGlobalCmd; commandGlobalCmd = 3;',
+            'who *Cmd;',
+            "names = who('*Cmd');",
+            "infos = whos('-regexp', '^(alpha|beta)Cmd$');",
+            'isglobal commandGlobalCmd;',
+            'exist commandRunValue var;',
+            'which sin;',
+            "keywordFlag = iskeyword('for');",
+            "varFlag = isvarname('alphaCmd');",
+            "globalFlag = isglobal('commandGlobalCmd');",
+            "existFlag = exist('commandRunValue', 'var');",
+            "whichText = which('sin');",
+            'commandRunValue; sourceValue; names; {infos.name}; keywordFlag; varFlag; globalFlag; existFlag; whichText',
+        ].join('\n');
+
+        expect(interpreter.Unparse(interpreter.Execute(source))).toBe(
+            'commandRunSeed=10\ncommandRunValue=11\nsourceValue=22\nalphaCmd=1\nbetaCmd=2\ncommandGlobalCmd=3\n{alphaCmd;\nbetaCmd;\ncommandGlobalCmd}\nnames={alphaCmd;\nbetaCmd;\ncommandGlobalCmd}\ninfos=[struct {\nname: alphaCmd\nsize: [1,1]\nbytes: 16\nclass: double\nglobal: false\nsparse: false\ncomplex: false\nnesting: struct {\nfunction: \nlevel: 0\n}\npersistent: false\n};\nstruct {\nname: betaCmd\nsize: [1,1]\nbytes: 16\nclass: double\nglobal: false\nsparse: false\ncomplex: false\nnesting: struct {\nfunction: \nlevel: 0\n}\npersistent: false\n}]\ntrue\n1\nsin is a built-in function\nkeywordFlag=true\nvarFlag=true\nglobalFlag=true\nexistFlag=1\nwhichText=sin is a built-in function\n11\n22\n{alphaCmd;\nbetaCmd;\ncommandGlobalCmd}\n{alphaCmd,betaCmd}\ntrue\ntrue\ntrue\n1\nsin is a built-in function\n',
+        );
+        expect(interpreter.Unparse(interpreter.Execute('run = 1; run += 2; source = 3; source += 4; exist = 5; which = 6; [run, source, exist, which]'))).toBe(
+            'run=1\nrun=3\nsource=3\nsource=7\nexist=5\nwhich=6\n[3,7,5,6]\n',
         );
     });
 
@@ -2680,6 +3486,16 @@ describe('Parser conformance fixtures.', () => {
             '  end',
             '  f = @next;',
             'end',
+            'function h = makePersistentClosure(seed)',
+            '  persistent shared = 0;',
+            '  shared += 1;',
+            '  local = seed;',
+            '  function y = nextPersistent(step)',
+            '    local += step;',
+            '    y = local + shared * 100;',
+            '  end',
+            '  h = @nextPersistent;',
+            'end',
             'function y = earlyReturn(x)',
             '  y = 0;',
             '  if x > 0',
@@ -2697,16 +3513,22 @@ describe('Parser conformance fixtures.', () => {
             'counter = makeCounter(100);',
             'counterFirst = counter(5);',
             'counterSecond = counter(2);',
+            'persistentFirst = makePersistentClosure(10);',
+            'persistentSecond = makePersistentClosure(20);',
+            'persistentA = persistentFirst(1);',
+            'persistentB = persistentFirst(1);',
+            'persistentC = persistentSecond(1);',
+            'persistentD = persistentFirst(1);',
             'early = earlyReturn(9);',
             'global touchedByEmptyReturn',
-            'localValue; localHandle(2); touchedByEmptyReturn; left; right; count; firstPacked; secondPacked; counterFirst; counterSecond; early',
+            'localValue; localHandle(2); touchedByEmptyReturn; left; right; count; firstPacked; secondPacked; counterFirst; counterSecond; persistentA; persistentB; persistentC; persistentD; early',
         ].join('\n');
 
         expect(interpreter.Unparse(interpreter.Parse(source))).toBe(
-            'scriptSeed=5\nlocalHandle=@scriptLocalScale\nlocalValue=scriptLocalScale(scriptSeed)\nFUNCTION touchGlobal(x)\nglobal touchedByEmptyReturn\ntouchedByEmptyReturn=x\nENDFUNCTION\nFUNCTION [a,b]=spacedReturns(x)\na=x\nb=x+nargin+nargout\nENDFUNCTION\nFUNCTION [head,varargout]=packValues(x,varargin)\nhead=nargin\nFOR k=1:nargout-1\nvarargout{k}=x+k\n\nENDFOR\nENDFUNCTION\nFUNCTION f=makeCounter(seed)\ncount=seed\nFUNCTION y=next(step)\ncount+=step\ny=count\nENDFUNCTION\nf=@next\nENDFUNCTION\nFUNCTION y=earlyReturn(x)\ny=0\nIF x>0\ny=x\nreturn\n\nENDIF\ny=-1\nENDFUNCTION\nFUNCTION y=scriptLocalScale(x)\ny=x*10\nENDFUNCTION\ntouchGlobal(7)\n[left,right]=spacedReturns(3)\n[count,firstPacked,secondPacked]=packValues(10,20,30)\ncounter=makeCounter(100)\ncounterFirst=counter(5)\ncounterSecond=counter(2)\nearly=earlyReturn(9)\nglobal touchedByEmptyReturn\nlocalValue\nlocalHandle(2)\ntouchedByEmptyReturn\nleft\nright\ncount\nfirstPacked\nsecondPacked\ncounterFirst\ncounterSecond\nearly\n',
+            'scriptSeed=5\nlocalHandle=@scriptLocalScale\nlocalValue=scriptLocalScale(scriptSeed)\nFUNCTION touchGlobal(x)\nglobal touchedByEmptyReturn\ntouchedByEmptyReturn=x\nENDFUNCTION\nFUNCTION [a,b]=spacedReturns(x)\na=x\nb=x+nargin+nargout\nENDFUNCTION\nFUNCTION [head,varargout]=packValues(x,varargin)\nhead=nargin\nFOR k=1:nargout-1\nvarargout{k}=x+k\n\nENDFOR\nENDFUNCTION\nFUNCTION f=makeCounter(seed)\ncount=seed\nFUNCTION y=next(step)\ncount+=step\ny=count\nENDFUNCTION\nf=@next\nENDFUNCTION\nFUNCTION h=makePersistentClosure(seed)\npersistent shared=0\nshared+=1\nlocal=seed\nFUNCTION y=nextPersistent(step)\nlocal+=step\ny=local+shared*100\nENDFUNCTION\nh=@nextPersistent\nENDFUNCTION\nFUNCTION y=earlyReturn(x)\ny=0\nIF x>0\ny=x\nreturn\n\nENDIF\ny=-1\nENDFUNCTION\nFUNCTION y=scriptLocalScale(x)\ny=x*10\nENDFUNCTION\ntouchGlobal(7)\n[left,right]=spacedReturns(3)\n[count,firstPacked,secondPacked]=packValues(10,20,30)\ncounter=makeCounter(100)\ncounterFirst=counter(5)\ncounterSecond=counter(2)\npersistentFirst=makePersistentClosure(10)\npersistentSecond=makePersistentClosure(20)\npersistentA=persistentFirst(1)\npersistentB=persistentFirst(1)\npersistentC=persistentSecond(1)\npersistentD=persistentFirst(1)\nearly=earlyReturn(9)\nglobal touchedByEmptyReturn\nlocalValue\nlocalHandle(2)\ntouchedByEmptyReturn\nleft\nright\ncount\nfirstPacked\nsecondPacked\ncounterFirst\ncounterSecond\npersistentA\npersistentB\npersistentC\npersistentD\nearly\n',
         );
         expect(interpreter.Unparse(interpreter.Execute(source))).toBe(
-            'scriptSeed=5\nlocalHandle=@scriptLocalScale\nlocalValue=50\nleft=3\nright=6\ncount=3\nfirstPacked=11\nsecondPacked=12\ncounter=@next\ncounterFirst=105\ncounterSecond=107\nearly=9\n50\n20\n7\n3\n6\n3\n11\n12\n105\n107\n9\n',
+            'scriptSeed=5\nlocalHandle=@scriptLocalScale\nlocalValue=50\nleft=3\nright=6\ncount=3\nfirstPacked=11\nsecondPacked=12\ncounter=@next\ncounterFirst=105\ncounterSecond=107\npersistentFirst=@nextPersistent\npersistentSecond=@nextPersistent\npersistentA=111\npersistentB=112\npersistentC=221\npersistentD=113\nearly=9\n50\n20\n7\n3\n6\n3\n11\n12\n105\n107\n111\n112\n221\n113\n9\n',
         );
     });
 
@@ -2729,6 +3551,46 @@ describe('Parser conformance fixtures.', () => {
         );
 
         expect(interpreter.Unparse(interpreter.Execute('a; b'))).toBe('12\n15\n');
+    });
+
+    it('Should keep MATLAB-compatible nested function visibility across lexical levels.', () => {
+        const interpreter = Interpreter.Create();
+        interpreter.Execute(
+            [
+                'function [fromParent, fromSibling, fromDescendant] = nestedVisibilityProbe(x)',
+                '  fromParent = first(x) + second(x);',
+                '  fromSibling = firstCallsSecond(x);',
+                '  fromDescendant = firstCallsDescendant(x);',
+                '  function y = first(v)',
+                '    y = v + 1;',
+                '  end',
+                '  function y = second(v)',
+                '    y = v + 2;',
+                '  end',
+                '  function y = firstCallsSecond(v)',
+                '    y = second(v) + 10;',
+                '  end',
+                '  function y = firstCallsDescendant(v)',
+                '    y = nestedChild(v) + second(v);',
+                '    function z = nestedChild(w)',
+                '      z = first(w) + second(w) + 100;',
+                '    end',
+                '  end',
+                'end',
+                'function y = nestedVisibilityRejectChild()',
+                '  y = hiddenChild(1);',
+                '  function firstCallsHidden()',
+                '    function z = hiddenChild(w)',
+                '      z = w;',
+                '    end',
+                '  end',
+                'end',
+                '[fromParent, fromSibling, fromDescendant] = nestedVisibilityProbe(5);',
+            ].join('\n'),
+        );
+
+        expect(interpreter.Unparse(interpreter.Execute('fromParent; fromSibling; fromDescendant'))).toBe('13\n17\n120\n');
+        expect(() => interpreter.Execute('nestedVisibilityRejectChild()')).toThrow("'hiddenChild' undefined.");
     });
 
     it('Should expose local and nested function handles through localfunctions.', () => {
@@ -2774,6 +3636,52 @@ describe('Parser conformance fixtures.', () => {
             'f=@(x,varargin) x+nargin+varargin{1}\na=6\ng=@(varargin) nargin\nb=0\nc=3\nh=@() deal(4,5)\nu=4\nv=5\n6\n0\n3\n4\n5\n',
         );
         expect(() => interpreter.Execute('@(varargin, x) x')).toThrow('varargin must be the last parameter in anonymous function.');
+    });
+
+    it('Should keep anonymous eval compatible with static workspace rules.', () => {
+        const interpreter = Interpreter.Create();
+        const source = [
+            'captured = 20;',
+            "readParam = @(x) eval('x + 1');",
+            "readCaptured = @() eval('captured + 1');",
+            'paramValue = readParam(5);',
+            'capturedValue = readCaptured();',
+            'paramValue; capturedValue',
+        ].join('\n');
+
+        expect(interpreter.Unparse(interpreter.Execute(source))).toBe(
+            'captured=20\nreadParam=@(x) eval(x + 1)\nreadCaptured=@() eval(captured + 1)\nparamValue=6\ncapturedValue=21\n6\n21\n',
+        );
+        expect(() => interpreter.Execute("dynamicAnon = @() eval('createdFromAnon = 1'); dynamicAnon()")).toThrow("Attempt to add variable 'createdFromAnon' to a static workspace.");
+    });
+
+    it('Should keep anonymous evalin caller compatible with static workspace rules.', () => {
+        const interpreter = Interpreter.Create();
+        const source = [
+            'x = 10;',
+            "readCaller = @(n) evalin('caller', 'x + n');",
+            'callerValue = readCaller(5);',
+            'function y = makeEvalinReader(base)',
+            "  y = @(n) evalin('caller', 'base + n');",
+            'end',
+            'function f = makeEvalinWriter()',
+            '  base = 3;',
+            "  f = @() evalin('caller', 'base = base + 1');",
+            'end',
+            'reader = makeEvalinReader(20);',
+            'returnedValue = reader(2);',
+            'writer = makeEvalinWriter();',
+            'firstWrite = writer();',
+            'secondWrite = writer();',
+            'callerValue; returnedValue; firstWrite; secondWrite',
+        ].join('\n');
+
+        expect(interpreter.Unparse(interpreter.Execute(source))).toBe(
+            'x=10\nreadCaller=@(n) evalin(caller,x + n)\ncallerValue=15\nreader=@(n) evalin(caller,base + n)\nreturnedValue=22\nwriter=@() evalin(caller,base = base + 1)\nfirstWrite=base=4\nsecondWrite=base=5\n15\n22\nbase=4\nbase=5\n',
+        );
+        expect(() => interpreter.Execute("dynamicEvalin = @() evalin('caller', 'createdFromEvalinAnon = 1'); dynamicEvalin()")).toThrow(
+            "Attempt to add variable 'createdFromEvalinAnon' to a static workspace.",
+        );
     });
 
     it('Should reject ignored targets outside signature, call, or assignment-list positions.', () => {

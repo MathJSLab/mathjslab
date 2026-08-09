@@ -91,13 +91,14 @@ class FunctionStack {
      * exposing caller-visible names to `evalin`. For assignment, the real caller
      * workspace is used instead of the overlay.
      */
-    public static callerWorkspace(frames: FunctionFrame[], globalScope: WorkspaceScope, createScope: CreateScope, forAssignment = false): WorkspaceScope {
+    public static callerWorkspace(frames: FunctionFrame[], globalScope: WorkspaceScope, createScope: CreateScope, forAssignment = false, variablesOnly = false): WorkspaceScope {
         const currentCallableFrame = this.currentFunctionCountFrame(frames);
-        if (currentCallableFrame?.func?.type === 'LAMBDA' && !forAssignment) {
+        if (currentCallableFrame?.func?.type === 'LAMBDA' && !forAssignment && variablesOnly) {
             return this.anonymousCallerWorkspace(currentCallableFrame, globalScope, createScope);
         }
         const frame = this.skipBuiltInFrames(currentCallableFrame?.parentFrame);
-        return frame?.scope ?? globalScope;
+        const scope = frame?.scope ?? globalScope;
+        return !forAssignment && variablesOnly ? this.variableOnlyCallerWorkspace(scope, createScope) : scope;
     }
 
     /**
@@ -105,11 +106,105 @@ class FunctionStack {
      */
     private static anonymousCallerWorkspace(lambdaFrame: FunctionFrame, globalScope: WorkspaceScope, createScope: CreateScope): WorkspaceScope {
         const callerFrame = this.skipBuiltInFrames(lambdaFrame.parentFrame);
-        const workspace = createScope(lambdaFrame.scope.parent);
-        FunctionWorkspace.copyVisibleScopeEntries(workspace, callerFrame?.scope ?? globalScope);
-        Object.assign(workspace.nameTable, lambdaFrame.scope.nameTable);
-        Object.assign(workspace.functionTable, lambdaFrame.scope.functionTable);
+        const workspace = createScope();
+        const sourceScopes = new Map<string, WorkspaceScope>();
+        this.copyVisibleVariablesWithSources(workspace, callerFrame?.scope ?? globalScope, sourceScopes);
+        this.copyVisibleVariablesWithSources(workspace, lambdaFrame.scope, sourceScopes);
+        workspace.rejectDynamicNameCreation = lambdaFrame.scope.rejectDynamicNameCreation;
+        workspace.staticWorkspaceNameSet = lambdaFrame.scope.staticWorkspaceNameSet ? new Set(lambdaFrame.scope.staticWorkspaceNameSet) : undefined;
+        workspace.globalDeclarationTarget = lambdaFrame.scope;
+        this.attachVariableOnlyWriteThrough(workspace, (name) => sourceScopes.get(name) ?? lambdaFrame.scope);
         return workspace;
+    }
+
+    /**
+     * Build the ordinary `evalin('caller', ...)` overlay.
+     *
+     * MATLAB documents `evalin('caller', ...)` as resolving caller variables
+     * but not functions. The overlay shares name entries with the real caller
+     * so assignments update the caller workspace while function lookup remains
+     * intentionally empty and parentless.
+     */
+    private static variableOnlyCallerWorkspace(scope: WorkspaceScope, createScope: CreateScope): WorkspaceScope {
+        const workspace = createScope();
+        FunctionWorkspace.copyVisibleScopeEntries(workspace, scope, false);
+        workspace.rejectDynamicNameCreation = scope.rejectDynamicNameCreation;
+        workspace.staticWorkspaceNameSet = scope.staticWorkspaceNameSet ? new Set(scope.staticWorkspaceNameSet) : undefined;
+        workspace.globalDeclarationTarget = scope;
+        this.attachVariableOnlyWriteThrough(workspace, () => scope);
+        return workspace;
+    }
+
+    /**
+     * Copy visible variable entries and remember the scope that owns each name.
+     */
+    private static copyVisibleVariablesWithSources(target: WorkspaceScope, source: WorkspaceScope | undefined, sourceScopes: Map<string, WorkspaceScope>): void {
+        const chain: WorkspaceScope[] = [];
+        let current = source;
+        while (current) {
+            chain.push(current);
+            if (!current.resolveParentNames) {
+                break;
+            }
+            current = current.parent;
+        }
+        for (let index = chain.length - 1; index >= 0; index--) {
+            const item = chain[index];
+            Object.assign(target.nameTable, item.nameTable);
+            for (const name of Object.keys(item.nameTable)) {
+                sourceScopes.set(name, item);
+            }
+        }
+    }
+
+    /**
+     * Attach variable write-through methods to a variable-only overlay.
+     */
+    private static attachVariableOnlyWriteThrough(workspace: WorkspaceScope, sourceForName: (name: string) => WorkspaceScope): void {
+        const writeThroughScope = (scope: WorkspaceScope, writer: () => ReturnType<WorkspaceScope['defineName']>) => {
+            const previous = scope.rejectDynamicNameCreation;
+            if (workspace.rejectDynamicNameCreation) {
+                scope.rejectDynamicNameCreation = true;
+            }
+            try {
+                return writer();
+            } finally {
+                scope.rejectDynamicNameCreation = previous;
+            }
+        };
+        workspace.defineName = (name, node, undefinedReference) => {
+            const scope = sourceForName(name);
+            const entry = writeThroughScope(scope, () => scope.defineName(name, node, undefinedReference));
+            workspace.nameTable[name] = entry;
+            return entry;
+        };
+        workspace.assignName = (name, node, undefinedReference) => {
+            const scope = sourceForName(name);
+            const assignName = scope.assignName?.bind(scope);
+            const entry = writeThroughScope(scope, () => (assignName ? assignName(name, node, undefinedReference) : scope.defineName(name, node, undefinedReference)));
+            workspace.nameTable[name] = entry;
+            return entry;
+        };
+        workspace.removeName = (name) => {
+            const scope = sourceForName(name);
+            if (scope.removeName) {
+                scope.removeName(name);
+            } else {
+                delete scope.nameTable[name];
+            }
+            delete workspace.nameTable[name];
+        };
+        workspace.clearName = (name) => {
+            const scope = sourceForName(name);
+            if (scope.clearName) {
+                scope.clearName(name);
+            } else if (scope.removeName) {
+                scope.removeName(name);
+            } else {
+                delete scope.nameTable[name];
+            }
+            delete workspace.nameTable[name];
+        };
     }
 
     /**

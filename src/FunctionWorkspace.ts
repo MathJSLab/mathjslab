@@ -11,13 +11,20 @@ type WorkspaceScope = {
     nameTable: NameTable;
     functionTable: FunctionTable;
     resolveParentNames: boolean;
-    defineName(name: string, node: NodeInput): NameEntry;
+    rejectDynamicNameCreation?: boolean;
+    staticWorkspaceNameSet?: Set<string>;
+    globalDeclarationTarget?: WorkspaceScope;
+    defineName(name: string, node: NodeInput, undefinedReference?: string): NameEntry;
+    assignName?(name: string, node: NodeInput, undefinedReference?: string): NameEntry;
+    removeName?(name: string): void;
+    clearName?(name: string): void;
     hasLocalName(name: string): boolean;
 };
 
 type RuntimeNameWriter = {
     nameTable?: NameTable;
     defineName(name: string, node: RuntimeExpressionValue): NameEntry;
+    assignName?(name: string, node: RuntimeExpressionValue): NameEntry;
 };
 
 type ThrowSyntaxError = (message: string) => never;
@@ -61,7 +68,7 @@ class FunctionWorkspace {
      * parent entries. It stops when a scope disables parent-name resolution,
      * preserving detached closure snapshots.
      */
-    public static copyVisibleScopeEntries(target: Pick<WorkspaceScope, 'nameTable' | 'functionTable'>, source?: WorkspaceScope): void {
+    public static copyVisibleScopeEntries(target: Pick<WorkspaceScope, 'nameTable' | 'functionTable'>, source?: WorkspaceScope, includeFunctions = true): void {
         if (!source) {
             return;
         }
@@ -76,7 +83,9 @@ class FunctionWorkspace {
         }
         for (const item of chain) {
             Object.assign(target.nameTable, item.nameTable);
-            Object.assign(target.functionTable, item.functionTable);
+            if (includeFunctions) {
+                Object.assign(target.functionTable, item.functionTable);
+            }
         }
     }
 
@@ -167,7 +176,12 @@ class FunctionWorkspace {
      * an answer in the command UI.
      */
     public static assignIn(scope: RuntimeNameWriter, name: string, value: RuntimeExpressionValue): NodeInput {
-        scope.defineName(name, RuntimeValue.copy(value));
+        const copied = RuntimeValue.copy(value);
+        if (scope.assignName) {
+            scope.assignName(name, copied);
+        } else {
+            scope.defineName(name, copied);
+        }
         return AST.nodeVoid();
     }
 

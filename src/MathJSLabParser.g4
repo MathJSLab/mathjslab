@@ -73,6 +73,37 @@ type ParserArgumentValidationNameNode = NodeIdentifier | NodeIndirectRef;
 
 }
 
+@members {
+
+    /**
+     * Attach source coordinates to one parsed statement node.
+     *
+     * ANTLR exposes the start token through each rule context, while the next
+     * token after a completed statement identifies the last consumed position
+     * used by the existing parser diagnostics.
+     */
+    private markStatementRange(node: NodeInput, statementStart: Token): void {
+        node.start = {
+            line: statementStart.line,
+            column: statementStart.column,
+        };
+        node.stop = {
+            line: this._input.LT(1).column > 0 ? this._input.LT(1).line : this._input.LT(1).line - 1,
+            column: this._input.LT(1).column > 0 ? this._input.LT(1).column - 1 : Infinity,
+        };
+    }
+
+    /**
+     * Apply MATLAB/Octave semicolon output suppression to the previous list item.
+     */
+    private markPreviousStatementOmitOutput(list: NodeList, separatorText?: string): void {
+        if (separatorText?.[0] === ';') {
+            list.list[list.list.length - 1].omitOutput = true;
+        }
+    }
+
+}
+
 /**
  * Input (start non-terminal symbol).
  */
@@ -93,64 +124,28 @@ input returns [node: NodeInput | null]
 global_list returns [node: NodeList]
     locals [i: number = 0]
     : statement {
-        localctx.statement(localctx.i).node.start = {
-            line: localctx.statement(localctx.i).start.line,
-            column: localctx.statement(localctx.i).start.column,
-        };
-        localctx.statement(localctx.i).node.stop = {
-            line: this._input.LT(1).column > 0 ? this._input.LT(1).line : this._input.LT(1).line - 1,
-            column: this._input.LT(1).column > 0 ? this._input.LT(1).column - 1 : Infinity,
-        };
+        this.markStatementRange(localctx.statement(localctx.i).node, localctx.statement(localctx.i).start);
         localctx.node = AST.nodeListFirst(localctx.statement(localctx.i++).node);
     } (sep statement {
-        localctx.statement(localctx.i).node.start = {
-            line: localctx.statement(localctx.i).start.line,
-            column: localctx.statement(localctx.i).start.column,
-        };
-        localctx.statement(localctx.i).node.stop = {
-            line: this._input.LT(1).column > 0 ? this._input.LT(1).line : this._input.LT(1).line - 1,
-            column: this._input.LT(1).column > 0 ? this._input.LT(1).column - 1 : Infinity,
-        };
-        if (localctx.sep(localctx.i - 1).getText()[0] === ';') {
-            localctx.node.list[localctx.node.list.length - 1].omitOutput = true;
-        }
+        this.markStatementRange(localctx.statement(localctx.i).node, localctx.statement(localctx.i).start);
+        this.markPreviousStatementOmitOutput(localctx.node, localctx.sep(localctx.i - 1).getText());
         localctx.node = AST.appendNodeList(localctx.node, localctx.statement(localctx.i++).node);
     } )* sep? {
-        if (localctx.sep(localctx.i - 1) && localctx.sep(localctx.i - 1).getText()[0] === ';') {
-            localctx.node.list[localctx.node.list.length - 1].omitOutput = true;
-        }
+        this.markPreviousStatementOmitOutput(localctx.node, localctx.sep(localctx.i - 1)?.getText());
     }
     ;
 
 list returns [node: NodeList]
     locals [i: number = 0]
     : statement {
-        localctx.statement(localctx.i).node.start = {
-            line: localctx.statement(localctx.i).start.line,
-            column: localctx.statement(localctx.i).start.column,
-        };
-        localctx.statement(localctx.i).node.stop = {
-            line: this._input.LT(1).column > 0 ? this._input.LT(1).line : this._input.LT(1).line - 1,
-            column: this._input.LT(1).column > 0 ? this._input.LT(1).column - 1 : Infinity,
-        };
+        this.markStatementRange(localctx.statement(localctx.i).node, localctx.statement(localctx.i).start);
         localctx.node = AST.nodeListFirst(localctx.statement(localctx.i++).node);
     } (sep statement {
-        localctx.statement(localctx.i).node.start = {
-            line: localctx.statement(localctx.i).start.line,
-            column: localctx.statement(localctx.i).start.column,
-        };
-        localctx.statement(localctx.i).node.stop = {
-            line: this._input.LT(1).column > 0 ? this._input.LT(1).line : this._input.LT(1).line - 1,
-            column: this._input.LT(1).column > 0 ? this._input.LT(1).column - 1 : Infinity,
-        };
-        if (localctx.sep(localctx.i - 1).getText()[0] === ';') {
-            localctx.node.list[localctx.node.list.length - 1].omitOutput = true;
-        }
+        this.markStatementRange(localctx.statement(localctx.i).node, localctx.statement(localctx.i).start);
+        this.markPreviousStatementOmitOutput(localctx.node, localctx.sep(localctx.i - 1).getText());
         localctx.node = AST.appendNodeList(localctx.node, localctx.statement(localctx.i++).node);
     } )* sep? {
-        if (localctx.sep(localctx.i - 1) && localctx.sep(localctx.i - 1).getText()[0] === ';') {
-            localctx.node.list[localctx.node.list.length - 1].omitOutput = true;
-        }
+        this.markPreviousStatementOmitOutput(localctx.node, localctx.sep(localctx.i - 1)?.getText());
     }
     ;
 

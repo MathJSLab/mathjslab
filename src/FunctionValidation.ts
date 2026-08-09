@@ -116,7 +116,7 @@ class FunctionValidation {
             return 'function_handle';
         }
         if (ClassEventListener.isInstanceOf(value)) {
-            return 'event.listener';
+            return value.kind;
         }
         if (ClassPropertyEvent.isInstanceOf(value)) {
             return 'event.PropertyEvent';

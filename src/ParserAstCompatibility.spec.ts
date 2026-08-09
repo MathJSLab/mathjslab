@@ -8,6 +8,7 @@ import {
     type NodeFor,
     type NodeFunctionDefinition,
     type NodeIdentifier,
+    type NodeIf,
     type NodeIndexExpr,
     type NodeIndirectRef,
     type NodeInput,
@@ -58,6 +59,31 @@ const numericValue = (node: unknown): number => {
 const idsOf = (list: { list: NodeInput[] }): string[] => list.list.map((node) => identifierNode(node).id);
 
 describe('Parser AST compatibility fixtures.', () => {
+    it('Should expose source ranges and semicolon output suppression for statement lists.', () => {
+        const tree = parseList(['a = 1; b = 2', 'if true', '  c = 3; d = 4', 'end'].join('\n'));
+        const first = binaryOperationNode(tree.list[0]);
+        const second = binaryOperationNode(tree.list[1]);
+        const block = expectNode(tree.list[2], AST.isNodeBase, 'if block');
+        const ifBlock = expectNode(block, (node): node is NodeIf => AST.isNodeBase(node) && node.type === 'IF', 'if block');
+        const innerFirst = binaryOperationNode(ifBlock.then[0].list[0]);
+        const innerSecond = binaryOperationNode(ifBlock.then[0].list[1]);
+
+        expect(first.start).toEqual({ line: 1, column: 0 });
+        expect(first.stop).toEqual({ line: 1, column: 4 });
+        expect(first.omitOutput).toBe(true);
+        expect(second.start).toEqual({ line: 1, column: 7 });
+        expect(second.stop).toEqual({ line: 1, column: 11 });
+        expect(second.omitOutput).toBe(false);
+        expect(ifBlock.start).toEqual({ line: 2, column: 0 });
+        expect(ifBlock.stop).toEqual({ line: 4, column: 2 });
+        expect(innerFirst.start).toEqual({ line: 3, column: 2 });
+        expect(innerFirst.stop).toEqual({ line: 3, column: 6 });
+        expect(innerFirst.omitOutput).toBe(true);
+        expect(innerSecond.start).toEqual({ line: 3, column: 9 });
+        expect(innerSecond.stop).toEqual({ line: 3, column: 13 });
+        expect(innerSecond.omitOutput).toBe(false);
+    });
+
     it('Should preserve dynamic field access followed by vector indexing with end.', () => {
         const assignment = binaryOperationNode(parseList('dynamicPick = nested.inner.(dyn)([2,end]);').list[0]);
         const index = indexNode(assignment.right);
@@ -200,6 +226,7 @@ describe('Parser AST compatibility fixtures.', () => {
                 '  methods (Abstract)',
                 '    y = foo(obj, x)',
                 '    bar(obj)',
+                '    [] = reset(obj)',
                 '    z = pkg.Factory.make(obj)',
                 '  end',
                 'end',
@@ -211,7 +238,7 @@ describe('Parser AST compatibility fixtures.', () => {
         const dependent = properties.attributeTable.Dependent[0];
         const hidden = properties.attributeTable.Hidden[0];
         const abstract = methods.attributeTable.Abstract[0];
-        const [foo, bar, qualified] = methods.members.list as NodeFunctionDefinition[];
+        const [foo, bar, reset, qualified] = methods.members.list as NodeFunctionDefinition[];
 
         expect(classDef.type).toBe('CLASSDEF');
         expect(classDef.id).toBe('PrototypeClass');
@@ -238,6 +265,12 @@ describe('Parser AST compatibility fixtures.', () => {
         expect(idsOf(bar.return)).toEqual([]);
         expect(idsOf(bar.parameter)).toEqual(['obj']);
         expect(bar.parent).toBe(methods);
+
+        expect(reset.id).toBe('reset');
+        expect(reset.attributes?.prototype).toBe(true);
+        expect(idsOf(reset.return)).toEqual([]);
+        expect(idsOf(reset.parameter)).toEqual(['obj']);
+        expect(reset.parent).toBe(methods);
 
         expect(qualified.id).toBe('pkg.Factory.make');
         expect(qualified.attributes?.prototype).toBe(true);

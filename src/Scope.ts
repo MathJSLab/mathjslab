@@ -26,8 +26,15 @@ type ImportTable = {
  * - `assignExistingParentNames`: when true, assignments update an existing
  *   parent binding instead of always creating a local name. Nested functions use
  *   this to emulate MATLAB/Octave shared workspaces.
+ * - `rejectDynamicNameCreation`: when true, dynamic evaluation paths may only
+ *   create names known from the function text. This models MATLAB static
+ *   workspaces for nested/anonymous functions without affecting normal
+ *   statement execution.
  */
 class Scope {
+    /** Real workspace that should receive declarations issued through an overlay scope. */
+    public globalDeclarationTarget?: Scope;
+
     /**
      * Use `Scope.create` so scope tables are always prototype-less maps.
      */
@@ -39,6 +46,8 @@ class Scope {
         public importTable: ImportTable = { explicit: Object.create(null), wildcard: [] },
         public resolveParentNames: boolean = true,
         public assignExistingParentNames: boolean = false,
+        public rejectDynamicNameCreation: boolean = false,
+        public staticWorkspaceNameSet?: Set<string>,
     ) {}
 
     /**
@@ -74,6 +83,9 @@ class Scope {
             }
             return entry;
         }
+        if (!this.canCreateLocalName(name)) {
+            throw new Error(`Attempt to add variable '${name}' to a static workspace.`);
+        }
         return undefinedReference ? (this.nameTable[name] = { undefinedReference, node }) : (this.nameTable[name] = { node });
     }
 
@@ -102,7 +114,45 @@ class Scope {
                 return parentEntry;
             }
         }
+        if (!this.canCreateLocalName(name)) {
+            throw new Error(`Attempt to add variable '${name}' to a static workspace.`);
+        }
         return this.defineName(name, node, undefinedReference);
+    }
+
+    /**
+     * Check whether an assignment may introduce a local name in this scope.
+     *
+     * Normal code paths leave `rejectDynamicNameCreation` disabled. Dynamic
+     * execution (`eval`, scripts sourced from a static workspace, and
+     * `assignin`) enables it temporarily so only textually known names may be
+     * introduced.
+     *
+     * @param name Candidate local name.
+     * @returns `true` when the name can be created locally.
+     */
+    public canCreateLocalName(name: string): boolean {
+        return !this.rejectDynamicNameCreation || this.hasLocalName(name) || Boolean(this.staticWorkspaceNameSet?.has(name));
+    }
+
+    /**
+     * Add one textually declared variable name to the static-workspace allowlist.
+     *
+     * @param name Variable name known from parsed function text.
+     */
+    public allowStaticWorkspaceName(name: string): void {
+        (this.staticWorkspaceNameSet ??= new Set()).add(name);
+    }
+
+    /**
+     * Add several textually declared variable names to the static-workspace allowlist.
+     *
+     * @param names Variable names known from parsed function text.
+     */
+    public allowStaticWorkspaceNames(names: Iterable<string>): void {
+        for (const name of names) {
+            this.allowStaticWorkspaceName(name);
+        }
     }
 
     /**
@@ -450,6 +500,9 @@ class Scope {
         }
         scope.importTable.explicit = Scope.cloneExplicitImports(this.importTable.explicit);
         scope.importTable.wildcard = [...this.importTable.wildcard];
+        scope.assignExistingParentNames = this.assignExistingParentNames;
+        scope.rejectDynamicNameCreation = this.rejectDynamicNameCreation;
+        scope.staticWorkspaceNameSet = this.staticWorkspaceNameSet ? new Set(this.staticWorkspaceNameSet) : undefined;
         return scope;
     }
 
@@ -480,6 +533,9 @@ class Scope {
         }
         scope.importTable.explicit = Scope.cloneExplicitImports(this.importTable.explicit);
         scope.importTable.wildcard = [...this.importTable.wildcard];
+        scope.assignExistingParentNames = this.assignExistingParentNames;
+        scope.rejectDynamicNameCreation = this.rejectDynamicNameCreation;
+        scope.staticWorkspaceNameSet = this.staticWorkspaceNameSet ? new Set(this.staticWorkspaceNameSet) : undefined;
         return scope;
     }
 

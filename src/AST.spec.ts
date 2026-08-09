@@ -150,6 +150,28 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(node.omitOutput).toBe(false);
         });
 
+        it('Should promote identifiers to empty command word list nodes without loose mutation.', () => {
+            const command = AST.nodeIdentifier('help');
+            const parent = AST.nodeListFirst(command);
+            command.index = 3;
+            command.start = { line: 1, column: 10 };
+            command.stop = { line: 1, column: 14 };
+            command.omitOutput = true;
+
+            const node = AST.nodeEmptyCmdWList(command);
+
+            expect(node.type).toBe('CMDWLIST');
+            expect(node.id).toBe('help');
+            expect(node.args).toEqual([]);
+            expect(node.parent).toBe(parent);
+            expect(node.index).toBe(3);
+            expect(node.start).toEqual({ line: 1, column: 10 });
+            expect(node.stop).toEqual({ line: 1, column: 14 });
+            expect(node.omitAnswer).toBe(true);
+            expect(node.omitOutput).toBe(true);
+            expect(command.parent).toBe(node);
+        });
+
         it('Should reject non-string command word list arguments.', () => {
             expect(() => AST.nodeCmdWList(AST.nodeIdentifier('disp'), AST.nodeListFirst(AST.nodeReturn()))).toThrow('command argument 1 is not a command word.');
         });

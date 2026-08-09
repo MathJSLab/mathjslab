@@ -162,6 +162,15 @@ class FunctionHandle {
     public className?: string;
 
     /**
+     * Whether name resolution must ignore nested functions for this handle.
+     *
+     * MATLAB permits nested functions to be called directly or through an
+     * `@nestedName` handle created in lexical scope. Textual APIs such as
+     * `feval('nestedName')` must not use the surrounding nested-function table.
+     */
+    public disallowNestedResolution = false;
+
+    /**
      * Type guard for FunctionHandle.
      *
      * @param obj - Value to test
@@ -296,6 +305,7 @@ class FunctionHandle {
         result.parent = fhandle.parent;
         result.sourceName = fhandle.sourceName;
         result.className = fhandle.className;
+        result.disallowNestedResolution = fhandle.disallowNestedResolution;
         return result;
     };
 

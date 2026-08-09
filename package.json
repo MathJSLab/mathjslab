@@ -1,6 +1,6 @@
 {
     "name": "mathjslab",
-    "version": "2.4.0",
+    "version": "2.5.0",
     "description": "MathJSLab - An interpreter with language syntax like MATLAB®/Octave, ISBN 978-65-00-82338-7.",
     "keywords": [
         "MathJSLab",
@@ -184,7 +184,7 @@
         "ts-loader": "^9.6.2",
         "ts-node": "^10.9.2",
         "tsconfig-paths": "^4.2.0",
-        "tsx": "^4.23.5",
+        "tsx": "^4.23.11",
         "turndown": "^7.2.4",
         "typedoc": "^0.28.20",
         "typescript": "^6.0.3",
@@ -199,7 +199,7 @@
         "yarn": "false"
     },
     "allowScripts": {
-        "esbuild@0.28.1": true,
-        "unrs-resolver@1.12.2": true
+        "unrs-resolver@1.12.2": true,
+        "esbuild@0.28.2": true
     }
 }

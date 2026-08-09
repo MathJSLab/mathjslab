@@ -3,7 +3,7 @@ import { AST } from './AST';
 import type { ClassDefinition } from './ClassDefinition';
 import type { FunctionHandle } from './FunctionHandle';
 import type { RuntimeDisplay } from './RuntimeDisplay';
-import { ClassEventListener } from './ClassEventListener';
+import { ClassEventListener, type ClassEventListenerKind } from './ClassEventListener';
 import { CharString } from './CharString';
 import { runtimeExpressionValue } from './ExpressionValue';
 import { MultiArray } from './MultiArray';
@@ -33,6 +33,10 @@ class ClassInstance {
     public readonly properties: ClassInstancePropertyTable;
     /** Event listeners grouped by event name. */
     public readonly listeners: Record<string, ClassEventListener[]> = {};
+    /** Source object assigned by `notify` for `event.EventData` subclasses. */
+    public eventDataSource?: ClassInstance;
+    /** Event name assigned by `notify` for `event.EventData` subclasses. */
+    public eventDataEventName?: string;
     /** Whether a handle instance has been deleted. */
     public deleted = false;
 
@@ -201,13 +205,21 @@ class ClassInstance {
      * @param instance Source instance.
      * @param eventName Event name.
      * @param callback Listener callback function handle.
+     * @param listenerKey Internal listener-table key.
+     * @param kind MATLAB-like runtime listener class.
      * @returns Created listener object.
      */
-    public static readonly addListener = (instance: ClassInstance, eventName: string, callback: FunctionHandle): ClassEventListener => {
+    public static readonly addListener = (
+        instance: ClassInstance,
+        eventName: string,
+        callback: FunctionHandle,
+        listenerKey: string = eventName,
+        kind: ClassEventListenerKind = 'event.listener',
+    ): ClassEventListener => {
         ClassInstance.throwIfDeleted(instance);
-        const listener = ClassEventListener.create(instance, eventName, callback);
-        instance.listeners[eventName] ??= [];
-        instance.listeners[eventName].push(listener);
+        const listener = ClassEventListener.create(instance, eventName, callback, listenerKey, kind);
+        instance.listeners[listenerKey] ??= [];
+        instance.listeners[listenerKey].push(listener);
         return listener;
     };
 

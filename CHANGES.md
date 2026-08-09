@@ -3,6 +3,34 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 2.5.0
+
+- Extended parser/AST conformance around dynamic evaluation, command-form
+  parsing, function-call dispatch, descriptor indexing, comma-separated-list
+  propagation, object/structure indexing, and MATLAB/Octave source-aware
+  diagnostics.
+- Centralized parser statement-range and semicolon output-suppression actions
+  so generated statement lists preserve source coordinates and `omitOutput`
+  consistently across top-level and nested blocks.
+- Moved no-argument command-form promotion into the AST factory layer, avoiding
+  loose evaluator-side mutation when registered word-list command names parse
+  first as identifiers.
+- Expanded public `substruct`/`subsref`/`subsasgn` conformance for native
+  structures, cells, character vectors, object arrays, and cells containing
+  objects, including chained dynamic fields, mixed `()`, `{}`, and `.`
+  descriptors, logical/vector subscripts, scalar broadcast, deletion with `[]`,
+  and implicit nested-path creation.
+- Preserved comma-separated-list behavior through chained indexing and method
+  calls such as `C{:}.field(idx)`, `C{:}.method()`, and `S.obj.method()`, while
+  keeping package/class-qualified name resolution and class `subsref` overload
+  precedence intact.
+- Tightened descriptor-dispatch boundaries so cells containing native
+  structures stay on native indexing paths, while cells containing class
+  objects use the class-property path helpers.
+- Added broad parser/runtime conformance fixtures covering the final
+  descriptor-indexing batches and keeping the source tree under the no-circular
+  dependency release gate.
+
 ## 2.4.0
 
 - Expanded MATLAB/Octave conformance coverage across parser, AST, dispatch, and

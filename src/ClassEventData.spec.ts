@@ -21,5 +21,14 @@ describe('ClassEventData', () => {
             expect(ClassEventData.getProperty(eventData, 'Missing')).toBeUndefined();
             expect(ClassEventData.unparse(eventData, Interpreter.Create())).toBe('event.EventData EventDataSourceSpec.Changed');
         });
+
+        it('Should create undispatched event data objects.', () => {
+            const eventData = ClassEventData.create();
+
+            expect(ClassEventData.isInstanceOf(eventData)).toBe(true);
+            expect(ClassEventData.getProperty(eventData, 'Source')).toBeUndefined();
+            expect(ClassEventData.getProperty(eventData, 'EventName')).toBeUndefined();
+            expect(ClassEventData.unparse(eventData, Interpreter.Create())).toBe('event.EventData');
+        });
     });
 });

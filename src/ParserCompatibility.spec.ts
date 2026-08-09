@@ -342,6 +342,25 @@ describe('Parser compatibility fixtures.', () => {
         expect(interpreter.Unparse(interpreter.Execute('cmdprobe "two words" \'single words\' bare'))).toBe('two words|single words|bare\n');
     });
 
+    it('Should keep command-form entry contextual for keywords, comments, and assignment-sensitive names.', () => {
+        const interpreter = Interpreter.Create({
+            externalCmdWListTable: {
+                cmdprobe: {
+                    func: (...args: string[]): CharString => new CharString(args.join('|')),
+                },
+            },
+        });
+
+        expect(interpreter.Unparse(interpreter.Execute(['cmdprobe if else end classdef', 'cmdprobe alpha % trailing comment', 'cmdprobe beta'].join('\n')))).toBe(
+            'if|else|end|classdef\nalpha\nbeta\n',
+        );
+        expect(interpreter.Unparse(interpreter.Execute('run = 1; run += 2; source = 10; source *= 3; exist = 4; which = 5; [run, source, exist, which]'))).toBe(
+            'run=1\nrun=3\nsource=10\nsource=30\nexist=4\nwhich=5\n[3,30,4,5]\n',
+        );
+        expect(interpreter.Unparse(interpreter.Parse('source file name.m caller'))).toBe('source file name.m caller\n');
+        expect(interpreter.Unparse(interpreter.Parse('source("file name.m", "caller")'))).toBe('source(file name.m,caller)\n');
+    });
+
     it('Should parse classdef method prototypes and negated attributes.', () => {
         const interpreter = Interpreter.Create();
         const source = [
@@ -351,14 +370,29 @@ describe('Parser compatibility fixtures.', () => {
             '  end',
             '  methods (Abstract)',
             '    y = foo(obj, x)',
+            '    [] = reset(obj)',
             '    bar(obj)',
             '  end',
             'end',
         ].join('\n');
 
         expect(interpreter.Unparse(interpreter.Parse(source))).toBe(
-            'CLASSDEF PrototypeClass\nPROPERTIES (~Dependent,!Hidden)\nx\nENDPROPERTIES\nMETHODS (Abstract)\ny=foo(obj,x)\nbar(obj)\nENDMETHODS\nENDCLASSDEF\n',
+            'CLASSDEF PrototypeClass\nPROPERTIES (~Dependent,!Hidden)\nx\nENDPROPERTIES\nMETHODS (Abstract)\ny=foo(obj,x)\nreset(obj)\nbar(obj)\nENDMETHODS\nENDCLASSDEF\n',
         );
+    });
+
+    it('Should keep Octave class attribute and parameter separators strict.', () => {
+        const interpreter = Interpreter.Create();
+
+        expect(interpreter.Unparse(interpreter.Parse(['classdef (Abstract, Sealed) StrictAttributes', 'end'].join('\n')))).toBe('CLASSDEF (Abstract,Sealed) StrictAttributes\nENDCLASSDEF\n');
+        expect(interpreter.Unparse(interpreter.Parse(['classdef StrictPropertyAttributes', '  properties (Access = private, Constant)', '    x = 1', '  end', 'end'].join('\n')))).toBe(
+            'CLASSDEF StrictPropertyAttributes\nPROPERTIES (Access=private,Constant)\nx=1\nENDPROPERTIES\nENDCLASSDEF\n',
+        );
+        expect(interpreter.Unparse(interpreter.Parse(['function y = strictparams(x, y)', '  y = x + y;', 'end'].join('\n')))).toBe('FUNCTION y=strictparams(x,y)\ny=x+y\nENDFUNCTION\n');
+
+        expect(() => interpreter.Parse(['classdef (Abstract Sealed) LooseAttributes', 'end'].join('\n'))).toThrow(SyntaxError);
+        expect(() => interpreter.Parse(['classdef LoosePropertyAttributes', '  properties (Access = private Constant)', '    x = 1', '  end', 'end'].join('\n'))).toThrow(SyntaxError);
+        expect(() => interpreter.Parse(['function y = looseparams(x y)', '  y = x;', 'end'].join('\n'))).toThrow(SyntaxError);
     });
 
     it('Should parse classdef attribute lists followed by statement separators.', () => {
@@ -391,10 +425,10 @@ describe('Parser compatibility fixtures.', () => {
 
     it('Should parse Octave-style adjacent class events and enumerations.', () => {
         const interpreter = Interpreter.Create();
-        const source = ['classdef AdjacentClassMembers', '  events Started Finished', '  end', '  enumeration Red(1) Blue(2)', '  end', 'end'].join('\n');
+        const source = ['classdef AdjacentClassMembers < handle', '  events Started Finished', '  end', '  enumeration Red(1) Blue(2)', '  end', 'end'].join('\n');
 
         expect(interpreter.Unparse(interpreter.Parse(source))).toBe(
-            'CLASSDEF AdjacentClassMembers\nEVENTS\nStarted\nFinished\nENDEVENTS\nENUMERATION\nRed(1)\nBlue(2)\nENDENUMERATION\nENDCLASSDEF\n',
+            'CLASSDEF AdjacentClassMembers < handle\nEVENTS\nStarted\nFinished\nENDEVENTS\nENUMERATION\nRed(1)\nBlue(2)\nENDENUMERATION\nENDCLASSDEF\n',
         );
         expect(interpreter.Unparse(interpreter.Execute([source, 'events("AdjacentClassMembers"); enumeration("AdjacentClassMembers"); AdjacentClassMembers.Red'].join('\n')))).toBe(
             '{Finished;\nStarted}\n{Blue;\nRed}\nAdjacentClassMembers.Red\n',

@@ -431,6 +431,119 @@ describe('MATLAB/Octave compatibility stability fixtures.', () => {
         );
     });
 
+    it('Should keep dynamic function handles reloadable after clear functions.', () => {
+        const interpreter = Interpreter.Create({
+            functionSourceTable: {
+                DynamicReloadTarget: ['function y = DynamicReloadTarget(x)', '  y = x + 10;', 'end'].join('\n'),
+                'pkg.dynamic.ImportedReloadTarget': ['function y = ImportedReloadTarget(x)', '  y = x + 20;', 'end'].join('\n'),
+            },
+        });
+        const source = [
+            'f = @DynamicReloadTarget;',
+            'g = str2func("DynamicReloadTarget");',
+            'first = [f(1), g(2), feval("DynamicReloadTarget", 3)];',
+            'clear functions',
+            'afterClearCode = exist("DynamicReloadTarget", "function");',
+            'second = [f(4), g(5), feval("DynamicReloadTarget", 6)];',
+            'function [h, t] = makeImportedReloadHandles()',
+            '  import pkg.dynamic.ImportedReloadTarget',
+            '  h = @ImportedReloadTarget;',
+            '  t = str2func("ImportedReloadTarget");',
+            'end',
+            '[h, t] = makeImportedReloadHandles();',
+            'importFirst = [h(1), t(2)];',
+            'clear functions',
+            'importSecond = [h(3), t(4)];',
+            'qualified = feval("pkg.dynamic.ImportedReloadTarget", 5);',
+            'first; afterClearCode; second; importFirst; importSecond; qualified',
+        ].join('\n');
+
+        expect(interpreter.Unparse(interpreter.Execute(source))).toBe(
+            'f=@DynamicReloadTarget\ng=@DynamicReloadTarget\nfirst=[11,12,13]\nafterClearCode=2\nsecond=[14,15,16]\nh=@ImportedReloadTarget\nt=@ImportedReloadTarget\nimportFirst=[21,22]\nimportSecond=[23,24]\nqualified=25\n[11,12,13]\n2\n[14,15,16]\n[21,22]\n[23,24]\n25\n',
+        );
+    });
+
+    it('Should keep dynamic imports and source-created functions visible to later dispatch.', () => {
+        const interpreter = Interpreter.Create({
+            functionSourceTable: {
+                'pkg.evaldispatch.shift': ['function y = shift(x)', '  y = x + 30;', 'end'].join('\n'),
+            },
+            scriptSourceTable: {
+                dynamicDispatchScript: ['import pkg.evaldispatch.shift', 'scriptHandle = @shift;', 'scriptValue = shift(1);'].join('\n'),
+            },
+        });
+        const source = [
+            "eval('import pkg.evaldispatch.shift; evalHandle = @shift; evalValue = shift(2);');",
+            'source dynamicDispatchScript',
+            'afterEvalHandle = evalHandle(3);',
+            'afterScriptHandle = scriptHandle(4);',
+            'afterString = feval("shift", 5);',
+            'evalValue; scriptValue; afterEvalHandle; afterScriptHandle; afterString',
+        ].join('\n');
+
+        expect(interpreter.Unparse(interpreter.Execute(source))).toBe(
+            'evalHandle=@shift\nevalValue=32\nscriptHandle=@shift\nscriptValue=31\nafterEvalHandle=33\nafterScriptHandle=34\nafterString=35\n32\n31\n33\n34\n35\n',
+        );
+    });
+
+    it('Should re-dispatch names after variables shadow and unshadow functions.', () => {
+        const interpreter = Interpreter.Create({
+            functionSourceTable: {
+                dynamicShadowTarget: ['function y = dynamicShadowTarget(x)', '  y = x + 40;', 'end'].join('\n'),
+            },
+        });
+        const source = [
+            'dynamicShadowTarget = [100, 200, 300];',
+            'indexed = dynamicShadowTarget(2);',
+            'clear dynamicShadowTarget',
+            'called = dynamicShadowTarget(2);',
+            'dynamicShadowTarget = 7;',
+            'whichVariable = which("dynamicShadowTarget");',
+            'clear dynamicShadowTarget',
+            'whichFunction = which("dynamicShadowTarget");',
+            'again = feval("dynamicShadowTarget", 3);',
+            'indexed; called; whichVariable; whichFunction; again',
+        ].join('\n');
+
+        expect(interpreter.Unparse(interpreter.Execute(source))).toBe(
+            'dynamicShadowTarget=[100,200,300]\nindexed=200\ncalled=42\ndynamicShadowTarget=7\nwhichVariable=dynamicShadowTarget is a variable\nwhichFunction=dynamicShadowTarget is a user-defined function\nagain=43\n200\n42\ndynamicShadowTarget is a variable\ndynamicShadowTarget is a user-defined function\n43\n',
+        );
+    });
+
+    it('Should keep dynamic static-method dispatch reloadable after clear classes.', () => {
+        const interpreter = Interpreter.Create({
+            classSourceTable: {
+                'pkg.dynamic.StaticDispatch': [
+                    'classdef StaticDispatch',
+                    '  properties (Constant)',
+                    '    Base = 9;',
+                    '  end',
+                    '  methods (Static)',
+                    '    function y = scale(x)',
+                    '      y = x * 10;',
+                    '    end',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            },
+        });
+        const source = [
+            'direct = pkg.dynamic.StaticDispatch.scale(1);',
+            'f = str2func("pkg.dynamic.StaticDispatch.scale");',
+            'first = f(2);',
+            'clear classes',
+            'afterClearCode = exist("pkg.dynamic.StaticDispatch", "class");',
+            'second = f(3);',
+            'third = feval("pkg.dynamic.StaticDispatch.scale", 4);',
+            'constant = pkg.dynamic.StaticDispatch.Base;',
+            'direct; first; afterClearCode; second; third; constant',
+        ].join('\n');
+
+        expect(interpreter.Unparse(interpreter.Execute(source))).toBe(
+            'direct=10\nf=@pkg.dynamic.StaticDispatch.scale\nfirst=20\nafterClearCode=8\nsecond=30\nthird=40\nconstant=9\n10\n20\n8\n30\n40\n9\n',
+        );
+    });
+
     it('Should execute browser-manifest sources through the unified source resolver.', async () => {
         const responses: Record<string, string> = {
             '/m-files/+pkg/+math/increment.m': ['function y = increment(x)', '  y = x + 1;', 'end'].join('\n'),

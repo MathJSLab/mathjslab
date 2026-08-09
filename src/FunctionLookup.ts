@@ -44,6 +44,7 @@ class FunctionLookup {
         'struct',
         'function_handle',
         'event.listener',
+        'event.proplistener',
         'event.EventData',
         'event.PropertyEvent',
         'handle',

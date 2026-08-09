@@ -16,6 +16,8 @@ class ClassPropertyEvent extends ClassEventData {
     public readonly propertyName: string;
     /** Object whose property changed or was observed. */
     public readonly affectedObject: ClassInstance;
+    /** Metadata object reported as the property event source. */
+    private readonly propertySource: RuntimeExpressionValue;
 
     /**
      * Test whether a value is property event data.
@@ -30,11 +32,14 @@ class ClassPropertyEvent extends ClassEventData {
      *
      * @param source Object whose property raised the event.
      * @param propertyName Property name.
+     * @param eventName Property event name.
+     * @param propertySource Metadata object reported as `Source`.
      */
-    constructor(source: ClassInstance, propertyName: string) {
-        super(source, propertyName);
+    constructor(source: ClassInstance, propertyName: string, eventName: string = propertyName, propertySource: RuntimeExpressionValue = source) {
+        super(source, eventName);
         this.propertyName = propertyName;
         this.affectedObject = source;
+        this.propertySource = propertySource;
     }
 
     /**
@@ -42,9 +47,12 @@ class ClassPropertyEvent extends ClassEventData {
      *
      * @param source Object whose property raised the event.
      * @param propertyName Property name.
+     * @param eventName Property event name.
+     * @param propertySource Metadata object reported as `Source`.
      * @returns Runtime property event data object.
      */
-    public static readonly create = (source: ClassInstance, propertyName: string): ClassPropertyEvent => new ClassPropertyEvent(source, propertyName);
+    public static readonly create = (source?: ClassInstance, propertyName?: string, eventName: string = propertyName ?? '', propertySource?: RuntimeExpressionValue): ClassPropertyEvent =>
+        new ClassPropertyEvent(source!, propertyName ?? '', eventName, propertySource ?? source!);
 
     /**
      * Read a public property event field.
@@ -58,6 +66,8 @@ class ClassPropertyEvent extends ClassEventData {
             return ClassEventData.getProperty(eventData, field);
         }
         switch (field) {
+            case 'Source':
+                return eventData.propertySource;
             case 'AffectedObject':
                 return eventData.affectedObject;
             case 'PropertyName':
@@ -76,7 +86,7 @@ class ClassPropertyEvent extends ClassEventData {
      */
     public static readonly unparse = (eventData: ClassEventData, _interpreter: RuntimeDisplay): string =>
         ClassPropertyEvent.isInstanceOf(eventData)
-            ? `event.PropertyEvent ${eventData.source.classDefinition.name}.${eventData.propertyName}`
+            ? `event.PropertyEvent ${eventData.affectedObject.classDefinition.name}.${eventData.propertyName}`
             : ClassEventData.unparse(eventData, _interpreter);
 
     /**

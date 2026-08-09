@@ -1705,6 +1705,72 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('breakSeen; breakCleanup; continueSeen; continueCleanup'))).toBe('1\n1\n[1,3]\n3\n');
         });
 
+        it('Should let unwind cleanup control-flow signals override body signals.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                [
+                    'function y = cleanupreturnoverride()',
+                    '  y = 0;',
+                    '  unwind_protect',
+                    '    y = 1;',
+                    '    error("mathjslab:body", "body failure");',
+                    '  unwind_protect_cleanup',
+                    '    y = 2;',
+                    '    return',
+                    '  end',
+                    '  y = 3;',
+                    'end',
+                    'breakValue = 0;',
+                    'for k = 1:3',
+                    '  unwind_protect',
+                    '    breakValue = 10;',
+                    '    error("mathjslab:bodyBreak", "body break failure");',
+                    '  unwind_protect_cleanup',
+                    '    breakValue = k;',
+                    '    break',
+                    '  end',
+                    '  breakValue = 99;',
+                    'end',
+                    'continueValues = [];',
+                    'for k = 1:3',
+                    '  unwind_protect',
+                    '    error("mathjslab:bodyContinue", "body continue failure");',
+                    '  unwind_protect_cleanup',
+                    '    continueValues(end + 1) = k;',
+                    '    continue',
+                    '  end',
+                    '  continueValues(end + 1) = 99;',
+                    'end',
+                    'returnValue = cleanupreturnoverride();',
+                ].join('\n'),
+            );
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('returnValue; breakValue; continueValues'))).toBe('2\n1\n[1,2,3]\n');
+        });
+
+        it('Should let unwind cleanup errors override body control flow.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(() =>
+                localInterpreter.Execute(
+                    [
+                        'function y = cleanupreturnerroroverride()',
+                        '  y = 1;',
+                        '  unwind_protect',
+                        '    return',
+                        '  unwind_protect_cleanup',
+                        '    error("mathjslab:cleanup", "cleanup failure");',
+                        '  end',
+                        'end',
+                        'cleanupreturnerroroverride();',
+                    ].join('\n'),
+                ),
+            ).toThrow('cleanup failure');
+            localInterpreter.Execute('err = lasterror();');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('err.message; err.identifier'))).toBe('cleanup failure\nmathjslab:cleanup\n');
+        });
+
         it('Should parse and unparse an empty classdef.', () => {
             const localInterpreter = Interpreter.Create();
 
@@ -2182,6 +2248,19 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('isvalid(handles)'))).toBe('[false,true]\n');
         });
 
+        it('Should delete handle arrays without producing values.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(['classdef DeletableHandleArray < handle', 'end'].join('\n'));
+            localInterpreter.Execute('p = DeletableHandleArray()');
+            localInterpreter.Execute('q = DeletableHandleArray()');
+            localInterpreter.Execute('handles = [p, q]');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('handles.isvalid(); delete(handles); isvalid(handles)'))).toBe('[true,true]\n[false,false]\n');
+            localInterpreter.Execute('r = DeletableHandleArray(); s = DeletableHandleArray(); dottedHandles = [r, s]');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('dottedHandles.delete(); isvalid(dottedHandles)'))).toBe('[false,false]\n');
+        });
+
         it('Should compare handle arrays by identity.', () => {
             const localInterpreter = Interpreter.Create();
 
@@ -2371,7 +2450,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
             localInterpreter.Execute(
                 [
-                    'classdef ArrayMethodPoint',
+                    'classdef ArrayMethodPoint < handle',
                     '  properties',
                     '    x = 0;',
                     '  end',
@@ -2381,6 +2460,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                     '    end',
                     '    function y = add(obj, n)',
                     '      y = obj.x + n;',
+                    '    end',
+                    '    function touch(obj, n)',
+                    '      obj.x = obj.x + n;',
                     '    end',
                     '  end',
                     'end',
@@ -2394,6 +2476,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('[a, b].x'))).toBe('[3,4]\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('[a, b].read()'))).toBe('[3,4]\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('[a, b].add(10)'))).toBe('[13,14]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('[a, b].touch(2); [a, b].x'))).toBe('[5,6]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('touch([a, b], 3); [a, b].x'))).toBe('[8,9]\n');
         });
 
         it('Should expand class instance array method calls for multiple outputs.', () => {
@@ -2424,13 +2508,17 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
             localInterpreter.Execute('[first, second] = objs.read()');
             localInterpreter.Execute('[plusFirst, plusSecond] = objs.add(10)');
+            localInterpreter.Execute('[functionalFirst, functionalSecond] = read(objs)');
+            localInterpreter.Execute('[functionalPlusFirst, functionalPlusSecond] = add(objs, 10)');
 
             expect(localInterpreter.Unparse(localInterpreter.Execute('objs.read()'))).toBe('[3,4]\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('first'))).toBe('3\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('second'))).toBe('4\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('plusFirst'))).toBe('13\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('plusSecond'))).toBe('14\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('functionalFirst; functionalSecond; functionalPlusFirst; functionalPlusSecond'))).toBe('3\n4\n13\n14\n');
             expect(() => localInterpreter.Execute('[one, two, three] = objs.read()')).toThrow('element number 3 undefined in return list');
+            expect(() => localInterpreter.Execute('[one, two, three] = read(objs)')).toThrow('element number 3 undefined in return list');
         });
 
         it('Should expand class instance array properties for multiple outputs.', () => {
@@ -3165,6 +3253,76 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             );
         });
 
+        it('Should dispatch public subsref and subsasgn overloads for selected cell objects.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute('global cellSubsasgnLastValue; cellSubsasgnLastValue = 0');
+            localInterpreter.Execute(
+                [
+                    'classdef PublicCellObjectOverload',
+                    '  properties',
+                    '    x = 0;',
+                    '  end',
+                    '  methods',
+                    '    function y = subsref(obj, s)',
+                    '      y = 102;',
+                    '    end',
+                    '    function obj = subsasgn(obj, s, value)',
+                    '      global cellSubsasgnLastValue',
+                    '      cellSubsasgnLastValue = value;',
+                    '      obj.x = value + 200;',
+                    '    end',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute('a = PublicCellObjectOverload(); b = PublicCellObjectOverload()');
+            localInterpreter.Execute('a.x = 1; b.x = 2; C = {a, b}');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('subsref(C, substruct("{}", {2}, ".", "virtual"))'))).toBe('102\n');
+            expect(
+                localInterpreter.Unparse(localInterpreter.Execute('updated = subsasgn(C, substruct("{}", {2}, ".", "virtual"), 10); cellSubsasgnLastValue; iscell(updated); numel(updated)')),
+            ).toBe('updated={PublicCellObjectOverload object with properties: x,PublicCellObjectOverload object with properties: x}\n10\ntrue\n2\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('subsref(C, substruct("()", {[2, 1]}, "{}", {1}, ".", "virtual"))'))).toBe('102\n');
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'updatedParen = subsasgn(C, substruct("()", {[2, 1]}, "{}", {1}, ".", "virtual"), 20); cellSubsasgnLastValue; iscell(updatedParen); numel(updatedParen)',
+                    ),
+                ),
+            ).toBe('updatedParen={PublicCellObjectOverload object with properties: x,PublicCellObjectOverload object with properties: x}\n20\ntrue\n2\n');
+        });
+
+        it('Should dispatch multiple-output public subsref overloads for selected cell objects.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                [
+                    'classdef PublicCellMultiOutputSubsref',
+                    '  methods',
+                    '    function n = numArgumentsFromSubscript(obj, s, context)',
+                    '      n = 2;',
+                    '    end',
+                    '    function [a, b] = subsref(obj, s)',
+                    '      a = 11;',
+                    '      b = 22;',
+                    '    end',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute('C = {PublicCellMultiOutputSubsref(), PublicCellMultiOutputSubsref()}');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('[first, second] = subsref(C, substruct("{}", {2}, ".", "virtual")); first; second'))).toBe(
+                'first=11\nsecond=22\n11\n22\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('[~, maskedSecond] = subsref(C, substruct("{}", {1}, ".", "virtual")); maskedSecond'))).toBe('maskedSecond=22\n22\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('[subFirst, subSecond] = subsref(C, substruct("()", {[2, 1]}, "{}", {1}, ".", "virtual")); subFirst; subSecond'))).toBe(
+                'subFirst=11\nsubSecond=22\n11\n22\n',
+            );
+            expect(() => localInterpreter.Execute('[one, two, three] = subsref(C, substruct("{}", {2}, ".", "virtual"))')).toThrow('element number 3 undefined in return list');
+        });
+
         it('Should apply public subsasgn descriptors to class property chains.', () => {
             const localInterpreter = Interpreter.Create();
 
@@ -3540,6 +3698,17 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() =>
                 localInterpreter.Execute(['classdef InvalidRuntimePartialMatchPriority', '  properties (PartialMatchPriority = 0)', '    Value', '  end', 'end'].join('\n')),
             ).toThrow('invalid positive integer PartialMatchPriority attribute for properties section of class InvalidRuntimePartialMatchPriority.');
+            expect(() => localInterpreter.Execute(['classdef InvalidRuntimeValueNonCopyable', '  properties (NonCopyable)', '    Value', '  end', 'end'].join('\n'))).toThrow(
+                "NonCopyable property 'Value' in class InvalidRuntimeValueNonCopyable requires a handle class.",
+            );
+            expect(() => localInterpreter.Execute(['classdef InvalidRuntimeValueAbortSet', '  properties (AbortSet)', '    Value = 1;', '  end', 'end'].join('\n'))).toThrow(
+                "AbortSet property 'Value' in class InvalidRuntimeValueAbortSet requires a handle class.",
+            );
+            localInterpreter.Execute(['classdef RuntimeHandleAbortSet < handle', '  properties (AbortSet)', '    Value = 1;', '  end', 'end'].join('\n'));
+            expect(localInterpreter.Unparse(localInterpreter.Execute('meta.class.fromName("RuntimeHandleAbortSet").PropertyList(1).AbortSet'))).toBe('true\n');
+            expect(() =>
+                localInterpreter.Execute(['classdef InvalidRuntimeValuePartialPriority', '  properties (PartialMatchPriority = 2)', '    Value', '  end', 'end'].join('\n')),
+            ).toThrow("PartialMatchPriority property 'Value' in class InvalidRuntimeValuePartialPriority requires matlab.mixin.SetGet.");
         });
 
         it('Should reject invalid class member access attributes.', () => {
@@ -3573,6 +3742,16 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                     ['classdef InvalidRuntimeAbstractSealedMethod', '  methods (Abstract, Sealed)', '    function y = value(obj)', '    end', '  end', 'end'].join('\n'),
                 ),
             ).toThrow('methods section of class InvalidRuntimeAbstractSealedMethod cannot be both abstract and sealed.');
+            expect(() => localInterpreter.Execute(['classdef (Sealed) InvalidRuntimeSealedAbstractMethod', '  methods (Abstract)', '    y = value(obj)', '  end', 'end'].join('\n'))).toThrow(
+                "sealed class InvalidRuntimeSealedAbstractMethod cannot define abstract method 'value'.",
+            );
+            expect(() => localInterpreter.Execute(['classdef (Sealed) InvalidRuntimeSealedAbstractProperty', '  properties (Abstract)', '    Value', '  end', 'end'].join('\n'))).toThrow(
+                "sealed class InvalidRuntimeSealedAbstractProperty cannot define abstract property 'Value'.",
+            );
+            localInterpreter.Execute(['classdef RuntimeEnumerationBase', '  enumeration', '    One', '  end', 'end'].join('\n'));
+            expect(() => localInterpreter.Execute(['classdef InvalidRuntimeEnumerationSubclass < RuntimeEnumerationBase', 'end'].join('\n'))).toThrow(
+                'class InvalidRuntimeEnumerationSubclass cannot inherit from sealed class RuntimeEnumerationBase.',
+            );
         });
 
         it('Should reject incompatible property attribute combinations.', () => {
@@ -3587,6 +3766,288 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => localInterpreter.Execute(['classdef InvalidRuntimeConstantWithoutDefault', '  properties (Constant)', '    Value', '  end', 'end'].join('\n'))).toThrow(
                 "constant property 'Value' in class InvalidRuntimeConstantWithoutDefault must define a default value.",
             );
+            expect(() =>
+                localInterpreter.Execute(
+                    [
+                        'classdef InvalidRuntimeAbstractGetMethod',
+                        '  properties (Abstract, GetMethod = readValue)',
+                        '    Value',
+                        '  end',
+                        '  methods',
+                        '    function y = readValue(obj)',
+                        '      y = 1;',
+                        '    end',
+                        '  end',
+                        'end',
+                    ].join('\n'),
+                ),
+            ).toThrow("abstract property 'Value' in class InvalidRuntimeAbstractGetMethod cannot define a GetMethod.");
+            expect(() =>
+                localInterpreter.Execute(
+                    [
+                        'classdef InvalidRuntimeAbstractSetMethod',
+                        '  properties (Abstract, SetMethod = writeValue)',
+                        '    Value',
+                        '  end',
+                        '  methods',
+                        '    function obj = writeValue(obj, value)',
+                        '    end',
+                        '  end',
+                        'end',
+                    ].join('\n'),
+                ),
+            ).toThrow("abstract property 'Value' in class InvalidRuntimeAbstractSetMethod cannot define a SetMethod.");
+        });
+
+        it('Should reject class members with class-name conflicts.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(() => localInterpreter.Execute(['classdef InvalidRuntimeClassNamedProperty', '  properties', '    InvalidRuntimeClassNamedProperty', '  end', 'end'].join('\n'))).toThrow(
+                'class InvalidRuntimeClassNamedProperty cannot define property with the same name as the class.',
+            );
+            expect(() => localInterpreter.Execute(['classdef InvalidRuntimeClassNamedEvent < handle', '  events', '    InvalidRuntimeClassNamedEvent', '  end', 'end'].join('\n'))).toThrow(
+                'class InvalidRuntimeClassNamedEvent cannot define event with the same name as the class.',
+            );
+            expect(() =>
+                localInterpreter.Execute(['classdef InvalidRuntimeClassNamedEnumeration', '  enumeration', '    InvalidRuntimeClassNamedEnumeration', '  end', 'end'].join('\n')),
+            ).toThrow('class InvalidRuntimeClassNamedEnumeration cannot define enumeration member with the same name as the class.');
+        });
+
+        it('Should validate inherited property redefinitions.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(['classdef AbstractRuntimePropertyBase', '  properties (Abstract, SetAccess = protected)', '    Value', '  end', 'end'].join('\n'));
+            localInterpreter.Execute(
+                ['classdef ConcreteRuntimePropertyChild < AbstractRuntimePropertyBase', '  properties (SetAccess = protected)', '    Value = 1', '  end', 'end'].join('\n'),
+            );
+            localInterpreter.Execute(['classdef PrivateRuntimePropertyBase', '  properties (Access = private)', '    Value = 2', '  end', 'end'].join('\n'));
+            localInterpreter.Execute(['classdef PrivateRuntimePropertyChild < PrivateRuntimePropertyBase', '  properties', '    Value = 3', '  end', 'end'].join('\n'));
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('ConcreteRuntimePropertyChild().Value'))).toBe('1\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('PrivateRuntimePropertyChild().Value'))).toBe('3\n');
+            expect(() =>
+                localInterpreter.Execute(
+                    [
+                        'classdef InvalidRuntimeConcretePropertyBase',
+                        '  properties',
+                        '    Value = 1',
+                        '  end',
+                        'end',
+                        'classdef InvalidRuntimeConcretePropertyChild < InvalidRuntimeConcretePropertyBase',
+                        '  properties',
+                        '    Value = 2',
+                        '  end',
+                        'end',
+                    ].join('\n'),
+                ),
+            ).toThrow("property 'Value' in class InvalidRuntimeConcretePropertyChild cannot redefine inherited property from class InvalidRuntimeConcretePropertyBase.");
+            expect(() =>
+                localInterpreter.Execute(
+                    [
+                        'classdef InvalidRuntimeAbstractAccessBase',
+                        '  properties (Abstract, SetAccess = protected)',
+                        '    Value',
+                        '  end',
+                        'end',
+                        'classdef InvalidRuntimeAbstractAccessChild < InvalidRuntimeAbstractAccessBase',
+                        '  properties',
+                        '    Value = 1',
+                        '  end',
+                        'end',
+                    ].join('\n'),
+                ),
+            ).toThrow(
+                "property 'Value' in class InvalidRuntimeAbstractAccessChild must match inherited GetAccess and SetAccess from abstract property in class InvalidRuntimeAbstractAccessBase.",
+            );
+            expect(() =>
+                localInterpreter.Execute(
+                    [
+                        'classdef InvalidRuntimeLeftProperty',
+                        '  properties',
+                        '    Value = 1',
+                        '  end',
+                        'end',
+                        'classdef InvalidRuntimeRightProperty',
+                        '  properties',
+                        '    Value = 2',
+                        '  end',
+                        'end',
+                        'classdef InvalidRuntimePropertyDiamond < InvalidRuntimeLeftProperty & InvalidRuntimeRightProperty',
+                        'end',
+                    ].join('\n'),
+                ),
+            ).toThrow("class InvalidRuntimePropertyDiamond inherits incompatible property 'Value' from multiple superclasses.");
+        });
+
+        it('Should validate inherited method overrides.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                ['classdef RuntimeMethodAccessBase', '  methods (Access = protected)', '    function y = value(obj)', '      y = 1;', '    end', '  end', 'end'].join('\n'),
+            );
+            localInterpreter.Execute(
+                [
+                    'classdef RuntimeMethodAccessChild < RuntimeMethodAccessBase',
+                    '  methods (Access = protected)',
+                    '    function y = value(obj)',
+                    '      y = 2;',
+                    '    end',
+                    '  end',
+                    '  methods',
+                    '    function y = read(obj)',
+                    '      y = obj.value();',
+                    '    end',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute(
+                ['classdef RuntimePrivateMethodBase', '  methods (Access = private)', '    function y = value(obj)', '      y = 1;', '    end', '  end', 'end'].join('\n'),
+            );
+            localInterpreter.Execute(
+                ['classdef RuntimePrivateMethodChild < RuntimePrivateMethodBase', '  methods', '    function y = value(obj)', '      y = 3;', '    end', '  end', 'end'].join('\n'),
+            );
+            localInterpreter.Execute(['classdef RuntimeLeftMethod', '  methods', '    function y = value(obj)', '      y = 1;', '    end', '  end', 'end'].join('\n'));
+            localInterpreter.Execute(
+                ['classdef RuntimeRightMethodPrivate', '  methods (Access = private)', '    function y = value(obj)', '      y = 2;', '    end', '  end', 'end'].join('\n'),
+            );
+            localInterpreter.Execute(['classdef RuntimeMethodDiamondPrivate < RuntimeLeftMethod & RuntimeRightMethodPrivate', 'end'].join('\n'));
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('RuntimeMethodAccessChild().read()'))).toBe('2\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('RuntimePrivateMethodChild().value()'))).toBe('3\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('RuntimeMethodDiamondPrivate().value()'))).toBe('1\n');
+            expect(() =>
+                localInterpreter.Execute(
+                    [
+                        'classdef InvalidRuntimeMethodAccessBase',
+                        '  methods (Access = protected)',
+                        '    function y = value(obj)',
+                        '      y = 1;',
+                        '    end',
+                        '  end',
+                        'end',
+                        'classdef InvalidRuntimeMethodAccessChild < InvalidRuntimeMethodAccessBase',
+                        '  methods',
+                        '    function y = value(obj)',
+                        '      y = 2;',
+                        '    end',
+                        '  end',
+                        'end',
+                    ].join('\n'),
+                ),
+            ).toThrow("method 'value' in class InvalidRuntimeMethodAccessChild must match inherited Access from method in class InvalidRuntimeMethodAccessBase.");
+            expect(() =>
+                localInterpreter.Execute(
+                    [
+                        'classdef InvalidRuntimeLeftMethod',
+                        '  methods',
+                        '    function y = value(obj)',
+                        '      y = 1;',
+                        '    end',
+                        '  end',
+                        'end',
+                        'classdef InvalidRuntimeRightMethod',
+                        '  methods',
+                        '    function y = value(obj)',
+                        '      y = 2;',
+                        '    end',
+                        '  end',
+                        'end',
+                        'classdef InvalidRuntimeMethodDiamond < InvalidRuntimeLeftMethod & InvalidRuntimeRightMethod',
+                        'end',
+                    ].join('\n'),
+                ),
+            ).toThrow("class InvalidRuntimeMethodDiamond inherits incompatible method 'value' from multiple superclasses.");
+            localInterpreter.Execute(
+                [
+                    'classdef RuntimeLeftOverriddenMethod',
+                    '  methods',
+                    '    function y = value(obj)',
+                    '      y = 1;',
+                    '    end',
+                    '  end',
+                    'end',
+                    'classdef RuntimeRightOverriddenMethod',
+                    '  methods',
+                    '    function y = value(obj)',
+                    '      y = 2;',
+                    '    end',
+                    '  end',
+                    'end',
+                    'classdef RuntimeMethodDiamondOverride < RuntimeLeftOverriddenMethod & RuntimeRightOverriddenMethod',
+                    '  methods',
+                    '    function y = value(obj)',
+                    '      y = 4;',
+                    '    end',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('RuntimeMethodDiamondOverride().value()'))).toBe('4\n');
+        });
+
+        it('Should validate inherited event conflicts.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(['classdef RuntimeLeftEvent < handle', '  events', '    Changed', '  end', 'end'].join('\n'));
+            localInterpreter.Execute(['classdef RuntimeRightPrivateEvent < handle', '  events (ListenAccess = private, NotifyAccess = private)', '    Changed', '  end', 'end'].join('\n'));
+            localInterpreter.Execute(['classdef RuntimeEventDiamondPrivate < RuntimeLeftEvent & RuntimeRightPrivateEvent', 'end'].join('\n'));
+            localInterpreter.Execute(['classdef RuntimeCommonEventBase < handle', '  events', '    Changed', '  end', 'end'].join('\n'));
+            localInterpreter.Execute(['classdef RuntimeLeftCommonEvent < RuntimeCommonEventBase', 'end'].join('\n'));
+            localInterpreter.Execute(['classdef RuntimeRightCommonEvent < RuntimeCommonEventBase', 'end'].join('\n'));
+            localInterpreter.Execute(['classdef RuntimeEventDiamondCommon < RuntimeLeftCommonEvent & RuntimeRightCommonEvent', 'end'].join('\n'));
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('events("RuntimeEventDiamondPrivate")'))).toBe('{Changed}\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('events("RuntimeEventDiamondCommon")'))).toBe('{Changed}\n');
+            expect(() =>
+                localInterpreter.Execute(
+                    [
+                        'classdef InvalidRuntimeLeftEvent < handle',
+                        '  events',
+                        '    Changed',
+                        '  end',
+                        'end',
+                        'classdef InvalidRuntimeRightEvent < handle',
+                        '  events',
+                        '    Changed',
+                        '  end',
+                        'end',
+                        'classdef InvalidRuntimeEventDiamond < InvalidRuntimeLeftEvent & InvalidRuntimeRightEvent',
+                        'end',
+                    ].join('\n'),
+                ),
+            ).toThrow("class InvalidRuntimeEventDiamond inherits incompatible event 'Changed' from multiple superclasses.");
+            expect(() =>
+                localInterpreter.Execute(
+                    [
+                        'classdef InvalidRuntimeLeftEventOverride < handle',
+                        '  events',
+                        '    Changed',
+                        '  end',
+                        'end',
+                        'classdef InvalidRuntimeRightEventOverride < handle',
+                        '  events',
+                        '    Changed',
+                        '  end',
+                        'end',
+                        'classdef InvalidRuntimeEventDiamondOverride < InvalidRuntimeLeftEventOverride & InvalidRuntimeRightEventOverride',
+                        '  events',
+                        '    Changed',
+                        '  end',
+                        'end',
+                    ].join('\n'),
+                ),
+            ).toThrow("class InvalidRuntimeEventDiamondOverride inherits incompatible event 'Changed' from multiple superclasses.");
+        });
+
+        it('Should reject events in value classes.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(() => localInterpreter.Execute(['classdef InvalidRuntimeValueEvent', '  events', '    Changed', '  end', 'end'].join('\n'))).toThrow(
+                'class InvalidRuntimeValueEvent cannot define events because it is not a handle class.',
+            );
+            localInterpreter.Execute(['classdef ValidRuntimeHandleEvent < handle', '  events', '    Changed', '  end', 'end'].join('\n'));
+            expect(localInterpreter.Unparse(localInterpreter.Execute('events("ValidRuntimeHandleEvent")'))).toBe('{Changed}\n');
         });
 
         it('Should reject abstract methods with method bodies.', () => {
@@ -3682,7 +4143,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                         '  end',
                         '  methods',
                         '    y = value(obj, x)',
+                        '    [] = touch(obj)',
                         '    y = mismatch(obj)',
+                        '    [] = mismatchVoid(obj)',
                         '    y = get.DependentValue(obj)',
                         '    y = plus(obj, other)',
                         '  end',
@@ -3694,8 +4157,10 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                     '+pkg/@ExternalMethodBox/value.m': ['function y = value(obj, x)', '  y = obj.x + localoffset(x);', 'end', 'function z = localoffset(x)', '  z = x + 1;', 'end'].join(
                         '\n',
                     ),
+                    '+pkg/@ExternalMethodBox/touch.m': ['function [] = touch(obj)', '  obj.x = 99;', 'end'].join('\n'),
                     '+pkg/@ExternalMethodBox/scale.m': ['function y = scale(x)', '  y = x * 3;', 'end'].join('\n'),
                     '+pkg/@ExternalMethodBox/mismatch.m': ['function [y, extra] = mismatch(obj)', '  y = obj.x;', '  extra = 1;', 'end'].join('\n'),
+                    '+pkg/@ExternalMethodBox/mismatchVoid.m': ['function y = mismatchVoid(obj)', '  y = obj.x;', 'end'].join('\n'),
                     '+pkg/@ExternalMethodBox/get.DependentValue.m': ['function y = get.DependentValue(obj)', '  y = obj.x * 10;', 'end'].join('\n'),
                     '+pkg/@ExternalMethodBox/plus.m': ['function y = plus(obj, other)', '  y = obj.x + other;', 'end'].join('\n'),
                 },
@@ -3709,6 +4174,10 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             );
             expect(() => localInterpreter.Execute('localoffset(1)')).toThrow("'localoffset' undefined.");
             expect(() => localInterpreter.Execute('box.mismatch()')).toThrow("method 'mismatch' for class pkg.ExternalMethodBox external definition does not match its classdef prototype.");
+            expect(() => localInterpreter.Execute('box.mismatchVoid()')).toThrow(
+                "method 'mismatchVoid' for class pkg.ExternalMethodBox external definition does not match its classdef prototype.",
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('box.touch(); box.x'))).toBe('7\n');
         });
 
         it('Should validate external class method file subfunctions before registration.', () => {
@@ -3860,6 +4329,40 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                     ),
                 ),
             ).toThrow('constructor for class InvalidRuntimeMultiOutputConstructor must declare exactly one output.');
+        });
+
+        it('Should require ConstructOnLoad constructors to accept zero inputs.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                ['classdef (ConstructOnLoad) RuntimeConstructOnLoadNoInput', '  methods', '    function obj = RuntimeConstructOnLoadNoInput()', '    end', '  end', 'end'].join('\n'),
+            );
+            localInterpreter.Execute(
+                ['classdef (ConstructOnLoad) RuntimeConstructOnLoadDefault', '  methods', '    function obj = RuntimeConstructOnLoadDefault(value = 1)', '    end', '  end', 'end'].join(
+                    '\n',
+                ),
+            );
+            localInterpreter.Execute(
+                ['classdef (ConstructOnLoad) RuntimeConstructOnLoadVarargin', '  methods', '    function obj = RuntimeConstructOnLoadVarargin(varargin)', '    end', '  end', 'end'].join(
+                    '\n',
+                ),
+            );
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('metaclass(RuntimeConstructOnLoadNoInput).ConstructOnLoad'))).toBe('true\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('metaclass(RuntimeConstructOnLoadDefault).ConstructOnLoad'))).toBe('true\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('metaclass(RuntimeConstructOnLoadVarargin).ConstructOnLoad'))).toBe('true\n');
+            expect(() =>
+                localInterpreter.Execute(
+                    [
+                        'classdef (ConstructOnLoad) InvalidRuntimeConstructOnLoadRequired',
+                        '  methods',
+                        '    function obj = InvalidRuntimeConstructOnLoadRequired(value)',
+                        '    end',
+                        '  end',
+                        'end',
+                    ].join('\n'),
+                ),
+            ).toThrow('ConstructOnLoad class InvalidRuntimeConstructOnLoadRequired constructor must support zero input arguments.');
         });
 
         it('Should reject invalid property accessor methods.', () => {
@@ -4038,6 +4541,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             localInterpreter.Execute(['classdef (Sealed) FinalShape', 'end'].join('\n'));
             localInterpreter.Execute(['classdef (AllowedSubclasses = {?AllowedRuntimeShape}) RestrictedShape', 'end'].join('\n'));
             localInterpreter.Execute(['classdef AllowedRuntimeShape < RestrictedShape', 'end'].join('\n'));
+            localInterpreter.Execute(['classdef (AllowedSubclasses = {}) EmptyAllowedRuntimeShape', 'end'].join('\n'));
 
             expect(() => localInterpreter.Execute('AbstractShape()')).toThrow('cannot instantiate abstract class AbstractShape: missing implementations for area.');
             expect(() => localInterpreter.Execute('PendingShape()')).toThrow('cannot instantiate abstract class PendingShape: missing implementations for area.');
@@ -4045,8 +4549,40 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('CircleShape().area()'))).toBe('12\n');
             expect(() => localInterpreter.Execute(['classdef IllegalShape < FinalShape', 'end'].join('\n'))).toThrow('class IllegalShape cannot inherit from sealed class FinalShape.');
             expect(localInterpreter.Unparse(localInterpreter.Execute('AllowedRuntimeShape()'))).toBe('AllowedRuntimeShape object\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('mc = metaclass(EmptyAllowedRuntimeShape); mc.Sealed; mc.RestrictsSubclassing'))).toBe(
+                'mc=meta.class EmptyAllowedRuntimeShape\ntrue\ntrue\n',
+            );
+            expect(() => localInterpreter.Execute(['classdef IllegalEmptyAllowedShape < EmptyAllowedRuntimeShape', 'end'].join('\n'))).toThrow(
+                'class IllegalEmptyAllowedShape cannot inherit from sealed class EmptyAllowedRuntimeShape.',
+            );
             expect(() => localInterpreter.Execute(['classdef IllegalRuntimeShape < RestrictedShape', 'end'].join('\n'))).toThrow(
                 'class IllegalRuntimeShape cannot inherit from class RestrictedShape: subclass is not listed in AllowedSubclasses.',
+            );
+        });
+
+        it('Should enforce handle-compatible class hierarchies.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(['classdef (HandleCompatible) RuntimeHandleUtility', 'end'].join('\n'));
+            localInterpreter.Execute(['classdef RuntimePlainValueBase', 'end'].join('\n'));
+            localInterpreter.Execute(['classdef RuntimeHandleCompatibleChild < handle & RuntimeHandleUtility', 'end'].join('\n'));
+            localInterpreter.Execute(['classdef RuntimeValueCompatibleChild < RuntimeHandleUtility', 'end'].join('\n'));
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('metaclass(RuntimeHandleUtility).HandleCompatible'))).toBe('true\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('metaclass(RuntimeHandleCompatibleChild).HandleCompatible; isa(RuntimeHandleCompatibleChild(), "handle")'))).toBe(
+                'true\ntrue\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('metaclass(RuntimeValueCompatibleChild).HandleCompatible; isa(RuntimeValueCompatibleChild(), "handle")'))).toBe(
+                'false\nfalse\n',
+            );
+            expect(() => localInterpreter.Execute(['classdef InvalidRuntimeHandleCompatibleChild < handle & RuntimePlainValueBase', 'end'].join('\n'))).toThrow(
+                'class InvalidRuntimeHandleCompatibleChild cannot combine handle semantics with non-handle-compatible superclass RuntimePlainValueBase.',
+            );
+            expect(() => localInterpreter.Execute(['classdef (HandleCompatible) InvalidRuntimeHandleUtility < RuntimePlainValueBase', 'end'].join('\n'))).toThrow(
+                'class InvalidRuntimeHandleUtility cannot combine handle semantics with non-handle-compatible superclass RuntimePlainValueBase.',
+            );
+            expect(() => localInterpreter.Execute(['classdef (HandleCompatible = false) InvalidRuntimeFalseHandleCompatible < handle', 'end'].join('\n'))).toThrow(
+                'class InvalidRuntimeFalseHandleCompatible cannot set HandleCompatible to false while inheriting from a handle class.',
             );
         });
 
@@ -4221,15 +4757,36 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         it('Should notify class event and observable property listeners.', () => {
             const localInterpreter = Interpreter.Create();
 
-            localInterpreter.Execute('global eventCount lastEvent lastEventClass lastPropertyName lastAffectedClass');
-            localInterpreter.Execute('eventCount = 0');
+            localInterpreter.Execute('global eventCount alternateCount recursiveCount lastEvent lastEventClass lastPropertyName lastAffectedClass savedEventData');
+            localInterpreter.Execute('eventCount = 0; alternateCount = 0; recursiveCount = 0');
             localInterpreter.Execute(
                 [
                     'function recordEvent(src, eventData)',
-                    '  global eventCount lastEvent lastEventClass',
+                    '  global eventCount lastEvent lastEventClass savedEventData',
                     '  eventCount = eventCount + 1;',
                     '  lastEvent = eventData.EventName;',
                     '  lastEventClass = class(eventData);',
+                    '  savedEventData = eventData;',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute(
+                [
+                    'function recordAlternateEvent(src, eventData)',
+                    '  global alternateCount lastEvent',
+                    '  alternateCount = alternateCount + 1;',
+                    '  lastEvent = eventData.EventName;',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute(
+                [
+                    'function recordRecursiveEvent(src, eventData)',
+                    '  global recursiveCount',
+                    '  recursiveCount = recursiveCount + 1;',
+                    '  if recursiveCount < 3',
+                    '    notify(src, eventData.EventName);',
+                    '  end',
                     'end',
                 ].join('\n'),
             );
@@ -4250,6 +4807,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                     'classdef EventSource < handle',
                     '  events',
                     '    Changed',
+                    '    Forwarded',
                     '  end',
                     '  properties (GetObservable, SetObservable)',
                     '    Value = 0;',
@@ -4262,12 +4820,17 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                     'end',
                 ].join('\n'),
             );
+            localInterpreter.Execute(['classdef NoChangedEventSource < handle', 'end'].join('\n'));
             localInterpreter.Execute('s = EventSource()');
+            localInterpreter.Execute('other = EventSource()');
 
             expect(localInterpreter.Unparse(localInterpreter.Execute('listener = addlistener(s, "Changed", @recordEvent)'))).toBe('listener=event.listener EventSource.Changed\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('class(listener)'))).toBe('event.listener\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('isvalid(listener)'))).toBe('true\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('listener.Enabled'))).toBe('true\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('listener.EventName; listener.Callback; listener.Recursive; listener.Source.Value'))).toBe(
+                'Changed\n@recordEvent\nfalse\n0\n',
+            );
             localInterpreter.Execute('notify(s, "Changed")');
             expect(localInterpreter.Unparse(localInterpreter.Execute('eventCount'))).toBe('1\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('lastEvent'))).toBe('Changed\n');
@@ -4281,24 +4844,444 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             localInterpreter.Execute('notify(s, "Changed")');
             expect(localInterpreter.Unparse(localInterpreter.Execute('eventCount'))).toBe('2\n');
             expect(() => localInterpreter.Execute('listener.Enabled.Value = true')).toThrow("cannot assign nested property 'Enabled.Value' for event.listener.");
+            localInterpreter.Execute('listener.Callback = @recordAlternateEvent; listener.EventName = "Forwarded"');
+            localInterpreter.Execute('notify(s, "Changed")');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('eventCount; alternateCount'))).toBe('2\n0\n');
+            localInterpreter.Execute('notify(s, "Forwarded")');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('eventCount; alternateCount; lastEvent; listener.EventName; listener.Callback'))).toBe(
+                '2\n1\nForwarded\nForwarded\n@recordAlternateEvent\n',
+            );
+            expect(() => localInterpreter.Execute('listener.EventName = "Missing"')).toThrow("unknown event 'Missing' for class EventSource.");
+            expect(() => localInterpreter.Execute('listener.EventName = "Value"')).toThrow('event listener EventName must name a class event.');
+            expect(() => localInterpreter.Execute('listener.Callback = 1')).toThrow('event listener Callback must be a function handle.');
+            localInterpreter.Execute('movedListener = addlistener(s, "Changed", @recordEvent)');
+            localInterpreter.Execute('movedListener.Source = other; notify(s, "Changed"); notify(other, "Changed")');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('eventCount; class(movedListener.Source)'))).toBe('3\nEventSource\n');
+            expect(() => localInterpreter.Execute('movedListener.Source = 1')).toThrow('event listener Source must be a class instance.');
+            expect(() => localInterpreter.Execute('movedListener.Source = NoChangedEventSource()')).toThrow("unknown event 'Changed' for class NoChangedEventSource.");
+            localInterpreter.Execute('delete(movedListener)');
+            localInterpreter.Execute('recursiveListener = addlistener(s, "Changed", @recordRecursiveEvent)');
+            localInterpreter.Execute('recursiveCount = 0; notify(s, "Changed")');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('recursiveCount'))).toBe('1\n');
+            localInterpreter.Execute('recursiveListener.Recursive = true; recursiveCount = 0; notify(s, "Changed")');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('recursiveCount; recursiveListener.Recursive'))).toBe('3\ntrue\n');
+            localInterpreter.Execute('delete(recursiveListener)');
+            localInterpreter.Execute('forwardedListener = addlistener(s, "Forwarded", @recordEvent)');
+            localInterpreter.Execute('notify(s, "Forwarded", savedEventData)');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('eventCount; lastEvent; class(savedEventData); savedEventData.EventName'))).toBe(
+                '4\nForwarded\nevent.EventData\nForwarded\n',
+            );
+            expect(() => localInterpreter.Execute('notify(s, "Forwarded", 1)')).toThrow('notify: event data must be an event.EventData object.');
             localInterpreter.Execute('delete(listener)');
             expect(localInterpreter.Unparse(localInterpreter.Execute('isvalid(listener)'))).toBe('false\n');
             localInterpreter.Execute('notify(s, "Changed")');
-            expect(localInterpreter.Unparse(localInterpreter.Execute('eventCount'))).toBe('2\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('eventCount'))).toBe('4\n');
             expect(() => localInterpreter.Execute('listener.Enabled')).toThrow('invalid or deleted event listener.');
 
-            localInterpreter.Execute('addlistener(s, "Value", @recordPropertyEvent)');
+            localInterpreter.Execute('propertyListener = addlistener(s, "Value", @recordPropertyEvent)');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('class(propertyListener)'))).toBe('event.proplistener\n');
+            localInterpreter.Execute('propertyListener.Source = other; s.Value; other.Value');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('eventCount; class(propertyListener.Source); lastAffectedClass'))).toBe('5\nEventSource\nEventSource\n');
+            localInterpreter.Execute('propertyListener.Source = s');
             localInterpreter.Execute('s.Value');
-            expect(localInterpreter.Unparse(localInterpreter.Execute('eventCount'))).toBe('3\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('eventCount'))).toBe('6\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('lastEvent'))).toBe('Value\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('lastEventClass'))).toBe('event.PropertyEvent\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('lastPropertyName'))).toBe('Value\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('lastAffectedClass'))).toBe('EventSource\n');
 
             localInterpreter.Execute('s.Value = 5');
-            expect(localInterpreter.Unparse(localInterpreter.Execute('eventCount'))).toBe('4\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('eventCount'))).toBe('7\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('lastEvent'))).toBe('Value\n');
             expect(() => localInterpreter.Execute('addlistener(s, "Missing", @recordEvent)')).toThrow("unknown event 'Missing' for class EventSource.");
+        });
+
+        it('Should support named observable property listener phases.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute('global preGetCount postGetCount preSetCount postSetCount lastPhase lastPhaseProperty lastMetaClass lastMetaName lastSourceName lastPropertyEventData');
+            localInterpreter.Execute('preGetCount = 0; postGetCount = 0; preSetCount = 0; postSetCount = 0');
+            localInterpreter.Execute(
+                [
+                    'function recordPreGet(metaProperty, eventData)',
+                    '  global preGetCount lastPhase lastPhaseProperty lastMetaClass lastMetaName lastSourceName',
+                    '  preGetCount = preGetCount + 1;',
+                    '  lastPhase = eventData.EventName;',
+                    '  lastPhaseProperty = eventData.PropertyName;',
+                    '  lastMetaClass = class(metaProperty);',
+                    '  lastMetaName = metaProperty.Name;',
+                    '  lastSourceName = eventData.Source.Name;',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute(
+                [
+                    'function recordPostGet(metaProperty, eventData)',
+                    '  global postGetCount lastPhase lastPhaseProperty lastMetaClass lastMetaName lastSourceName',
+                    '  postGetCount = postGetCount + 1;',
+                    '  lastPhase = eventData.EventName;',
+                    '  lastPhaseProperty = eventData.PropertyName;',
+                    '  lastMetaClass = class(metaProperty);',
+                    '  lastMetaName = metaProperty.Name;',
+                    '  lastSourceName = eventData.Source.Name;',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute(
+                [
+                    'function recordPreSet(metaProperty, eventData)',
+                    '  global preSetCount lastPhase lastPhaseProperty lastMetaClass lastMetaName lastSourceName',
+                    '  preSetCount = preSetCount + 1;',
+                    '  lastPhase = eventData.EventName;',
+                    '  lastPhaseProperty = eventData.PropertyName;',
+                    '  lastMetaClass = class(metaProperty);',
+                    '  lastMetaName = metaProperty.Name;',
+                    '  lastSourceName = eventData.Source.Name;',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute(
+                [
+                    'function recordPostSet(metaProperty, eventData)',
+                    '  global postSetCount lastPhase lastPhaseProperty lastMetaClass lastMetaName lastSourceName lastPropertyEventData',
+                    '  postSetCount = postSetCount + 1;',
+                    '  lastPhase = eventData.EventName;',
+                    '  lastPhaseProperty = eventData.PropertyName;',
+                    '  lastMetaClass = class(metaProperty);',
+                    '  lastMetaName = metaProperty.Name;',
+                    '  lastSourceName = eventData.Source.Name;',
+                    '  lastPropertyEventData = eventData;',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute(
+                [
+                    'classdef PropertyPhaseSource < handle',
+                    '  properties (GetObservable, SetObservable)',
+                    '    Value = 1;',
+                    '  end',
+                    '  properties (GetObservable)',
+                    '    ReadOnlyEvent = 2;',
+                    '  end',
+                    '  properties (SetObservable)',
+                    '    WriteOnlyEvent = 3;',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute(['classdef OtherPropertyPhaseSource < handle', '  properties (SetObservable)', '    Value = 9;', '  end', 'end'].join('\n'));
+            localInterpreter.Execute('s = PropertyPhaseSource()');
+            localInterpreter.Execute('preGet = addlistener(s, "Value", "PreGet", @recordPreGet)');
+            localInterpreter.Execute('postGet = addlistener(s, "Value", "PostGet", @recordPostGet)');
+            localInterpreter.Execute('preSet = addlistener(s, "Value", "PreSet", @recordPreSet)');
+            localInterpreter.Execute('postSet = addlistener(s, "Value", "PostSet", @recordPostSet)');
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('preGet.EventName; postSet.EventName'))).toBe('PreGet\nPostSet\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('class(preGet); isa(preGet, "event.proplistener"); isa(preGet, "event.listener")'))).toBe(
+                'event.proplistener\ntrue\ntrue\n',
+            );
+            expect(() => localInterpreter.Execute('preGet.EventName.Value = "x"')).toThrow("cannot assign nested property 'EventName.Value' for event.proplistener.");
+            expect(() => localInterpreter.Execute('preGet.EventName = "AroundGet"')).toThrow("unknown property event 'AroundGet' for class PropertyPhaseSource.");
+            expect(() => localInterpreter.Execute('preGet.Missing')).toThrow("unknown property 'Missing' for event.proplistener.");
+            expect(localInterpreter.Unparse(localInterpreter.Execute('s.Value'))).toBe('1\n');
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute('preGetCount; postGetCount; preSetCount; postSetCount; lastPhase; lastPhaseProperty; lastMetaClass; lastMetaName; lastSourceName'),
+                ),
+            ).toBe('1\n1\n0\n0\nPostGet\nValue\nmeta.property\nValue\nValue\n');
+            localInterpreter.Execute('s.Value = 5');
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute('preGetCount; postGetCount; preSetCount; postSetCount; lastPhase; lastPhaseProperty; lastMetaClass; lastMetaName; lastSourceName'),
+                ),
+            ).toBe('1\n1\n1\n1\nPostSet\nValue\nmeta.property\nValue\nValue\n');
+            localInterpreter.Execute('propertyMeta = meta.class.fromName("PropertyPhaseSource").PropertyList(1)');
+            localInterpreter.Execute('metaPostSet = addlistener(s, propertyMeta, "PostSet", @recordPostSet)');
+            localInterpreter.Execute('s.Value = 6');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('class(metaPostSet); metaPostSet.EventName; preSetCount; postSetCount; lastMetaName; lastSourceName'))).toBe(
+                'event.proplistener\nPostSet\n2\n3\nValue\nValue\n',
+            );
+            expect(() => localInterpreter.Execute('lastPropertyEventData.PropertyName = "Other"')).toThrow("cannot assign to read-only property 'PropertyName' for event.PropertyEvent.");
+            expect(() => localInterpreter.Execute('lastPropertyEventData.Source.Name = "Other"')).toThrow("cannot assign nested property 'Source.Name' for event.PropertyEvent.");
+            localInterpreter.Execute('otherPropertyMeta = meta.class.fromName("OtherPropertyPhaseSource").PropertyList(1)');
+            expect(() => localInterpreter.Execute('addlistener(s, otherPropertyMeta, "PostSet", @recordPostSet)')).toThrow(
+                "property 'Value' is not a property of class PropertyPhaseSource.",
+            );
+            expect(() => localInterpreter.Execute('addlistener(s, "ReadOnlyEvent", "PreSet", @recordPreSet)')).toThrow(
+                "property 'ReadOnlyEvent' is not SetObservable for class PropertyPhaseSource.",
+            );
+            expect(() => localInterpreter.Execute('addlistener(s, "WriteOnlyEvent", "PostGet", @recordPostGet)')).toThrow(
+                "property 'WriteOnlyEvent' is not GetObservable for class PropertyPhaseSource.",
+            );
+            expect(() => localInterpreter.Execute('addlistener(s, "Value", "AroundSet", @recordPostSet)')).toThrow("unknown property event 'AroundSet' for class PropertyPhaseSource.");
+        });
+
+        it('Should create explicit event and property listeners with listener.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute('global explicitEventCount explicitPropertyCount explicitLastSource explicitLastEvent');
+            localInterpreter.Execute('explicitEventCount = 0; explicitPropertyCount = 0');
+            localInterpreter.Execute(
+                [
+                    'function recordExplicitEvent(src, eventData)',
+                    '  global explicitEventCount explicitLastSource explicitLastEvent',
+                    '  explicitEventCount = explicitEventCount + 1;',
+                    '  explicitLastSource = class(src);',
+                    '  explicitLastEvent = eventData.EventName;',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute(
+                [
+                    'function recordExplicitProperty(metaProperty, eventData)',
+                    '  global explicitPropertyCount explicitLastSource explicitLastEvent',
+                    '  explicitPropertyCount = explicitPropertyCount + 1;',
+                    '  explicitLastSource = metaProperty.Name;',
+                    '  explicitLastEvent = eventData.EventName;',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute(
+                ['classdef ExplicitListenerSource < handle', '  events', '    Changed', '  end', '  properties (SetObservable)', '    Value = 1;', '  end', 'end'].join('\n'),
+            );
+            localInterpreter.Execute('s = ExplicitListenerSource()');
+            localInterpreter.Execute('eventListener = listener(s, "Changed", @recordExplicitEvent)');
+            localInterpreter.Execute('propertyListener = listener(s, "Value", "PostSet", @recordExplicitProperty)');
+            localInterpreter.Execute('propertyMeta = meta.class.fromName("ExplicitListenerSource").PropertyList(1)');
+            localInterpreter.Execute('metaPropertyListener = listener(s, propertyMeta, "PostSet", @recordExplicitProperty)');
+            localInterpreter.Execute('qualifiedEventListener = event.listener(s, "Changed", @recordExplicitEvent)');
+            localInterpreter.Execute('qualifiedPropertyListener = event.proplistener(s, propertyMeta, "PostSet", @recordExplicitProperty)');
+            localInterpreter.Execute('dottedEventListener = s.addlistener("Changed", @recordExplicitEvent)');
+            localInterpreter.Execute('dottedPropertyListener = s.addlistener("Value", "PostSet", @recordExplicitProperty)');
+            localInterpreter.Execute('dottedMetaPropertyListener = s.addlistener(propertyMeta, "PostSet", @recordExplicitProperty)');
+
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'class(eventListener); class(propertyListener); class(metaPropertyListener); class(qualifiedEventListener); class(qualifiedPropertyListener); class(dottedEventListener); class(dottedPropertyListener); class(dottedMetaPropertyListener)',
+                    ),
+                ),
+            ).toBe('event.listener\nevent.proplistener\nevent.proplistener\nevent.listener\nevent.proplistener\nevent.listener\nevent.proplistener\nevent.proplistener\n');
+            localInterpreter.Execute('s.notify("Changed")');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('explicitEventCount; explicitLastSource; explicitLastEvent'))).toBe('3\nExplicitListenerSource\nChanged\n');
+            localInterpreter.Execute('s.Value = 2');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('explicitPropertyCount; explicitLastSource; explicitLastEvent'))).toBe('5\nValue\nPostSet\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('dottedEventListener.isvalid(); dottedPropertyListener.isvalid(); dottedMetaPropertyListener.isvalid()'))).toBe(
+                'true\ntrue\ntrue\n',
+            );
+            localInterpreter.Execute('dottedEventListener.delete(); s.notify("Changed")');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('explicitEventCount; dottedEventListener.isvalid()'))).toBe('5\nfalse\n');
+            localInterpreter.Execute('delete(propertyListener)');
+            localInterpreter.Execute('s.Value = 3');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('explicitPropertyCount'))).toBe('9\n');
+            expect(() => localInterpreter.Execute('listener(1, "Changed", @recordExplicitEvent)')).toThrow('listener: source must be a class instance.');
+            expect(() => localInterpreter.Execute('event.listener(s, "Value", @recordExplicitEvent)')).toThrow('event.listener: event name must name a class event.');
+            expect(() => localInterpreter.Execute('event.proplistener(s, propertyMeta, @recordExplicitProperty)')).toThrow('Invalid call to event.proplistener.');
+        });
+
+        it('Should create listener arrays for source object arrays.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute('global sourceArrayEventTotal sourceArrayPropertyTotal');
+            localInterpreter.Execute('sourceArrayEventTotal = 0; sourceArrayPropertyTotal = 0');
+            localInterpreter.Execute(
+                ['function recordSourceArrayEvent(src, eventData)', '  global sourceArrayEventTotal', '  sourceArrayEventTotal = sourceArrayEventTotal + src.Value;', 'end'].join('\n'),
+            );
+            localInterpreter.Execute(
+                [
+                    'function recordSourceArrayProperty(metaProperty, eventData)',
+                    '  global sourceArrayPropertyTotal',
+                    '  sourceArrayPropertyTotal = sourceArrayPropertyTotal + eventData.AffectedObject.Value;',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute(
+                [
+                    'classdef SourceArrayListenerSource < handle',
+                    '  events',
+                    '    Changed',
+                    '  end',
+                    '  properties (SetObservable)',
+                    '    Value = 0;',
+                    '  end',
+                    '  methods',
+                    '    function obj = SourceArrayListenerSource(value = 0)',
+                    '      obj.Value = value;',
+                    '    end',
+                    '    function fire(obj)',
+                    '      notify(obj, "Changed");',
+                    '    end',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute('sources = [SourceArrayListenerSource(1), SourceArrayListenerSource(2)]');
+            localInterpreter.Execute('eventListeners = addlistener(sources, "Changed", @recordSourceArrayEvent)');
+            localInterpreter.Execute('qualifiedEventListeners = event.listener(sources, "Changed", @recordSourceArrayEvent)');
+            localInterpreter.Execute('sources(1).fire(); sources(2).fire()');
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'class(eventListeners(1)); class(eventListeners(2)); class(qualifiedEventListeners(1)); class(qualifiedEventListeners(2)); sourceArrayEventTotal',
+                    ),
+                ),
+            ).toBe('event.listener\nevent.listener\nevent.listener\nevent.listener\n6\n');
+            localInterpreter.Execute('delete(eventListeners(1)); delete(qualifiedEventListeners(1)); sources(1).fire(); sources(2).fire()');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('sourceArrayEventTotal; isvalid(eventListeners); isvalid(qualifiedEventListeners)'))).toBe(
+                '10\n[false,true]\n[false,true]\n',
+            );
+            localInterpreter.Execute('notify(sources, "Changed")');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('sourceArrayEventTotal'))).toBe('14\n');
+            localInterpreter.Execute('delete(eventListeners); delete(qualifiedEventListeners); notify(sources, "Changed")');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('sourceArrayEventTotal; isvalid(eventListeners); isvalid(qualifiedEventListeners)'))).toBe(
+                '14\n[false,false]\n[false,false]\n',
+            );
+            localInterpreter.Execute('dottedListeners = addlistener(sources, "Changed", @recordSourceArrayEvent)');
+            localInterpreter.Execute('dottedListeners.delete(); notify(sources, "Changed")');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('sourceArrayEventTotal; isvalid(dottedListeners)'))).toBe('14\n[false,false]\n');
+            localInterpreter.Execute('inheritedListeners = sources.addlistener("Changed", @recordSourceArrayEvent)');
+            localInterpreter.Execute('sources.notify("Changed")');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('sourceArrayEventTotal; inheritedListeners.isvalid()'))).toBe('17\n[true,true]\n');
+            localInterpreter.Execute('inheritedListeners.delete()');
+
+            localInterpreter.Execute('propertyListeners = listener(sources, "Value", "PostSet", @recordSourceArrayProperty)');
+            localInterpreter.Execute('qualifiedPropertyListeners = event.proplistener(sources, "Value", "PostSet", @recordSourceArrayProperty)');
+            localInterpreter.Execute('sources(1).Value = 10; sources(2).Value = 20');
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'class(propertyListeners(1)); class(propertyListeners(2)); class(qualifiedPropertyListeners(1)); class(qualifiedPropertyListeners(2)); sourceArrayPropertyTotal',
+                    ),
+                ),
+            ).toBe('event.proplistener\nevent.proplistener\nevent.proplistener\nevent.proplistener\n60\n');
+            localInterpreter.Execute('delete(propertyListeners); delete(qualifiedPropertyListeners); sources(1).Value = 30; sources(2).Value = 40');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('sourceArrayPropertyTotal; isvalid(propertyListeners); isvalid(qualifiedPropertyListeners)'))).toBe(
+                '60\n[false,false]\n[false,false]\n',
+            );
+            expect(() => localInterpreter.Execute('addlistener({SourceArrayListenerSource(), 1}, "Changed", @recordSourceArrayEvent)')).toThrow(
+                'addlistener: source array must contain class instances.',
+            );
+            expect(() => localInterpreter.Execute('event.listener({SourceArrayListenerSource(), 1}, "Changed", @recordSourceArrayEvent)')).toThrow(
+                'event.listener: source array must contain class instances.',
+            );
+            expect(() => localInterpreter.Execute('notify({SourceArrayListenerSource(), 1}, "Changed")')).toThrow('notify: source array must contain class instances.');
+        });
+
+        it('Should create property listener arrays for property name lists.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute('global propertyListTotal');
+            localInterpreter.Execute('propertyListTotal = 0');
+            localInterpreter.Execute(
+                [
+                    'function recordPropertyList(metaProperty, eventData)',
+                    '  global propertyListTotal',
+                    '  propertyListTotal = propertyListTotal + eventData.AffectedObject.First + eventData.AffectedObject.Second;',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute(['classdef PropertyListListenerSource < handle', '  properties (SetObservable)', '    First = 1;', '    Second = 2;', '  end', 'end'].join('\n'));
+            localInterpreter.Execute('s = PropertyListListenerSource()');
+            localInterpreter.Execute('cellListeners = addlistener(s, {"First", "Second"}, "PostSet", @recordPropertyList)');
+            localInterpreter.Execute('metaProps = meta.class.fromName("PropertyListListenerSource").PropertyList');
+            localInterpreter.Execute('metaListeners = event.proplistener(s, metaProps, "PostSet", @recordPropertyList)');
+            localInterpreter.Execute('s.First = 3; s.Second = 4');
+
+            expect(
+                localInterpreter.Unparse(localInterpreter.Execute('class(cellListeners(1)); class(cellListeners(2)); class(metaListeners(1)); class(metaListeners(2)); propertyListTotal')),
+            ).toBe('event.proplistener\nevent.proplistener\nevent.proplistener\nevent.proplistener\n24\n');
+            expect(() => localInterpreter.Execute('addlistener(s, {"First", 2}, "PostSet", @recordPropertyList)')).toThrow('addlistener: property name must be a string or meta.property.');
+            expect(() => localInterpreter.Execute('addlistener([s, s], {"First", "Second"}, "PostSet", @recordPropertyList)')).toThrow(
+                'addlistener: property name must be a string or meta.property.',
+            );
+        });
+
+        it('Should pass custom event.EventData subclasses through notify.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute('global customEventClass customEventIsData customEventIsHandle customEventName customEventSource customEventPayload baseEventName baseEventSource');
+            localInterpreter.Execute(
+                [
+                    'function recordCustomEvent(src, eventData)',
+                    '  global customEventClass customEventIsData customEventIsHandle customEventName customEventSource customEventPayload',
+                    '  customEventClass = class(eventData);',
+                    '  customEventIsData = isa(eventData, "event.EventData");',
+                    '  customEventIsHandle = isa(eventData, "handle");',
+                    '  customEventName = eventData.EventName;',
+                    '  customEventSource = class(eventData.Source);',
+                    '  customEventPayload = eventData.Payload;',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute(
+                [
+                    'function recordBaseEvent(src, eventData)',
+                    '  global baseEventName baseEventSource',
+                    '  baseEventName = eventData.EventName;',
+                    '  baseEventSource = class(eventData.Source);',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute(
+                [
+                    'classdef CustomEventSource < handle',
+                    '  events',
+                    '    Changed',
+                    '  end',
+                    '  methods',
+                    '    function fire(obj, data)',
+                    '      notify(obj, "Changed", data);',
+                    '    end',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute(['classdef CustomNotifySource < handle', '  methods', '    function y = notify(obj)', '      y = 99;', '    end', '  end', 'end'].join('\n'));
+            localInterpreter.Execute(
+                [
+                    'classdef (ConstructOnLoad) CustomEventPayload < event.EventData',
+                    '  properties',
+                    '    Payload = 0;',
+                    '  end',
+                    '  methods',
+                    '    function obj = CustomEventPayload(value = 0)',
+                    '      obj.Payload = value;',
+                    '    end',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute('s = CustomEventSource(); data = CustomEventPayload(42); customListener = addlistener(s, "Changed", @recordCustomEvent); s.fire(data)');
+
+            expect(
+                localInterpreter.Unparse(localInterpreter.Execute('customEventClass; customEventIsData; customEventIsHandle; customEventName; customEventSource; customEventPayload')),
+            ).toBe('CustomEventPayload\ntrue\ntrue\nChanged\nCustomEventSource\n42\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('data.EventName; class(data.Source)'))).toBe('Changed\nCustomEventSource\n');
+            expect(() => localInterpreter.Execute('CustomEventPayload(1).EventName')).toThrow('event data EventName is not assigned until notify dispatch.');
+            expect(() => localInterpreter.Execute('data.Source = s')).toThrow("cannot assign to read-only property 'Source' for class CustomEventPayload.");
+            localInterpreter.Execute('delete(customListener); addlistener(s, "Changed", @recordBaseEvent); baseData = event.EventData(); notify(s, "Changed", baseData)');
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute('class(baseData); isa(baseData, "event.EventData"); baseData.EventName; class(baseData.Source); baseEventName; baseEventSource'),
+                ),
+            ).toBe('event.EventData\ntrue\nChanged\nCustomEventSource\nChanged\nCustomEventSource\n');
+            expect(() => localInterpreter.Execute('event.EventData().EventName')).toThrow('event data EventName is not assigned until notify dispatch.');
+            expect(() => localInterpreter.Execute('baseData.EventName = "Other"')).toThrow("cannot assign to read-only property 'EventName' for event.EventData.");
+            expect(() => localInterpreter.Execute('baseData.Source.Value = 1')).toThrow("cannot assign nested property 'Source.Value' for event.EventData.");
+            localInterpreter.Execute('dotData = CustomEventPayload(7); s.notify("Changed", dotData)');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('dotData.EventName; class(dotData.Source); baseEventName; baseEventSource'))).toBe(
+                'Changed\nCustomEventSource\nChanged\nCustomEventSource\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('CustomNotifySource().notify()'))).toBe('99\n');
+            expect(() => localInterpreter.Execute('classdef InvalidCustomEventPayload < event.EventData; end')).toThrow(
+                'class InvalidCustomEventPayload must set ConstructOnLoad because it subclasses event.EventData.',
+            );
+            expect(() => localInterpreter.Execute('classdef (ConstructOnLoad) InvalidCustomEventSourceProperty < event.EventData; properties; Source; end; end')).toThrow(
+                "class InvalidCustomEventSourceProperty cannot redefine inherited event.EventData property 'Source'.",
+            );
+            expect(() => localInterpreter.Execute('classdef InvalidPropertyEventChild < event.PropertyEvent; end')).toThrow(
+                'class InvalidPropertyEventChild cannot inherit from sealed class event.PropertyEvent.',
+            );
         });
 
         it('Should abort identical property assignments with AbortSet.', () => {
@@ -4468,11 +5451,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const localInterpreter = Interpreter.Create();
 
             localInterpreter.Execute(['classdef ColorChoice', '  enumeration', '    Red', '    Blue(2)', '  end', 'end'].join('\n'));
-            localInterpreter.Execute(['classdef MoreColorChoice < ColorChoice', 'end'].join('\n'));
 
             expect(localInterpreter.Unparse(localInterpreter.Execute('ColorChoice.Red'))).toBe('ColorChoice.Red\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('ColorChoice.Blue'))).toBe('ColorChoice.Blue\n');
-            expect(localInterpreter.Unparse(localInterpreter.Execute('MoreColorChoice.Red'))).toBe('ColorChoice.Red\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('class(ColorChoice.Red)'))).toBe('ColorChoice\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute("isa(ColorChoice.Red, 'ColorChoice')"))).toBe('true\n');
         });
@@ -4482,7 +5463,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
             localInterpreter.Execute(
                 [
-                    'classdef IntrospectionBase',
+                    'classdef IntrospectionBase < handle',
                     '  properties',
                     '    baseValue = 1;',
                     '  end',
@@ -4586,6 +5567,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('isclass("IntrospectionChild")'))).toBe('true\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('isclass("double")'))).toBe('true\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('isclass("handle")'))).toBe('true\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('isclass("event.listener"); isclass("event.proplistener")'))).toBe('true\ntrue\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('isclass("MissingIntrospectionClass")'))).toBe('false\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('exist("IntrospectionChild", "class")'))).toBe('8\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('exist("handle", "class")'))).toBe('8\n');
@@ -4601,7 +5583,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
             localInterpreter.Execute(
                 [
-                    'classdef PublicIntrospectionFilter',
+                    'classdef PublicIntrospectionFilter < handle',
                     '  properties',
                     '    PublicValue = 1;',
                     '  end',
@@ -4667,7 +5649,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
             localInterpreter.Execute(
                 [
-                    'classdef LeftDuplicateRuntime',
+                    'classdef LeftDuplicateRuntime < handle',
                     '  properties',
                     '    Value = 1;',
                     '  end',
@@ -4684,16 +5666,16 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             );
             localInterpreter.Execute(
                 [
-                    'classdef RightDuplicateRuntime',
-                    '  properties',
+                    'classdef RightDuplicateRuntime < handle',
+                    '  properties (Access = private)',
                     '    Value = 2;',
                     '  end',
-                    '  methods',
+                    '  methods (Access = private)',
                     '    function y = value(obj)',
                     '      y = 99;',
                     '    end',
                     '  end',
-                    '  events',
+                    '  events (ListenAccess = private, NotifyAccess = private)',
                     '    Changed',
                     '  end',
                     'end',
@@ -4957,7 +5939,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
             localInterpreter.Execute(
                 [
-                    'classdef (Hidden, ConstructOnLoad, HandleCompatible, InferiorClasses = {?LowPriorityMetaPoint, ?pkg.OtherLowMetaPoint}, AllowedSubclasses = {?MetaPointChild}) MetaPoint',
+                    'classdef (Hidden, ConstructOnLoad, HandleCompatible, InferiorClasses = {?LowPriorityMetaPoint, ?pkg.OtherLowMetaPoint}, AllowedSubclasses = {?MetaPointChild}) MetaPoint < handle',
                     '  properties (SetObservable, NonCopyable)',
                     '    x = 1;',
                     '  end',
@@ -4985,7 +5967,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('class(mc)'))).toBe('meta.class\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute("isa(mc, 'meta.class')"))).toBe('true\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('mc.Name'))).toBe('MetaPoint\n');
-            expect(localInterpreter.Unparse(localInterpreter.Execute('mc.Sealed'))).toBe('false\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('mc.Sealed'))).toBe('true\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('mc.Hidden'))).toBe('true\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('mc.ConstructOnLoad'))).toBe('true\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('mc.RestrictsSubclassing'))).toBe('true\n');
@@ -6681,6 +7663,66 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             localInterpreter.Execute(['function f = makefevalnested(a)', '  function z = inner(x)', '    z = x + a;', '  end', '  f = @inner;', 'end'].join('\n'));
 
             expect(localInterpreter.Unparse(localInterpreter.Execute('h = makefevalnested(10); feval(h, 5)'))).toBe('h=@inner\n15\n');
+        });
+
+        it('Should reject textual nested function calls through feval, nthargout, and arity queries.', () => {
+            const localInterpreter = Interpreter.Create();
+            localInterpreter.Execute(
+                [
+                    'function [direct, handleCall, fevalHandleCall, nthHandleCall] = nestedtextdispatch(a)',
+                    '  direct = inner(1);',
+                    '  h = @inner;',
+                    '  handleCall = h(2);',
+                    '  fevalHandleCall = feval(h, 3);',
+                    '  nthHandleCall = nthargout(1, h, 4);',
+                    '  function y = inner(x)',
+                    '    y = a + x;',
+                    '  end',
+                    'end',
+                    'function y = nestedtextfeval(a)',
+                    '  y = feval("inner", 1);',
+                    '  function z = inner(x)',
+                    '    z = a + x;',
+                    '  end',
+                    'end',
+                    'function y = nestedtextnthargout(a)',
+                    '  y = nthargout(1, "inner", 1);',
+                    '  function z = inner(x)',
+                    '    z = a + x;',
+                    '  end',
+                    'end',
+                    'function y = nestedtextnargin()',
+                    '  y = nargin("inner");',
+                    '  function z = inner(x)',
+                    '    z = x;',
+                    '  end',
+                    'end',
+                    'function y = nestedtextnargout()',
+                    '  y = nargout("inner");',
+                    '  function z = inner(x)',
+                    '    z = x;',
+                    '  end',
+                    'end',
+                    'function y = nestedtextstr2func(a)',
+                    '  h = str2func("inner");',
+                    '  y = h(1);',
+                    '  function z = inner(x)',
+                    '    z = a + x;',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute('[direct, handleCall, fevalHandleCall, nthHandleCall] = nestedtextdispatch(10); [direct, handleCall, fevalHandleCall, nthHandleCall]'),
+                ),
+            ).toBe('direct=11\nhandleCall=12\nfevalHandleCall=13\nnthHandleCall=14\n[11,12,13,14]\n');
+            expect(() => localInterpreter.Execute('nestedtextfeval(10)')).toThrow("'inner' undefined.");
+            expect(() => localInterpreter.Execute('nestedtextnthargout(10)')).toThrow("'inner' undefined.");
+            expect(() => localInterpreter.Execute('nestedtextnargin()')).toThrow("'inner' undefined.");
+            expect(() => localInterpreter.Execute('nestedtextnargout()')).toThrow("'inner' undefined.");
+            expect(() => localInterpreter.Execute('nestedtextstr2func(10)')).toThrow("'inner' undefined.");
         });
 
         it('Should preserve anonymous function call metadata through feval.', () => {
@@ -8885,6 +9927,18 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('h = makeanonymouscounter(10); h(1, 2)'))).toBe('h=@(x,y) nargin+nargout+offset\n13\n');
         });
 
+        it('Should reject dynamic variable creation in anonymous function workspaces.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('f = @(x) eval("x + 1"); f(5)'))).toBe('f=@(x) eval(x + 1)\n6\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('captured = 10; g = @() eval("captured + 1"); g()'))).toBe('captured=10\ng=@() eval(captured + 1)\n11\n');
+            expect(() => localInterpreter.Execute('h = @() eval("dynamicAnonymous = 2"); h()')).toThrow("Attempt to add variable 'dynamicAnonymous' to a static workspace.");
+            expect(() => localInterpreter.Execute('k = @() eval("missingAnonymous + 1", "fallbackAnonymous = 3"); k()')).toThrow(
+                "Attempt to add variable 'fallbackAnonymous' to a static workspace.",
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('exist("dynamicAnonymous", "var"); exist("fallbackAnonymous", "var")'))).toBe('0\n0\n');
+        });
+
         it('Should support varargin in anonymous functions.', () => {
             const localInterpreter = Interpreter.Create();
             expect(localInterpreter.Unparse(localInterpreter.Execute('f = @(x, varargin) x + varargin{1} + nargin; f(1, 2, 3)'))).toBe('f=@(x,varargin) x+varargin{1}+nargin\n6\n');
@@ -9061,8 +10115,78 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const localInterpreter = Interpreter.Create();
             localInterpreter.Execute(['function y = readcallerexpr()', '  x = 10;', '  y = evalin("caller", "x + 1");', 'end'].join('\n'));
             localInterpreter.Execute(['function y = readbaseexpr()', '  x = 10;', '  y = evalin("base", "x + 1");', 'end'].join('\n'));
+            localInterpreter.Execute(['function y = writecallerexpr()', '  evalin("caller", "x = x + 2");', '  y = 0;', 'end'].join('\n'));
+            localInterpreter.Execute(['function declareglobalcallerhelper()', '  evalin("caller", "global evalinGlobalCaller; evalinGlobalCaller = 42");', 'end'].join('\n'));
+            localInterpreter.Execute(
+                [
+                    'function [y, isGlobal] = declareglobalcallerexpr()',
+                    '  declareglobalcallerhelper();',
+                    '  y = evalinGlobalCaller;',
+                    '  info = whos("evalinGlobalCaller");',
+                    '  isGlobal = info.global;',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute(['function clearcallerexpr()', '  evalin("caller", "clear x");', 'end'].join('\n'));
+            localInterpreter.Execute(
+                [
+                    'function [visibleCount, helperCount, updatedValue, updatedCount, infoName] = whocallerexpr()',
+                    '  x = 10;',
+                    '  visibleCount = innerWhoX();',
+                    '  helperCount = innerWhoHelper();',
+                    '  updatedValue = innerUpdate();',
+                    '  updatedCount = innerWhoX();',
+                    '  info = innerWhosX();',
+                    '  infoName = info.name;',
+                    '  function n = innerWhoX()',
+                    '    n = evalin("caller", "numel(who(\'x\'))");',
+                    '  end',
+                    '  function n = innerWhoHelper()',
+                    '    n = evalin("caller", "numel(who(\'helper\'))");',
+                    '  end',
+                    '  function n = innerUpdate()',
+                    '    n = evalin("caller", "x = x + 1");',
+                    '  end',
+                    '  function info = innerWhosX()',
+                    '    info = evalin("caller", "whos(\'x\')");',
+                    '  end',
+                    '  function z = helper()',
+                    '    z = 99;',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+            localInterpreter.Execute(['function clearallcallerexpr()', '  evalin("caller", "clear");', 'end'].join('\n'));
+            localInterpreter.Execute(
+                [
+                    'function y = evalincallerlocalfunction()',
+                    '  y = helper();',
+                    '  inner();',
+                    '  function z = helper()',
+                    '    z = 9;',
+                    '  end',
+                    '  function z = inner()',
+                    '    z = evalin("caller", "helper()");',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
             expect(localInterpreter.Unparse(localInterpreter.Execute('x = 20; readcallerexpr()'))).toBe('x=20\n21\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('readbaseexpr()'))).toBe('21\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('x = 30; writecallerexpr(); x'))).toBe('x=30\n0\n32\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('[globalValue, isGlobal] = declareglobalcallerexpr(); [globalValue, isGlobal]'))).toBe(
+                'globalValue=42\nisGlobal=true\n[42,true]\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('x = 40; clearcallerexpr(); exist("x", "var")'))).toBe('x=40\n0\n');
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        '[visibleCount, helperCount, updatedValue, updatedCount, infoName] = whocallerexpr(); [visibleCount, helperCount, updatedValue, updatedCount]; infoName',
+                    ),
+                ),
+            ).toBe('visibleCount=1\nhelperCount=0\nupdatedValue=x=11\nupdatedCount=1\ninfoName=x\n[1,0,x=11,1]\nx\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('a = 1; b = 2; clearallcallerexpr(); exist("a", "var") + exist("b", "var")'))).toBe('a=1\nb=2\n0\n');
+            expect(() => localInterpreter.Execute('evalincallerlocalfunction()')).toThrow("'helper' undefined.");
         });
 
         it('Should evaluate code in anonymous caller workspaces with evalin caller.', () => {
@@ -9072,18 +10196,54 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             localInterpreter.Execute(['function y = evalinlambdaarg()', '  f = @(x) evalin("caller", "x + 5");', '  y = f(20);', 'end'].join('\n'));
             localInterpreter.Execute(['function y = evalinreturnedlambda()', '  x = 30;', '  f = makereadcallerlambda();', '  y = f(1);', 'end'].join('\n'));
             localInterpreter.Execute(['function f = makereadcallerlambda()', '  f = @(t) evalin("caller", "x + t");', 'end'].join('\n'));
+            localInterpreter.Execute(['function f = makeevalinwriter()', '  x = 1;', '  f = @() evalin("caller", "x = x + 1");', 'end'].join('\n'));
+            localInterpreter.Execute(
+                ['function y = evalinlambdahelper()', '  function z = helper()', '    z = 9;', '  end', '  f = @() evalin("caller", "helper()");', '  y = f();', 'end'].join('\n'),
+            );
             expect(localInterpreter.Unparse(localInterpreter.Execute('f = @(x) readcallerx(); f(10)'))).toBe('f=@(x) readcallerx()\n10\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('evalinlambdaouter()'))).toBe('8\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('evalinlambdaarg()'))).toBe('25\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('evalinreturnedlambda()'))).toBe('31\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('x = 50; writeAnon = @() evalin("caller", "x = x + 4"); writeAnon(); x'))).toBe(
+                'x=50\nwriteAnon=@() evalin(caller,x = x + 4)\nx=54\n50\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('x = 60; clearAnon = @() evalin("caller", "clear x"); clearAnon(); exist("x", "var")'))).toBe(
+                'x=60\nclearAnon=@() evalin(caller,clear x)\n1\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('paramWrite = @(x) evalin("caller", "x = x + 1"); paramWrite(5)'))).toBe(
+                'paramWrite=@(x) evalin(caller,x = x + 1)\nx=6\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('writer = makeevalinwriter(); writer(); writer()'))).toBe('writer=@() evalin(caller,x = x + 1)\nx=2\nx=3\n');
+            expect(
+                localInterpreter.Unparse(localInterpreter.Execute('x = 70; whoAnon = @() [numel(evalin("caller", "who(\'x\')")), numel(evalin("caller", "who(\'helper\')"))]; whoAnon()')),
+            ).toBe("x=70\nwhoAnon=@() [numel(evalin(caller,who('x'))),numel(evalin(caller,who('helper')))]\n[1,0]\n");
+            expect(() => localInterpreter.Execute('evalinlambdahelper()')).toThrow("'helper' undefined.");
+            expect(() => localInterpreter.Execute('dynamicEvalin = @() evalin("caller", "createdByEvalinLambda = 5"); dynamicEvalin()')).toThrow(
+                "Attempt to add variable 'createdByEvalinLambda' to a static workspace.",
+            );
         });
 
         it('Should assign variables in caller and base workspaces with assignin.', () => {
             const localInterpreter = Interpreter.Create();
             localInterpreter.Execute(['function setcaller()', '  assignin("caller", "createdByCaller", 99)', 'end'].join('\n'));
             localInterpreter.Execute(['function setbase()', '  assignin("base", "createdByBase", 123)', 'end'].join('\n'));
+            localInterpreter.Execute(
+                [
+                    'function y = assigninValueCaller()',
+                    '  target = 1;',
+                    '  local = 5;',
+                    '  assigninValueHelper(local + 1);',
+                    '  y = target;',
+                    'end',
+                    'function assigninValueHelper(value)',
+                    '  target = 99;',
+                    '  assignin("caller", "target", value)',
+                    'end',
+                ].join('\n'),
+            );
             expect(localInterpreter.Unparse(localInterpreter.Execute('setcaller(); createdByCaller'))).toBe('99\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('setbase(); createdByBase'))).toBe('123\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('assigninValueCaller()'))).toBe('6\n');
         });
 
         it('Should assign into the calling user function workspace with assignin caller.', () => {
@@ -9136,6 +10296,23 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const localInterpreter = Interpreter.Create();
             localInterpreter.Execute(['function [a, b] = evalcpair(x)', '  a = x;', '  b = x + 1;', 'end'].join('\n'));
             localInterpreter.Execute(['function [a, b, c] = evalcmaskprobe()', '  a = isargout(1);', '  b = isargout(2);', '  c = isargout(3);', 'end'].join('\n'));
+            localInterpreter.Execute(
+                [
+                    'function y = staticEvalcDeclared()',
+                    '  declared = [];',
+                    '  evalc("declared = 5");',
+                    '  y = declared;',
+                    '  function inner()',
+                    '  end',
+                    'end',
+                    'function y = staticEvalcDynamic()',
+                    '  evalc("evalcDynamic = 1");',
+                    '  y = 0;',
+                    '  function inner()',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
 
             expect(localInterpreter.Unparse(localInterpreter.Execute('s = evalc("x = 10"); s'))).toBe('s=x=10\nx=10\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('s = evalc("missingEvalC", "fallback = 7"); s; fallback'))).toBe('s=fallback=7\nfallback=7\n7\n');
@@ -9143,6 +10320,12 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('[~, p] = evalc("pi"); p'))).toBe('p=3.141592653589793238\n3.141592653589793238\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('[s, ~, b, ~] = evalc("evalcmaskprobe()"); s; b'))).toBe('s=true\nb=true\ntrue\ntrue\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('[~, a, ~, c] = evalc("evalcmaskprobe()"); [a, c]'))).toBe('a=true\nc=true\n[true,true]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('staticEvalcDeclared()'))).toBe('5\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('readEvalc = @(x) evalc("x + 1"); readEvalc(5)'))).toBe('readEvalc=@(x) evalc(x + 1)\n6\n');
+            expect(() => localInterpreter.Execute('staticEvalcDynamic()')).toThrow("Attempt to add variable 'evalcDynamic' to a static workspace.");
+            expect(() => localInterpreter.Execute('dynamicEvalc = @() evalc("createdFromEvalcAnon = 1"); dynamicEvalc()')).toThrow(
+                "Attempt to add variable 'createdFromEvalcAnon' to a static workspace.",
+            );
         });
 
         it('Should keep return scoped to the workspace selected by eval and evalin.', () => {
@@ -9207,6 +10390,111 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const localInterpreter = Interpreter.Create();
             localInterpreter.Execute(['function y = evalnested()', '  x = 1;', '  inner();', '  y = x;', '  function inner()', '    eval("x = x + 4");', '  end', 'end'].join('\n'));
             expect(localInterpreter.Unparse(localInterpreter.Execute('evalnested()'))).toBe('5\n');
+        });
+
+        it('Should reject dynamic variable creation in static nested-function workspaces.', () => {
+            const localInterpreter = Interpreter.Create({
+                scriptSourceTable: {
+                    staticScriptAllowed: 'scriptDeclared = scriptDeclared + 2;',
+                    staticScriptDynamic: 'scriptDynamic = 1;',
+                },
+            });
+
+            localInterpreter.Execute(
+                [
+                    'function y = staticEvalDeclared()',
+                    '  declared = [];',
+                    '  eval("declared = 5");',
+                    '  y = declared;',
+                    '  function inner()',
+                    '  end',
+                    'end',
+                    'function y = staticEvalDynamic()',
+                    '  eval("dynamicName = 5");',
+                    '  y = 0;',
+                    '  function inner()',
+                    '  end',
+                    'end',
+                    'function y = staticEvalinCallerDeclared()',
+                    '  callerDeclared = [];',
+                    '  inner();',
+                    '  y = callerDeclared;',
+                    '  function inner()',
+                    '    evalin("caller", "callerDeclared = 7");',
+                    '  end',
+                    'end',
+                    'function y = staticEvalinCallerDynamic()',
+                    '  inner();',
+                    '  y = 0;',
+                    '  function inner()',
+                    '    evalin("caller", "callerDynamic = 7");',
+                    '  end',
+                    'end',
+                    'function y = staticAssigninCallerDeclared()',
+                    '  assignedDeclared = [];',
+                    '  inner();',
+                    '  y = assignedDeclared;',
+                    '  function inner()',
+                    '    assignin("caller", "assignedDeclared", 9);',
+                    '  end',
+                    'end',
+                    'function y = staticAssigninCallerDynamic()',
+                    '  inner();',
+                    '  y = 0;',
+                    '  function inner()',
+                    '    assignin("caller", "assignedDynamic", 9);',
+                    '  end',
+                    'end',
+                    'function y = staticScriptDeclared()',
+                    '  scriptDeclared = 3;',
+                    '  run("staticScriptAllowed");',
+                    '  y = scriptDeclared;',
+                    '  function inner()',
+                    '  end',
+                    'end',
+                    'function y = staticScriptDynamic()',
+                    '  run("staticScriptDynamic");',
+                    '  y = 0;',
+                    '  function inner()',
+                    '  end',
+                    'end',
+                ].join('\n'),
+            );
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('staticEvalDeclared(); staticEvalinCallerDeclared(); staticAssigninCallerDeclared(); staticScriptDeclared()'))).toBe(
+                '5\n7\n9\n5\n',
+            );
+            expect(() => localInterpreter.Execute('staticEvalDynamic()')).toThrow("Attempt to add variable 'dynamicName' to a static workspace.");
+            expect(() => localInterpreter.Execute('staticEvalinCallerDynamic()')).toThrow("Attempt to add variable 'callerDynamic' to a static workspace.");
+            expect(() => localInterpreter.Execute('staticAssigninCallerDynamic()')).toThrow("Attempt to add variable 'assignedDynamic' to a static workspace.");
+            expect(() => localInterpreter.Execute('staticScriptDynamic()')).toThrow("Attempt to add variable 'scriptDynamic' to a static workspace.");
+        });
+
+        it('Should source scripts into the selected real caller workspace.', () => {
+            const localInterpreter = Interpreter.Create({
+                scriptSourceTable: {
+                    callerSourceScript: 'sourceCreated = sourceSeed + 5;',
+                    callerCommandSourceScript: 'commandCreated = commandSeed + 7;',
+                },
+            });
+            localInterpreter.Execute(
+                [
+                    'function [a, b] = sourceCallerOuter()',
+                    '  sourceSeed = 10;',
+                    '  commandSeed = 20;',
+                    '  sourceCallerHelper();',
+                    '  a = sourceCreated;',
+                    '  b = commandCreated;',
+                    'end',
+                    'function sourceCallerHelper()',
+                    '  source("callerSourceScript", "caller");',
+                    '  source callerCommandSourceScript caller',
+                    'end',
+                ].join('\n'),
+            );
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('[a, b] = sourceCallerOuter(); [a, b]'))).toBe('a=15\nb=27\n[15,27]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('exist("sourceCreated", "var") + exist("commandCreated", "var")'))).toBe('0\n');
         });
 
         it('Should call nested functions from eval code.', () => {
@@ -9309,6 +10597,32 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             );
             expect(localInterpreter.Unparse(localInterpreter.Execute('earlycounter(1)'))).toBe('1\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('earlycounter(0)'))).toBe('102\n');
+        });
+
+        it('Should combine persistent outer state with returned nested closures.', () => {
+            const localInterpreter = Interpreter.Create();
+            localInterpreter.Execute(
+                [
+                    'function h = makePersistentClosure(seed)',
+                    '  persistent shared = 0;',
+                    '  shared = shared + 1;',
+                    '  local = seed;',
+                    '  function y = next(step)',
+                    '    local = local + step;',
+                    '    y = local + shared * 100;',
+                    '  end',
+                    '  h = @next;',
+                    'end',
+                    'first = makePersistentClosure(10);',
+                    'second = makePersistentClosure(20);',
+                    'a = first(1);',
+                    'b = first(1);',
+                    'c = second(1);',
+                    'd = first(1);',
+                ].join('\n'),
+            );
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('a; b; c; d; exist("shared", "var"); exist("local", "var")'))).toBe('111\n112\n221\n113\n0\n0\n');
         });
 
         it('Should accept return at top level as a no-output early stop.', () => {

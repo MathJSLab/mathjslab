@@ -94,8 +94,12 @@ class ClassDefinition {
     private static readonly eventBooleanAttributes = new Set(['Hidden']);
     /** Enumeration-section attributes that must be boolean markers when present. */
     private static readonly enumerationBooleanAttributes = new Set(['Hidden']);
-    /** Built-in MATLAB mixin superclasses recognized without external source. */
-    private static readonly builtinSuperclassNames = new Set(['handle', 'matlab.mixin.SetGet', 'matlab.mixin.SetGetExactNames']);
+    /** Built-in MATLAB handle/mixin superclasses recognized without external source. */
+    private static readonly builtinSuperclassNames = new Set(['handle', 'event.EventData', 'event.PropertyEvent', 'matlab.mixin.SetGet', 'matlab.mixin.SetGetExactNames']);
+    /** Built-in MATLAB classes that exist but cannot be subclassed. */
+    private static readonly sealedBuiltinSuperclassNames = new Set(['event.PropertyEvent']);
+    /** Read-only properties inherited from MATLAB's `event.EventData`. */
+    private static readonly eventDataInheritedPropertyNames = new Set(['Source', 'EventName']);
     /**
      * Keep the first item for each key while preserving input order.
      *
@@ -137,10 +141,14 @@ class ClassDefinition {
     public readonly isConstructOnLoad: boolean;
     /** Whether the class was declared with `HandleCompatible`. */
     public readonly isHandleCompatible: boolean;
+    /** Explicit `HandleCompatible` attribute value, or `null` when absent. */
+    private readonly explicitHandleCompatible: boolean | null;
     /** Class names declared in the `InferiorClasses` class attribute. */
     public readonly inferiorClasses: string[];
     /** Class names declared in the `AllowedSubclasses` class attribute. */
     public readonly allowedSubclasses: string[];
+    /** Whether `AllowedSubclasses` was explicitly assigned a valid class-name list. */
+    private readonly hasAllowedSubclassesAttribute: boolean;
     /** Whether metadata should report subclassing as restricted. */
     public readonly isRestrictsSubclassing: boolean;
     /** Whether this object represents the built-in `handle` base class. */
@@ -194,13 +202,15 @@ class ClassDefinition {
         this.packageName = packageSeparator < 0 ? '' : this.name.slice(0, packageSeparator);
         this.simpleName = packageSeparator < 0 ? this.name : this.name.slice(packageSeparator + 1);
         this.attributes = ast.attributeTable;
-        this.isSealed = ClassMember.hasAttribute(this.attributes, 'Sealed');
+        const explicitSealed = ClassMember.hasAttribute(this.attributes, 'Sealed');
         this.isHidden = ClassMember.hasAttribute(this.attributes, 'Hidden');
         this.isConstructOnLoad = ClassMember.hasAttribute(this.attributes, 'ConstructOnLoad');
-        this.isHandleCompatible = ClassMember.hasAttribute(this.attributes, 'HandleCompatible');
+        this.explicitHandleCompatible = ClassMember.attributeBooleanValue(this.attributes.HandleCompatible?.[0]);
+        this.isHandleCompatible = this.explicitHandleCompatible === true;
         this.inferiorClasses = ClassMember.classNameListFromAttribute(this.attributes.InferiorClasses?.[0]) ?? [];
-        this.allowedSubclasses = ClassMember.classNameListFromAttribute(this.attributes.AllowedSubclasses?.[0]) ?? [];
-        this.isRestrictsSubclassing = this.isSealed || this.allowedSubclasses.length > 0 || ClassMember.hasAttribute(this.attributes, 'RestrictsSubclassing');
+        const allowedSubclasses = ClassMember.classNameListFromAttribute(this.attributes.AllowedSubclasses?.[0]);
+        this.allowedSubclasses = allowedSubclasses ?? [];
+        this.hasAllowedSubclassesAttribute = allowedSubclasses !== null;
         this.isBuiltinHandleClass = this.name === 'handle';
         this.superclasses = ast.superclasses.map((node: NodeIdentifier) => node.id);
         this.superclassDefinitions = [];
@@ -216,6 +226,8 @@ class ClassDefinition {
         this.enumerations = [];
         this.enumerationTable = {};
         this.collectMembers();
+        this.isSealed = explicitSealed || this.enumerations.length > 0 || (this.hasAllowedSubclassesAttribute && this.allowedSubclasses.length === 0);
+        this.isRestrictsSubclassing = this.isSealed || this.hasAllowedSubclassesAttribute || ClassMember.hasAttribute(this.attributes, 'RestrictsSubclassing');
         this.isAbstract =
             ClassMember.hasAttribute(this.attributes, 'Abstract') || this.properties.some((property) => property.isAbstract) || this.methods.some((method) => method.isAbstract);
     }
@@ -285,6 +297,9 @@ class ClassDefinition {
         this.validateLocalDefinition(throwEvalError);
         this.superclassDefinitions.length = 0;
         for (const name of this.superclasses) {
+            if (ClassDefinition.sealedBuiltinSuperclassNames.has(name)) {
+                throwEvalError(`class ${this.name} cannot inherit from sealed class ${name}.`);
+            }
             if (ClassDefinition.builtinSuperclassNames.has(name)) {
                 continue;
             }
@@ -305,6 +320,11 @@ class ClassDefinition {
         }
         this.validateInheritanceCycles(throwEvalError);
         this.validateSealedMethodOverrides(throwEvalError);
+        this.validateInheritedMethodCompatibility(throwEvalError);
+        this.validateInheritedPropertyCompatibility(throwEvalError);
+        this.validateInheritedEventCompatibility(throwEvalError);
+        this.validateHandleCompatibility(throwEvalError);
+        this.validateResolvedClassRestrictions(throwEvalError);
     }
 
     /**
@@ -324,6 +344,9 @@ class ClassDefinition {
      * @returns `true` when the name is declared or inherited.
      */
     public isSubclassOfName(baseClassName: string): boolean {
+        if (baseClassName === 'handle') {
+            return this.isHandleClass();
+        }
         if (this.superclasses.includes(baseClassName)) {
             return true;
         }
@@ -339,10 +362,21 @@ class ClassDefinition {
         return (
             this.isBuiltinHandleClass ||
             this.superclasses.includes('handle') ||
+            this.superclasses.includes('event.EventData') ||
             this.superclasses.includes('matlab.mixin.SetGet') ||
             this.superclasses.includes('matlab.mixin.SetGetExactNames') ||
             this.superclassDefinitions.some((superclass) => superclass.isHandleClass())
         );
+    }
+
+    /**
+     * Test whether the class can participate in a handle-class hierarchy.
+     *
+     * @returns `true` for handle classes and value classes explicitly marked
+     * with `HandleCompatible`.
+     */
+    public isHandleCompatibleClass(): boolean {
+        return this.isHandleClass() || this.isHandleCompatible;
     }
 
     /**
@@ -658,6 +692,72 @@ class ClassDefinition {
     }
 
     /**
+     * Test whether a method is private to its declaring class.
+     *
+     * Private superclass methods do not participate in ordinary override or
+     * multiple-inheritance conflict checks because subclasses cannot call them
+     * through the inherited public/protected interface.
+     *
+     * @param method Method metadata to inspect.
+     * @returns `true` when the method access is private.
+     */
+    private isPrivateMethodDefinition(method: ClassMethodDefinition): boolean {
+        return method.access === 'private';
+    }
+
+    /**
+     * Validate inherited method overrides and multiple-inheritance conflicts.
+     *
+     * MATLAB requires overriding methods to keep the superclass `Access`
+     * attribute. Multiple concrete inherited methods with the same name are
+     * ambiguous unless private methods are ignored, a subclass supplies a
+     * compatible override, or a single sealed inherited method determines the
+     * inherited implementation.
+     *
+     * @param throwEvalError Interpreter error callback.
+     */
+    private validateInheritedMethodCompatibility(throwEvalError: (message: string) => never): void {
+        const inheritedByKey = new Map<string, ClassMethodDefinition[]>();
+        for (const method of this.inheritedMethods()) {
+            const key = this.methodOverrideKey(method);
+            const list = inheritedByKey.get(key) ?? [];
+            if (!list.some((item) => item.classDefinition === method.classDefinition && item.name === method.name && item.isStatic === method.isStatic)) {
+                list.push(method);
+            }
+            inheritedByKey.set(key, list);
+        }
+
+        for (const method of this.methods) {
+            for (const inherited of inheritedByKey.get(this.methodOverrideKey(method)) ?? []) {
+                if (this.isPrivateMethodDefinition(inherited)) {
+                    continue;
+                }
+                if (method.access !== inherited.access) {
+                    throwEvalError(`method '${method.name}' in class ${this.name} must match inherited Access from method in class ${inherited.classDefinition.name}.`);
+                }
+            }
+        }
+
+        const ownKeys = new Set(this.methods.map((method) => this.methodOverrideKey(method)));
+        for (const [key, inherited] of inheritedByKey) {
+            if (ownKeys.has(key)) {
+                continue;
+            }
+            const visibleConcrete = inherited.filter((method) => !method.isAbstract && !this.isPrivateMethodDefinition(method));
+            const definingClasses = new Set(visibleConcrete.map((method) => method.classDefinition.name));
+            if (definingClasses.size <= 1) {
+                continue;
+            }
+            const sealedMethods = visibleConcrete.filter((method) => method.isSealed);
+            if (sealedMethods.length === 1) {
+                continue;
+            }
+            const methodName = visibleConcrete[0]?.name ?? key.slice(key.indexOf(':') + 1);
+            throwEvalError(`class ${this.name} inherits incompatible method '${methodName}' from multiple superclasses.`);
+        }
+    }
+
+    /**
      * Validate class and section attribute names before their values are used.
      *
      * @param throwEvalError Interpreter error callback.
@@ -925,6 +1025,165 @@ class ClassDefinition {
     }
 
     /**
+     * Validate rules that require superclass resolution.
+     *
+     * These checks depend on effective handle and Set/Get mixin inheritance, so
+     * they run after `resolveSuperclasses` has populated the inherited metadata.
+     *
+     * @param throwEvalError Interpreter error callback.
+     */
+    private validateResolvedClassRestrictions(throwEvalError: (message: string) => never): void {
+        if (this.events.length > 0 && !this.isHandleClass()) {
+            throwEvalError(`class ${this.name} cannot define events because it is not a handle class.`);
+        }
+        if (this.isSubclassOfName('event.EventData') && !this.isConstructOnLoad) {
+            throwEvalError(`class ${this.name} must set ConstructOnLoad because it subclasses event.EventData.`);
+        }
+        for (const property of this.properties) {
+            if (this.isSubclassOfName('event.EventData') && ClassDefinition.eventDataInheritedPropertyNames.has(property.name)) {
+                throwEvalError(`class ${this.name} cannot redefine inherited event.EventData property '${property.name}'.`);
+            }
+            if (property.isNonCopyable && !this.isHandleClass()) {
+                throwEvalError(`NonCopyable property '${property.name}' in class ${this.name} requires a handle class.`);
+            }
+            if (property.isAbortSet && !this.isHandleClass()) {
+                throwEvalError(`AbortSet property '${property.name}' in class ${this.name} requires a handle class.`);
+            }
+            if (property.partialMatchPriority !== 1 && !this.isSetGetClass()) {
+                throwEvalError(`PartialMatchPriority property '${property.name}' in class ${this.name} requires matlab.mixin.SetGet.`);
+            }
+        }
+    }
+
+    /**
+     * Validate MATLAB handle-compatible superclass rules.
+     *
+     * Handle classes can mix only with handle-compatible superclasses.
+     * Nonhandle classes explicitly marked `HandleCompatible` must also have
+     * only handle-compatible superclasses, while an explicit false marker
+     * forbids inheriting handle semantics through any superclass.
+     *
+     * @param throwEvalError Interpreter error callback.
+     */
+    private validateHandleCompatibility(throwEvalError: (message: string) => never): void {
+        const hasDirectHandleSuperclass =
+            this.superclasses.some((name) => ClassDefinition.builtinSuperclassNames.has(name)) || this.superclassDefinitions.some((superclass) => superclass.isHandleClass());
+        const incompatibleSuperclass = this.superclassDefinitions.find((superclass) => !superclass.isHandleCompatibleClass());
+
+        if (this.explicitHandleCompatible === false && hasDirectHandleSuperclass) {
+            throwEvalError(`class ${this.name} cannot set HandleCompatible to false while inheriting from a handle class.`);
+        }
+        if ((this.explicitHandleCompatible === true || hasDirectHandleSuperclass) && incompatibleSuperclass) {
+            throwEvalError(`class ${this.name} cannot combine handle semantics with non-handle-compatible superclass ${incompatibleSuperclass.name}.`);
+        }
+    }
+
+    /**
+     * Test whether a property is completely private to its declaring class.
+     *
+     * MATLAB lets subclasses reuse the name of a superclass property only when
+     * the inherited property is abstract or when both inherited accessors are
+     * private to the superclass.
+     *
+     * @param property Property metadata to inspect.
+     * @returns `true` when get and set access are both private.
+     */
+    private isPrivatePropertyDefinition(property: ClassPropertyDefinition): boolean {
+        return property.getAccess === 'private' && property.setAccess === 'private';
+    }
+
+    /**
+     * Validate inherited property redefinitions and multiple-inheritance conflicts.
+     *
+     * MATLAB allows a subclass to implement an abstract property, preserving
+     * the inherited get/set access, or to reuse a name hidden by a completely
+     * private superclass property. Other inherited property conflicts are
+     * rejected because property dispatch cannot be disambiguated safely.
+     *
+     * @param throwEvalError Interpreter error callback.
+     */
+    private validateInheritedPropertyCompatibility(throwEvalError: (message: string) => never): void {
+        const inheritedByName = new Map<string, ClassPropertyDefinition[]>();
+        for (const superclass of this.superclassDefinitions) {
+            for (const property of superclass.allProperties()) {
+                const list = inheritedByName.get(property.name) ?? [];
+                if (!list.some((item) => item.classDefinition === property.classDefinition && item.name === property.name)) {
+                    list.push(property);
+                }
+                inheritedByName.set(property.name, list);
+            }
+        }
+
+        for (const property of this.properties) {
+            for (const inherited of inheritedByName.get(property.name) ?? []) {
+                if (inherited.isAbstract) {
+                    if (property.getAccess !== inherited.getAccess || property.setAccess !== inherited.setAccess) {
+                        throwEvalError(
+                            `property '${property.name}' in class ${this.name} must match inherited GetAccess and SetAccess from abstract property in class ${inherited.classDefinition.name}.`,
+                        );
+                    }
+                    continue;
+                }
+                if (!this.isPrivatePropertyDefinition(inherited)) {
+                    throwEvalError(`property '${property.name}' in class ${this.name} cannot redefine inherited property from class ${inherited.classDefinition.name}.`);
+                }
+            }
+        }
+
+        for (const [name, inherited] of inheritedByName) {
+            const visible = inherited.filter((property) => !property.isAbstract && !this.isPrivatePropertyDefinition(property));
+            const definingClasses = new Set(visible.map((property) => property.classDefinition.name));
+            if (definingClasses.size > 1 && !this.properties.some((property) => property.name === name)) {
+                throwEvalError(`class ${this.name} inherits incompatible property '${name}' from multiple superclasses.`);
+            }
+        }
+    }
+
+    /**
+     * Test whether an event is completely private to its declaring class.
+     *
+     * Event conflicts in multiple inheritance are resolved only when all but
+     * one inherited event with the same name are private for both listening and
+     * notification.
+     *
+     * @param event Event metadata to inspect.
+     * @returns `true` when listen and notify access are both private.
+     */
+    private isPrivateEventDefinition(event: ClassEventDefinition): boolean {
+        return event.listenAccess === 'private' && event.notifyAccess === 'private';
+    }
+
+    /**
+     * Validate inherited event conflicts from multiple superclasses.
+     *
+     * MATLAB does not use a subclass event declaration to disambiguate two
+     * inherited event definitions. The inherited definitions must either be
+     * private except for one visible event, or originate from the same ancestor.
+     *
+     * @param throwEvalError Interpreter error callback.
+     */
+    private validateInheritedEventCompatibility(throwEvalError: (message: string) => never): void {
+        const inheritedByName = new Map<string, ClassEventDefinition[]>();
+        for (const superclass of this.superclassDefinitions) {
+            for (const event of superclass.allEvents()) {
+                const list = inheritedByName.get(event.name) ?? [];
+                if (!list.some((item) => item.classDefinition === event.classDefinition && item.name === event.name)) {
+                    list.push(event);
+                }
+                inheritedByName.set(event.name, list);
+            }
+        }
+
+        for (const [name, inherited] of inheritedByName) {
+            const visible = inherited.filter((event) => !this.isPrivateEventDefinition(event));
+            const definingClasses = new Set(visible.map((event) => event.classDefinition.name));
+            if (definingClasses.size > 1) {
+                throwEvalError(`class ${this.name} inherits incompatible event '${name}' from multiple superclasses.`);
+            }
+        }
+    }
+
+    /**
      * Validate incompatible class and section attribute combinations.
      *
      * @param throwEvalError Interpreter error callback.
@@ -932,6 +1191,16 @@ class ClassDefinition {
     private validateAttributeCombinations(throwEvalError: (message: string) => never): void {
         if (ClassMember.hasAttribute(this.attributes, 'Abstract') && ClassMember.hasAttribute(this.attributes, 'Sealed')) {
             throwEvalError(`class ${this.name} cannot be both abstract and sealed.`);
+        }
+        if (this.isSealed) {
+            const abstractMethod = this.methods.find((method) => method.isAbstract);
+            if (abstractMethod) {
+                throwEvalError(`sealed class ${this.name} cannot define abstract method '${abstractMethod.name}'.`);
+            }
+            const abstractProperty = this.properties.find((property) => property.isAbstract);
+            if (abstractProperty) {
+                throwEvalError(`sealed class ${this.name} cannot define abstract property '${abstractProperty.name}'.`);
+            }
         }
         for (const section of this.sections) {
             if (section.kind === 'METHODS' && ClassMember.hasAttribute(section.attributeTable, 'Abstract') && ClassMember.hasAttribute(section.attributeTable, 'Sealed')) {
@@ -944,6 +1213,12 @@ class ClassDefinition {
             }
             if (property.isAbstract && property.isConstant) {
                 throwEvalError(`property '${property.name}' in class ${this.name} cannot be both abstract and constant.`);
+            }
+            if (property.isAbstract && property.getMethodName) {
+                throwEvalError(`abstract property '${property.name}' in class ${this.name} cannot define a GetMethod.`);
+            }
+            if (property.isAbstract && property.setMethodName) {
+                throwEvalError(`abstract property '${property.name}' in class ${this.name} cannot define a SetMethod.`);
             }
             if (property.isDependent && property.defaultValue) {
                 throwEvalError(`dependent property '${property.name}' in class ${this.name} cannot define a default value.`);
@@ -975,7 +1250,24 @@ class ClassDefinition {
             if (this.isConstructorMethodName(method.name) && (returns.length !== 1 || AST.isNodeIgnoredTarget(returns[0]))) {
                 throwEvalError(`constructor for class ${this.name} must declare exactly one output.`);
             }
+            if (this.isConstructorMethodName(method.name) && this.isConstructOnLoad && !this.constructorAcceptsNoInputs(method)) {
+                throwEvalError(`ConstructOnLoad class ${this.name} constructor must support zero input arguments.`);
+            }
         }
+    }
+
+    /**
+     * Test whether a constructor can be called without explicit inputs.
+     *
+     * `ConstructOnLoad` requires MATLAB to be able to call the constructor
+     * during load. A constructor with no parameters, only defaulted parameters,
+     * or `varargin` satisfies that static requirement.
+     *
+     * @param method Constructor metadata.
+     * @returns `true` when no required input parameters are declared.
+     */
+    private constructorAcceptsNoInputs(method: ClassMethodDefinition): boolean {
+        return this.methodParameters(method).every((parameter) => AST.isNodeDefaultedParameter(parameter) || (AST.isNodeIdentifier(parameter) && parameter.id === 'varargin'));
     }
 
     /**
@@ -1020,6 +1312,9 @@ class ClassDefinition {
     private validateCrossMemberNameConflicts(throwEvalError: (message: string) => never): void {
         const memberNames = new Map<string, string>();
         const register = (name: string, kind: string): void => {
+            if (name === this.simpleName || name === this.name) {
+                throwEvalError(`class ${this.name} cannot define ${kind} with the same name as the class.`);
+            }
             const previousKind = memberNames.get(name);
             if (previousKind) {
                 throwEvalError(`class ${this.name} has conflicting ${previousKind} and ${kind} named '${name}'.`);

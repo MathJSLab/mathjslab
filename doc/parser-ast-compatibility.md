@@ -17,20 +17,25 @@ The parser and AST currently cover the following high-value MATLAB/Octave-like
 forms:
 
 - script statement lists with comma, semicolon, newline, comments, block
-  comments, and line continuations;
+  comments, and line continuations, preserving statement source ranges and
+  semicolon output suppression in top-level and nested lists;
 - expression parsing for numeric, string, matrix, cell, range, indexing,
   dynamic field, function-call, anonymous-function, function-handle,
   metaclass-literal, and package/class-qualified name forms;
 - direct and descriptor-based indexing semantics for arrays, cells, character
   vectors, structures, and class objects, including public `substruct`,
-  `subsref`, and `subsasgn` compatibility paths;
+  `subsref`, and `subsasgn` compatibility paths with chained `()`, `{}`, and
+  `.` descriptors, dynamic fields, deletion, scalar broadcast, and implicit
+  nested-path creation;
 - multidimensional array and cell indexing over the engine's page-stacked
   storage model, including page slices, N-D expansion, logical subscripts,
   deletion, comma-separated-list expansion, and structure/cell conversion
   order;
 - command syntax through word-list command nodes, including continuation lines
   and comments after ellipsis, while keeping command parsing restricted to
-  registered command-word names;
+  registered command-word names. Registered commands with no following word
+  list are promoted through an AST factory instead of evaluator-side node
+  mutation;
 - MATLAB package/class `import` declarations, including wildcard imports, as
   first-class no-op declarations that participate in later name lookup;
 - browser-safe host-provided `.m` source lookup for functions, scripts, and
@@ -75,11 +80,22 @@ The AST layer normalizes parse output into node contracts exported from
   sizes, and validator-function lists, are expression-boundary arrays;
 - `NodeImport` stores imported qualified names as identifier-like entries with
   parent/index links, including wildcard names such as `pkg.*`;
+- statement-list parser actions attach `start`/`stop` source coordinates to
+  statement nodes and apply semicolon-driven `omitOutput` through shared parser
+  helpers, keeping top-level and nested block lists structurally consistent;
+- `NodeCmdWList` construction, including empty word-list commands, should go
+  through AST factories so contextual command-form promotion does not mutate
+  arbitrary identifier nodes in the interpreter;
 - `NodeReturnList` represents lazy multi-output values. Use
   `AST.nodeBoundedReturnList` for fixed maximum-output helpers and
   `AST.nodeCommaSeparatedReturnList` for values that should expand as
   comma-separated lists; direct metadata mutation should stay inside AST
   factories;
+- public descriptor-based `subsref` should preserve intermediate
+  comma-separated lists from structure arrays and cell contents, applying the
+  next descriptor to each expanded element instead of reducing to the first
+  value. `subsasgn` should mirror this distribution when assigning through
+  structure arrays, cells, object arrays, and cells containing objects;
 - `NodeFor` preserves `parallel === true` for `parfor` and stores optional
   worker expressions separately from the loop target/range;
 - `NodeOperation` consumers should narrow through the AST binary, prefix, and
@@ -155,7 +171,9 @@ The AST layer normalizes parse output into node contracts exported from
 - native indexed assignment should prepare scalar RHS values as concrete
   `RuntimeExpressionValue` data before wrapping them for `MultiArray`
   assignment, while already-materialized `MultiArray` RHS values preserve their
-  array/cell shape;
+  array/cell shape. Empty arrays used below an indexed property or structure
+  path are scalar deletion values for each selected branch, not zero-value
+  assignment lists;
 - workspace initializer paths such as `assignin`, `global = value`, and
   `persistent = value` should store concrete `RuntimeExpressionValue` data when
   an initializer is supplied;

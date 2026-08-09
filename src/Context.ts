@@ -69,6 +69,8 @@ interface ContextInterpreter {
     applyScopedImports(tree: NodeInput, scope: Scope): void;
     /** Register nested functions visible from a function body. */
     registerNestedFunctions(func: NodeFunctionDefinition, scope: Scope): void;
+    /** Configure static-workspace metadata for nested-function-compatible calls. */
+    configureFunctionWorkspace(func: NodeFunctionDefinition, scope: Scope): void;
     /** Validate input `arguments` blocks after inputs are bound. */
     validateFunctionInputArguments(func: NodeFunctionDefinition, scope: Scope): void;
     /** Validate `arguments (Repeating)` declarations against `varargin`. */
@@ -1043,6 +1045,9 @@ class Context {
                 const scope = (expr.closure as Scope | undefined) ?? this.currentScope;
                 const resolved = this.resolveSymbol(expr.id, scope, { variables: false, classes: false });
                 const func = resolved?.functionDefinition;
+                if (expr.disallowNestedResolution && func?.type === 'FCNDEF' && func.attributes?.nested) {
+                    this.throwReferenceError(`'${expr.id}' undefined.`);
+                }
                 if (func) {
                     return Callables.fromFunctionNode(func);
                 }
@@ -1331,8 +1336,8 @@ class Context {
         return FunctionStack.currentFunctionCountFrame(this.callStack) as CallFrame | undefined;
     }
 
-    private getCallerWorkspace(forAssignment = false): Scope {
-        return FunctionStack.callerWorkspace(this.callStack, this.globalScope!, (parent) => Scope.create(parent as Scope | undefined), forAssignment) as Scope;
+    private getCallerWorkspace(forAssignment = false, variablesOnly = false): Scope {
+        return FunctionStack.callerWorkspace(this.callStack, this.globalScope!, (parent) => Scope.create(parent as Scope | undefined), forAssignment, variablesOnly) as Scope;
     }
 
     /**
@@ -1342,8 +1347,8 @@ class Context {
      * @param forAssignment Whether the resolved workspace will be assigned into.
      * @returns Target scope.
      */
-    public resolveWorkspace(name: string, forAssignment = false): Scope {
-        return FunctionWorkspace.resolveWorkspace(name, this.globalScope!, this.getCallerWorkspace(forAssignment), (message) => this.throwSyntaxError(message)) as Scope;
+    public resolveWorkspace(name: string, forAssignment = false, variablesOnly = false): Scope {
+        return FunctionWorkspace.resolveWorkspace(name, this.globalScope!, this.getCallerWorkspace(forAssignment, variablesOnly), (message) => this.throwSyntaxError(message)) as Scope;
     }
 
     /**
@@ -1488,7 +1493,8 @@ class Context {
      * @param scope Scope that should reference the global binding.
      */
     public declareGlobal(name: string, value: RuntimeExpressionValue | undefined, scope: Scope): void {
-        FunctionWorkspace.declareGlobal(name, value, this.globalNameSet, this.globalScope!.nameTable, scope.nameTable, this.globalInitializedNameSet);
+        const targetScope = scope.globalDeclarationTarget ?? scope;
+        FunctionWorkspace.declareGlobal(name, value, this.globalNameSet, this.globalScope!.nameTable, targetScope.nameTable, this.globalInitializedNameSet);
     }
 
     /**
@@ -1668,6 +1674,7 @@ class Context {
         /* Create a function scope, preserving the definition scope when available. */
         const functionScope = Scope.create((func.definingScope as Scope | undefined) ?? this.currentScope);
         functionScope.assignExistingParentNames = Boolean(func.attributes?.nested);
+        this.interpreter!.configureFunctionWorkspace(func, functionScope);
         FunctionCall.initializeFixedReturnSlots(returnLayout.returnNames, functionScope.nameTable);
         /* Bind evaluated arguments to formal parameter names. */
         const evaluateCallArgument = (arg: CallArgumentValue): NodeInput => {
@@ -1792,6 +1799,7 @@ class Context {
             throwEvalError: (message) => this.throwEvalError(message),
         });
         const functionScope = Scope.create((func.definingScope as Scope | undefined) ?? this.currentScope);
+        this.interpreter!.configureFunctionWorkspace(func, functionScope);
         FunctionCall.initializeFixedReturnSlots(returnLayout.returnNames, functionScope.nameTable);
         const firstReturn = returnLayout.returnNames[0];
         if (firstReturn && firstReturn.type !== '<~>') {
@@ -2029,6 +2037,13 @@ class Context {
     }
 
     /**
+     * Test whether every element in a dispatch result array is a void marker.
+     */
+    private allVoidArrayResults(value: MultiArray): boolean {
+        return MultiArray.linearize(value).every((item: unknown) => AST.isNodeBase(item) && (item as { type: unknown }).type === 'VOID');
+    }
+
+    /**
      * Invoke one class method expecting a single output and reduce lazy
      * return-list carriers before storing the result in array dispatch paths.
      */
@@ -2066,6 +2081,16 @@ class Context {
      * @returns Scalar or array expression result.
      */
     private callClassBoundMethodArray(expr: MultiArray, args: CallArgumentValue[], parent: NodeInput): NodeExpr {
+        const methods = MultiArray.linearize(expr);
+        if (methods.length > 0 && methods.every((item) => ClassBoundMethod.isInstanceOf(item) && item.method.name === 'delete')) {
+            for (const item of methods) {
+                if (!ClassBoundMethod.isInstanceOf(item)) {
+                    this.throwEvalError('internal error: bound method array contains a non-method value.');
+                }
+                this.deleteClassInstance(item.instance, parent);
+            }
+            return AST.nodeVoid();
+        }
         const result = new MultiArray(expr.dimension);
         for (let n = 0; n < MultiArray.linearLength(expr); n++) {
             const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(expr.dimension[0], expr.dimension[1], n);
@@ -2076,6 +2101,9 @@ class Context {
             result.array[i][j] = this.reducedClassMethodResult(boundMethod.instance, boundMethod.method, args, parent);
         }
         MultiArray.setType(result);
+        if (this.allVoidArrayResults(result)) {
+            return AST.nodeVoid();
+        }
         if (this.requestedOutputCount > 1) {
             const values = MultiArray.linearize(result);
             return this.valueReturnList(values);
@@ -2083,18 +2111,40 @@ class Context {
         return this.scalarArrayReturnExpression(result, 'ans');
     }
 
+    /**
+     * Invoke a bound method value produced outside ordinary call syntax.
+     *
+     * Public `subsref` descriptors may resolve `.` to a bound method and then
+     * apply a following `()` descriptor. This bridge reuses the same scalar and
+     * array method-dispatch semantics used by parser-built dotted calls.
+     *
+     * @param expr Bound method or homogeneous array of bound methods.
+     * @param args Already evaluated method arguments.
+     * @param parent AST/runtime node that owns the public descriptor call.
+     * @returns Method dispatch result.
+     */
+    public callClassBoundMethodValue(expr: ClassBoundMethod | MultiArray, args: CallArgumentValue[], parent: NodeInput): NodeExpr {
+        if (ClassBoundMethod.isInstanceOf(expr)) {
+            return this.callClassInstanceMethod(expr.instance, expr.method, args, parent);
+        }
+        return this.callClassBoundMethodArray(expr, args, parent);
+    }
+
     private callFunctionalClassMethodArray(name: string, receiver: MultiArray, args: CallArgumentValue[], parent: NodeInput): NodeExpr {
         if (MultiArray.linearLength(receiver) === 0 || !MultiArray.linearize(receiver).every((item) => ClassInstance.isInstanceOf(item))) {
             this.throwUndefinedReferenceError(name);
+        }
+        if (name === 'delete') {
+            for (let n = 0; n < MultiArray.linearLength(receiver); n++) {
+                const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(receiver.dimension[0], receiver.dimension[1], n);
+                this.deleteClassInstance(this.classInstanceArrayElement(receiver, i, j, name), parent);
+            }
+            return AST.nodeVoid();
         }
         const result = new MultiArray(receiver.dimension);
         for (let n = 0; n < MultiArray.linearLength(receiver); n++) {
             const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(receiver.dimension[0], receiver.dimension[1], n);
             const instance = this.classInstanceArrayElement(receiver, i, j, name);
-            if (name === 'delete') {
-                result.array[i][j] = this.deleteClassInstance(instance, parent);
-                continue;
-            }
             const method = instance.classDefinition.findMethod(name, (item) => !item.isStatic);
             if (!method) {
                 this.throwEvalError(`unknown method '${name}' for class ${instance.classDefinition.name}.`);
@@ -2105,6 +2155,9 @@ class Context {
             result.array[i][j] = this.reducedClassMethodResult(instance, method, args, parent);
         }
         MultiArray.setType(result);
+        if (this.allVoidArrayResults(result)) {
+            return AST.nodeVoid();
+        }
         if (this.requestedOutputCount > 1) {
             const values = MultiArray.linearize(result);
             return this.valueReturnList(values);
@@ -2162,7 +2215,9 @@ class Context {
         return (
             ClassInstance.isInstanceOf(receiver) ||
             ClassEventListener.isInstanceOf(receiver) ||
-            (MultiArray.isInstanceOf(receiver) && MultiArray.linearLength(receiver) > 0 && MultiArray.linearize(receiver).every((item) => ClassInstance.isInstanceOf(item)))
+            (MultiArray.isInstanceOf(receiver) &&
+                MultiArray.linearLength(receiver) > 0 &&
+                MultiArray.linearize(receiver).every((item) => ClassInstance.isInstanceOf(item) || ClassEventListener.isInstanceOf(item)))
         );
     }
 
@@ -2172,6 +2227,15 @@ class Context {
         }
         if (name === 'delete' && ClassEventListener.isInstanceOf(receiver)) {
             ClassEventListener.delete(receiver);
+            return AST.nodeVoid();
+        }
+        if (name === 'delete' && MultiArray.isInstanceOf(receiver) && MultiArray.linearLength(receiver) > 0 && MultiArray.linearize(receiver).every(ClassEventListener.isInstanceOf)) {
+            for (const listener of MultiArray.linearize(receiver)) {
+                if (!ClassEventListener.isInstanceOf(listener)) {
+                    this.throwEvalError('internal error: event listener array contains a non-listener value.');
+                }
+                ClassEventListener.delete(listener);
+            }
             return AST.nodeVoid();
         }
         if (MultiArray.isInstanceOf(receiver) && MultiArray.linearLength(receiver) > 0 && MultiArray.linearize(receiver).every((item) => ClassInstance.isInstanceOf(item))) {
@@ -2242,6 +2306,7 @@ class Context {
                 const callArgs = this.expandCommaListArguments(args);
                 FunctionCall.validateLambdaInputArity(callArgs.length, hasVarargin, fixedParamCount, (message) => this.throwEvalError(message));
                 const lambdaScope = Scope.create((lambda.closure as Scope | undefined) ?? this.currentScope);
+                this.configureAnonymousFunctionWorkspace(lambda, lambdaScope);
                 FunctionCall.bindLambdaInputs(
                     params,
                     callArgs,
@@ -2286,6 +2351,50 @@ class Context {
             }
             default:
                 throw new Error('Invalid callable.');
+        }
+    }
+
+    /**
+     * Configure the static workspace used by anonymous functions.
+     *
+     * MATLAB treats anonymous-function workspaces as static: dynamic code such
+     * as `eval` may use names that appear in the expression or parameter list,
+     * but may not introduce brand-new names from strings.
+     */
+    private configureAnonymousFunctionWorkspace(lambda: FunctionHandle, scope: Scope): void {
+        const names = new Set<string>();
+        for (const parameter of lambda.parameter) {
+            if (AST.isNodeIdentifier(parameter)) {
+                names.add(parameter.id);
+            }
+        }
+        this.collectAnonymousExpressionNames(lambda.expression, names);
+        scope.allowStaticWorkspaceNames(names);
+    }
+
+    /**
+     * Collect identifier names that appear textually in an anonymous expression.
+     */
+    private collectAnonymousExpressionNames(node: unknown, names: Set<string>, seen = new WeakSet<object>()): void {
+        if (!node || typeof node !== 'object' || seen.has(node)) {
+            return;
+        }
+        seen.add(node);
+        if (AST.isNodeIdentifier(node)) {
+            names.add(node.id);
+        }
+        const record = node as Record<string, unknown>;
+        for (const [key, value] of Object.entries(record)) {
+            if (key === 'parent' || key === 'start' || key === 'stop') {
+                continue;
+            }
+            if (Array.isArray(value)) {
+                for (const item of value) {
+                    this.collectAnonymousExpressionNames(item, names, seen);
+                }
+            } else {
+                this.collectAnonymousExpressionNames(value, names, seen);
+            }
         }
     }
 

@@ -188,6 +188,13 @@ Runtime metadata for an event declared in an `events` block.
 
 Runtime listener object returned by event subscription APIs.
 
+## ClassEventListenerKind
+
+- Kind: `type`
+- Source: `src/ClassEventListener.ts`
+
+No JSDoc documentation is available yet.
+
 ## ClassEventSource
 
 - Kind: `type`

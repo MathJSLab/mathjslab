@@ -1610,6 +1610,33 @@ abstract class AST {
     };
 
     /**
+     * Promote an unresolved command name to a no-argument command-form call.
+     *
+     * MATLAB/Octave command-form syntax allows registered command names to be
+     * invoked without a following word list. The lexer/parser initially see
+     * that shape as an identifier; this factory keeps the contextual promotion
+     * inside the AST layer instead of mutating node fields in the evaluator.
+     *
+     * @param nodename Identifier that resolved as a command-form command.
+     * @returns Command-form AST node with an empty word-list.
+     */
+    public static readonly nodeEmptyCmdWList = (nodename: NodeIdentifier): NodeCmdWList => {
+        const result: NodeCmdWList = {
+            type: 'CMDWLIST',
+            id: nodename.id,
+            args: [],
+            parent: nodename.parent,
+            index: nodename.index,
+            start: nodename.start,
+            stop: nodename.stop,
+            omitAnswer: true,
+            omitOutput: nodename.omitOutput ?? false,
+        };
+        nodename.parent = result;
+        return result;
+    };
+
+    /**
      * Create expression and arguments node.
      * @param nodeexpr
      * @param nodelist

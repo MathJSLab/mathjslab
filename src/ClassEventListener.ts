@@ -14,6 +14,8 @@ type ClassEventSource = {
     };
 };
 
+type ClassEventListenerKind = 'event.listener' | 'event.proplistener';
+
 /**
  * Runtime listener object returned by event subscription APIs.
  */
@@ -25,13 +27,21 @@ class ClassEventListener {
     /** Optional AST-style parent pointer used by generic value handling. */
     public parent?: unknown;
     /** Source object that owns the event. */
-    public readonly source: ClassEventSource;
+    public source: ClassEventSource;
+    /** MATLAB-like runtime class for this listener object. */
+    public readonly kind: ClassEventListenerKind;
     /** Event name observed by this listener. */
-    public readonly eventName: string;
+    public eventName: string;
+    /** Internal event key used by the source object listener table. */
+    public listenerKey: string;
     /** Function handle called when the event is raised. */
-    public readonly callback: FunctionHandle;
+    public callback: FunctionHandle;
     /** Whether the listener is currently enabled. */
     public enabled = true;
+    /** Whether this listener can be called recursively by its own callback. */
+    public recursive = false;
+    /** Whether the listener is currently inside a callback dispatch. */
+    public notifying = false;
     /** Whether the listener has been deleted. */
     public deleted = false;
 
@@ -49,10 +59,14 @@ class ClassEventListener {
      * @param source Source object.
      * @param eventName Event name.
      * @param callback Callback function handle.
+     * @param listenerKey Internal listener-table key.
+     * @param kind MATLAB-like runtime listener class.
      */
-    constructor(source: ClassEventSource, eventName: string, callback: FunctionHandle) {
+    constructor(source: ClassEventSource, eventName: string, callback: FunctionHandle, listenerKey: string = eventName, kind: ClassEventListenerKind = 'event.listener') {
         this.source = source;
+        this.kind = kind;
         this.eventName = eventName;
+        this.listenerKey = listenerKey;
         this.callback = callback;
     }
 
@@ -62,9 +76,17 @@ class ClassEventListener {
      * @param source Source object.
      * @param eventName Event name.
      * @param callback Callback function handle.
+     * @param listenerKey Internal listener-table key.
+     * @param kind MATLAB-like runtime listener class.
      * @returns Runtime listener object.
      */
-    public static readonly create = (source: ClassEventSource, eventName: string, callback: FunctionHandle): ClassEventListener => new ClassEventListener(source, eventName, callback);
+    public static readonly create = (
+        source: ClassEventSource,
+        eventName: string,
+        callback: FunctionHandle,
+        listenerKey: string = eventName,
+        kind: ClassEventListenerKind = 'event.listener',
+    ): ClassEventListener => new ClassEventListener(source, eventName, callback, listenerKey, kind);
 
     /**
      * Test whether a listener has not been deleted.
@@ -92,7 +114,7 @@ class ClassEventListener {
      * @returns Human-readable listener summary.
      */
     public static readonly unparse = (listener: ClassEventListener, _interpreter: RuntimeDisplay): string => {
-        return `event.listener ${listener.source.classDefinition.name}.${listener.eventName}`;
+        return `${listener.kind} ${listener.source.classDefinition.name}.${listener.eventName}`;
     };
 
     /**
@@ -108,5 +130,5 @@ class ClassEventListener {
 }
 
 export { ClassEventListener };
-export type { ClassEventSource };
+export type { ClassEventListenerKind, ClassEventSource };
 export default { ClassEventListener };

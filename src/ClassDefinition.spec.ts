@@ -310,6 +310,23 @@ describe('ClassDefinition', () => {
             );
         });
 
+        it('Should require AbortSet properties to belong to handle classes.', () => {
+            const invalidAbortSet = ClassDefinition.create(parseClass(['classdef ValueAbortSetSpec', '  properties (AbortSet)', '    Value = 1;', '  end', 'end'].join('\n')));
+            const validAbortSet = ClassDefinition.create(parseClass(['classdef HandleAbortSetSpec < handle', '  properties (AbortSet)', '    Value = 1;', '  end', 'end'].join('\n')));
+            const observableValue = ClassDefinition.create(
+                parseClass(['classdef ObservableValueSpec', '  properties (GetObservable, SetObservable)', '    Value = 1;', '  end', 'end'].join('\n')),
+            );
+            const raise = (message: string): never => {
+                throw new Error(message);
+            };
+
+            expect(() => invalidAbortSet.resolveSuperclasses(() => undefined, raise)).toThrow("AbortSet property 'Value' in class ValueAbortSetSpec requires a handle class.");
+            expect(() => validAbortSet.resolveSuperclasses(() => undefined, raise)).not.toThrow();
+            expect(() => observableValue.resolveSuperclasses(() => undefined, raise)).not.toThrow();
+            expect(observableValue.properties[0].isGetObservable).toBe(true);
+            expect(observableValue.properties[0].isSetObservable).toBe(true);
+        });
+
         it('Should reject invalid access attribute values.', () => {
             const invalidAccess = ClassDefinition.create(
                 parseClass(['classdef InvalidAccessSpec', '  methods (Access = 1)', '    function y = value(obj)', '      y = 1;', '    end', '  end', 'end'].join('\n')),
@@ -426,6 +443,37 @@ describe('ClassDefinition', () => {
             );
             expect(() => invalidConstructorHeader.resolveSuperclasses(() => undefined, raise)).toThrow(
                 "internal AST error: method 'InvalidConstructorHeaderSpec' return 2 has invalid node type.",
+            );
+        });
+
+        it('Should require ConstructOnLoad constructors to accept zero inputs.', () => {
+            const noInputConstructor = ClassDefinition.create(
+                parseClass(['classdef (ConstructOnLoad) ConstructOnLoadNoInputSpec', '  methods', '    function obj = ConstructOnLoadNoInputSpec()', '    end', '  end', 'end'].join('\n')),
+            );
+            const defaultedConstructor = ClassDefinition.create(
+                parseClass(
+                    ['classdef (ConstructOnLoad) ConstructOnLoadDefaultSpec', '  methods', '    function obj = ConstructOnLoadDefaultSpec(value = 1)', '    end', '  end', 'end'].join('\n'),
+                ),
+            );
+            const vararginConstructor = ClassDefinition.create(
+                parseClass(
+                    ['classdef (ConstructOnLoad) ConstructOnLoadVararginSpec', '  methods', '    function obj = ConstructOnLoadVararginSpec(varargin)', '    end', '  end', 'end'].join('\n'),
+                ),
+            );
+            const requiredConstructor = ClassDefinition.create(
+                parseClass(
+                    ['classdef (ConstructOnLoad) ConstructOnLoadRequiredSpec', '  methods', '    function obj = ConstructOnLoadRequiredSpec(value)', '    end', '  end', 'end'].join('\n'),
+                ),
+            );
+            const raise = (message: string): never => {
+                throw new Error(message);
+            };
+
+            expect(() => noInputConstructor.resolveSuperclasses(() => undefined, raise)).not.toThrow();
+            expect(() => defaultedConstructor.resolveSuperclasses(() => undefined, raise)).not.toThrow();
+            expect(() => vararginConstructor.resolveSuperclasses(() => undefined, raise)).not.toThrow();
+            expect(() => requiredConstructor.resolveSuperclasses(() => undefined, raise)).toThrow(
+                'ConstructOnLoad class ConstructOnLoadRequiredSpec constructor must support zero input arguments.',
             );
         });
 
@@ -667,7 +715,7 @@ describe('ClassDefinition', () => {
             const left = ClassDefinition.create(
                 parseClass(
                     [
-                        'classdef LeftDuplicateSpec',
+                        'classdef LeftDuplicateSpec < handle',
                         '  properties',
                         '    Value = 1;',
                         '  end',
@@ -686,16 +734,16 @@ describe('ClassDefinition', () => {
             const right = ClassDefinition.create(
                 parseClass(
                     [
-                        'classdef RightDuplicateSpec',
-                        '  properties',
+                        'classdef RightDuplicateSpec < handle',
+                        '  properties (Access = private)',
                         '    Value = 2;',
                         '  end',
-                        '  methods',
+                        '  methods (Access = private)',
                         '    function y = value(obj)',
                         '      y = 2;',
                         '    end',
                         '  end',
-                        '  events',
+                        '  events (ListenAccess = private, NotifyAccess = private)',
                         '    Changed',
                         '  end',
                         'end',
@@ -746,6 +794,53 @@ describe('ClassDefinition', () => {
             expect(allowed.findSuperclass('RestrictedBaseSpec')).toBe(base);
             expect(() => illegal.resolveSuperclasses(resolve, raise)).toThrow(
                 'class IllegalSubclassSpec cannot inherit from class RestrictedBaseSpec: subclass is not listed in AllowedSubclasses.',
+            );
+        });
+
+        it('Should treat empty AllowedSubclasses as sealed.', () => {
+            const base = ClassDefinition.create(parseClass(['classdef (AllowedSubclasses = {}) EmptyAllowedSubclassesSpec', 'end'].join('\n')));
+            const child = ClassDefinition.create(parseClass(['classdef EmptyAllowedSubclassesChildSpec < EmptyAllowedSubclassesSpec', 'end'].join('\n')));
+            const raise = (message: string): never => {
+                throw new Error(message);
+            };
+
+            expect(base.isSealed).toBe(true);
+            expect(base.isRestrictsSubclassing).toBe(true);
+            expect(base.allowedSubclasses).toEqual([]);
+            expect(() => child.resolveSuperclasses((name) => (name === 'EmptyAllowedSubclassesSpec' ? base : undefined), raise)).toThrow(
+                'class EmptyAllowedSubclassesChildSpec cannot inherit from sealed class EmptyAllowedSubclassesSpec.',
+            );
+        });
+
+        it('Should enforce handle-compatible superclass rules.', () => {
+            const utility = ClassDefinition.create(parseClass(['classdef (HandleCompatible) HandleCompatibleUtilitySpec', 'end'].join('\n')));
+            const plain = ClassDefinition.create(parseClass(['classdef PlainValueBaseSpec', 'end'].join('\n')));
+            const handleChild = ClassDefinition.create(parseClass(['classdef ValidHandleCompatibleChildSpec < handle & HandleCompatibleUtilitySpec', 'end'].join('\n')));
+            const valueChild = ClassDefinition.create(parseClass(['classdef ValueHandleCompatibleChildSpec < HandleCompatibleUtilitySpec', 'end'].join('\n')));
+            const incompatibleHandleChild = ClassDefinition.create(parseClass(['classdef InvalidHandleCompatibleChildSpec < handle & PlainValueBaseSpec', 'end'].join('\n')));
+            const incompatibleUtility = ClassDefinition.create(parseClass(['classdef (HandleCompatible) InvalidHandleCompatibleUtilitySpec < PlainValueBaseSpec', 'end'].join('\n')));
+            const explicitFalseHandle = ClassDefinition.create(parseClass(['classdef (HandleCompatible = false) InvalidFalseHandleCompatibleSpec < handle', 'end'].join('\n')));
+            const resolve = (name: string) => ({ HandleCompatibleUtilitySpec: utility, PlainValueBaseSpec: plain })[name];
+            const raise = (message: string): never => {
+                throw new Error(message);
+            };
+
+            utility.resolveSuperclasses(resolve, raise);
+            plain.resolveSuperclasses(resolve, raise);
+            expect(() => handleChild.resolveSuperclasses(resolve, raise)).not.toThrow();
+            expect(handleChild.isHandleClass()).toBe(true);
+            expect(handleChild.isHandleCompatibleClass()).toBe(true);
+            expect(() => valueChild.resolveSuperclasses(resolve, raise)).not.toThrow();
+            expect(valueChild.isHandleClass()).toBe(false);
+            expect(valueChild.isHandleCompatibleClass()).toBe(false);
+            expect(() => incompatibleHandleChild.resolveSuperclasses(resolve, raise)).toThrow(
+                'class InvalidHandleCompatibleChildSpec cannot combine handle semantics with non-handle-compatible superclass PlainValueBaseSpec.',
+            );
+            expect(() => incompatibleUtility.resolveSuperclasses(resolve, raise)).toThrow(
+                'class InvalidHandleCompatibleUtilitySpec cannot combine handle semantics with non-handle-compatible superclass PlainValueBaseSpec.',
+            );
+            expect(() => explicitFalseHandle.resolveSuperclasses(resolve, raise)).toThrow(
+                'class InvalidFalseHandleCompatibleSpec cannot set HandleCompatible to false while inheriting from a handle class.',
             );
         });
 
@@ -856,6 +951,31 @@ describe('ClassDefinition', () => {
             expect(exactNames.isHandleClass()).toBe(true);
             expect(exactNames.isSetGetClass()).toBe(true);
             expect(exactNames.isSetGetExactNamesClass()).toBe(true);
+        });
+
+        it('Should treat event.EventData as a built-in handle superclass.', () => {
+            const eventData = ClassDefinition.create(parseClass(['classdef (ConstructOnLoad) CustomEventDataSpec < event.EventData', 'end'].join('\n')));
+            const missingConstructOnLoad = ClassDefinition.create(parseClass(['classdef InvalidCustomEventDataSpec < event.EventData', 'end'].join('\n')));
+            const redefinedSource = ClassDefinition.create(
+                parseClass(['classdef (ConstructOnLoad) InvalidCustomEventDataSourceSpec < event.EventData', '  properties', '    Source', '  end', 'end'].join('\n')),
+            );
+            const propertyEventChild = ClassDefinition.create(parseClass(['classdef InvalidPropertyEventChildSpec < event.PropertyEvent', 'end'].join('\n')));
+            const raise = (message: string): never => {
+                throw new Error(message);
+            };
+
+            eventData.resolveSuperclasses(() => undefined, raise);
+
+            expect(eventData.isSubclassOfName('event.EventData')).toBe(true);
+            expect(eventData.isSubclassOfName('handle')).toBe(true);
+            expect(eventData.isHandleClass()).toBe(true);
+            expect(() => missingConstructOnLoad.resolveSuperclasses(() => undefined, raise)).toThrow(
+                'class InvalidCustomEventDataSpec must set ConstructOnLoad because it subclasses event.EventData.',
+            );
+            expect(() => redefinedSource.resolveSuperclasses(() => undefined, raise)).toThrow(
+                "class InvalidCustomEventDataSourceSpec cannot redefine inherited event.EventData property 'Source'.",
+            );
+            expect(() => propertyEventChild.resolveSuperclasses(() => undefined, raise)).toThrow('class InvalidPropertyEventChildSpec cannot inherit from sealed class event.PropertyEvent.');
         });
 
         it('Should track inherited abstract methods until compatible methods implement them.', () => {

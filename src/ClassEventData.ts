@@ -14,9 +14,9 @@ class ClassEventData {
     /** Optional AST-style parent pointer used by generic value handling. */
     public parent?: unknown;
     /** Object that raised the event. */
-    public readonly source: ClassInstance;
+    public source?: ClassInstance;
     /** Name of the event that was raised. */
-    public readonly eventName: string;
+    public eventName?: string;
 
     /**
      * Test whether a value is event data.
@@ -29,10 +29,10 @@ class ClassEventData {
     /**
      * Create event data.
      *
-     * @param source Object that raised the event.
-     * @param eventName Event name.
+     * @param source Object that raised the event, when already dispatched.
+     * @param eventName Event name, when already dispatched.
      */
-    constructor(source: ClassInstance, eventName: string) {
+    constructor(source?: ClassInstance, eventName?: string) {
         this.source = source;
         this.eventName = eventName;
     }
@@ -40,11 +40,11 @@ class ClassEventData {
     /**
      * Create event data.
      *
-     * @param source Object that raised the event.
-     * @param eventName Event name.
+     * @param source Object that raised the event, when already dispatched.
+     * @param eventName Event name, when already dispatched.
      * @returns Runtime event data object.
      */
-    public static readonly create = (source: ClassInstance, eventName: string): ClassEventData => new ClassEventData(source, eventName);
+    public static readonly create = (source?: ClassInstance, eventName?: string): ClassEventData => new ClassEventData(source, eventName);
 
     /**
      * Read a public event data field.
@@ -58,7 +58,7 @@ class ClassEventData {
             case 'Source':
                 return eventData.source;
             case 'EventName':
-                return CharString.create(eventData.eventName);
+                return typeof eventData.eventName === 'undefined' ? undefined : CharString.create(eventData.eventName);
             default:
                 return undefined;
         }
@@ -71,7 +71,8 @@ class ClassEventData {
      * @param _interpreter Interpreter requesting unparse.
      * @returns Human-readable event data summary.
      */
-    public static readonly unparse = (eventData: ClassEventData, _interpreter: RuntimeDisplay): string => `event.EventData ${eventData.source.classDefinition.name}.${eventData.eventName}`;
+    public static readonly unparse = (eventData: ClassEventData, _interpreter: RuntimeDisplay): string =>
+        eventData.source && eventData.eventName ? `event.EventData ${eventData.source.classDefinition.name}.${eventData.eventName}` : 'event.EventData';
 
     /**
      * Copy event data.
