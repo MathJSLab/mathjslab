@@ -3,6 +3,10 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 2.5.1
+
+- Dependecies updated.
+
 ## 2.5.0
 
 - Extended parser/AST conformance around dynamic evaluation, command-form
