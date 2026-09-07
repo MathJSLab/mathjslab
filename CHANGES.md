@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 2.5.2
+
+- Added focused unit coverage for AST helpers, BLAS routines, and symbolic
+  substitution, including moving BLAS-specific cases out of the LAPACK test
+  suite.
+- Reorganized non-unit test suites out of `src/` into `test/` folders for
+  architecture, compatibility fixtures, parser fixtures, function
+  infrastructure, package-source entry points, node bundles, web bundles, and
+  m-file execution coverage.
+- Added granular Jest projects and npm scripts for the reorganized test groups,
+  so unit, integration, package, parser, compatibility, and m-file suites can
+  be run independently or through the release test pipeline.
+- Added m-file test fixtures, a shared m-file Jest helper with mocked `help`
+  command support, and per-file Jest specs for runnable `.m` fixtures that
+  consolidate their result through final `complete_test_result*` variables.
+
 ## 2.5.1
 
 - Dependecies updated.

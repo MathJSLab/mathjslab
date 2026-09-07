@@ -1,0 +1,402 @@
+{
+    "basic-operation-function": {
+        "file": "basic-operation-function.m",
+        "caption": "Basic operations and functions",
+        "description": "Tests basic operations and functions.",
+        "test": "basic-operation-function.spec.ts",
+        "variable": "complete_test_result_basic_operation_function"
+    },
+    "logical": {
+        "file": "logical.m",
+        "caption": "Logical",
+        "description": "Test logical operators.",
+        "test": "logical.spec.ts",
+        "variable": "complete_test_result_logical"
+    },
+    "array-operation": {
+        "file": "array-operation.m",
+        "caption": "Array operations",
+        "description": "Tests array operations."
+    },
+    "array-concatenation-01": {
+        "file": "array-concatenation-01.m",
+        "caption": "Concatenation 01",
+        "description": "Tests array concatenation.",
+        "test": "array-concatenation-01.spec.ts",
+        "variable": "complete_test_result_array_concatenation_01"
+    },
+    "array-concatenation-02": {
+        "file": "array-concatenation-02.m",
+        "caption": "Concatenation 02",
+        "description": "Tests array concatenation.",
+        "test": "array-concatenation-02.spec.ts",
+        "variable": "complete_test_result_array_concatenation_02"
+    },
+    "array-function": {
+        "file": "array-function.m",
+        "caption": "Array functions",
+        "description": "Tests array functions."
+    },
+    "array-shape": {
+        "file": "array-shape.m",
+        "caption": "Array shape functions",
+        "description": "Tests array shape functions.",
+        "test": "array-shape.spec.ts",
+        "variable": "complete_test_result_array_shape"
+    },
+    "forward-reference": {
+        "file": "forward-reference.m",
+        "caption": "Forward Reference",
+        "description": "General forward reference test suite."
+    },
+    "function-definition": {
+        "file": "function-definition.m",
+        "caption": "Function Definition",
+        "description": "General function definition test suite."
+    },
+    "function": {
+        "file": "function.m",
+        "caption": "Function",
+        "description": "General function test suite.",
+        "test": "function.spec.ts",
+        "variable": "complete_test_result_function"
+    },
+    "persistent": {
+        "file": "persistent.m",
+        "caption": "Persistent variables",
+        "description": "General persistent test suite."
+    },
+    "global": {
+        "file": "global.m",
+        "caption": "Global variables",
+        "description": "General global test suite."
+    },
+    "arg-ret": {
+        "file": "arg-ret.m",
+        "caption": "Function arguments and returns",
+        "description": "General function arguments and returns test suite."
+    },
+    "arg-validation": {
+        "file": "arg-validation.m",
+        "caption": "Function arguments validation",
+        "description": "General function arguments validation test suite."
+    },
+    "inner-function": {
+        "file": "inner-function.m",
+        "caption": "Inner Function",
+        "description": "General inner function test suite."
+    },
+    "function-feval": {
+        "file": "function-feval.m",
+        "caption": "feval Function",
+        "description": "General feval function test suite."
+    },
+    "exist": {
+        "file": "exist.m",
+        "caption": "exist",
+        "description": "General exist test suite.",
+        "test": "exist.spec.ts",
+        "variable": "complete_test_result_exist"
+    },
+    "which": {
+        "file": "which.m",
+        "caption": "which",
+        "description": "General which test suite.",
+        "test": "which.spec.ts",
+        "variable": "complete_test_result_which"
+    },
+    "class": {
+        "file": "class.m",
+        "caption": "class",
+        "description": "General class test suite.",
+        "test": "class.spec.ts",
+        "variable": "complete_test_result_class"
+    },
+    "mfilename": {
+        "file": "mfilename.m",
+        "caption": "mfilename",
+        "description": "General mfilename test suite.",
+        "test": "mfilename.spec.ts",
+        "variable": "complete_test_result_mfilename"
+    },
+    "localfunctions": {
+        "file": "localfunctions.m",
+        "caption": "localfunctions",
+        "description": "General localfunctions test suite.",
+        "test": "localfunctions.spec.ts",
+        "variable": "complete_test_result_localfunctions"
+    },
+    "dbstack": {
+        "file": "dbstack.m",
+        "caption": "dbstack",
+        "description": "General dbstack test suite."
+    },
+    "inputname": {
+        "file": "inputname.m",
+        "caption": "inputname",
+        "description": "General inputname test suite.",
+        "test": "inputname.spec.ts",
+        "variable": "complete_test_result_inputname"
+    },
+    "evalin-assignin": {
+        "file": "evalin-assignin.m",
+        "caption": "evalin & assignin",
+        "description": "General evalin and assignin test suite."
+    },
+    "eval": {
+        "file": "eval.m",
+        "caption": "eval",
+        "description": "General eval test suite."
+    },
+    "eval-evalin-catch": {
+        "file": "eval-evalin-catch.m",
+        "caption": "eval/evalin with catch",
+        "description": "General eval/evalin with catch test suite."
+    },
+    "clear": {
+        "file": "clear.m",
+        "caption": "clear",
+        "description": "General clear test suite."
+    },
+    "builtin-signature-introspection": {
+        "file": "builtin-signature-introspection.m",
+        "caption": "Built-in signature introspection",
+        "description": "General built-in signature introspection test suite.",
+        "test": "builtin-signature-introspection.spec.ts",
+        "variable": "complete_test_result_builtin_signature_introspection"
+    },
+    "builtin-signature-arity-validation": {
+        "file": "builtin-signature-arity-validation.m",
+        "caption": "Built-in signature - arity validation",
+        "description": "General built-in signature - arity validation test suite."
+    },
+    "builtin-signature-parameter-validation": {
+        "file": "builtin-signature-parameter-validation.m",
+        "caption": "Built-in signature - parameter validation",
+        "description": "General built-in signature - parameter validation test suite."
+    },
+    "builtin-meshgrid-ndgrid": {
+        "file": "builtin-meshgrid-ndgrid.m",
+        "caption": "Built-in: meshgrid and ndgrid",
+        "description": "General built-in meshgrid and ndgrid test suite.",
+        "test": "builtin-meshgrid-ndgrid.spec.ts",
+        "variable": "complete_test_result_builtin_meshgrid_ndgrid"
+    },
+    "indexing": {
+        "file": "indexing.m",
+        "caption": "Indexing",
+        "description": "General indexing test suite.",
+        "test": "indexing.spec.ts",
+        "variable": "complete_test_result_indexing"
+    },
+    "indexing-rhs": {
+        "file": "indexing-rhs.m",
+        "caption": "Indexing right-hand side",
+        "description": "Tests indexing at right-hand side.",
+        "test": "indexing-rhs.spec.ts",
+        "variable": "complete_test_result_index_rhs"
+    },
+    "indexing-right": {
+        "file": "indexing-right.m",
+        "caption": "Indexing right",
+        "description": "Tests indexing at right side."
+    },
+    "indexing-lhs": {
+        "file": "indexing-lhs.m",
+        "caption": "Indexing left-hand side",
+        "description": "Tests indexing at left-hand side.",
+        "test": "indexing-lhs.spec.ts",
+        "variable": "complete_test_result_index_lhs"
+    },
+    "indexing-left": {
+        "file": "indexing-left.m",
+        "caption": "Indexing left",
+        "description": "Tests indexing at left side."
+    },
+    "indexing-function": {
+        "file": "indexing-function.m",
+        "caption": "Indexing function",
+        "description": "Tests indexing functions.",
+        "test": "indexing-function.spec.ts",
+        "variable": "complete_test_result_indexing_function"
+    },
+    "element-wise": {
+        "file": "element-wise.m",
+        "caption": "Element-wise Operations",
+        "description": "Test Element-wise Operations.",
+        "test": "element-wise.spec.ts",
+        "variable": "complete_test_result_element_wise"
+    },
+    "diag-01": {
+        "file": "diag-01.m",
+        "caption": "diag 01",
+        "description": "Test diag function.",
+        "test": "diag-01.spec.ts",
+        "variable": "complete_test_result_diag_01"
+    },
+    "eig-01": {
+        "file": "eig-01.m",
+        "caption": "eig 01",
+        "description": "Test eig function.",
+        "test": "eig-01.spec.ts",
+        "variable": "complete_test_result_eig"
+    },
+    "eig-02": {
+        "file": "eig-02.m",
+        "caption": "eig 02",
+        "description": "Test eig function.",
+        "test": "eig-02.spec.ts",
+        "variable": "complete_test_result_eig_02"
+    },
+    "eig-03": {
+        "file": "eig-03.m",
+        "caption": "eig 03",
+        "description": "Test eig function.",
+        "test": "eig-03.spec.ts",
+        "variable": "complete_test_result_eig_03"
+    },
+    "eig-04": {
+        "file": "eig-04.m",
+        "caption": "eig 04",
+        "description": "Test eig function.",
+        "test": "eig-04.spec.ts",
+        "variable": "complete_test_result_eig_04"
+    },
+    "eig-05": {
+        "file": "eig-05.m",
+        "caption": "eig 05",
+        "description": "Test eig function.",
+        "test": "eig-05.spec.ts",
+        "variable": "complete_test_result_eig_05"
+    },
+    "reduce-functions": {
+        "file": "reduce-functions.m",
+        "caption": "Reduce",
+        "description": "Test reduce functions.",
+        "test": "reduce-functions.spec.ts",
+        "variable": "complete_test_result_reduce_functions"
+    },
+    "left-division": {
+        "file": "left-division.m",
+        "caption": "Left division",
+        "description": "Left division related functions test.",
+        "test": "left-division.spec.ts",
+        "variable": "complete_test_result_left_division"
+    },
+    "linear-algebra": {
+        "file": "linear-algebra.m",
+        "caption": "Linear Algebra",
+        "description": "Linear Algebra related functions test.",
+        "test": "linear-algebra.spec.ts",
+        "variable": "complete_test_result"
+    },
+    "multiple-assignment": {
+        "file": "multiple-assignment.m",
+        "caption": "Multiple assignment",
+        "description": "Tests multiple assignment.",
+        "test": "multiple-assignment.spec.ts",
+        "variable": "complete_test_result_multiple_assignment"
+    },
+    "cell-array": {
+        "file": "cell-array.m",
+        "caption": "Cell array",
+        "description": "Tests cell arrays."
+    },
+    "multidimensional": {
+        "file": "multidimensional.m",
+        "caption": "Multidimensional",
+        "description": "Tests multidimensional arrays.",
+        "test": "multidimensional.spec.ts",
+        "variable": "complete_test_result_multidimensional"
+    },
+    "map-dimension-functions": {
+        "file": "map-dimension-functions.m",
+        "caption": "Map dimension",
+        "description": "Test map dimension functions.",
+        "test": "map-dimension-functions.spec.ts",
+        "variable": "complete_test_result_map_dimension_functions"
+    },
+    "min-max": {
+        "file": "min-max.m",
+        "caption": "MinMax",
+        "description": "Test min and max functions.",
+        "test": "min-max.spec.ts",
+        "variable": "complete_test_result_min_max"
+    },
+    "greek": {
+        "file": "greek.m",
+        "caption": "Greek letters",
+        "description": "Tests Greek letters.",
+        "test": "greek.spec.ts",
+        "variable": "complete_test_result_greek"
+    },
+    "singularity": {
+        "file": "singularity.m",
+        "caption": "Singularities",
+        "description": "Tests singularities.",
+        "test": "singularity.spec.ts",
+        "variable": "complete_test_result_singularity"
+    },
+    "help": {
+        "file": "help.m",
+        "caption": "Help",
+        "description": "Test help command.",
+        "test": "help.spec.ts",
+        "variable": "complete_test_result_help"
+    },
+    "histogram": {
+        "file": "histogram.m",
+        "caption": "Histogram",
+        "description": "Test histogram command.",
+        "test": "histogram.spec.ts",
+        "variable": "complete_test_result_histogram"
+    },
+    "load": {
+        "file": "load.m",
+        "caption": "Load",
+        "description": "Test load function.",
+        "test": "load.spec.ts",
+        "variable": "complete_test_result_load"
+    },
+    "markdown": {
+        "file": "markdown.m",
+        "caption": "Markdown",
+        "description": "Test markdown function.",
+        "test": "markdown.spec.ts",
+        "variable": "complete_test_result_markdown"
+    },
+    "configuration": {
+        "file": "configuration.m",
+        "caption": "Configuration",
+        "description": "Test configure function."
+    },
+    "string": {
+        "file": "string.m",
+        "caption": "Strings",
+        "description": "Test strings.",
+        "test": "string.spec.ts",
+        "variable": "complete_test_result_string"
+    },
+    "structure": {
+        "file": "structure.m",
+        "caption": "Structure",
+        "description": "Test structures."
+    },
+    "statements": {
+        "file": "statements.m",
+        "caption": "Statements",
+        "description": "Test statements, block comments...",
+        "test": "statements.spec.ts",
+        "variable": "complete_test_result_statements"
+    },
+    "incdec": {
+        "file": "incdec.m",
+        "caption": "Inc / Dec",
+        "description": "Test increment and decrement..."
+    },
+    "debug": {
+        "file": "debug.m",
+        "caption": "Debug",
+        "description": "Debug related commands and functions."
+    }
+}

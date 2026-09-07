@@ -71,9 +71,39 @@ module.exports = {
             transform,
         },
         {
+            displayName: 'architecture-tests',
+            testEnvironment,
+            testMatch: [test_prefix + 'architecture/**/*' + postfix],
+            transform,
+        },
+        {
+            displayName: 'compatibility-tests',
+            testEnvironment,
+            testMatch: [test_prefix + 'compatibility/**/*' + postfix],
+            transform,
+        },
+        {
+            displayName: 'parser-fixtures-tests',
+            testEnvironment,
+            testMatch: [test_prefix + 'parser/**/*' + postfix],
+            transform,
+        },
+        {
             displayName: 'function-infrastructure-tests',
             testEnvironment,
             testMatch: [test_prefix + 'function-infrastructure/**/*' + postfix],
+            transform,
+        },
+        {
+            displayName: 'package-source-tests',
+            testEnvironment,
+            testMatch: [test_prefix + 'package/**/*' + postfix],
+            transform,
+        },
+        {
+            displayName: 'mfile-tests',
+            testEnvironment,
+            testMatch: [test_prefix + 'mfile/**/*' + postfix],
             transform,
         },
         {
