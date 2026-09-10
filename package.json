@@ -1,6 +1,6 @@
 {
     "name": "mathjslab",
-    "version": "2.5.2",
+    "version": "2.5.3",
     "description": "MathJSLab - An interpreter with language syntax like MATLAB®/Octave, ISBN 978-65-00-82338-7.",
     "keywords": [
         "MathJSLab",
@@ -30,7 +30,7 @@
     "type": "module",
     "exports": {
         ".": {
-            "types": "./lib/src/lib.d.ts",
+            "types": "./lib/types/lib.d.ts",
             "node": {
                 "import": "./lib/mathjslab.node.esm2022.js",
                 "require": "./lib/mathjslab.node.cjs2022.js"
@@ -41,27 +41,27 @@
             "default": "./lib/mathjslab.web.esm2022.js"
         },
         "./node-esm": {
-            "types": "./lib/src/lib.d.ts",
+            "types": "./lib/types/lib.d.ts",
             "default": "./lib/mathjslab.node.esm2022.js"
         },
         "./node-cjs": {
-            "types": "./lib/src/lib.d.ts",
+            "types": "./lib/types/lib.d.ts",
             "default": "./lib/mathjslab.node.cjs2022.js"
         },
         "./node-cjs-es2015": {
-            "types": "./lib/src/lib.d.ts",
+            "types": "./lib/types/lib.d.ts",
             "default": "./lib/mathjslab.node.cjs2015.js"
         },
         "./web-esm": {
-            "types": "./lib/src/lib.d.ts",
+            "types": "./lib/types/lib.d.ts",
             "default": "./lib/mathjslab.web.esm2022.js"
         },
         "./web-umd": {
-            "types": "./lib/src/lib.d.ts",
+            "types": "./lib/types/lib.d.ts",
             "default": "./lib/mathjslab.web.umd2022.js"
         },
         "./web-umd-es2015": {
-            "types": "./lib/src/lib.d.ts",
+            "types": "./lib/types/lib.d.ts",
             "default": "./lib/mathjslab.web.umd2015.js"
         }
     },
@@ -166,8 +166,8 @@
         "@types/turndown": "^5.0.6",
         "@types/webpack": "^5.28.5",
         "@types/webpack-bundle-analyzer": "^4.7.0",
-        "@typescript-eslint/eslint-plugin": "^8.69.0",
-        "@typescript-eslint/parser": "^8.69.0",
+        "@typescript-eslint/eslint-plugin": "^8.70.0",
+        "@typescript-eslint/parser": "^8.70.0",
         "ajv": "^8.20.0",
         "cross-env": "^10.1.0",
         "eslint": "^9.39.5",
@@ -182,7 +182,7 @@
         "jsdom": "^30.0.1",
         "license-webpack-plugin": "^4.0.2",
         "madge": "^8.0.0",
-        "node-html-parser": "^9.0.3",
+        "node-html-parser": "^9.0.4",
         "prettier": "^3.9.6",
         "shx": "^0.4.0",
         "ts-jest": "^29.4.12",
@@ -194,7 +194,7 @@
         "typedoc": "^0.28.20",
         "typescript": "^6.0.3",
         "webpack": "^5.110.3",
-        "webpack-bundle-analyzer": "^5.3.2",
+        "webpack-bundle-analyzer": "^5.3.3",
         "webpack-cli": "^7.2.3"
     },
     "engines": {

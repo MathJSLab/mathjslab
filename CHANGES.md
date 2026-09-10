@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 2.5.3
+
+- Corrected the TypeScript declaration paths for the package root and all
+  exported runtime variants to reference the generated `lib/types/lib.d.ts`.
+- Restored declaration resolution through package exports for TypeScript
+  projects using modern Node.js and bundler module resolution.
+
 ## 2.5.2
 
 - Added focused unit coverage for AST helpers, BLAS routines, and symbolic
