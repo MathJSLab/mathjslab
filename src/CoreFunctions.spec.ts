@@ -146,6 +146,44 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => CoreFunctions.double(MultiArray.firstRow([new CharString('x')], true))).toThrow('double: invalid conversion input.');
         });
 
+        it('Should convert and combine numeric values to complex arrays.', () => {
+            const row = MultiArray.firstRow([Complex.create(1), Complex.create(2)]);
+            const column = MultiArray.toColumnVector([Complex.create(10), Complex.create(20)]);
+            const broadcast = CoreFunctions.complex(column, row) as MultiArray;
+            const ndReal = new MultiArray([2, 1, 2], (...subscript) => Complex.create(100 * subscript[0] + subscript[2]));
+            const ndImaginary = new MultiArray([1, 3, 1], (...subscript) => Complex.create(10 * subscript[1]));
+            const ndBroadcast = CoreFunctions.complex(ndReal, ndImaginary) as MultiArray;
+
+            expect(CoreFunctions.functions.complex.func).toBe(CoreFunctions.complex);
+            expect(CoreFunctions.functions.complex.signature).toBe(CoreFunctions.complexSignature);
+            expect(CoreFunctions.complex(Complex.create(1, 2))!.toString()).toBe('1+2i');
+            expect(broadcast.dimension).toEqual([2, 2]);
+            expect(broadcast.array.map((line) => line.map((value) => (value as ComplexType).toString()))).toEqual([
+                ['10+i', '10+2i'],
+                ['20+i', '20+2i'],
+            ]);
+            expect(ndBroadcast.dimension).toEqual([2, 3, 2]);
+            expect(MultiArray.linearize(ndBroadcast).map((value) => (value as ComplexType).toString())).toEqual([
+                '101+10i',
+                '201+10i',
+                '101+20i',
+                '201+20i',
+                '101+30i',
+                '201+30i',
+                '102+10i',
+                '202+10i',
+                '102+20i',
+                '202+20i',
+                '102+30i',
+                '202+30i',
+            ]);
+            expect(() => CoreFunctions.complex(Complex.create(1, 2), Complex.one())).toThrow('complex: real and imaginary inputs must be real numeric values.');
+            expect(() => CoreFunctions.complex(MultiArray.firstRow([Complex.one(), Complex.two()]), MultiArray.firstRow([Complex.one(), Complex.two(), Complex.create(3)]))).toThrow(
+                'complex: nonconformant arguments (op1 is 1x2, op2 is 1x3).',
+            );
+            expect(() => CoreFunctions.complex()).toThrow("Invalid call to complex. Type 'help complex' to see correct usage.");
+        });
+
         it('Should convert numeric and character values to logical arrays.', () => {
             const numeric = new MultiArray([2, 2]);
             numeric.array[0][0] = Complex.zero();

@@ -2,6 +2,7 @@
 import path from 'node:path';
 import { describe, it, expect } from '@jest/globals';
 import { Complex, ComplexType, toNumber } from './Complex';
+import { CharString } from './CharString';
 import { MathOperation } from './MathOperation';
 import { BLAS } from './BLAS';
 import { LAPACK } from './LAPACK';
@@ -311,6 +312,151 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const unparsed = interpreter.Unparse(tree);
             expect(Complex.realToNumber(value.list[0])).toBe(7);
             expect(unparsed === '1+2*3\n').toBe(true);
+        });
+
+        it('LinearAlgebra.pagetranspose should transpose each N-D page in logical storage order.', () => {
+            const source = new MultiArray([2, 3, 2], (...subscript) => Complex.create(100 * subscript[2] + 10 * subscript[0] + subscript[1]));
+            const transposed = LinearAlgebra.pagetranspose(source) as MultiArray;
+
+            expect(transposed.dimension).toEqual([3, 2, 2]);
+            expect(MultiArray.linearize(transposed).map((value) => Complex.realToNumber(value as ComplexType))).toEqual([111, 112, 113, 121, 122, 123, 211, 212, 213, 221, 222, 223]);
+        });
+
+        it('LinearAlgebra.pagectranspose should conjugate numeric pages without touching cell contents.', () => {
+            const complexSource = new MultiArray([2, 2, 2], (...subscript) => Complex.create(10 * subscript[2] + subscript[0], subscript[1]));
+            const conjugated = LinearAlgebra.pagectranspose(complexSource) as MultiArray;
+            expect(conjugated.dimension).toEqual([2, 2, 2]);
+            expect(MultiArray.linearize(conjugated).map((value) => [Complex.realToNumber(value as ComplexType), Complex.imagToNumber(value as ComplexType)])).toEqual([
+                [11, -1],
+                [11, -2],
+                [12, -1],
+                [12, -2],
+                [21, -1],
+                [21, -2],
+                [22, -1],
+                [22, -2],
+            ]);
+
+            const cellSource = new MultiArray([1, 2, 2], (...subscript) => Complex.create(100 * subscript[2] + subscript[1], subscript[0]), true);
+            const cellTransposed = LinearAlgebra.pagectranspose(cellSource) as MultiArray;
+            expect(cellTransposed.dimension).toEqual([2, 1, 2]);
+            expect(MultiArray.linearize(cellTransposed).map((value) => [Complex.realToNumber(value as ComplexType), Complex.imagToNumber(value as ComplexType)])).toEqual([
+                [101, 1],
+                [102, 1],
+                [201, 1],
+                [202, 1],
+            ]);
+        });
+
+        it('LinearAlgebra.pagemtimes should multiply corresponding pages and broadcast page dimensions.', () => {
+            const left = interpreter.Execute('cat(3, [1, 2; 3, 4], [5, 6; 7, 8])').list[0] as MultiArray;
+            const right = interpreter.Execute('cat(3, [2, 0; 1, 2], [1, 1; 0, 1])').list[0] as MultiArray;
+            const pageProduct = LinearAlgebra.pagemtimes(left, right) as MultiArray;
+
+            expect(pageProduct.dimension).toEqual([2, 2, 2]);
+            expect(MultiArray.linearize(pageProduct).map((value) => Complex.realToNumber(value as ComplexType))).toEqual([4, 10, 4, 8, 5, 7, 11, 15]);
+
+            const singletonPages = interpreter.Execute('reshape(1:4, [2, 2, 1])').list[0] as MultiArray;
+            const broadcastPages = interpreter.Execute('cat(4, eye(2), 2*eye(2), 3*eye(2))').list[0] as MultiArray;
+            const broadcastProduct = LinearAlgebra.pagemtimes(singletonPages, broadcastPages) as MultiArray;
+
+            expect(broadcastProduct.dimension).toEqual([2, 2, 1, 3]);
+            expect(MultiArray.linearize(broadcastProduct).map((value) => Complex.realToNumber(value as ComplexType))).toEqual([1, 2, 3, 4, 2, 4, 6, 8, 3, 6, 9, 12]);
+        });
+
+        it('LinearAlgebra.pagemtimes should honor page-wise transpose options.', () => {
+            const left = interpreter.Execute('cat(3, [1+1i, 2; 3, 4], [5, 6; 7, 8])').list[0] as MultiArray;
+            const right = interpreter.Execute('cat(3, [1, 0; 0, 1], [2, 0; 0, 2])').list[0] as MultiArray;
+            const plainTranspose = LinearAlgebra.pagemtimes(left, new CharString('transpose'), right, new CharString('none')) as MultiArray;
+            const conjugateTranspose = LinearAlgebra.pagemtimes(left, new CharString('ctranspose'), right, new CharString('none')) as MultiArray;
+
+            expect(MultiArray.linearize(plainTranspose).map((value) => [Complex.realToNumber(value as ComplexType), Complex.imagToNumber(value as ComplexType)])).toEqual([
+                [1, 1],
+                [2, 0],
+                [3, 0],
+                [4, 0],
+                [10, 0],
+                [12, 0],
+                [14, 0],
+                [16, 0],
+            ]);
+            expect(MultiArray.linearize(conjugateTranspose).map((value) => [Complex.realToNumber(value as ComplexType), Complex.imagToNumber(value as ComplexType)])).toEqual([
+                [1, -1],
+                [2, 0],
+                [3, 0],
+                [4, 0],
+                [10, 0],
+                [12, 0],
+                [14, 0],
+                [16, 0],
+            ]);
+            expect(() => LinearAlgebra.pagemtimes(left, new CharString('bad'), right, new CharString('none'))).toThrow(
+                "pagemtimes: transpose options must be 'none', 'transpose', or 'ctranspose'.",
+            );
+        });
+
+        it('LinearAlgebra.pageinv should invert each square matrix page.', () => {
+            const source = interpreter.Execute('cat(3, [2, 0; 0, 4], [1, 2; 0, 1])').list[0] as MultiArray;
+            const pageinv = LinearAlgebra.pageinv(source);
+            const inverse = pageinv.selector(pageinv.handler(1), 0) as MultiArray;
+            const reciprocalCondition = pageinv.selector(pageinv.handler(2), 1) as MultiArray;
+
+            expect(inverse.dimension).toEqual([2, 2, 2]);
+            expect(MultiArray.linearize(inverse).map((value) => Complex.realToNumber(value as ComplexType))).toEqual([0.5, 0, 0, 0.25, 1, 0, -2, 1]);
+            expect(reciprocalCondition.dimension).toEqual([1, 1, 2]);
+            expect(MultiArray.linearize(reciprocalCondition).map((value) => Complex.realToNumber(value as ComplexType))).toEqual([0.5, 1 / 9]);
+
+            const singular = interpreter.Execute('cat(3, eye(2), [1, 2; 2, 4])').list[0] as MultiArray;
+            const singularReturn = LinearAlgebra.pageinv(singular);
+            const singularInverse = singularReturn.selector(singularReturn.handler(1), 0) as MultiArray;
+            const singularReciprocalCondition = singularReturn.selector(singularReturn.handler(2), 1) as MultiArray;
+            expect(Complex.realToNumber(singularInverse.array[2][0] as ComplexType)).toBe(Infinity);
+            expect(Complex.realToNumber(singularReciprocalCondition.array[1][0] as ComplexType)).toBe(0);
+            expect(() => LinearAlgebra.pageinv(interpreter.Execute('ones(2, 3, 2)').list[0]).handler(1)).toThrow('pageinv: each page must be a square matrix');
+        });
+
+        it('LinearAlgebra.pagemldivide and pagemrdivide should solve each page with page expansion and transpose options.', () => {
+            const divisor = interpreter.Execute('cat(3, [2, 0; 0, 4], [1, 2; 0, 1])').list[0] as MultiArray;
+            const rightHandSide = interpreter.Execute('cat(3, [2, 8; 6, 16], [3, 5; 7, 11])').list[0] as MultiArray;
+            const leftReturn = LinearAlgebra.pagemldivide(divisor, rightHandSide);
+            const rightReturn = LinearAlgebra.pagemrdivide(rightHandSide, divisor);
+            const leftSolution = leftReturn.selector(leftReturn.handler(1), 0) as MultiArray;
+            const rightSolution = rightReturn.selector(rightReturn.handler(1), 0) as MultiArray;
+            const leftReciprocalCondition = leftReturn.selector(leftReturn.handler(2), 1) as MultiArray;
+            const rightReciprocalCondition = rightReturn.selector(rightReturn.handler(2), 1) as MultiArray;
+
+            expect(leftSolution.dimension).toEqual([2, 2, 2]);
+            expect(MultiArray.linearize(leftSolution).map((value) => Complex.realToNumber(value as ComplexType))).toEqual([1, 1.5, 4, 4, -11, 7, -17, 11]);
+            expect(rightSolution.dimension).toEqual([2, 2, 2]);
+            expect(MultiArray.linearize(rightSolution).map((value) => Complex.realToNumber(value as ComplexType))).toEqual([1, 3, 2, 4, 3, 7, -1, -3]);
+            expect(MultiArray.linearize(leftReciprocalCondition).map((value) => Complex.realToNumber(value as ComplexType))).toEqual([0.5, 1 / 9]);
+            expect(MultiArray.linearize(rightReciprocalCondition).map((value) => Complex.realToNumber(value as ComplexType))).toEqual([0.5, 1 / 9]);
+
+            const broadcastDivisor = interpreter.Execute('reshape([2, 0; 0, 4], [2, 2, 1])').list[0] as MultiArray;
+            const broadcastReturn = LinearAlgebra.pagemldivide(broadcastDivisor, rightHandSide);
+            const broadcastSolution = broadcastReturn.selector(broadcastReturn.handler(1), 0) as MultiArray;
+            expect(broadcastSolution.dimension).toEqual([2, 2, 2]);
+            expect(MultiArray.linearize(broadcastSolution).map((value) => Complex.realToNumber(value as ComplexType))).toEqual([1, 1.5, 4, 4, 1.5, 1.75, 2.5, 2.75]);
+
+            const transposeDivisor = interpreter.Execute('[1, 2; 0, 1]').list[0] as MultiArray;
+            const transposeRightHandSide = interpreter.Execute('[3, 5; 7, 11]').list[0] as MultiArray;
+            const leftTransposeReturn = LinearAlgebra.pagemldivide(transposeDivisor, new CharString('transpose'), transposeRightHandSide);
+            const rightTransposeReturn = LinearAlgebra.pagemrdivide(transposeRightHandSide, transposeDivisor, new CharString('transpose'));
+            const leftTransposeSolution = leftTransposeReturn.selector(leftTransposeReturn.handler(1), 0) as MultiArray;
+            const rightTransposeSolution = rightTransposeReturn.selector(rightTransposeReturn.handler(1), 0) as MultiArray;
+            expect(MultiArray.linearize(leftTransposeSolution).map((value) => Complex.realToNumber(value as ComplexType))).toEqual([3, 1, 5, 1]);
+            expect(MultiArray.linearize(rightTransposeSolution).map((value) => Complex.realToNumber(value as ComplexType))).toEqual([-7, -15, 5, 11]);
+
+            const rectangular = interpreter.Execute('cat(3, [1, 0; 0, 1; 1, 1], [1, 0; 0, 1; 1, 1])').list[0] as MultiArray;
+            const rectangularRightHandSide = interpreter.Execute('cat(3, [1; 2; 3], [2; 4; 6])').list[0] as MultiArray;
+            const rectangularReturn = LinearAlgebra.pagemldivide(rectangular, rectangularRightHandSide);
+            const rectangularSolution = rectangularReturn.selector(rectangularReturn.handler(1), 0) as MultiArray;
+            const rectangularReciprocalCondition = rectangularReturn.selector(rectangularReturn.handler(2), 1) as MultiArray;
+            expect(rectangularSolution.dimension).toEqual([2, 1, 2]);
+            expect(MultiArray.linearize(rectangularSolution).map((value) => Complex.realToNumber(value as ComplexType))).toEqual([1, 2, 2, 4]);
+            for (const value of MultiArray.linearize(rectangularReciprocalCondition)) {
+                expect(Complex.realToNumber(value as ComplexType)).toBeCloseTo(1 / Math.sqrt(3), 12);
+            }
         });
 
         describe('Hermitian property checks', () => {

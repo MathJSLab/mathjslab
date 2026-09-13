@@ -27,6 +27,10 @@ forms:
   `subsref`, and `subsasgn` compatibility paths with chained `()`, `{}`, and
   `.` descriptors, dynamic fields, deletion, scalar broadcast, and implicit
   nested-path creation;
+- structure-array semantics for field-pair `struct` construction, empty
+  structure arrays with preserved field schemas, `for [value, name]` iteration,
+  indexed `getfield`/`setfield`, and nested indexed field assignments such as
+  `S(2).b(3).c = value`;
 - multidimensional array and cell indexing over the engine's page-stacked
   storage model, including page slices, N-D expansion, logical subscripts,
   deletion, comma-separated-list expansion, and structure/cell conversion
@@ -96,6 +100,11 @@ The AST layer normalizes parse output into node contracts exported from
   next descriptor to each expanded element instead of reducing to the first
   value. `subsasgn` should mirror this distribution when assigning through
   structure arrays, cells, object arrays, and cells containing objects;
+- structure arrays have a shared top-level field schema. Helpers that add a
+  field during indexed assignment should fill only missing fields with `[]`,
+  preserving any value already written into selected elements. Empty structure
+  arrays may carry schema metadata even though they contain no scalar
+  `Structure` elements;
 - `NodeFor` preserves `parallel === true` for `parfor` and stores optional
   worker expressions separately from the loop target/range;
 - `NodeOperation` consumers should narrow through the AST binary, prefix, and
@@ -201,6 +210,11 @@ The AST layer normalizes parse output into node contracts exported from
   `linearIndexToMultiArrayRowColumn`. Conformance coverage should include N-D
   selection, assignment, expansion, deletion, logical masks, and cells whenever
   these helpers change;
+- numeric runtime helpers include MATLAB/Octave-facing matrix left/right
+  division, page-wise matrix division, complex-value construction, and
+  non-finite predicate/equality paths. These should remain routed through the
+  shared operation and linear-algebra layers instead of duplicating parser or
+  evaluator-specific behavior;
 - AST factory methods validate expression slots, function signatures,
   `arguments` metadata, class sections, branch/loop bodies, and array elements
   before storing child nodes;

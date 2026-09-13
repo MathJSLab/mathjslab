@@ -3,7 +3,7 @@ import path from 'node:path';
 import { ComplexDecimal } from './ComplexDecimal';
 import { Interpreter } from './Interpreter';
 import { MultiArray } from './MultiArray';
-import { Complex } from './Complex';
+import { Complex, type ComplexType } from './Complex';
 import { CharString } from './CharString';
 import { executeList } from './ParserTestUtils';
 
@@ -68,6 +68,32 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(MultiArray.isVector(MultiArray.firstRow([Complex.one(), Complex.two()]))).toBe(true);
             expect(MultiArray.isColumnVector(MultiArray.toColumnVector([Complex.one(), Complex.two()]))).toBe(true);
             expect(MultiArray.isEmpty(MultiArray.emptyArray())).toBe(true);
+        });
+
+        it('Copy should preserve empty structure-array field schemas.', () => {
+            const emptyStruct = MultiArray.emptyArray();
+            emptyStruct.type = MultiArray.STRUCTURE;
+            emptyStruct.emptyStructureFields = ['a', 'b'];
+
+            const staticCopy = MultiArray.copy(emptyStruct);
+            const instanceCopy = emptyStruct.copy();
+            emptyStruct.emptyStructureFields.push('c');
+
+            expect(staticCopy.emptyStructureFields).toEqual(['a', 'b']);
+            expect(instanceCopy.emptyStructureFields).toEqual(['a', 'b']);
+        });
+
+        it('Indexing should preserve empty structure-array field schemas.', () => {
+            const emptyStruct = MultiArray.emptyArray();
+            emptyStruct.type = MultiArray.STRUCTURE;
+            emptyStruct.emptyStructureFields = ['a', 'b'];
+
+            const colonSelected = MultiArray.getElements(emptyStruct, 'emptyStruct', [], [MultiArray.toColumnVector([])]) as MultiArray;
+            const logicalSelected = MultiArray.getElements(emptyStruct, 'emptyStruct', [], [MultiArray.emptyArray()]) as MultiArray;
+
+            expect(colonSelected.dimension).toEqual([0, 1]);
+            expect(colonSelected.emptyStructureFields).toEqual(['a', 'b']);
+            expect(logicalSelected.emptyStructureFields).toEqual(['a', 'b']);
         });
 
         it('Interpreter should be defined', () => {
@@ -136,6 +162,18 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
                 expect(MultiArray.linearize(array).map(realScalar)).toEqual(expected);
             }
+        });
+
+        it('mapBroadcasted should preserve N-D singleton expansion in logical linear order.', () => {
+            const left = new MultiArray([2, 1, 2], (...subscript) => Complex.create(100 * subscript[0] + 10 * subscript[1] + subscript[2]));
+            const right = new MultiArray([1, 3, 1], (...subscript) => Complex.create(subscript[0] + 10 * subscript[1] + 100 * subscript[2]));
+            const result = MultiArray.mapBroadcasted(left, right, 'test', (leftValue, rightValue) => Complex.add(leftValue as ComplexType, rightValue as ComplexType));
+
+            expect(result.dimension).toEqual([2, 3, 2]);
+            expect(MultiArray.linearize(result).map(realScalar)).toEqual([222, 322, 232, 332, 242, 342, 223, 323, 233, 333, 243, 343]);
+            expect(() => MultiArray.mapBroadcasted(new MultiArray([2, 2]), new MultiArray([3, 2]), 'test', () => Complex.zero())).toThrow(
+                'test: nonconformant arguments (op1 is 2x2, op2 is 3x2).',
+            );
         });
 
         it('subscript indexing should preserve selected N-D slices in page storage.', () => {

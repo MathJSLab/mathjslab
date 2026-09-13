@@ -103,7 +103,7 @@ module.exports = {
         {
             displayName: 'mfile-tests',
             testEnvironment,
-            testMatch: [test_prefix + 'mfile/**/*' + postfix],
+            testMatch: [test_prefix + 'mfile/mfile.spec.ts'],
             transform,
         },
         {

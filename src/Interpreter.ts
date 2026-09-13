@@ -2462,10 +2462,15 @@ class Interpreter implements InterpreterInterface {
      * @returns Values assigned on each loop iteration.
      */
     private forLoopValues(value: NodeInput, target: NodeExpr): NodeExpr[] {
-        if (Structure.isInstanceOf(value)) {
+        if (Structure.isInstanceOf(value) || (MultiArray.isInstanceOf(value) && Structure.isStructure(value))) {
             const targetWidth = MultiArray.isRowVector(target) ? MultiArray.linearize(this.expressionValue(target, 'for target')).length : 1;
-            return Object.entries(value.field).map(([field, fieldValue]) => {
-                const valueExpression = this.expressionValue(fieldValue, field);
+            const elements = Structure.structureElements(value);
+            if (elements.length === 0) {
+                return [];
+            }
+            const firstStructure = elements[0];
+            return Object.keys(firstStructure.field).map((field) => {
+                const valueExpression = this.expressionValue(Structure.getField(value, [field]), field);
                 return targetWidth > 1 ? this.expressionValue(new MultiArray([1, 2], [[valueExpression, CharString.create(field)]]), field) : valueExpression;
             });
         }
@@ -2479,13 +2484,17 @@ class Interpreter implements InterpreterInterface {
             return [];
         }
         if (value.dimension[0] === 1 && !value.isCell) {
-            return value.array[0].map((item, index) => this.expressionValue(item, `for${index + 1}`));
+            return MultiArray.linearize(value).map((item, index) => this.expressionValue(item, `for${index + 1}`));
         }
         const result: NodeExpr[] = [];
-        for (let column = 0; column < value.dimension[1]; column++) {
+        const rows = value.dimension[0];
+        const columns = value.dimension.slice(1).reduce((product, dimension) => product * dimension, 1);
+        for (let column = 0; column < columns; column++) {
             const columnValue = new MultiArray([value.dimension[0], 1], undefined, value.isCell);
-            for (let row = 0; row < value.dimension[0]; row++) {
-                columnValue.array[row][0] = value.array[row][column];
+            for (let row = 0; row < rows; row++) {
+                const linearIndex = column * rows + row;
+                const [sourceRow, sourceColumn] = MultiArray.linearIndexToMultiArrayRowColumn(value.dimension[0], value.dimension[1], linearIndex);
+                columnValue.array[row][0] = RuntimeValue.copy(value.array[sourceRow][sourceColumn]) as NodeExpr;
             }
             result.push(this.expressionValue(columnValue, `for${column + 1}`));
         }
@@ -5364,6 +5373,14 @@ class Interpreter implements InterpreterInterface {
                 outputs: { arity: -1 },
             },
         },
+        getfield: {
+            func: (...args: NodeInput[]): NodeInput => this.getfieldResult(args[0], args.slice(1)),
+            signature: CoreFunctions.getfieldSignature,
+        },
+        setfield: {
+            func: (...args: NodeInput[]): NodeInput => this.setfieldResult(args[0], args.slice(1)),
+            signature: CoreFunctions.setfieldSignature,
+        },
         subsref: {
             func: (...args: NodeInput[]): NodeInput => this.subsrefResult(args[0], args[1]),
             signature: {
@@ -5973,7 +5990,7 @@ class Interpreter implements InterpreterInterface {
         for (const func in CoreFunctions.functions) {
             this.context.defineBuiltInFunction(func, CoreFunctions.functions[func].func, false, [], CoreFunctions.functions[func].signature);
         }
-        for (const func of ['properties', 'fieldnames', 'methods', 'events', 'enumeration', 'superclasses', 'isprop', 'ismethod']) {
+        for (const func of ['properties', 'fieldnames', 'methods', 'events', 'enumeration', 'superclasses', 'isprop', 'ismethod', 'getfield', 'setfield']) {
             this.context.defineBuiltInFunction(func, this.functions[func].func, false, [], this.functions[func].signature);
         }
         /* Define LinearAlgebra functions */
@@ -7183,57 +7200,18 @@ class Interpreter implements InterpreterInterface {
         }
         const leftArray = MultiArray.scalarToMultiArray(left);
         const rightArray = MultiArray.scalarToMultiArray(right);
-        const leftDim = leftArray.dimension.slice();
-        const rightDim = rightArray.dimension.slice();
-        const maxDim = Math.max(leftDim.length, rightDim.length);
-        while (leftDim.length < maxDim) leftDim.push(1);
-        while (rightDim.length < maxDim) rightDim.push(1);
-        const resultDim = new Array<number>(maxDim);
-        const leftBroadcast = new Array<boolean>(maxDim);
-        const rightBroadcast = new Array<boolean>(maxDim);
-        for (let i = 0; i < maxDim; i++) {
-            if (leftDim[i] === rightDim[i]) {
-                resultDim[i] = leftDim[i];
-                leftBroadcast[i] = rightBroadcast[i] = false;
-            } else if (leftDim[i] === 1) {
-                resultDim[i] = rightDim[i];
-                leftBroadcast[i] = true;
-                rightBroadcast[i] = false;
-            } else if (rightDim[i] === 1) {
-                resultDim[i] = leftDim[i];
-                leftBroadcast[i] = false;
-                rightBroadcast[i] = true;
-            } else {
-                this.context.throwEvalError(`operator ${methodName}: nonconformant arguments (op1 is ${leftDim.join('x')}, op2 is ${rightDim.join('x')}).`);
-            }
-        }
         const firstLeft = leftArray.array[0]?.[0];
         const firstRight = rightArray.array[0]?.[0];
         if (!this.classBinaryOperatorMethod(firstLeft, firstRight, methodName)) {
             return undefined;
         }
-        const leftStrides = MultiArray.computeStrides(leftDim);
-        const rightStrides = MultiArray.computeStrides(rightDim);
-        const resultStrides = MultiArray.computeStrides(resultDim);
-        const result = new MultiArray(resultDim);
-        const totalElements = resultDim.reduce((a, b) => a * b, 1);
-        for (let n = 0; n < totalElements; n++) {
-            let leftIndexLinear = 0;
-            let rightIndexLinear = 0;
-            for (let d = 0; d < maxDim; d++) {
-                const coord = Math.floor(n / resultStrides[d]) % resultDim[d];
-                leftIndexLinear += (leftBroadcast[d] ? 0 : coord) * leftStrides[d];
-                rightIndexLinear += (rightBroadcast[d] ? 0 : coord) * rightStrides[d];
-            }
-            const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(leftDim[0], leftDim[1], leftIndexLinear);
-            const [k, l] = MultiArray.linearIndexToMultiArrayRowColumn(rightDim[0], rightDim[1], rightIndexLinear);
-            const [o, p] = MultiArray.linearIndexToMultiArrayRowColumn(resultDim[0], resultDim[1], n);
-            const overload = this.classBinaryOperatorMethod(leftArray.array[i][j], rightArray.array[k][l], methodName);
+        const result = MultiArray.mapBroadcasted(leftArray, rightArray, `operator ${methodName}`, (leftValue, rightValue) => {
+            const overload = this.classBinaryOperatorMethod(leftValue, rightValue, methodName);
             if (!overload) {
                 this.context.throwEvalError(`operator ${methodName} is not defined for class array element.`);
             }
-            result.array[o][p] = this.reducedClassMethodResult(overload.receiver, overload.method, overload.args, parent);
-        }
+            return this.reducedClassMethodResult(overload.receiver, overload.method, overload.args, parent);
+        });
         MultiArray.setType(result);
         return MultiArray.MultiArrayToScalar(result);
     }
@@ -8581,6 +8559,9 @@ class Interpreter implements InterpreterInterface {
         if (values.length > 1) {
             return this.valueReturnList(values);
         }
+        if (values.length === 0) {
+            return MultiArray.toRowVector([]);
+        }
         return this.expressionValue(values[0], `field ${field.str}`);
     }
 
@@ -9267,6 +9248,124 @@ class Interpreter implements InterpreterInterface {
         return this.expressionValue(MultiArray.MultiArrayToScalar(selected), 'indexed value');
     }
 
+    /** Validate one `getfield`/`setfield` field-name argument. */
+    private fieldAccessNameArgument(value: NodeInput, functionName: 'getfield' | 'setfield', argumentIndex: number): string {
+        const expression = this.expressionValue(value, `${functionName} argument ${argumentIndex}`);
+        if (!CharString.isInstanceOf(expression)) {
+            this.context.throwEvalError(`${functionName}: argument ${argumentIndex} must be a string.`);
+        }
+        return expression.str;
+    }
+
+    /**
+     * Build native descriptors for MATLAB/Octave `getfield`/`setfield` forms.
+     *
+     * Field names become dot descriptors, while cell-array arguments become
+     * parenthesis descriptors selecting structure elements or field elements.
+     */
+    private fieldAccessDescriptors(args: NodeInput[], functionName: 'getfield' | 'setfield'): NativeSubscriptDescriptor[] {
+        const descriptors: NativeSubscriptDescriptor[] = [];
+        let sawField = false;
+        let index = 0;
+        const isIndexCell = (value: NodeInput): value is MultiArray => MultiArray.isInstanceOf(value) && value.isCell;
+        const appendIndex = (value: MultiArray): void => {
+            descriptors.push({ type: '()', subs: this.descriptorSubscripts(value) });
+        };
+        if (args.length > 0 && isIndexCell(args[0])) {
+            appendIndex(args[0]);
+            index = 1;
+        }
+        while (index < args.length) {
+            if (isIndexCell(args[index])) {
+                this.context.throwEvalError(`${functionName}: argument ${index + 2} must be a string.`);
+            }
+            const field = this.fieldAccessNameArgument(args[index], functionName, index + 2);
+            descriptors.push({ type: '.', subs: [CharString.create(field)] });
+            sawField = true;
+            index++;
+            if (index < args.length && isIndexCell(args[index])) {
+                appendIndex(args[index]);
+                index++;
+            }
+        }
+        if (!sawField) {
+            AST.throwInvalidCallError(functionName, true);
+        }
+        return descriptors;
+    }
+
+    /**
+     * Insert MATLAB's default first-element structure index for `getfield` and
+     * `setfield` calls on nonscalar structure arrays when no explicit leading
+     * index was supplied.
+     */
+    private defaultStructureArrayFieldIndex(target: NodeInput, descriptors: NativeSubscriptDescriptor[]): NativeSubscriptDescriptor[] {
+        if (descriptors[0]?.type === '.' && MultiArray.isInstanceOf(target) && Structure.isStructure(target) && !MultiArray.isEmpty(target) && MultiArray.linearLength(target) > 1) {
+            return [{ type: '()', subs: [Complex.one()] }, ...descriptors];
+        }
+        return descriptors;
+    }
+
+    /** Interpreter-aware `getfield` implementation supporting indexed forms. */
+    private getfieldResult(target: NodeInput, args: NodeInput[]): NodeInput {
+        AST.throwInvalidCallError('getfield', !(typeof target !== 'undefined' && args.length > 0 && Structure.isStructure(target)));
+        const descriptors = this.defaultStructureArrayFieldIndex(target, this.fieldAccessDescriptors(args, 'getfield'));
+        return this.nativeSubsrefNativeDescriptors(target, descriptors);
+    }
+
+    /** Interpreter-aware `setfield` implementation supporting indexed forms. */
+    private setfieldResult(target: NodeInput, args: NodeInput[]): NodeInput {
+        AST.throwInvalidCallError('setfield', !(typeof target !== 'undefined' && args.length >= 2 && Structure.isStructure(target)));
+        const descriptors = this.defaultStructureArrayFieldIndex(target, this.fieldAccessDescriptors(args.slice(0, -1), 'setfield'));
+        return this.assignNativeSubsasgnNativeDescriptors(target, descriptors, args[args.length - 1]);
+    }
+
+    /**
+     * Complete values assigned into an indexed empty structure array with that
+     * array's known schema. This keeps `S(1).field = value` from losing other
+     * fields declared by `struct("a", {}, "b", {})`.
+     */
+    private emptyStructureSchemaAssignmentValue(target: MultiArray, value: NodeInput): NodeInput {
+        if (!MultiArray.isEmpty(target) || !Structure.isStructure(target)) {
+            return value;
+        }
+        const schema = Structure.fieldNames(target);
+        if (schema.length === 0) {
+            return value;
+        }
+        const fillMissingFields = (structure: Structure): void => {
+            schema.forEach((field) => {
+                if (!RuntimeValue.hasOwnField(structure.field, field)) {
+                    structure.field[field] = MultiArray.emptyArray();
+                }
+            });
+        };
+        if (Structure.isInstanceOf(value)) {
+            const result = Structure.copy(value);
+            fillMissingFields(result);
+            return result;
+        }
+        if (MultiArray.isInstanceOf(value) && Structure.isStructure(value)) {
+            const result = MultiArray.copy(value);
+            Structure.structureElements(result).forEach(fillMissingFields);
+            return result;
+        }
+        return value;
+    }
+
+    /** Ensure every element of a structure array has the same top-level fields. */
+    private normalizeStructureArrayFields(value: NodeInput): void {
+        if (!MultiArray.isInstanceOf(value) || !Structure.isStructure(value)) {
+            return;
+        }
+        const elements = Structure.structureElements(value);
+        if (elements.length <= 1) {
+            return;
+        }
+        const fields = [...new Set(elements.flatMap((structure) => Object.keys(structure.field)))].sort();
+        fields.forEach((field) => Structure.setEmptyField(value, field));
+    }
+
     private setNativeIndexedValue(target: MultiArray | CharString, descriptor: NativeSubscriptDescriptor, value: NodeInput): NodeInput {
         if (CharString.isInstanceOf(target)) {
             if (descriptor.type === '{}') {
@@ -9282,7 +9381,8 @@ class Interpreter implements InterpreterInterface {
             this.context.throwEvalError('matrix cannot be indexed with {');
         }
         const result = MultiArray.copy(target);
-        let right = this.indexedAssignmentRhs(descriptor.type as IndexingDelimiterType, value, result);
+        const schemaAwareValue = descriptor.type === '()' ? this.emptyStructureSchemaAssignmentValue(target, value) : value;
+        let right = this.indexedAssignmentRhs(descriptor.type as IndexingDelimiterType, schemaAwareValue, result);
         if (descriptor.type === '{}' && MultiArray.isInstanceOf(value) && !value.isCell) {
             try {
                 const selectedCount = MultiArray.linearize(MultiArray.getElements(result, '', [], this.nativeDescriptorIndexList(descriptor, result), this)).length;
@@ -9296,7 +9396,9 @@ class Interpreter implements InterpreterInterface {
         const tempScope = Scope.create();
         tempScope.defineName('__subsasgn__', result);
         MultiArray.setElements(tempScope, '__subsasgn__', [], this.nativeDescriptorIndexList(descriptor, result), right, undefined, this);
-        return this.scopedMultiArrayValue(tempScope, '__subsasgn__', 'indexed assignment result');
+        const assigned = this.scopedMultiArrayValue(tempScope, '__subsasgn__', 'indexed assignment result');
+        this.normalizeStructureArrayFields(assigned);
+        return assigned;
     }
 
     private blankNativeSubsasgnValue(nextDescriptor?: NativeSubscriptDescriptor): NodeInput {
@@ -9349,7 +9451,7 @@ class Interpreter implements InterpreterInterface {
                 if (!CharString.isInstanceOf(field)) {
                     this.context.throwEvalError('invalid subsasgn descriptor.');
                 }
-                if (MultiArray.isEmpty(current)) {
+                if (MultiArray.isEmpty(current) && !Structure.isStructure(current)) {
                     current = new Structure({});
                 }
                 if (!Structure.isInstanceOf(current) && !Structure.isStructure(current)) {
@@ -10792,7 +10894,7 @@ class Interpreter implements InterpreterInterface {
                                             }
                                             if (typeof entry === 'undefined') {
                                                 entry = scope.defineName(id, new Structure({}));
-                                            } else if (MultiArray.isInstanceOf(entry.node) && !entry.node.isCell && MultiArray.isEmpty(entry.node)) {
+                                            } else if (MultiArray.isInstanceOf(entry.node) && !entry.node.isCell && MultiArray.isEmpty(entry.node) && !Structure.isStructure(entry.node)) {
                                                 entry.node = new Structure({});
                                             }
                                             const fieldExpressionValue = (): NodeExpr => {

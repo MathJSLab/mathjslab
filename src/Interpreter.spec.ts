@@ -639,6 +639,18 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => localInterpreter.Execute('double({"A"})')).toThrow('double: invalid conversion input.');
         });
 
+        it('Should convert and combine values with complex.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('complex(3); complex(3,4); complex([1,2], [3,4]); complex(5, [6,7])'))).toBe('3\n3+4i\n[1+3i,2+4i]\n[5+6i,5+7i]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('complex([1;2],[3,4])'))).toBe('[1+3i,1+4i;\n2+3i,2+4i]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('complex(Inf, Inf); complex(NaN, NaN); nargin("complex"); nargout("complex")'))).toBe(
+                '&infin;+&infin;i\nNaNNaNi\n-2\n1\n',
+            );
+            expect(() => localInterpreter.Execute('complex(1 + 2i, 3)')).toThrow('complex: real and imaginary inputs must be real numeric values.');
+            expect(() => localInterpreter.Execute('complex({"A"})')).toThrow('complex: argument 1 must be numeric.');
+        });
+
         it('Should convert values with logical.', () => {
             const localInterpreter = Interpreter.Create();
 
@@ -658,10 +670,26 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('isnan([1, NaN, Inf]); isinf([1, NaN, Inf]); isfinite([1, NaN, Inf])'))).toBe(
                 '[false,true,false]\n[false,false,true]\n[true,false,false]\n',
             );
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'isnan(complex(NaN,0)); isnan(complex(0,NaN)); isinf(complex(Inf,0)); isinf(complex(0,Inf)); isfinite(complex(Inf,0)); isfinite(complex(NaN,0)); isreal(complex(1,0)); isreal(complex(1,Inf))',
+                    ),
+                ),
+            ).toBe('true\ntrue\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('isfinite("abc"); nargin("isnan"); nargin("isinf"); nargin("isfinite")'))).toBe('[true,true,true]\n1\n1\n1\n');
             expect(() => localInterpreter.Execute('isnan({"A"})')).toThrow('isnan: invalid conversion input.');
             expect(() => localInterpreter.Execute('isinf({"A"})')).toThrow('isinf: invalid conversion input.');
             expect(() => localInterpreter.Execute('isfinite({"A"})')).toThrow('isfinite: invalid conversion input.');
+        });
+
+        it('Should keep non-finite equality and relational comparisons MATLAB/Octave-like.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('isequal(NaN, NaN); isequal(complex(NaN, Inf), complex(NaN, Inf)); NaN == NaN; NaN ~= NaN'))).toBe(
+                'true\ntrue\nfalse\ntrue\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('complex(NaN,Inf)==complex(NaN,Inf); complex(NaN,Inf)~=complex(NaN,Inf)'))).toBe('false\ntrue\n');
         });
 
         it('Should classify floating-point and integer storage classes.', () => {
@@ -728,6 +756,31 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             );
 
             expect(localInterpreter.Unparse(localInterpreter.Execute('lastValue; total; lastName; onlyName'))).toBe('20\n30\nb\nb\n');
+        });
+
+        it('Should evaluate Octave-style for loops over structure-array fields.', () => {
+            const localInterpreter = Interpreter.Create();
+
+            localInterpreter.Execute(
+                [
+                    'S(1).a = 1;',
+                    'S(2).a = 2;',
+                    'S(1).b = 3;',
+                    'S(2).b = 4;',
+                    'plainValues = {};',
+                    'for value = S',
+                    '  plainValues{end + 1} = value;',
+                    'end',
+                    'fieldNames = {};',
+                    'fieldValues = {};',
+                    'for [value, name] = S',
+                    '  fieldNames{end + 1} = name;',
+                    '  fieldValues{end + 1} = value;',
+                    'end',
+                ].join('\n'),
+            );
+
+            expect(localInterpreter.Unparse(localInterpreter.Execute('plainValues; fieldNames; fieldValues'))).toBe('{[1,2],[3,4]}\n{a,b}\n{[1,2],[3,4]}\n');
         });
 
         it('Should continue a for loop.', () => {
@@ -2356,6 +2409,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(localInterpreter.Unparse(localInterpreter.Execute('[a, c] + 1'))).toBe('[4,5]\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('1 + [a, c]'))).toBe('[4,5]\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('[a, c] + [b, c]'))).toBe('[6,8]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('[a; c] + [b, c]'))).toBe('[6,7;\n7,8]\n');
+            expect(() => localInterpreter.Execute('[a, c] + [a, b, c]')).toThrow('operator plus: nonconformant arguments (op1 is 1x2, op2 is 1x3).');
         });
 
         it('Should honor InferiorClasses when choosing binary operator methods.', () => {
@@ -9807,6 +9862,74 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                 's=struct {\n\n}\nt=struct {\na: 1\nb: [2,3]\n}\n1\n[2,3]\n',
             );
             expect(localInterpreter.Unparse(localInterpreter.Execute('u = struct(t); u.a; u.b'))).toBe('u=struct {\na: 1\nb: [2,3]\n}\n1\n[2,3]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('SA = struct("a", {1, 2}, "b", {3, 4}); size(SA); [SA.a]; [SA.b]'))).toBe(
+                'SA=[struct {\na: 1\nb: 3\n},struct {\na: 2\nb: 4\n}]\n[1,2]\n[1,2]\n[3,4]\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('SB = struct("a", {1, 2}, "b", 9); [SB.a]; [SB.b]'))).toBe(
+                'SB=[struct {\na: 1\nb: 9\n},struct {\na: 2\nb: 9\n}]\n[1,2]\n[9,9]\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('SD = struct("a", {1; 2}, "b", {3; 4}); size(SD); [SD.a]; [SD.b]'))).toBe(
+                'SD=[struct {\na: 1\nb: 3\n};\nstruct {\na: 2\nb: 4\n}]\n[2,1]\n[1,2]\n[3,4]\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('SE = struct("a", {1, 3; 2, 4}, "b", 10); size(SE); [SE.a]; [SE.b]'))).toBe(
+                'SE=[struct {\na: 1\nb: 10\n},struct {\na: 3\nb: 10\n};\nstruct {\na: 2\nb: 10\n},struct {\na: 4\nb: 10\n}]\n[2,2]\n[1,2,3,4]\n[10,10,10,10]\n',
+            );
+            expect(localInterpreter.Unparse(localInterpreter.Execute('SC = struct("a", {{1, 2}}, "b", 3); class(SC.a); SC.a{2}; SC.b'))).toBe('SC=struct {\na: {1,2}\nb: 3\n}\ncell\n2\n3\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('Copy = struct(SA); Copy(1).a = 99; [SA.a]; [Copy.a]'))).toBe(
+                'Copy=[struct {\na: 1\nb: 3\n},struct {\na: 2\nb: 4\n}]\nCopy=[struct {\na: 99\nb: 3\n},struct {\na: 2\nb: 4\n}]\n[1,2]\n[99,2]\n',
+            );
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'EmptyStruct = struct("a", {}, "b", {}); size(EmptyStruct); fieldnames(EmptyStruct); isfield(EmptyStruct, {"a", "b", "c"}); numfields(EmptyStruct)',
+                    ),
+                ),
+            ).toBe('EmptyStruct=[ ](0x0)\n[0,0]\n{a;\nb}\n[true,true,false]\n2\n');
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute('EmptyCopy = struct(EmptyStruct); size(EmptyCopy); fieldnames(EmptyCopy); EmptyCells = struct2cell(EmptyCopy); size(EmptyCells)'),
+                ),
+            ).toBe('EmptyCopy=[ ](0x0)\n[0,0]\n{a;\nb}\nEmptyCells={ }(2x0x0)\n[2,0,0]\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('EmptyLoop = struct("a", {}, "b", {}); count = 0; for [value, name] = EmptyLoop, count += 1; end; count'))).toBe(
+                'EmptyLoop=[ ](0x0)\ncount=0\n0\n',
+            );
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'EmptyUpdated = rmfield(EmptyStruct, "a"); fieldnames(EmptyUpdated); isfield(EmptyUpdated, {"a", "b"}); EmptyOrdered = orderfields(struct("b", {}, "a", {})); fieldnames(EmptyOrdered)',
+                    ),
+                ),
+            ).toBe('EmptyUpdated=[ ](0x0)\n{b}\n[false,true]\nEmptyOrdered=[ ](0x0)\n{a;\nb}\n');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('EmptyAccess = struct("a", {}, "b", {}); EmptyAccess.a; [EmptyAccess.a]; getfield(EmptyAccess, "a")'))).toBe(
+                'EmptyAccess=[ ](0x0)\n[ ](1x0)\n[ ](1x0)\n',
+            );
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'EmptySelected = struct("a", {}, "b", {}); EmptySelected(:).a; [EmptySelected(:).a]; subsref(EmptySelected, substruct("()", {":"}, ".", "a")); [subsref(EmptySelected, substruct("()", {":"}, ".", "a"))]',
+                    ),
+                ),
+            ).toBe('EmptySelected=[ ](0x0)\n[ ](1x0)\n[ ](1x0)\n[ ](1x0)\n');
+            expect(() => localInterpreter.Execute('EmptyAccess.missing')).toThrow('value cannot be indexed with .');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('Expanded = struct("a", {}, "b", {}); Expanded(1).a = 5; fieldnames(Expanded); Expanded.a; Expanded.b'))).toBe(
+                'Expanded=[ ](0x0)\nExpanded=[struct {\na: 5\nb: [ ](0x0)\n}]\n{a;\nb}\n5\n[ ](0x0)\n',
+            );
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute('ExpandedTail = struct("a", {}, "b", {}); ExpandedTail(2).c = 7; size(ExpandedTail); fieldnames(ExpandedTail); [ExpandedTail.c]'),
+                ),
+            ).toBe('ExpandedTail=[ ](0x0)\nExpandedTail=[struct {\na: [ ](0x0)\nb: [ ](0x0)\nc: [ ](0x0)\n},struct {\na: [ ](0x0)\nb: [ ](0x0)\nc: 7\n}]\n[1,2]\n{a;\nb;\nc}\n[7]\n');
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'SubsasgnExpanded = subsasgn(struct("a", {}, "b", {}), substruct("()", {1}, ".", "a"), 5); fieldnames(SubsasgnExpanded); SubsasgnExpanded.a; SubsasgnExpanded.b',
+                    ),
+                ),
+            ).toBe('SubsasgnExpanded=[struct {\na: 5\nb: [ ](0x0)\n}]\n{a;\nb}\n5\n[ ](0x0)\n');
+            expect(() => localInterpreter.Execute('DirectEmpty = struct("a", {}, "b", {}); DirectEmpty.a = 5')).toThrow(
+                'A dot name structure assignment is illegal when the structure is empty. Use a subscript on the structure.',
+            );
+            expect(() => localInterpreter.Execute('struct("a", {1, 2}, "b", {3; 4})')).toThrow('struct: dimensions of parameter values must match or be scalar cells.');
             expect(localInterpreter.Unparse(localInterpreter.Execute('nargin("struct"); nargout("struct")'))).toBe('-1\n1\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('nargin("isfield"); nargout("isfield")'))).toBe('2\n1\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('S.a.b = 5; getfield(S, "a", "b"); T = setfield(S, "c", 7); T.c; isfield(S, "c")'))).toBe(
@@ -9817,7 +9940,33 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             ).toBe('R=struct {\nc: 7\n}\nfalse\n7\nO=struct {\na: 1\nb: 2\n}\n{a;\nb}\n2\n');
             const structureArrayInterpreter = Interpreter.Create();
             expect(structureArrayInterpreter.Unparse(structureArrayInterpreter.Execute('S(1).x = 1; S(2).x = 2; [getfield(S, "x")]'))).toBe(
-                'S=[struct {\nx: 1\n}]\nS=[struct {\nx: 1\n},struct {\nx: 2\n}]\n[1,2]\n',
+                'S=[struct {\nx: 1\n}]\nS=[struct {\nx: 1\n},struct {\nx: 2\n}]\n[1]\n',
+            );
+            expect(structureArrayInterpreter.Unparse(structureArrayInterpreter.Execute('getfield(S, {2}, "x"); [getfield(S, {1:2}, "x")]'))).toBe('2\n[1,2]\n');
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'IndexedField = struct("a", [5, 10, 15]); getfield(IndexedField, "a", {2:3}); IndexedFieldUpdated = setfield(IndexedField, "a", {2:3}, [20, 30]); IndexedFieldUpdated.a',
+                    ),
+                ),
+            ).toBe('IndexedField=struct {\na: [5,10,15]\n}\n[10,15]\nIndexedFieldUpdated=struct {\na: [5,20,30]\n}\n[5,20,30]\n');
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'NestedIndexed = struct("a", {1, 2}); NestedIndexed = setfield(NestedIndexed, {2}, "b", {3}, "c", 9); getfield(NestedIndexed, {2}, "b", {3}, "c"); fieldnames(NestedIndexed)',
+                    ),
+                ),
+            ).toBe(
+                'NestedIndexed=[struct {\na: 1\n},struct {\na: 2\n}]\nNestedIndexed=[struct {\na: 1\nb: [ ](0x0)\n},struct {\na: 2\nb: [struct {\nc: [ ](0x0)\n},struct {\nc: [ ](0x0)\n},struct {\nc: 9\n}]\n}]\n9\n{a;\nb}\n',
+            );
+            expect(
+                localInterpreter.Unparse(
+                    localInterpreter.Execute(
+                        'NestedIndexedSyntax = struct("a", {1, 2}); NestedIndexedSyntax(2).b(3).c = 9; getfield(NestedIndexedSyntax, {2}, "b", {3}, "c"); fieldnames(NestedIndexedSyntax)',
+                    ),
+                ),
+            ).toBe(
+                'NestedIndexedSyntax=[struct {\na: 1\n},struct {\na: 2\n}]\nNestedIndexedSyntax=[struct {\na: 1\nb: [ ](0x0)\n},struct {\na: 2\nb: [struct {\nc: [ ](0x0)\n},struct {\nc: [ ](0x0)\n},struct {\nc: 9\n}]\n}]\n9\n{a;\nb}\n',
             );
             expect(localInterpreter.Unparse(localInterpreter.Execute('C = struct2cell(struct("a", 1, "b", 2)); C; size(C); U = cell2struct({1, 2}, {"a", "b"}, 2); U.a; U.b'))).toBe(
                 'C={1;\n2}\n{1;\n2}\n[2,1]\nU=struct {\na: 1\nb: 2\n}\n1\n2\n',

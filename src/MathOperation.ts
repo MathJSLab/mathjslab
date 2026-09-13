@@ -200,48 +200,7 @@ abstract class MathOperation {
         };
         const leftArray = MultiArray.scalarToMultiArray(left);
         const rightArray = MultiArray.scalarToMultiArray(right);
-        const leftDim = leftArray.dimension.slice();
-        const rightDim = rightArray.dimension.slice();
-        const maxDim = Math.max(leftDim.length, rightDim.length);
-        while (leftDim.length < maxDim) leftDim.push(1);
-        while (rightDim.length < maxDim) rightDim.push(1);
-        const resultDim = new Array<number>(maxDim);
-        const leftBroadcast = new Array<boolean>(maxDim);
-        const rightBroadcast = new Array<boolean>(maxDim);
-        for (let i = 0; i < maxDim; i++) {
-            if (leftDim[i] === rightDim[i]) {
-                resultDim[i] = leftDim[i];
-                leftBroadcast[i] = rightBroadcast[i] = false;
-            } else if (leftDim[i] === 1) {
-                resultDim[i] = rightDim[i];
-                leftBroadcast[i] = true;
-                rightBroadcast[i] = false;
-            } else if (rightDim[i] === 1) {
-                resultDim[i] = leftDim[i];
-                leftBroadcast[i] = false;
-                rightBroadcast[i] = true;
-            } else {
-                throw new EvalError(`operator ${op}: nonconformant arguments (op1 is ${leftDim.join('x')}, op2 is ${rightDim.join('x')}).`);
-            }
-        }
-        const leftStrides = MultiArray.computeStrides(leftDim);
-        const rightStrides = MultiArray.computeStrides(rightDim);
-        const resultStrides = MultiArray.computeStrides(resultDim);
-        const result = new MultiArray(resultDim);
-        const totalElements = resultDim.reduce((a, b) => a * b, 1);
-        for (let n = 0; n < totalElements; n++) {
-            let leftIndexLinear = 0;
-            let rightIndexLinear = 0;
-            for (let d = 0; d < maxDim; d++) {
-                const coord = Math.floor(n / resultStrides[d]) % resultDim[d];
-                leftIndexLinear += (leftBroadcast[d] ? 0 : coord) * leftStrides[d];
-                rightIndexLinear += (rightBroadcast[d] ? 0 : coord) * rightStrides[d];
-            }
-            const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(leftDim[0], leftDim[1], leftIndexLinear);
-            const [k, l] = MultiArray.linearIndexToMultiArrayRowColumn(rightDim[0], rightDim[1], rightIndexLinear);
-            const [o, p] = MultiArray.linearIndexToMultiArrayRowColumn(resultDim[0], resultDim[1], n);
-            result.array[o][p] = compare(leftArray.array[i][j], rightArray.array[k][l]);
-        }
+        const result = MultiArray.mapBroadcasted(leftArray, rightArray, `operator ${op}`, compare);
         result.type = Complex.LOGICAL;
         return MultiArray.MultiArrayToScalar(result) as MathObject;
     };
@@ -321,6 +280,7 @@ abstract class MathOperation {
             right = MultiArray.fromCharString(right as CharString);
         }
         MathOperation.throwIfStructureBinaryOperand('*', left, right);
+        MathOperation.throwIfCellBinaryOperand('*', left, right);
         if (Complex.isInstanceOf(left) && Complex.isInstanceOf(right)) {
             return Complex.mul(left as ComplexType, right as ComplexType);
         } else if (Complex.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
@@ -342,9 +302,14 @@ abstract class MathOperation {
 
     /**
      * Matrix right division operator (`/`).
-     * @param left
-     * @param right
-     * @returns
+     *
+     * Scalar cases use complex division directly. Matrix cases delegate to the
+     * linear algebra layer so `A / B` follows the MATLAB/Octave identity
+     * `((B') \ (A'))'`.
+     *
+     * @param left Numerator value.
+     * @param right Denominator value.
+     * @returns Scalar or matrix right-division result.
      */
     public static readonly mrdivide: BinaryMathOperation = (left: MathObject, right: MathObject): MathObject => {
         if (CharString.isInstanceOf(left)) {
@@ -354,6 +319,7 @@ abstract class MathOperation {
             right = MultiArray.fromCharString(right as CharString);
         }
         MathOperation.throwIfStructureBinaryOperand('/', left, right);
+        MathOperation.throwIfCellBinaryOperand('/', left, right);
         if (Complex.isInstanceOf(left) && Complex.isInstanceOf(right)) {
             return Complex.rdiv(left as ComplexType, right as ComplexType);
         } else if (Complex.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
@@ -367,17 +333,23 @@ abstract class MathOperation {
 
     /**
      * Left division operator (`.\`).
-     * @param left
-     * @param right
-     * @returns
+     *
+     * @param left Denominator value.
+     * @param right Numerator value.
+     * @returns Element-wise left-division result.
      */
     public static readonly ldivide: BinaryMathOperation = (left: MathObject, right: MathObject): MathObject => MathOperation.elementWiseOperation('ldiv', left, right);
 
     /**
      * Matrix left division operator (`\`).
-     * @param left
-     * @param right
-     * @returns
+     *
+     * Scalar cases use complex division directly. Matrix cases delegate to the
+     * linear algebra layer, which chooses the square solve or least-squares
+     * path according to the operand shapes.
+     *
+     * @param left Coefficient matrix or scalar denominator.
+     * @param right Right-hand side matrix or scalar numerator.
+     * @returns Scalar or matrix left-division result.
      */
     public static readonly mldivide: BinaryMathOperation = (left: MathObject, right: MathObject): MathObject => {
         if (CharString.isInstanceOf(left)) {
@@ -387,6 +359,7 @@ abstract class MathOperation {
             right = MultiArray.fromCharString(right as CharString);
         }
         MathOperation.throwIfStructureBinaryOperand('\\', left, right);
+        MathOperation.throwIfCellBinaryOperand('\\', left, right);
         if (Complex.isInstanceOf(left) && Complex.isInstanceOf(right)) {
             return Complex.ldiv(left as ComplexType, right as ComplexType);
         } else if (Complex.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
@@ -420,6 +393,7 @@ abstract class MathOperation {
             right = MultiArray.fromCharString(right as CharString);
         }
         MathOperation.throwIfStructureBinaryOperand('^', left, right);
+        MathOperation.throwIfCellBinaryOperand('^', left, right);
         const leftScalar = MathOperation.numericScalarValue(left);
         const rightScalar = MathOperation.numericScalarValue(right);
         if (leftScalar && rightScalar) {
@@ -429,7 +403,6 @@ abstract class MathOperation {
         } else if (leftScalar && MultiArray.isInstanceOf(right)) {
             return LinearAlgebra.scalarPower(leftScalar, right as MultiArray);
         } else {
-            // TODO: implement general matrix exponent operands.
             throw new Error("invalid exponent in '^'.");
         }
     };
@@ -548,15 +521,18 @@ abstract class MathOperation {
         if (CharString.isInstanceOf(right)) {
             right = MultiArray.fromCharString(right as CharString);
         }
+        MathOperation.throwIfStructureBinaryOperand('&&', left, right);
+        MathOperation.throwIfCellBinaryOperand('&&', left, right);
         if (Complex.isInstanceOf(left) && Complex.isInstanceOf(right)) {
             return Complex.and(left as ComplexType, right as ComplexType);
         } else if (Complex.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
             return Complex.and(left as ComplexType, MultiArray.toLogical(right as MultiArray));
         } else if (MultiArray.isInstanceOf(left) && Complex.isInstanceOf(right)) {
             return Complex.and(MultiArray.toLogical(left as MultiArray), right as ComplexType);
-        } else {
+        } else if (MultiArray.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
             return Complex.and(MultiArray.toLogical(left as MultiArray), MultiArray.toLogical(right as MultiArray));
         }
+        throw new EvalError('operator && is not defined for these operands.');
     };
 
     /**
@@ -577,15 +553,18 @@ abstract class MathOperation {
         if (CharString.isInstanceOf(right)) {
             right = MultiArray.fromCharString(right as CharString);
         }
+        MathOperation.throwIfStructureBinaryOperand('||', left, right);
+        MathOperation.throwIfCellBinaryOperand('||', left, right);
         if (Complex.isInstanceOf(left) && Complex.isInstanceOf(right)) {
             return Complex.or(left as ComplexType, right as ComplexType);
         } else if (Complex.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
             return Complex.or(left as ComplexType, MultiArray.toLogical(right as MultiArray));
         } else if (MultiArray.isInstanceOf(left) && Complex.isInstanceOf(right)) {
             return Complex.or(MultiArray.toLogical(left as MultiArray), right as ComplexType);
-        } else {
+        } else if (MultiArray.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
             return Complex.or(MultiArray.toLogical(left as MultiArray), MultiArray.toLogical(right as MultiArray));
         }
+        throw new EvalError('operator || is not defined for these operands.');
     };
 
     /**

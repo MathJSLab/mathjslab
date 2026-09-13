@@ -3,6 +3,21 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 2.5.4
+
+- Broadened MATLAB/Octave-compatible numeric and linear-algebra semantics,
+  including `complex`, non-finite comparisons/predicates, matrix division and
+  page-wise division coverage, and additional singularity fixtures.
+- Improved structure-array compatibility for `struct` construction,
+  empty-structure schemas, field iteration, indexed `getfield`/`setfield`, and
+  nested indexed field assignment such as `S(2).b(3).c = value`.
+- Consolidated m-file fixture execution through a shared manifest-driven test
+  runner and refreshed parser/runtime conformance coverage for recent
+  descriptor-indexing and structural semantics.
+- Tightened runtime helper documentation and maintained the release gates for
+  TypeScript declarations, compatibility fixtures, m-file tests, and circular
+  dependency checks.
+
 ## 2.5.3
 
 - Corrected the TypeScript declaration paths for the package root and all

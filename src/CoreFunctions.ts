@@ -641,6 +641,72 @@ abstract class CoreFunctions {
         throw new Error('double: invalid conversion input.');
     };
 
+    /** Signature metadata for `complex`. */
+    public static readonly complexSignature: BuiltInFunctionSignature = {
+        inputs: [
+            { arity: 1, parameters: [{ name: 'real' }] },
+            { arity: 2, parameters: [{ name: 'real' }, { name: 'imaginary' }] },
+        ],
+        outputs: { arity: 1 },
+    };
+
+    /**
+     * Convert numeric values to complex values or combine real and imaginary parts.
+     *
+     * @param real Real component, or an already numeric value for one-argument calls.
+     * @param imaginary Imaginary component for two-argument calls.
+     * @param rest Extra arguments, rejected for MATLAB-compatible arity.
+     * @returns Complex scalar or array.
+     */
+    public static readonly complex = (real?: ElementType, imaginary?: ElementType, ...rest: unknown[]): ElementType => {
+        AST.throwInvalidCallError('complex', !(typeof real !== 'undefined' && rest.length === 0));
+        const realArray = CoreFunctions.numericArrayArgument(real, 'complex', 1);
+        if (typeof imaginary === 'undefined') {
+            return CoreFunctions.mapNumericArray(realArray, (value) => Complex.create(Complex.realToNumber(value), Complex.imagToNumber(value)));
+        }
+        const imaginaryArray = CoreFunctions.numericArrayArgument(imaginary, 'complex', 2);
+        const result = MultiArray.mapBroadcasted(realArray, imaginaryArray, 'complex', (left, right) => {
+            const realValue = left as ComplexType;
+            const imaginaryValue = right as ComplexType;
+            if (!Complex.imagIsZero(realValue) || !Complex.imagIsZero(imaginaryValue)) {
+                throw new Error('complex: real and imaginary inputs must be real numeric values.');
+            }
+            return Complex.create(Complex.realToNumber(realValue), Complex.realToNumber(imaginaryValue));
+        });
+        return MultiArray.MultiArrayToScalar(result);
+    };
+
+    /**
+     * Normalize numeric scalar or array input for numeric conversion helpers.
+     *
+     * @param value Candidate scalar or array.
+     * @param name Built-in name used in diagnostics.
+     * @param index One-based argument index.
+     * @returns Numeric value wrapped as a `MultiArray`.
+     */
+    private static readonly numericArrayArgument = (value: ElementType, name: string, index: number): MultiArray => {
+        if (Complex.isInstanceOf(value)) {
+            return MultiArray.scalarToMultiArray(value);
+        }
+        if (MultiArray.isInstanceOf(value) && !value.isCell && MultiArray.linearize(value).every(Complex.isInstanceOf)) {
+            return value;
+        }
+        throw new Error(`${name}: argument ${index} must be numeric.`);
+    };
+
+    /**
+     * Map a numeric array and reduce scalar results back to scalar form.
+     *
+     * @param value Numeric input array.
+     * @param callback Element conversion callback.
+     * @returns Converted scalar or array.
+     */
+    private static readonly mapNumericArray = (value: MultiArray, callback: (value: ComplexType) => ComplexType): ElementType => {
+        const result = MultiArray.rawMap(value, (element: ElementType) => callback(element as ComplexType));
+        MultiArray.setType(result);
+        return MultiArray.MultiArrayToScalar(result);
+    };
+
     /** Signature metadata for `logical`. */
     public static readonly logicalSignature: BuiltInFunctionSignature = { inputs: { arity: 1, parameters: [{ name: 'value' }] }, outputs: { arity: 1 } };
 
@@ -3304,11 +3370,15 @@ abstract class CoreFunctions {
         outputs: { arity: 1 },
     };
     /**
+     * Compute the standard deviation along the selected dimension.
      *
-     * @param M
-     * @param FLAG
-     * @param DIM
-     * @returns
+     * This is implemented as `sqrt(var(...))`, preserving the same flag and
+     * dimension semantics as the shared variance helper.
+     *
+     * @param M Input scalar or array.
+     * @param FLAG Normalization flag, dimension shorthand, or omitted.
+     * @param DIM Explicit one-based dimension.
+     * @returns Standard deviation scalar or array.
      */
     public static readonly std = (M: ElementType, FLAG?: ElementType, DIM?: ElementType): ElementType => {
         const varElem = CoreFunctions.variance(M, FLAG, DIM);
@@ -3351,16 +3421,25 @@ abstract class CoreFunctions {
         outputs: { arity: 1 },
     };
     /**
+     * Build a MATLAB/Octave structure scalar or structure array.
      *
-     * @param args
-     * @returns
+     * With no arguments this creates an empty scalar structure. A single
+     * structure argument is copied, preserving structure-array shape. Field
+     * pairs distribute non-scalar cell values across a structure array while
+     * non-cell values and scalar cells are copied into every element.
+     *
+     * @param args Empty input, one structure value, or alternating field/value
+     * pairs.
+     * @returns Structure scalar, structure array, or empty array result.
      */
     public static readonly struct = (...args: ElementType[]): ElementType => {
         const errorMessage = `struct: additional arguments must occur as "field", VALUE pairs`;
         if (args.length === 0) {
             return new Structure({});
         } else if (args.length === 1) {
-            if (MultiArray.isInstanceOf(args[0]) && MultiArray.isEmpty(args[0])) {
+            if (MultiArray.isInstanceOf(args[0]) && Structure.isStructure(args[0])) {
+                return args[0].copy();
+            } else if (MultiArray.isInstanceOf(args[0]) && MultiArray.isEmpty(args[0])) {
                 return MultiArray.emptyArray();
             } else if (Structure.isInstanceOf(args[0])) {
                 return (args[0] as Structure).copy();
@@ -3371,18 +3450,56 @@ abstract class CoreFunctions {
             if (args.length % 2 !== 0) {
                 throw new Error(errorMessage);
             }
-            const resultFields: Record<string, StructureFieldValue> = {};
+            const entries: { name: string; value: StructureFieldValue; cell?: MultiArray }[] = [];
             for (let i = 0; i < args.length; i += 2) {
                 if (CharString.isInstanceOf(args[i])) {
                     const value = runtimeExpressionValue(args[i + 1], (args[i] as CharString).str, 'struct field', () => {
                         throw new Error(errorMessage);
                     });
-                    resultFields[(args[i] as CharString).str] = value;
+                    entries.push({ name: (args[i] as CharString).str, value, cell: MultiArray.isInstanceOf(value) && value.isCell ? value : undefined });
                 } else {
                     throw new Error(errorMessage);
                 }
             }
-            return new Structure(resultFields);
+
+            const nonScalarCells = entries.map(({ cell }) => cell).filter((cell): cell is MultiArray => !!cell && MultiArray.linearLength(cell) !== 1);
+            const targetDimensions = nonScalarCells[0]?.dimension.slice() ?? [1, 1];
+            if (nonScalarCells.some((cell) => cell.dimension.length !== targetDimensions.length || cell.dimension.some((dimension, index) => dimension !== targetDimensions[index]))) {
+                throw new Error('struct: dimensions of parameter values must match or be scalar cells.');
+            }
+            if (nonScalarCells.some((cell) => MultiArray.linearLength(cell) === 0)) {
+                const result = new MultiArray(targetDimensions);
+                result.type = Structure.STRUCTURE;
+                result.emptyStructureFields = entries.map(({ name }) => name);
+                return result;
+            }
+
+            const fieldValue = (entry: { value: StructureFieldValue; cell?: MultiArray }, linearIndex: number): StructureFieldValue => {
+                if (!entry.cell) {
+                    return RuntimeValue.copy(entry.value);
+                }
+                const values = MultiArray.linearize(entry.cell);
+                return RuntimeValue.copy(values.length === 1 ? values[0] : values[linearIndex]) as StructureFieldValue;
+            };
+            const structureAt = (linearIndex: number): Structure => {
+                const resultFields: Record<string, StructureFieldValue> = {};
+                entries.forEach((entry) => {
+                    resultFields[entry.name] = fieldValue(entry, linearIndex);
+                });
+                return new Structure(resultFields);
+            };
+
+            const length = targetDimensions.reduce((product, dimension) => product * dimension, 1);
+            if (length === 1) {
+                return structureAt(0);
+            }
+            const result = new MultiArray(targetDimensions);
+            for (let index = 0; index < length; index++) {
+                const [row, column] = MultiArray.linearIndexToMultiArrayRowColumn(result.dimension[0], result.dimension[1], index);
+                result.array[row][column] = structureAt(index);
+            }
+            MultiArray.setType(result);
+            return result;
         }
     };
 
@@ -3595,6 +3712,7 @@ abstract class CoreFunctions {
         cellstr: { func: CoreFunctions.cellstr, signature: CoreFunctions.cellstrSignature },
         char: { func: CoreFunctions.char, signature: CoreFunctions.charSignature },
         double: { func: CoreFunctions.double, signature: CoreFunctions.doubleSignature },
+        complex: { func: CoreFunctions.complex, signature: CoreFunctions.complexSignature },
         logical: { func: CoreFunctions.logical, signature: CoreFunctions.logicalSignature },
         isnan: { func: CoreFunctions.isnan, signature: CoreFunctions.isnanSignature },
         isinf: { func: CoreFunctions.isinf, signature: CoreFunctions.isinfSignature },

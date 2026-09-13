@@ -81,12 +81,21 @@ class Structure {
     };
 
     /**
-     * Test whether a value is a structure scalar or non-empty structure array.
+     * Test whether an array carries an empty-structure schema.
+     *
+     * @param obj Value to test.
+     * @returns `true` for empty structure arrays that still expose fields.
+     */
+    private static isEmptyStructureArray = (obj: ElementType): obj is MultiArray =>
+        obj instanceof MultiArray && !obj.isCell && obj.type === Structure.STRUCTURE && Array.isArray(obj.emptyStructureFields);
+
+    /**
+     * Test whether a value is a structure scalar or structure array.
      *
      * @param obj Value to test.
      * @returns `true` when the value can be dot-indexed as a structure.
      */
-    public static isStructure = (obj: ElementType): boolean => Structure.structureElements(obj).length > 0;
+    public static isStructure = (obj: ElementType): boolean => Structure.structureElements(obj).length > 0 || Structure.isEmptyStructureArray(obj);
 
     /**
      * Return sorted field names for a structure scalar or structure array.
@@ -98,7 +107,10 @@ class Structure {
      * @param obj Structure scalar or structure array.
      * @returns Sorted field names, or an empty list for non-structures.
      */
-    public static fieldNames = (obj: ElementType): string[] => Object.keys(Structure.structureElements(obj)[0]?.field ?? {}).sort();
+    public static fieldNames = (obj: ElementType): string[] => {
+        const elements = Structure.structureElements(obj);
+        return (elements.length > 0 ? Object.keys(elements[0].field) : Structure.isEmptyStructureArray(obj) ? (obj.emptyStructureFields ?? []) : []).sort();
+    };
 
     /**
      * Test whether every element in a structure scalar/array defines a field.
@@ -109,6 +121,9 @@ class Structure {
      */
     public static hasField = (obj: ElementType, field: string): boolean => {
         const elements = Structure.structureElements(obj);
+        if (elements.length === 0 && Structure.isEmptyStructureArray(obj)) {
+            return (obj.emptyStructureFields ?? []).includes(field);
+        }
         return elements.length > 0 && elements.every((structure) => RuntimeValue.hasOwnField(structure.field, field));
     };
 
@@ -152,6 +167,9 @@ class Structure {
         if (target instanceof MultiArray) {
             const elements = Structure.structureElements(target);
             if (elements.length === 0) {
+                if (Structure.isEmptyStructureArray(target)) {
+                    throw new EvalError('A dot name structure assignment is illegal when the structure is empty. Use a subscript on the structure.');
+                }
                 throw new EvalError(Structure.invalidReferenceMessage);
             }
             elements.forEach((structure) => Structure.assignFieldPath(structure, field, value));
@@ -186,7 +204,14 @@ class Structure {
             return [obj];
         }
         if (obj instanceof MultiArray && Structure.isStructure(obj)) {
-            return Structure.structureElements(obj).flatMap((structure) => Structure.collectFieldPath(structure, field));
+            const elements = Structure.structureElements(obj);
+            if (elements.length === 0) {
+                if (Structure.isEmptyStructureArray(obj) && (obj.emptyStructureFields ?? []).includes(field[0])) {
+                    return [];
+                }
+                throw new EvalError(Structure.invalidReferenceMessage);
+            }
+            return elements.flatMap((structure) => Structure.collectFieldPath(structure, field));
         }
         if (obj instanceof Structure) {
             const value = obj.field[field[0]];
@@ -265,6 +290,11 @@ class Structure {
         }
         const elements = Structure.structureElements(obj);
         if (elements.length === 0) {
+            if (Structure.isEmptyStructureArray(obj)) {
+                const result = MultiArray.copy(obj);
+                result.emptyStructureFields = (obj.emptyStructureFields ?? []).filter((field) => !fields.includes(field));
+                return result;
+            }
             throw new EvalError(Structure.invalidReferenceMessage);
         }
         const result = MultiArray.copy(obj);
@@ -297,6 +327,11 @@ class Structure {
         }
         const elements = Structure.structureElements(obj);
         if (elements.length === 0) {
+            if (Structure.isEmptyStructureArray(obj)) {
+                const result = MultiArray.copy(obj);
+                result.emptyStructureFields = (obj.emptyStructureFields ?? []).slice().sort();
+                return result;
+            }
             throw new EvalError(Structure.invalidReferenceMessage);
         }
         const result = MultiArray.copy(obj);
@@ -407,9 +442,11 @@ class Structure {
         if (elements.length === 0) {
             throw new EvalError(Structure.invalidReferenceMessage);
         }
-        if (!M.isCell && !Structure.hasField(M, field)) {
+        if (!M.isCell) {
             elements.forEach((structure) => {
-                structure.field[field] = MultiArray.emptyArray();
+                if (!RuntimeValue.hasOwnField(structure.field, field)) {
+                    structure.field[field] = MultiArray.emptyArray();
+                }
             });
         }
     };

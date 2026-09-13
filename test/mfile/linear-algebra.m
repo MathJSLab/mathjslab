@@ -306,6 +306,47 @@ M = [1e-6 2 3; 4 1e6 6; 7 8 9]
 R = inv(M)
 test_result_inv(25,1) = all(all(M*R == eye(3)))
 
+help rcond
+% 26. Reciprocal condition number in the 1-norm
+M = [1 2; 3 4]
+test_result_inv(26,1) = abs(rcond(M) - 1/21) < 1e-12
+
+help pageinv
+% 27. Page-wise inverse with two square pages
+M = cat(3, [2 0; 0 4], [1 2; 0 1])
+[R, RC] = pageinv(M)
+test_result_inv(27,1) = all(all(R(:,:,1) == [0.5 0; 0 0.25] & R(:,:,2) == [1 -2; 0 1] & abs(RC(:,:,1) - 0.5) < 1e-12 & abs(RC(:,:,2) - 1/9) < 1e-12))
+
+% 28. Page-wise inverse of a singular page follows inv singular behavior
+M = cat(3, eye(2), [1 2; 2 4])
+[R, RC] = pageinv(M)
+test_result_inv(28,1) = all(all(R(:,:,1) == eye(2) & R(:,:,2) == [Inf Inf; Inf Inf] & RC(:,:,2) == 0))
+
+help pagemldivide
+help pagemrdivide
+% 29. Page-wise left matrix division
+A = cat(3, [2 0; 0 4], [1 2; 0 1])
+B = cat(3, [2 8; 6 16], [3 5; 7 11])
+[R, RC] = pagemldivide(A, B)
+test_result_inv(29,1) = all(all(R(:,:,1) == [1 4; 1.5 4] & R(:,:,2) == [-11 -17; 7 11] & abs(RC(:,:,1) - 0.5) < 1e-12 & abs(RC(:,:,2) - 1/9) < 1e-12))
+
+% 30. Page-wise right matrix division
+[R, RC] = pagemrdivide(B, A)
+test_result_inv(30,1) = all(all(R(:,:,1) == [1 2; 3 4] & R(:,:,2) == [3 -1; 7 -3] & abs(RC(:,:,1) - 0.5) < 1e-12 & abs(RC(:,:,2) - 1/9) < 1e-12))
+
+% 31. Page-wise matrix division with singleton page broadcast
+A = reshape([2 0; 0 4], [2 2 1])
+B = cat(3, [2 8; 6 16], [3 5; 7 11])
+R = pagemldivide(A, B)
+test_result_inv(31,1) = all(all(R(:,:,1) == [1 4; 1.5 4] & R(:,:,2) == [1.5 2.5; 1.75 2.75]))
+
+% 32. Page-wise matrix division with transpose options
+A = [1 2; 0 1]
+B = [3 5; 7 11]
+L = pagemldivide(A, "transpose", B)
+R = pagemrdivide(B, A, "transpose")
+test_result_inv(32,1) = all(all(L == [3 5; 1 1] & R == [-7 5; -15 11]))
+
 % Final aggregated result
 complete_test_result_inv = all(test_result_inv)
 
@@ -1152,6 +1193,31 @@ test_result_mtimes(61,1) = all(all(R == -2 * A))
 A = [1 2; 3 4]
 R = zeros(2,2)
 test_result_mtimes(62,1) = all(all(R == 0 * A))
+
+% 75. Page-wise matrix multiplication with matching pages
+A = cat(3, [1 2; 3 4], [5 6; 7 8])
+B = cat(3, [2 0; 1 2], [1 1; 0 1])
+R = pagemtimes(A, B)
+test_result_mtimes(63,1) = all(all(R(:,:,1) == [4 4; 10 8] & R(:,:,2) == [5 11; 7 15]))
+
+% 76. Page-wise matrix multiplication with singleton page broadcast
+A = cat(3, [1 2; 3 4])
+B = cat(3, eye(2), [2 0; 0 2])
+R = pagemtimes(A, B)
+test_result_mtimes(64,1) = all(all(R(:,:,1) == [1 2; 3 4] & R(:,:,2) == [2 4; 6 8]))
+
+% 77. Page-wise matrix multiplication with scalar expansion
+A = 3
+B = cat(3, [1 2; 3 4], [5 6; 7 8])
+R = pagemtimes(A, B)
+test_result_mtimes(65,1) = all(all(R(:,:,1) == [3 6; 9 12] & R(:,:,2) == [15 18; 21 24]))
+
+% 78. Page-wise matrix multiplication with transpose options
+A = cat(3, [1 2; 3 4], [1+i 2; 3 4-i])
+B = cat(3, [5 6; 7 8], eye(2))
+R1 = pagemtimes(A, "transpose", B, "none")
+R2 = pagemtimes(A, "ctranspose", B, "none")
+test_result_mtimes(66,1) = all(all(R1(:,:,1) == [26 30; 38 44] & R1(:,:,2) == [1+i 3; 2 4-i] & R2(:,:,2) == [1-i 3; 2 4+i]))
 
 % Result of complete test
 complete_test_result_mtimes = all(test_result_mtimes)

@@ -111,7 +111,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('MathOperation matrix division should reject nonconformant matrix dimensions', () => {
-            expect(() => MathOperation.mrdivide(createRealMatrix([[1, 2]]), createRealMatrix([[1, 2]]))).toThrow('operator /: nonconformant arguments');
+            expect(() => MathOperation.mrdivide(createRealMatrix([[1, 2]]), createRealMatrix([[1, 2, 3]]))).toThrow('operator /: nonconformant arguments');
             expect(() => MathOperation.mldivide(createRealMatrix([[1, 2, 3]]), createRealMatrix([[1], [2], [3]]))).toThrow('operator \\: nonconformant arguments');
         });
 
@@ -140,10 +140,14 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => MathOperation.uminus(structArray)).toThrow('operator - is not defined for struct operands.');
             expect(() => MathOperation.not(scalarStruct)).toThrow('operator ~ is not defined for struct operands.');
             expect(() => MathOperation.not(structArray)).toThrow('operator ~ is not defined for struct operands.');
+            expect(() => MathOperation.mand(scalarStruct, Complex.true())).toThrow('operator && is not defined for struct operands.');
+            expect(() => MathOperation.mor(Complex.false(), structArray)).toThrow('operator || is not defined for struct operands.');
         });
 
         it('MathOperation.not should reject function handles instead of applying truthiness.', () => {
             expect(() => MathOperation.not(FunctionHandle.create('sqrt'))).toThrow('operator ~ is not defined for this operand.');
+            expect(() => MathOperation.mand(FunctionHandle.create('sqrt'), Complex.true())).toThrow('operator && is not defined for these operands.');
+            expect(() => MathOperation.mor(Complex.false(), FunctionHandle.create('sqrt'))).toThrow('operator || is not defined for these operands.');
         });
 
         it('MathOperation dispatchers should reject cell-array operands explicitly.', () => {
@@ -151,10 +155,16 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
             expect(() => MathOperation.plus(cellArray, Complex.create(1))).toThrow('operator + is not defined for cell operands.');
             expect(() => MathOperation.times(Complex.create(2), cellArray)).toThrow('operator .* is not defined for cell operands.');
+            expect(() => MathOperation.mtimes(cellArray, Complex.create(2))).toThrow('operator * is not defined for cell operands.');
+            expect(() => MathOperation.mrdivide(Complex.create(2), cellArray)).toThrow('operator / is not defined for cell operands.');
+            expect(() => MathOperation.mldivide(cellArray, Complex.create(2))).toThrow('operator \\ is not defined for cell operands.');
+            expect(() => MathOperation.mpower(cellArray, Complex.create(2))).toThrow('operator ^ is not defined for cell operands.');
             expect(() => MathOperation.eq(cellArray, cellArray)).toThrow('operator == is not defined for cell operands.');
             expect(() => MathOperation.lt(cellArray, Complex.create(2))).toThrow('operator < is not defined for cell operands.');
             expect(() => MathOperation.and(cellArray, Complex.true())).toThrow('operator & is not defined for cell operands.');
             expect(() => MathOperation.not(cellArray)).toThrow('operator ~ is not defined for cell operands.');
+            expect(() => MathOperation.mand(cellArray, Complex.true())).toThrow('operator && is not defined for cell operands.');
+            expect(() => MathOperation.mor(Complex.false(), cellArray)).toThrow('operator || is not defined for cell operands.');
         });
 
         it('MathOperation.mpower should accept numeric scalar values stored in 1x1 matrices', () => {

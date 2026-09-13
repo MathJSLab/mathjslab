@@ -4,6 +4,7 @@ import { type ElementType, MultiArray } from './MultiArray';
 import { BLAS } from './BLAS';
 import { LAPACK } from './LAPACK';
 import { type BuiltInFunctionSignature, type NodeExpr, type NodeReturnList, AST, type FunctionSignatureEntry, ReturnHandlerResult } from './AST';
+import { RuntimeValue } from './RuntimeValue';
 
 /**
  * Runtime configuration for higher-level linear algebra algorithms.
@@ -278,6 +279,36 @@ abstract class LinearAlgebra {
         }
     };
 
+    /**
+     * Transpose each two-dimensional page of an array, preserving higher
+     * dimensions.
+     *
+     * `MultiArray` stores pages stacked in the physical row axis. This helper
+     * therefore maps through the canonical logical subscript translators
+     * instead of assuming that a page is contiguous in ordinary row-major
+     * storage.
+     *
+     * @param M Input array.
+     * @param func Optional element transform applied after page transposition.
+     * @returns Array with the first two dimensions swapped.
+     */
+    private static readonly applyPageTranspose = (M: MultiArray, func: (value: ElementType) => ElementType = RuntimeValue.copy): MultiArray => {
+        const resultDimension = M.dimension.slice();
+        [resultDimension[0], resultDimension[1]] = [resultDimension[1], resultDimension[0]];
+        const result = new MultiArray(resultDimension, undefined, M.isCell);
+        for (let index = 0; index < result.dimension.reduce((product, dimension) => product * dimension, 1); index++) {
+            const resultSubscript = MultiArray.linearIndexToSubscript(result.dimension, index);
+            const sourceSubscript = resultSubscript.slice();
+            [sourceSubscript[0], sourceSubscript[1]] = [resultSubscript[1], resultSubscript[0]];
+            const [sourceRow, sourceColumn] = MultiArray.subscriptToMultiArrayRowColumn(M.dimension, sourceSubscript);
+            const [resultRow, resultColumn] = MultiArray.linearIndexToMultiArrayRowColumn(result.dimension[0], result.dimension[1], index);
+            result.array[resultRow][resultColumn] = func(M.array[sourceRow][sourceColumn]);
+        }
+        result.type = M.type;
+        result.isCell = M.isCell;
+        return result;
+    };
+
     public static readonly transposeSignature: BuiltInFunctionSignature = {
         inputs: { arity: 1, parameters: [{ name: 'value' }] },
         outputs: { arity: 1 },
@@ -310,6 +341,508 @@ abstract class LinearAlgebra {
                       (value as MultiArray).isCell || !Complex.isInstanceOf(element) ? element : Complex.conj(element),
                   )
         ) as T extends CharString ? MultiArray : T;
+    };
+
+    public static readonly pagetransposeSignature: BuiltInFunctionSignature = {
+        inputs: { arity: 1, parameters: [{ name: 'value' }] },
+        outputs: { arity: 1 },
+    };
+    /**
+     * Page-wise nonconjugate transpose.
+     *
+     * MATLAB defines this as `permute(X,[2 1 3:ndims(X)])`.
+     *
+     * @param M Value to transpose page-wise.
+     * @returns Page-wise transposed value.
+     */
+    public static readonly pagetranspose = <T extends ElementType>(M: T): T extends CharString ? MultiArray : T => {
+        const value = CharString.isInstanceOf(M) ? MultiArray.characterVectorFromCharString(M) : M;
+        return (Complex.isInstanceOf(value) ? Complex.copy(value) : LinearAlgebra.applyPageTranspose(value as MultiArray)) as T extends CharString ? MultiArray : T;
+    };
+
+    public static readonly pagectransposeSignature: BuiltInFunctionSignature = {
+        inputs: { arity: 1, parameters: [{ name: 'value' }] },
+        outputs: { arity: 1 },
+    };
+    /**
+     * Page-wise complex conjugate transpose.
+     *
+     * MATLAB defines this as `permute(conj(X),[2 1 3:ndims(X)])`.
+     *
+     * @param M Value to conjugate-transpose page-wise.
+     * @returns Page-wise conjugate-transposed value.
+     */
+    public static readonly pagectranspose = <T extends ElementType>(M: T): T extends CharString ? MultiArray : T => {
+        const value = CharString.isInstanceOf(M) ? MultiArray.characterVectorFromCharString(M) : M;
+        return (
+            Complex.isInstanceOf(value)
+                ? Complex.conj(value)
+                : LinearAlgebra.applyPageTranspose(value as MultiArray, (element: ElementType) =>
+                      (value as MultiArray).isCell || !Complex.isInstanceOf(element) ? RuntimeValue.copy(element) : Complex.conj(element),
+                  )
+        ) as T extends CharString ? MultiArray : T;
+    };
+
+    public static readonly pagemtimesSignature: BuiltInFunctionSignature = {
+        inputs: [
+            {
+                arity: 2,
+                parameters: [
+                    { name: 'left', classes: ['double'] },
+                    { name: 'right', classes: ['double'] },
+                ],
+            },
+            {
+                arity: 4,
+                parameters: [
+                    { name: 'left', classes: ['double'] },
+                    { name: 'leftTranspose', classes: ['char', 'string'], allowedStrings: ['none', 'transpose', 'ctranspose'] },
+                    { name: 'right', classes: ['double'] },
+                    { name: 'rightTranspose', classes: ['char', 'string'], allowedStrings: ['none', 'transpose', 'ctranspose'] },
+                ],
+            },
+        ],
+        outputs: { arity: 1 },
+    };
+
+    /**
+     * Parse a page-wise multiplication transposition option.
+     *
+     * @param option Option value.
+     * @returns Normalized transposition option.
+     */
+    private static readonly pageTransposeOption = (option: ElementType, functionName = 'pagemtimes'): 'none' | 'transpose' | 'ctranspose' => {
+        if (!CharString.isInstanceOf(option) || (option.str !== 'none' && option.str !== 'transpose' && option.str !== 'ctranspose')) {
+            throw new EvalError(`${functionName}: transpose options must be 'none', 'transpose', or 'ctranspose'.`);
+        }
+        return option.str;
+    };
+
+    /**
+     * Normalize a numeric page-wise multiplication input.
+     *
+     * @param value Input scalar or array.
+     * @returns Dense numeric array representation.
+     */
+    private static readonly pageNumericArray = (value: ElementType, functionName = 'pagemtimes'): MultiArray => {
+        const array = MultiArray.scalarToMultiArray(value);
+        if (array.isCell || !MultiArray.linearize(array).every(Complex.isInstanceOf)) {
+            throw new EvalError(`${functionName}: input arrays must be numeric.`);
+        }
+        return array;
+    };
+
+    /**
+     * Apply a page-wise transposition option to an array.
+     *
+     * @param value Input array.
+     * @param option Transposition option.
+     * @returns Transformed array.
+     */
+    private static readonly applyPageTransposeOption = (value: MultiArray, option: 'none' | 'transpose' | 'ctranspose'): MultiArray => {
+        if (option === 'transpose') {
+            return LinearAlgebra.pagetranspose(value) as MultiArray;
+        }
+        if (option === 'ctranspose') {
+            return LinearAlgebra.pagectranspose(value) as MultiArray;
+        }
+        return value;
+    };
+
+    /**
+     * Read one element from a logical page.
+     *
+     * @param value Source array.
+     * @param dimensions Padded source dimensions.
+     * @param row One-based row subscript.
+     * @param column One-based column subscript.
+     * @param pageSubscript One-based subscripts for dimensions three and above.
+     * @returns Numeric element.
+     */
+    private static readonly pageElement = (value: MultiArray, dimensions: number[], row: number, column: number, pageSubscript: number[]): ComplexType => {
+        const linear = MultiArray.subscriptToLinearIndex(dimensions, [row, column, ...pageSubscript]);
+        const [physicalRow, physicalColumn] = MultiArray.linearIndexToMultiArrayRowColumn(dimensions[0], dimensions[1], linear);
+        return value.array[physicalRow][physicalColumn] as ComplexType;
+    };
+
+    /**
+     * Extract a two-dimensional matrix page from an N-D array.
+     *
+     * @param value Source array.
+     * @param dimensions Padded source dimensions.
+     * @param pageSubscript One-based subscripts for dimensions three and above.
+     * @returns Dense matrix containing the requested page.
+     */
+    private static readonly pageMatrix = (value: MultiArray, dimensions: number[], pageSubscript: number[]): MultiArray => {
+        const result = new MultiArray([dimensions[0], dimensions[1]]);
+        for (let row = 1; row <= dimensions[0]; row++) {
+            for (let column = 1; column <= dimensions[1]; column++) {
+                result.array[row - 1][column - 1] = RuntimeValue.copy(LinearAlgebra.pageElement(value, dimensions, row, column, pageSubscript));
+            }
+        }
+        MultiArray.setType(result);
+        return result;
+    };
+
+    /**
+     * Store a two-dimensional matrix page in an N-D result array.
+     *
+     * @param target Target array.
+     * @param pageSubscript One-based subscripts for dimensions three and above.
+     * @param page Page matrix.
+     */
+    private static readonly setPageMatrix = (target: MultiArray, pageSubscript: number[], page: MultiArray): void => {
+        for (let row = 1; row <= page.dimension[0]; row++) {
+            for (let column = 1; column <= page.dimension[1]; column++) {
+                const [targetRow, targetColumn] = MultiArray.subscriptToMultiArrayRowColumn(target.dimension, [row, column, ...pageSubscript]);
+                target.array[targetRow][targetColumn] = RuntimeValue.copy(page.array[row - 1][column - 1]);
+            }
+        }
+    };
+
+    /**
+     * Compute singleton-expanded page dimensions for two page-wise operands.
+     *
+     * @param functionName Function name used in diagnostics.
+     * @param leftDimensions Padded left operand dimensions.
+     * @param rightDimensions Padded right operand dimensions.
+     * @param pageRank Common padded rank.
+     * @returns Broadcast page dimensions.
+     */
+    private static readonly pageBroadcastDimensions = (functionName: string, leftDimensions: number[], rightDimensions: number[], pageRank: number): number[] => {
+        const resultPageDimensions = new Array<number>(pageRank - 2);
+        for (let index = 2; index < pageRank; index++) {
+            if (leftDimensions[index] === rightDimensions[index]) {
+                resultPageDimensions[index - 2] = leftDimensions[index];
+            } else if (leftDimensions[index] === 1) {
+                resultPageDimensions[index - 2] = rightDimensions[index];
+            } else if (rightDimensions[index] === 1) {
+                resultPageDimensions[index - 2] = leftDimensions[index];
+            } else {
+                throw new EvalError(`${functionName}: page dimensions must agree (op1 is ${leftDimensions.slice(2).join('x') || '1'}, op2 is ${rightDimensions.slice(2).join('x') || '1'}).`);
+            }
+        }
+        return resultPageDimensions;
+    };
+
+    /**
+     * Page-wise matrix multiplication with singleton expansion over page
+     * dimensions.
+     *
+     * @param args `pagemtimes(X,Y)` or `pagemtimes(X,transpX,Y,transpY)`.
+     * @returns Page-wise matrix product.
+     */
+    public static readonly pagemtimes = (...args: ElementType[]): ElementType => {
+        AST.throwInvalidCallError('pagemtimes', args.length !== 2 && args.length !== 4);
+        const leftOption = args.length === 4 ? LinearAlgebra.pageTransposeOption(args[1]) : 'none';
+        const rightOption = args.length === 4 ? LinearAlgebra.pageTransposeOption(args[3]) : 'none';
+        const left = LinearAlgebra.applyPageTransposeOption(LinearAlgebra.pageNumericArray(args[0]), leftOption);
+        const right = LinearAlgebra.applyPageTransposeOption(LinearAlgebra.pageNumericArray(args.length === 4 ? args[2] : args[1]), rightOption);
+        const leftDimensions = left.dimension.slice();
+        const rightDimensions = right.dimension.slice();
+        const pageRank = Math.max(leftDimensions.length, rightDimensions.length, 2);
+        MultiArray.appendSingletonTail(leftDimensions, pageRank);
+        MultiArray.appendSingletonTail(rightDimensions, pageRank);
+
+        const leftRows = leftDimensions[0];
+        const leftColumns = leftDimensions[1];
+        const rightRows = rightDimensions[0];
+        const rightColumns = rightDimensions[1];
+        const leftIsScalarPage = leftRows === 1 && leftColumns === 1;
+        const rightIsScalarPage = rightRows === 1 && rightColumns === 1;
+        if (!leftIsScalarPage && !rightIsScalarPage && leftColumns !== rightRows) {
+            throw new EvalError(`pagemtimes: inner matrix dimensions must agree (op1 is ${leftRows}x${leftColumns}, op2 is ${rightRows}x${rightColumns}).`);
+        }
+
+        const resultPageDimensions = LinearAlgebra.pageBroadcastDimensions('pagemtimes', leftDimensions, rightDimensions, pageRank);
+
+        const resultRows = leftIsScalarPage ? rightRows : leftRows;
+        const resultColumns = rightIsScalarPage ? leftColumns : rightColumns;
+        const resultDimensions = [resultRows, resultColumns, ...resultPageDimensions];
+        const result = new MultiArray(resultDimensions);
+        const resultPageCount = resultPageDimensions.reduce((product, dimension) => product * dimension, 1);
+        const resultPageStrides = MultiArray.computeStrides(resultPageDimensions.length > 0 ? resultPageDimensions : [1]);
+
+        for (let pageIndex = 0; pageIndex < resultPageCount; pageIndex++) {
+            const resultPageSubscript = resultPageDimensions.map((dimension, index) => (Math.floor(pageIndex / resultPageStrides[index]) % dimension) + 1);
+            const leftPageSubscript = resultPageSubscript.map((subscript, index) => (leftDimensions[index + 2] === 1 ? 1 : subscript));
+            const rightPageSubscript = resultPageSubscript.map((subscript, index) => (rightDimensions[index + 2] === 1 ? 1 : subscript));
+            for (let row = 1; row <= resultRows; row++) {
+                for (let column = 1; column <= resultColumns; column++) {
+                    let sum = Complex.zero();
+                    if (leftIsScalarPage) {
+                        sum = Complex.mul(
+                            LinearAlgebra.pageElement(left, leftDimensions, 1, 1, leftPageSubscript),
+                            LinearAlgebra.pageElement(right, rightDimensions, row, column, rightPageSubscript),
+                        );
+                    } else if (rightIsScalarPage) {
+                        sum = Complex.mul(
+                            LinearAlgebra.pageElement(left, leftDimensions, row, column, leftPageSubscript),
+                            LinearAlgebra.pageElement(right, rightDimensions, 1, 1, rightPageSubscript),
+                        );
+                    } else {
+                        for (let inner = 1; inner <= leftColumns; inner++) {
+                            sum = Complex.add(
+                                sum,
+                                Complex.mul(
+                                    LinearAlgebra.pageElement(left, leftDimensions, row, inner, leftPageSubscript),
+                                    LinearAlgebra.pageElement(right, rightDimensions, inner, column, rightPageSubscript),
+                                ),
+                            );
+                        }
+                    }
+                    const resultSubscript = [row, column, ...resultPageSubscript];
+                    const [resultRow, resultColumn] = MultiArray.subscriptToMultiArrayRowColumn(result.dimension, resultSubscript);
+                    result.array[resultRow][resultColumn] = sum;
+                }
+            }
+        }
+        MultiArray.setType(result);
+        MultiArray.removeSingletonTail(result.dimension);
+        return MultiArray.MultiArrayToScalar(result);
+    };
+
+    public static readonly pageinvSignature: BuiltInFunctionSignature = {
+        inputs: { arity: 1, parameters: [{ name: 'array', classes: ['double'] }] },
+        outputs: { arity: -2 },
+    };
+
+    /**
+     * Page-wise matrix inverse.
+     *
+     * MATLAB defines each output page as `Y(:,:,i,...) = inv(X(:,:,i,...))`.
+     *
+     * @param X Numeric matrix or N-D array whose pages are square matrices.
+     * @returns Page-wise inverse array.
+     */
+    public static readonly pageinvValue = (X: ElementType): ElementType => {
+        const source = LinearAlgebra.pageNumericArray(X, 'pageinv');
+        const dimensions = source.dimension.slice();
+        MultiArray.appendSingletonTail(dimensions, 2);
+        if (dimensions[0] !== dimensions[1]) {
+            throw new EvalError(`pageinv: each page must be a square matrix (page size is ${dimensions[0]}x${dimensions[1]}).`);
+        }
+
+        const pageDimensions = dimensions.slice(2);
+        const result = new MultiArray(dimensions);
+        const pageCount = pageDimensions.reduce((product, dimension) => product * dimension, 1);
+        const pageStrides = MultiArray.computeStrides(pageDimensions.length > 0 ? pageDimensions : [1]);
+        for (let pageIndex = 0; pageIndex < pageCount; pageIndex++) {
+            const pageSubscript = pageDimensions.map((dimension, index) => (Math.floor(pageIndex / pageStrides[index]) % dimension) + 1);
+            LinearAlgebra.setPageMatrix(result, pageSubscript, LinearAlgebra.inv(LinearAlgebra.pageMatrix(source, dimensions, pageSubscript)));
+        }
+        MultiArray.setType(result);
+        MultiArray.removeSingletonTail(result.dimension);
+        return MultiArray.MultiArrayToScalar(result);
+    };
+
+    /**
+     * Estimate one reciprocal condition value for each matrix page.
+     *
+     * Square pages use `rcond`; rectangular pages use the reciprocal of the
+     * default dense `cond` estimate. Both produce the MATLAB-style `1x1` page
+     * result shape.
+     *
+     * @param functionName Function name used in diagnostics.
+     * @param source Source array.
+     * @param dimensions Padded source dimensions.
+     * @returns Reciprocal condition numbers, one scalar per matrix page.
+     */
+    private static readonly pageReciprocalCondition = (functionName: string, source: MultiArray, dimensions: number[]): ElementType => {
+        const pageDimensions = dimensions.slice(2);
+        const result = new MultiArray([1, 1, ...pageDimensions]);
+        const pageCount = pageDimensions.reduce((product, dimension) => product * dimension, 1);
+        const pageStrides = MultiArray.computeStrides(pageDimensions.length > 0 ? pageDimensions : [1]);
+        for (let pageIndex = 0; pageIndex < pageCount; pageIndex++) {
+            const pageSubscript = pageDimensions.map((dimension, index) => (Math.floor(pageIndex / pageStrides[index]) % dimension) + 1);
+            const page = LinearAlgebra.pageMatrix(source, dimensions, pageSubscript);
+            const reciprocal = page.dimension[0] === page.dimension[1] ? LinearAlgebra.rcond(page) : Complex.rdiv(Complex.one(), LinearAlgebra.cond(page));
+            const [row, column] = MultiArray.subscriptToMultiArrayRowColumn(result.dimension, [1, 1, ...pageSubscript]);
+            result.array[row][column] = reciprocal;
+        }
+        MultiArray.setType(result);
+        MultiArray.removeSingletonTail(result.dimension);
+        return MultiArray.MultiArrayToScalar(result);
+    };
+
+    /**
+     * Page-wise matrix inverse with optional reciprocal condition numbers.
+     *
+     * @param X Numeric matrix or N-D array whose pages are square matrices.
+     * @returns Lazy return list for `Y` and optional `RC`.
+     */
+    public static readonly pageinv = (X: ElementType): NodeReturnList => {
+        return AST.nodeBoundedReturnList(
+            2,
+            (evaluated: ReturnHandlerResult, index: number): NodeExpr => (index === 0 ? evaluated.inverse : evaluated.reciprocalCondition),
+            (length: number): ReturnHandlerResult => {
+                const source = LinearAlgebra.pageNumericArray(X, 'pageinv');
+                const dimensions = source.dimension.slice();
+                MultiArray.appendSingletonTail(dimensions, 2);
+                const inverse = LinearAlgebra.pageinvValue(source);
+                const reciprocalCondition = length > 1 ? LinearAlgebra.pageReciprocalCondition('pageinv', source, dimensions) : undefined;
+                return { length, inverse, reciprocalCondition };
+            },
+        );
+    };
+
+    public static readonly pagemldivideSignature: BuiltInFunctionSignature = {
+        inputs: [
+            {
+                arity: 2,
+                parameters: [
+                    { name: 'left', classes: ['double'] },
+                    { name: 'right', classes: ['double'] },
+                ],
+            },
+            {
+                arity: 3,
+                parameters: [
+                    { name: 'left', classes: ['double'] },
+                    { name: 'leftTranspose', classes: ['char', 'string'], allowedStrings: ['none', 'transpose', 'ctranspose'] },
+                    { name: 'right', classes: ['double'] },
+                ],
+            },
+        ],
+        outputs: { arity: -2 },
+    };
+
+    public static readonly pagemrdivideSignature: BuiltInFunctionSignature = {
+        inputs: [
+            {
+                arity: 2,
+                parameters: [
+                    { name: 'left', classes: ['double'] },
+                    { name: 'right', classes: ['double'] },
+                ],
+            },
+            {
+                arity: 3,
+                parameters: [
+                    { name: 'left', classes: ['double'] },
+                    { name: 'right', classes: ['double'] },
+                    { name: 'rightTranspose', classes: ['char', 'string'], allowedStrings: ['none', 'transpose', 'ctranspose'] },
+                ],
+            },
+        ],
+        outputs: { arity: -2 },
+    };
+
+    /**
+     * Apply a binary page-wise matrix solver with singleton page expansion.
+     *
+     * @param functionName Function name used in diagnostics.
+     * @param left Left operand.
+     * @param right Right operand.
+     * @param solve Per-page solver.
+     * @returns Page-wise solver output.
+     */
+    private static readonly pageMatrixBinarySolveValue = (
+        functionName: string,
+        left: MultiArray,
+        right: MultiArray,
+        solve: (leftPage: MultiArray, rightPage: MultiArray) => MultiArray,
+    ): ElementType => {
+        const leftDimensions = left.dimension.slice();
+        const rightDimensions = right.dimension.slice();
+        const pageRank = Math.max(leftDimensions.length, rightDimensions.length, 2);
+        MultiArray.appendSingletonTail(leftDimensions, pageRank);
+        MultiArray.appendSingletonTail(rightDimensions, pageRank);
+        const resultPageDimensions = LinearAlgebra.pageBroadcastDimensions(functionName, leftDimensions, rightDimensions, pageRank);
+        const resultPageCount = resultPageDimensions.reduce((product, dimension) => product * dimension, 1);
+        const resultPageStrides = MultiArray.computeStrides(resultPageDimensions.length > 0 ? resultPageDimensions : [1]);
+        let result: MultiArray | undefined;
+
+        for (let pageIndex = 0; pageIndex < resultPageCount; pageIndex++) {
+            const resultPageSubscript = resultPageDimensions.map((dimension, index) => (Math.floor(pageIndex / resultPageStrides[index]) % dimension) + 1);
+            const leftPageSubscript = resultPageSubscript.map((subscript, index) => (leftDimensions[index + 2] === 1 ? 1 : subscript));
+            const rightPageSubscript = resultPageSubscript.map((subscript, index) => (rightDimensions[index + 2] === 1 ? 1 : subscript));
+            const solved = solve(LinearAlgebra.pageMatrix(left, leftDimensions, leftPageSubscript), LinearAlgebra.pageMatrix(right, rightDimensions, rightPageSubscript));
+            if (!result) {
+                result = new MultiArray([solved.dimension[0], solved.dimension[1], ...resultPageDimensions]);
+            }
+            LinearAlgebra.setPageMatrix(result, resultPageSubscript, solved);
+        }
+        if (!result) {
+            result = new MultiArray([0, 0, ...resultPageDimensions]);
+        }
+        MultiArray.setType(result);
+        MultiArray.removeSingletonTail(result.dimension);
+        return MultiArray.MultiArrayToScalar(result);
+    };
+
+    /**
+     * Page-wise left matrix division.
+     *
+     * @param args `pagemldivide(A,B)` or `pagemldivide(A,transpA,B)`.
+     * @returns Page-wise solution for `A(:,:,i,...) \ B(:,:,i,...)`.
+     */
+    public static readonly pagemldivideValue = (...args: ElementType[]): ElementType => {
+        AST.throwInvalidCallError('pagemldivide', args.length !== 2 && args.length !== 3);
+        const leftOption = args.length === 3 ? LinearAlgebra.pageTransposeOption(args[1], 'pagemldivide') : 'none';
+        const left = LinearAlgebra.applyPageTransposeOption(LinearAlgebra.pageNumericArray(args[0], 'pagemldivide'), leftOption);
+        const right = LinearAlgebra.pageNumericArray(args.length === 3 ? args[2] : args[1], 'pagemldivide');
+        return LinearAlgebra.pageMatrixBinarySolveValue('pagemldivide', left, right, LinearAlgebra.mldivide);
+    };
+
+    /**
+     * Page-wise left matrix division with optional reciprocal condition numbers.
+     *
+     * @param args `pagemldivide(A,B)` or `pagemldivide(A,transpA,B)`.
+     * @returns Lazy return list for `X` and optional `rcondA`.
+     */
+    public static readonly pagemldivide = (...args: ElementType[]): NodeReturnList => {
+        AST.throwInvalidCallError('pagemldivide', args.length !== 2 && args.length !== 3);
+        return AST.nodeBoundedReturnList(
+            2,
+            (evaluated: ReturnHandlerResult, index: number): NodeExpr => (index === 0 ? evaluated.solution : evaluated.reciprocalCondition),
+            (length: number): ReturnHandlerResult => {
+                const leftOption = args.length === 3 ? LinearAlgebra.pageTransposeOption(args[1], 'pagemldivide') : 'none';
+                const left = LinearAlgebra.applyPageTransposeOption(LinearAlgebra.pageNumericArray(args[0], 'pagemldivide'), leftOption);
+                const solution = LinearAlgebra.pagemldivideValue(...args);
+                const leftDimensions = left.dimension.slice();
+                MultiArray.appendSingletonTail(leftDimensions, 2);
+                const reciprocalCondition = length > 1 ? LinearAlgebra.pageReciprocalCondition('pagemldivide', left, leftDimensions) : undefined;
+                return { length, solution, reciprocalCondition };
+            },
+        );
+    };
+
+    /**
+     * Page-wise right matrix division.
+     *
+     * @param args `pagemrdivide(B,A)` or `pagemrdivide(B,A,transpA)`.
+     * @returns Page-wise solution for `B(:,:,i,...) / A(:,:,i,...)`.
+     */
+    public static readonly pagemrdivideValue = (...args: ElementType[]): ElementType => {
+        AST.throwInvalidCallError('pagemrdivide', args.length !== 2 && args.length !== 3);
+        const rightOption = args.length === 3 ? LinearAlgebra.pageTransposeOption(args[2], 'pagemrdivide') : 'none';
+        const left = LinearAlgebra.pageNumericArray(args[0], 'pagemrdivide');
+        const right = LinearAlgebra.applyPageTransposeOption(LinearAlgebra.pageNumericArray(args[1], 'pagemrdivide'), rightOption);
+        return LinearAlgebra.pageMatrixBinarySolveValue('pagemrdivide', left, right, LinearAlgebra.mrdivide);
+    };
+
+    /**
+     * Page-wise right matrix division with optional reciprocal condition numbers.
+     *
+     * @param args `pagemrdivide(B,A)` or `pagemrdivide(B,A,transpA)`.
+     * @returns Lazy return list for `X` and optional `rcondA`.
+     */
+    public static readonly pagemrdivide = (...args: ElementType[]): NodeReturnList => {
+        AST.throwInvalidCallError('pagemrdivide', args.length !== 2 && args.length !== 3);
+        return AST.nodeBoundedReturnList(
+            2,
+            (evaluated: ReturnHandlerResult, index: number): NodeExpr => (index === 0 ? evaluated.solution : evaluated.reciprocalCondition),
+            (length: number): ReturnHandlerResult => {
+                const rightOption = args.length === 3 ? LinearAlgebra.pageTransposeOption(args[2], 'pagemrdivide') : 'none';
+                const right = LinearAlgebra.applyPageTransposeOption(LinearAlgebra.pageNumericArray(args[1], 'pagemrdivide'), rightOption);
+                const solution = LinearAlgebra.pagemrdivideValue(...args);
+                const rightDimensions = right.dimension.slice();
+                MultiArray.appendSingletonTail(rightDimensions, 2);
+                const reciprocalCondition = length > 1 ? LinearAlgebra.pageReciprocalCondition('pagemrdivide', right, rightDimensions) : undefined;
+                return { length, solution, reciprocalCondition };
+            },
+        );
     };
 
     public static readonly mulSignature: BuiltInFunctionSignature = {
@@ -646,7 +1179,7 @@ abstract class LinearAlgebra {
             if (normType.str !== 'fro') {
                 AST.throwInvalidCallError('cond');
             }
-            return LinearAlgebra.squareMatrixNormCondition(A, 'fro');
+            return LinearAlgebra.squareMatrixNormCondition(A, 'fro', 'cond');
         }
         const p = Complex.realToNumber(MultiArray.firstElement(normType) as ComplexType);
         if (p === 2) {
@@ -661,10 +1194,33 @@ abstract class LinearAlgebra {
             }
             return Complex.create(Math.sqrt(largest / smallest));
         } else if (p === 1 || p === Infinity) {
-            return LinearAlgebra.squareMatrixNormCondition(A, p);
+            return LinearAlgebra.squareMatrixNormCondition(A, p, 'cond');
         }
         AST.throwInvalidCallError('cond');
         throw new EvalError('Invalid call to cond.');
+    };
+
+    public static readonly rcondSignature: BuiltInFunctionSignature = {
+        inputs: { arity: 1, parameters: [{ name: 'matrix', classes: ['double'], validators: ['squareMatrix'] }] },
+        outputs: { arity: 1 },
+    };
+
+    /**
+     * Estimate reciprocal condition number in the 1-norm.
+     *
+     * This follows the public MATLAB/Octave contract of `rcond(A)`. The
+     * current implementation derives the estimate from the deterministic dense
+     * `cond(A,1)` path used elsewhere in this layer.
+     *
+     * @param A Square numeric matrix.
+     * @returns Reciprocal condition estimate.
+     */
+    public static readonly rcond = (A: MultiArray): ComplexType => {
+        if (!A || A.dimension.length !== 2 || A.dimension[0] !== A.dimension[1]) {
+            AST.throwInvalidCallError('rcond');
+        }
+        const condition = LinearAlgebra.squareMatrixNormCondition(A, 1, 'rcond');
+        return Complex.realToNumber(condition) === Infinity ? Complex.zero() : Complex.rdiv(Complex.one(), condition);
     };
 
     public static readonly rankSignature: BuiltInFunctionSignature = {
@@ -714,9 +1270,9 @@ abstract class LinearAlgebra {
      * @param normType Matrix norm type.
      * @returns `norm(A, p) * norm(inv(A), p)`.
      */
-    private static readonly squareMatrixNormCondition = (A: MultiArray, normType: 1 | typeof Infinity | 'fro'): ComplexType => {
+    private static readonly squareMatrixNormCondition = (A: MultiArray, normType: 1 | typeof Infinity | 'fro', functionName = 'cond'): ComplexType => {
         if (A.dimension[0] !== A.dimension[1]) {
-            AST.throwInvalidCallError('cond');
+            AST.throwInvalidCallError(functionName);
         }
         return Complex.mul(LinearAlgebra.matrixNorm(A, normType), LinearAlgebra.matrixNorm(LinearAlgebra.inv(A), normType));
     };
@@ -857,6 +1413,130 @@ abstract class LinearAlgebra {
     };
 
     /**
+     * Extract a dense two-dimensional block from a matrix.
+     *
+     * @param source Source matrix.
+     * @param rowStart First source row.
+     * @param columnStart First source column.
+     * @param rows Number of rows to copy.
+     * @param columns Number of columns to copy.
+     * @returns Copied matrix block.
+     */
+    private static readonly matrixBlock = (source: MultiArray, rowStart: number, columnStart: number, rows: number, columns: number): MultiArray => {
+        const result = new MultiArray([rows, columns]);
+        for (let row = 0; row < rows; row++) {
+            for (let column = 0; column < columns; column++) {
+                result.array[row][column] = RuntimeValue.copy(source.array[rowStart + row][columnStart + column]) as ComplexType;
+            }
+        }
+        MultiArray.setType(result);
+        return result;
+    };
+
+    /**
+     * Solve an upper-triangular square system by back substitution.
+     *
+     * @param upper Upper-triangular coefficient matrix.
+     * @param rightHandSide Right-hand side matrix.
+     * @param operatorName Operator used in diagnostics.
+     * @returns Solution matrix.
+     */
+    private static readonly solveUpperTriangular = (upper: MultiArray, rightHandSide: MultiArray, operatorName: '\\' | '/'): MultiArray => {
+        const size = upper.dimension[0];
+        const columns = rightHandSide.dimension[1];
+        const result = new MultiArray([size, columns]);
+        for (let column = 0; column < columns; column++) {
+            for (let row = size - 1; row >= 0; row--) {
+                let value = RuntimeValue.copy(rightHandSide.array[row][column]) as ComplexType;
+                for (let inner = row + 1; inner < size; inner++) {
+                    value = Complex.sub(value, Complex.mul(upper.array[row][inner] as ComplexType, result.array[inner][column] as ComplexType));
+                }
+                const diagonal = upper.array[row][row] as ComplexType;
+                if (Complex.realIsZero(Complex.abs(diagonal))) {
+                    throw new EvalError(`operator ${operatorName}: matrix is singular to working precision.`);
+                }
+                result.array[row][column] = Complex.rdiv(value, diagonal);
+            }
+        }
+        MultiArray.setType(result);
+        return result;
+    };
+
+    /**
+     * Solve a lower-triangular square system by forward substitution.
+     *
+     * @param lower Lower-triangular coefficient matrix.
+     * @param rightHandSide Right-hand side matrix.
+     * @param operatorName Operator used in diagnostics.
+     * @returns Solution matrix.
+     */
+    private static readonly solveLowerTriangular = (lower: MultiArray, rightHandSide: MultiArray, operatorName: '\\' | '/'): MultiArray => {
+        const size = lower.dimension[0];
+        const columns = rightHandSide.dimension[1];
+        const result = new MultiArray([size, columns]);
+        for (let column = 0; column < columns; column++) {
+            for (let row = 0; row < size; row++) {
+                let value = RuntimeValue.copy(rightHandSide.array[row][column]) as ComplexType;
+                for (let inner = 0; inner < row; inner++) {
+                    value = Complex.sub(value, Complex.mul(lower.array[row][inner] as ComplexType, result.array[inner][column] as ComplexType));
+                }
+                const diagonal = lower.array[row][row] as ComplexType;
+                if (Complex.realIsZero(Complex.abs(diagonal))) {
+                    throw new EvalError(`operator ${operatorName}: matrix is singular to working precision.`);
+                }
+                result.array[row][column] = Complex.rdiv(value, diagonal);
+            }
+        }
+        MultiArray.setType(result);
+        return result;
+    };
+
+    /**
+     * Solve a tall rectangular least-squares system through QR factorization.
+     *
+     * @param A Full-column-rank coefficient matrix with rows >= columns.
+     * @param B Right-hand side matrix.
+     * @returns Least-squares solution.
+     */
+    private static readonly tallLeastSquares = (A: MultiArray, B: MultiArray): MultiArray => {
+        const rows = A.dimension[0];
+        const columns = A.dimension[1];
+        const { Q, R } = LinearAlgebra.qrDecomposition(A, 2);
+        const projected = LinearAlgebra.multiplyMatrices(LinearAlgebra.ctranspose(Q as MultiArray) as MultiArray, B);
+        const reducedRightHandSide = LinearAlgebra.matrixBlock(projected, 0, 0, columns, B.dimension[1]);
+        const reducedR = LinearAlgebra.matrixBlock(R, 0, 0, columns, columns);
+        return LinearAlgebra.solveUpperTriangular(reducedR, reducedRightHandSide, '\\');
+    };
+
+    /**
+     * Solve a wide rectangular system through LQ factorization.
+     *
+     * @param A Full-row-rank coefficient matrix with rows < columns.
+     * @param B Right-hand side matrix.
+     * @returns Minimum-norm solution.
+     */
+    private static readonly wideLeastSquares = (A: MultiArray, B: MultiArray): MultiArray => {
+        const rows = A.dimension[0];
+        const columns = A.dimension[1];
+        const { L, taus, phis } = LAPACK.gelq2(MultiArray.copy(A) as MultiArray);
+        const Q = LAPACK.orglq(L, taus);
+        if (MultiArray.haveAnyComplex(L)) {
+            LinearAlgebra.lqPhaseNormalize(phis, L, Q);
+        }
+        LAPACK.tril_inplace(L);
+        const reducedL = LinearAlgebra.matrixBlock(L, 0, 0, rows, rows);
+        const leadingSolution = LinearAlgebra.solveLowerTriangular(reducedL, B, '\\');
+        const padded = new MultiArray([columns, B.dimension[1]]);
+        for (let row = 0; row < columns; row++) {
+            for (let column = 0; column < B.dimension[1]; column++) {
+                padded.array[row][column] = row < rows ? RuntimeValue.copy(leadingSolution.array[row][column]) : Complex.zero();
+            }
+        }
+        MultiArray.setType(padded);
+        return LinearAlgebra.multiplyMatrices(LinearAlgebra.ctranspose(Q) as MultiArray, padded);
+    };
+
+    /**
      * Matrix left division wrapper for the language-level `\` operator.
      *
      * This keeps parser/interpreter arithmetic routed through the
@@ -868,8 +1548,11 @@ abstract class LinearAlgebra {
      * @returns Solution matrix `X` for `A * X = B`.
      */
     public static readonly mldivide = (A: MultiArray, B: MultiArray): MultiArray => {
-        if (A.dimension.length !== 2 || B.dimension.length !== 2 || A.dimension[0] !== A.dimension[1] || A.dimension[0] !== B.dimension[0]) {
+        if (A.dimension.length !== 2 || B.dimension.length !== 2 || A.dimension[0] !== B.dimension[0]) {
             throw new EvalError(`operator \\: nonconformant arguments (op1 is ${LinearAlgebra.formatDimensions(A)}, op2 is ${LinearAlgebra.formatDimensions(B)}).`);
+        }
+        if (A.dimension[0] !== A.dimension[1]) {
+            return A.dimension[0] >= A.dimension[1] ? LinearAlgebra.tallLeastSquares(A, B) : LinearAlgebra.wideLeastSquares(A, B);
         }
         return LAPACK.mldivide(A, B).X;
     };
@@ -885,7 +1568,7 @@ abstract class LinearAlgebra {
      * @returns Solution matrix `X` for `X * B = A`.
      */
     public static readonly mrdivide = (A: MultiArray, B: MultiArray): MultiArray => {
-        if (A.dimension.length !== 2 || B.dimension.length !== 2 || B.dimension[0] !== B.dimension[1] || A.dimension[1] !== B.dimension[1]) {
+        if (A.dimension.length !== 2 || B.dimension.length !== 2 || A.dimension[1] !== B.dimension[1]) {
             throw new EvalError(`operator /: nonconformant arguments (op1 is ${LinearAlgebra.formatDimensions(A)}, op2 is ${LinearAlgebra.formatDimensions(B)}).`);
         }
         return LinearAlgebra.ctranspose(LinearAlgebra.mldivide(LinearAlgebra.ctranspose(B), LinearAlgebra.ctranspose(A)));
@@ -1854,11 +2537,18 @@ abstract class LinearAlgebra {
         eye: { func: LinearAlgebra.eye, signature: LinearAlgebra.eyeSignature },
         transpose: { func: LinearAlgebra.transpose, signature: LinearAlgebra.transposeSignature },
         ctranspose: { func: LinearAlgebra.ctranspose, signature: LinearAlgebra.ctransposeSignature },
+        pagetranspose: { func: LinearAlgebra.pagetranspose, signature: LinearAlgebra.pagetransposeSignature },
+        pagectranspose: { func: LinearAlgebra.pagectranspose, signature: LinearAlgebra.pagectransposeSignature },
+        pagemtimes: { func: LinearAlgebra.pagemtimes, signature: LinearAlgebra.pagemtimesSignature },
+        pageinv: { func: LinearAlgebra.pageinv, signature: LinearAlgebra.pageinvSignature },
+        pagemldivide: { func: LinearAlgebra.pagemldivide, signature: LinearAlgebra.pagemldivideSignature },
+        pagemrdivide: { func: LinearAlgebra.pagemrdivide, signature: LinearAlgebra.pagemrdivideSignature },
         diag: { func: LinearAlgebra.diag, signature: LinearAlgebra.diagSignature },
         trace: { func: LinearAlgebra.trace, signature: LinearAlgebra.traceSignature },
         det: { func: LinearAlgebra.det, signature: LinearAlgebra.detSignature },
         inv: { func: LinearAlgebra.inv, signature: LinearAlgebra.invSignature },
         cond: { func: LinearAlgebra.cond, signature: LinearAlgebra.condSignature },
+        rcond: { func: LinearAlgebra.rcond, signature: LinearAlgebra.rcondSignature },
         rank: { func: LinearAlgebra.rank, signature: LinearAlgebra.rankSignature },
         gauss: { func: LinearAlgebra.gauss, signature: LinearAlgebra.gaussSignature },
         lu: { func: LinearAlgebra.lu, signature: LinearAlgebra.luSignature },

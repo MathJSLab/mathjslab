@@ -351,10 +351,12 @@ common static/instance dispatch paths, and stricter AST/runtime expression
 boundary validation. Parser/AST metadata preserves statement source ranges and
 semicolon output suppression for diagnostics and round trips. Descriptor
 indexing covers chained native and object paths with scalar broadcast,
-deletion, implicit path creation, and comma-separated-list expansion. Runtime
-array helpers preserve MATLAB/Octave column-major logical semantics over
-MathJSLab's page-stacked internal storage, including N-D slicing, expansion,
-logical indexing, deletion, cells, and structures.
+deletion, implicit path creation, indexed `getfield`/`setfield`, empty
+structure-array schemas, and comma-separated-list expansion. Runtime array
+helpers preserve MATLAB/Octave column-major logical semantics over MathJSLab's
+page-stacked internal storage, including N-D slicing, expansion, logical
+indexing, deletion, cells, structures, matrix division, page-wise division, and
+non-finite numeric cases.
 
 The main remaining limitations are general external filesystem access,
 incomplete MATLAB/Octave library and toolbox coverage, and less common class

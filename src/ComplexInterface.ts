@@ -1712,8 +1712,8 @@ export const rdivFactory =
             if ((rctor as RealInterfaceStatic<REAL>).isFinite(right.re)) {
                 if ((rctor as RealInterfaceStatic<REAL>).isZero(right.re)) {
                     return new ctor(
-                        (rctor as RealInterfaceStatic<REAL>).mul(left.re, (rctor as RealInterfaceStatic<REAL>).INF),
-                        (rctor as RealInterfaceStatic<REAL>).mul(left.im, (rctor as RealInterfaceStatic<REAL>).INF),
+                        (rctor as RealInterfaceStatic<REAL>).div(left.re, right.re),
+                        ctor.imagIsZero(left) ? (rctor as RealInterfaceStatic<REAL>).ZERO : (rctor as RealInterfaceStatic<REAL>).div(left.im, right.re),
                     );
                 } else {
                     return new ctor((rctor as RealInterfaceStatic<REAL>).div(left.re, right.re), (rctor as RealInterfaceStatic<REAL>).div(left.im, right.re));
@@ -1727,8 +1727,10 @@ export const rdivFactory =
                     }
                 } else if (ctor.realIsFinite(left) && ctor.imagIsFinite(left)) {
                     return ctor.zero();
-                } else {
+                } else if (ctor.imagIsZero(left)) {
                     return new ctor(NaN, 0);
+                } else {
+                    return new ctor(NaN, (rctor as RealInterfaceStatic<REAL>).div(left.im, right.re));
                 }
             }
         } else {
@@ -1847,6 +1849,25 @@ export const powerFactory =
      * @returns left^right
      */
     (left: COMPLEX, right: COMPLEX): COMPLEX => {
+        if (ctor.imagIsZero(left) && ctor.imagIsZero(right) && !ctor.realIsFinite(right) && !ctor.realIsNaN(right)) {
+            if (ctor.realEquals(left, 1)) {
+                return new ctor(1, 0);
+            }
+            if (ctor.realEquals(left, -1)) {
+                return new ctor(NaN, NaN);
+            }
+        }
+        if (ctor.realIsNaN(right) && !ctor.imagIsFinite(right) && !ctor.imagIsNaN(right)) {
+            const positiveImaginaryInfinity = !ctor.imagIsNegative(right);
+            const positivePrincipalArgument = (ctor.imagIsZero(left) && ctor.realEquals(left, -1)) || (ctor.realIsZero(left) && ctor.imagEquals(left, 1));
+            const negativePrincipalArgument = ctor.realIsZero(left) && ctor.imagEquals(left, -1);
+            if (positivePrincipalArgument) {
+                return positiveImaginaryInfinity ? ctor.zero() : new ctor((rctor as RealInterfaceStatic<REAL>).INF, NaN);
+            }
+            if (negativePrincipalArgument) {
+                return positiveImaginaryInfinity ? new ctor((rctor as RealInterfaceStatic<REAL>).INF, NaN) : ctor.zero();
+            }
+        }
         if (ctor.imagIsZero(left) && ctor.imagIsZero(right) && ctor.realGreaterThanOrEqualTo(left, 0)) {
             return new ctor((rctor as RealInterfaceStatic<REAL>).pow(left.re, right.re), 0);
         } else {

@@ -80,19 +80,52 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const scalar = new Structure({ z: Complex.one(), a: Complex.two() });
             const array = new MultiArray([1, 2], (row, column) => new Structure({ a: Complex.create(row + column), z: Complex.create(row + column + 1) }));
             const mixed = MultiArray.firstRow([new Structure({ a: Complex.one() }), Complex.one()]);
+            const emptyArray = MultiArray.emptyArray();
+            emptyArray.type = Structure.STRUCTURE;
+            emptyArray.emptyStructureFields = ['z', 'a'];
 
             expect(Structure.structureElements(scalar)).toEqual([scalar]);
             expect(Structure.structureElements(array)).toHaveLength(2);
             expect(Structure.structureElements(mixed)).toEqual([]);
             expect(Structure.isStructure(array)).toBe(true);
             expect(Structure.isStructure(mixed)).toBe(false);
+            expect(Structure.isStructure(emptyArray)).toBe(true);
             expect(Structure.fieldNames(scalar)).toEqual(['a', 'z']);
             expect(Structure.fieldNames(array)).toEqual(['a', 'z']);
+            expect(Structure.fieldNames(emptyArray)).toEqual(['a', 'z']);
             expect(Structure.hasField(array, 'a')).toBe(true);
             expect(Structure.hasField(array, 'missing')).toBe(false);
+            expect(Structure.hasField(emptyArray, 'a')).toBe(true);
+            expect(Structure.hasField(emptyArray, 'missing')).toBe(false);
 
             Object.setPrototypeOf((scalar as Structure).field, { inherited: Complex.one() });
             expect(Structure.hasField(scalar, 'inherited')).toBe(false);
+        });
+
+        it('Should preserve empty structure-array schemas when removing and ordering fields.', () => {
+            const emptyArray = MultiArray.emptyArray();
+            emptyArray.type = Structure.STRUCTURE;
+            emptyArray.emptyStructureFields = ['z', 'a', 'b'];
+
+            const removed = Structure.removeFields(emptyArray, ['z']) as MultiArray;
+            const ordered = Structure.orderFields(emptyArray) as MultiArray;
+
+            expect(Structure.isStructure(removed)).toBe(true);
+            expect(Structure.fieldNames(removed)).toEqual(['a', 'b']);
+            expect(removed.emptyStructureFields).toEqual(['a', 'b']);
+            expect(Structure.fieldNames(ordered)).toEqual(['a', 'b', 'z']);
+            expect(ordered.emptyStructureFields).toEqual(['a', 'b', 'z']);
+            expect(emptyArray.emptyStructureFields).toEqual(['z', 'a', 'b']);
+        });
+
+        it('Should read known fields from empty structure-array schemas as empty value lists.', () => {
+            const emptyArray = MultiArray.emptyArray();
+            emptyArray.type = Structure.STRUCTURE;
+            emptyArray.emptyStructureFields = ['a', 'b'];
+
+            expect(Structure.getFields(emptyArray, ['a'])).toEqual([]);
+            expect(Structure.getField(emptyArray, ['a'])).toEqual(MultiArray.toRowVector([]));
+            expect(() => Structure.getField(emptyArray, ['missing'])).toThrow('value cannot be indexed with .');
         });
     });
 

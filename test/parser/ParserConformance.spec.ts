@@ -2,7 +2,7 @@
 import { CharString } from '../../src/CharString';
 import { Interpreter } from '../../src/Interpreter';
 import { MultiArray } from '../../src/MultiArray';
-import { Complex } from '../../src/Complex';
+import { Complex, type ComplexType } from '../../src/Complex';
 import { executeList } from '../../src/ParserTestUtils';
 
 /**
@@ -1989,6 +1989,8 @@ describe('Parser conformance fixtures.', () => {
         expect(() => interpreter.Execute('f = @(x) x; ~f')).toThrow('operator ~ is not defined for this operand.');
         expect(() => interpreter.Execute('f = @(x) x; !f')).toThrow('operator ~ is not defined for this operand.');
         expect(() => interpreter.Execute('f = @(x) x; not(f)')).toThrow('operator ~ is not defined for this operand.');
+        expect(() => interpreter.Execute('f = @(x) x; true && f')).toThrow('invalid conversion from function_handle to logical.');
+        expect(() => interpreter.Execute('f = @(x) x; false || f')).toThrow('invalid conversion from function_handle to logical.');
     });
 
     it('Should reject direct cell-array operands in arithmetic, relational, equality, and logical operators.', () => {
@@ -2000,8 +2002,14 @@ describe('Parser conformance fixtures.', () => {
         expect(() => interpreter.Execute('{1} ~= {2}')).toThrow('operator ~= is not defined for cell operands.');
         expect(() => interpreter.Execute('{1} < 2')).toThrow('operator < is not defined for cell operands.');
         expect(() => interpreter.Execute('{1} & true')).toThrow('operator & is not defined for cell operands.');
+        expect(() => interpreter.Execute('{1} * 2')).toThrow('operator * is not defined for cell operands.');
+        expect(() => interpreter.Execute('{1} / 2')).toThrow('operator / is not defined for cell operands.');
+        expect(() => interpreter.Execute('{1} \\ 2')).toThrow('operator \\ is not defined for cell operands.');
+        expect(() => interpreter.Execute('{1} ^ 2')).toThrow('operator ^ is not defined for cell operands.');
         expect(() => interpreter.Execute('~{1}')).toThrow('operator ~ is not defined for cell operands.');
         expect(() => interpreter.Execute('not({1})')).toThrow('operator ~ is not defined for cell operands.');
+        expect(() => interpreter.Execute('true && {1}')).toThrow('invalid conversion from cell to logical.');
+        expect(() => interpreter.Execute('false || {1}')).toThrow('invalid conversion from cell to logical.');
         expect(interpreter.Unparse(interpreter.Execute('C = {1, 2}; [C{1} + C{2}, (C{1} < C{2}), (C{1} == 1)]'))).toBe('C={1,2}\n[3,true,true]\n');
     });
 
@@ -2030,6 +2038,130 @@ describe('Parser conformance fixtures.', () => {
             'Z=[1+2i,3-4i]\nplainNumeric=[1+2i;\n3-4i]\nconjNumeric=[1-2i;\n3+4i]\ntext=ab\nplainText=[a;\nb]\nconjText=[a;\nb]\nC={1+2i,2;\n3,4-5i}\nplainCell={1+2i,3;\n2,4-5i}\nconjCell={1+2i,3;\n2,4-5i}\nS=[struct {\nx: 1\n}]\nS=[struct {\nx: 1\n},struct {\nx: 2\n}]\nstructColumn=[struct {\nx: 1\n};\nstruct {\nx: 2\n}]\n[1+2i;\n3-4i]\n[1-2i;\n3+4i]\n[a;\nb]\n[a;\nb]\n{1+2i,3;\n2,4-5i}\n{1+2i,3;\n2,4-5i}\n1+2i\n1+2i\n[1,2]\n',
         );
         expect(() => interpreter.Execute("A = reshape(1:8, [2, 2, 2]); A.';")).toThrow('transpose not defined for N-D objects');
+    });
+
+    it('Should expose page-wise transpose helpers for N-D arrays.', () => {
+        const interpreter = Interpreter.Create();
+        interpreter.Execute(
+            [
+                'A = cat(3, [111, 112, 113; 121, 122, 123], [211, 212, 213; 221, 222, 223]);',
+                'Z = cat(3, [11+1i, 12+2i; 21+1i, 22+2i], [31+1i, 32+2i; 41+1i, 42+2i]);',
+                'PT = pagetranspose(A);',
+                'PCT = pagectranspose(Z);',
+            ].join('\n'),
+        );
+        const [plain, conjugated] = executeList(interpreter, 'PT; PCT').list as MultiArray[];
+
+        expect(plain.dimension).toEqual([3, 2, 2]);
+        expect(MultiArray.linearize(plain).map(realScalar)).toEqual([111, 112, 113, 121, 122, 123, 211, 212, 213, 221, 222, 223]);
+        expect(conjugated.dimension).toEqual([2, 2, 2]);
+        expect(MultiArray.linearize(conjugated).map((value) => [Complex.realToNumber(value as ComplexType), Complex.imagToNumber(value as ComplexType)])).toEqual([
+            [11, -1],
+            [12, -2],
+            [21, -1],
+            [22, -2],
+            [31, -1],
+            [32, -2],
+            [41, -1],
+            [42, -2],
+        ]);
+    });
+
+    it('Should expose page-wise matrix multiplication with page expansion and transpose options.', () => {
+        const interpreter = Interpreter.Create();
+        interpreter.Execute(
+            [
+                'A = cat(3, [1, 2; 3, 4], [5, 6; 7, 8]);',
+                'B = cat(3, [2, 0; 1, 2], [1, 1; 0, 1]);',
+                'P = pagemtimes(A, B);',
+                'S = reshape(1:4, [2, 2, 1]);',
+                'I = cat(4, eye(2), 2*eye(2), 3*eye(2));',
+                'Q = pagemtimes(S, I);',
+                'T = pagemtimes(A, "transpose", B, "none");',
+            ].join('\n'),
+        );
+        const [pageProduct, broadcastProduct, transposedProduct] = executeList(interpreter, 'P; Q; T').list as MultiArray[];
+
+        expect(pageProduct.dimension).toEqual([2, 2, 2]);
+        expect(MultiArray.linearize(pageProduct).map(realScalar)).toEqual([4, 10, 4, 8, 5, 7, 11, 15]);
+        expect(broadcastProduct.dimension).toEqual([2, 2, 1, 3]);
+        expect(MultiArray.linearize(broadcastProduct).map(realScalar)).toEqual([1, 2, 3, 4, 2, 4, 6, 8, 3, 6, 9, 12]);
+        expect(transposedProduct.dimension).toEqual([2, 2, 2]);
+        expect(MultiArray.linearize(transposedProduct).map(realScalar)).toEqual([5, 8, 6, 8, 5, 6, 12, 14]);
+        expect(() => interpreter.Execute('pagemtimes(A, "bad", B, "none")')).toThrow('Invalid call to pagemtimes.');
+        expect(() => interpreter.Execute('pagemtimes(A, B, B)')).toThrow('Invalid call to pagemtimes.');
+    });
+
+    it('Should expose page-wise inverse for N-D arrays.', () => {
+        const interpreter = Interpreter.Create();
+        interpreter.Execute(['A = cat(3, [2, 0; 0, 4], [1, 2; 0, 1]);', '[Y,RC] = pageinv(A);', 'directRC = rcond(A(:,:,2));', 'bad = ones(2, 3, 2);'].join('\n'));
+        const [inverse, reciprocalCondition, directReciprocalCondition] = executeList(interpreter, 'Y; RC; directRC').list as [MultiArray, MultiArray, ComplexType];
+
+        expect(inverse.dimension).toEqual([2, 2, 2]);
+        expect(MultiArray.linearize(inverse).map(realScalar)).toEqual([0.5, 0, 0, 0.25, 1, 0, -2, 1]);
+        expect(MultiArray.linearize(reciprocalCondition).map(realScalar)).toEqual([0.5, 1 / 9]);
+        expect(Complex.realToNumber(directReciprocalCondition)).toBeCloseTo(1 / 9, 12);
+        expect(() => interpreter.Execute('pageinv(bad)')).toThrow('pageinv: each page must be a square matrix');
+        expect(() => interpreter.Execute('rcond([1, 2])')).toThrow('Invalid call to rcond.');
+    });
+
+    it('Should expose page-wise left and right matrix division.', () => {
+        const interpreter = Interpreter.Create();
+        interpreter.Execute(
+            [
+                'A = cat(3, [2, 0; 0, 4], [1, 2; 0, 1]);',
+                'B = cat(3, [2, 8; 6, 16], [3, 5; 7, 11]);',
+                '[L,LRC] = pagemldivide(A, B);',
+                '[R,RRC] = pagemrdivide(B, A);',
+                'BT = [3, 5; 7, 11];',
+                'AT = [1, 2; 0, 1];',
+                'LT = pagemldivide(AT, "transpose", BT);',
+                'RT = pagemrdivide(BT, AT, "transpose");',
+            ].join('\n'),
+        );
+        const [leftSolution, rightSolution, leftReciprocalCondition, rightReciprocalCondition, leftTransposeSolution, rightTransposeSolution] = executeList(
+            interpreter,
+            'L; R; LRC; RRC; LT; RT',
+        ).list as MultiArray[];
+
+        expect(MultiArray.linearize(leftSolution).map(realScalar)).toEqual([1, 1.5, 4, 4, -11, 7, -17, 11]);
+        expect(MultiArray.linearize(rightSolution).map(realScalar)).toEqual([1, 3, 2, 4, 3, 7, -1, -3]);
+        expect(MultiArray.linearize(leftReciprocalCondition).map(realScalar)).toEqual([0.5, 1 / 9]);
+        expect(MultiArray.linearize(rightReciprocalCondition).map(realScalar)).toEqual([0.5, 1 / 9]);
+        expect(MultiArray.linearize(leftTransposeSolution).map(realScalar)).toEqual([3, 1, 5, 1]);
+        expect(MultiArray.linearize(rightTransposeSolution).map(realScalar)).toEqual([-7, -15, 5, 11]);
+        expect(() => interpreter.Execute('pagemldivide(A, "bad", B)')).toThrow('Invalid call to pagemldivide.');
+        expect(() => interpreter.Execute('pagemrdivide(B, A, "bad")')).toThrow('Invalid call to pagemrdivide.');
+    });
+
+    it('Should solve rectangular dense matrix division through least-squares semantics.', () => {
+        const interpreter = Interpreter.Create();
+        interpreter.Execute(
+            [
+                'A = [1, 0; 0, 1; 1, 1];',
+                'B = [1; 2; 3];',
+                'leftOperator = A \\ B;',
+                'leftFunction = mldivide(A, B);',
+                "rightOperator = B' / A';",
+                "rightFunction = mrdivide(B', A');",
+                'AP = cat(3, A, A);',
+                'BP = cat(3, B, 2*B);',
+                '[pageLeft,pageRC] = pagemldivide(AP, BP);',
+            ].join('\n'),
+        );
+        const [leftOperator, leftFunction, rightOperator, rightFunction, pageLeft, pageReciprocalCondition] = executeList(
+            interpreter,
+            'leftOperator; leftFunction; rightOperator; rightFunction; pageLeft; pageRC',
+        ).list as MultiArray[];
+
+        expect(MultiArray.linearize(leftOperator).map(realScalar)).toEqual([1, 2]);
+        expect(MultiArray.linearize(leftFunction).map(realScalar)).toEqual([1, 2]);
+        expect(MultiArray.linearize(rightOperator).map(realScalar)).toEqual([1, 2]);
+        expect(MultiArray.linearize(rightFunction).map(realScalar)).toEqual([1, 2]);
+        expect(MultiArray.linearize(pageLeft).map(realScalar)).toEqual([1, 2, 2, 4]);
+        for (const value of MultiArray.linearize(pageReciprocalCondition)) {
+            expect(realScalar(value)).toBeCloseTo(1 / Math.sqrt(3), 12);
+        }
     });
 
     it('Should preserve MATLAB operator precedence, associativity, and short-circuit evaluation.', () => {
@@ -2397,11 +2529,28 @@ describe('Parser conformance fixtures.', () => {
             'for item = {1, 2; 3, 4}',
             '  cellColumns{end + 1} = item;',
             'end',
+            'pageArray = reshape(1:8, [2, 2, 2]);',
+            'pageSums = []; pageColumns = {};',
+            'for pageColumn = pageArray',
+            '  pageSums(end + 1) = sum(pageColumn);',
+            '  pageColumns{end + 1} = pageColumn;',
+            'endfor',
+            'pageRowArray = reshape(1:4, [1, 2, 2]);',
+            'pageRowValues = [];',
+            'for pageRowValue = pageRowArray',
+            '  pageRowValues(end + 1) = pageRowValue;',
+            'endfor',
             'S.alpha = 10; S.beta = 20;',
             'fieldNames = {}; fieldValues = [];',
             'for [value, name] = S',
             '  fieldNames{end + 1} = name;',
             '  fieldValues(end + 1) = value;',
+            'endfor',
+            'SA = struct("a", {1, 2}, "b", {3, 4});',
+            'structArrayNames = {}; structArrayValues = {};',
+            'for [value, name] = SA',
+            '  structArrayNames{end + 1} = name;',
+            '  structArrayValues{end + 1} = value;',
             'endfor',
             'd = 0;',
             'do',
@@ -2417,14 +2566,14 @@ describe('Parser conformance fixtures.', () => {
             'parfor (p = 1:3, 2)',
             '  parallelTotal += p;',
             'endparfor',
-            'rowTotal; matrixColumns; textCells; cellColumns{1}; cellColumns{2}; fieldNames; fieldValues; d; w; parallelTotal',
+            'rowTotal; matrixColumns; textCells; cellColumns{1}; cellColumns{2}; pageSums; pageColumns{1}; pageColumns{4}; pageRowValues; fieldNames; fieldValues; structArrayNames; structArrayValues; d; w; parallelTotal',
         ].join('\n');
 
         expect(interpreter.Unparse(interpreter.Parse(source))).toBe(
-            'rowTotal=0\nFOR k=1:4\nIF k==2\ncontinue\n\nENDIF\nrowTotal+=k\nIF k==3\nbreak\n\nENDIF\n\nENDFOR\nmatrixColumns=[ ](0x0)\nFOR col=[1,2;\n3,4]\nmatrixColumns=[matrixColumns,sum(col)]\n\nENDFOR\ntextCells={ }(0x0)\nFOR ch=ab\ntextCells{end+1}=ch\n\nENDFOR\ncellColumns={ }(0x0)\nFOR item={1,2;\n3,4}\ncellColumns{end+1}=item\n\nENDFOR\nS.alpha=10\nS.beta=20\nfieldNames={ }(0x0)\nfieldValues=[ ](0x0)\nFOR [value,name]=S\nfieldNames{end+1}=name\nfieldValues(end+1)=value\n\nENDFOR\nd=0\nDO\nd+=1\n\nUNTIL d>=2\nw=0\nWHILE true\nw+=1\nIF w<3\ncontinue\n\nENDIF\nbreak\n\nENDWHILE\nparallelTotal=0\nPARFOR (p=1:3,2)\nparallelTotal+=p\n\nENDPARFOR\nrowTotal\nmatrixColumns\ntextCells\ncellColumns{1}\ncellColumns{2}\nfieldNames\nfieldValues\nd\nw\nparallelTotal\n',
+            'rowTotal=0\nFOR k=1:4\nIF k==2\ncontinue\n\nENDIF\nrowTotal+=k\nIF k==3\nbreak\n\nENDIF\n\nENDFOR\nmatrixColumns=[ ](0x0)\nFOR col=[1,2;\n3,4]\nmatrixColumns=[matrixColumns,sum(col)]\n\nENDFOR\ntextCells={ }(0x0)\nFOR ch=ab\ntextCells{end+1}=ch\n\nENDFOR\ncellColumns={ }(0x0)\nFOR item={1,2;\n3,4}\ncellColumns{end+1}=item\n\nENDFOR\npageArray=reshape(1:8,[2,2,2])\npageSums=[ ](0x0)\npageColumns={ }(0x0)\nFOR pageColumn=pageArray\npageSums(end+1)=sum(pageColumn)\npageColumns{end+1}=pageColumn\n\nENDFOR\npageRowArray=reshape(1:4,[1,2,2])\npageRowValues=[ ](0x0)\nFOR pageRowValue=pageRowArray\npageRowValues(end+1)=pageRowValue\n\nENDFOR\nS.alpha=10\nS.beta=20\nfieldNames={ }(0x0)\nfieldValues=[ ](0x0)\nFOR [value,name]=S\nfieldNames{end+1}=name\nfieldValues(end+1)=value\n\nENDFOR\nSA=struct(a,{1,2},b,{3,4})\nstructArrayNames={ }(0x0)\nstructArrayValues={ }(0x0)\nFOR [value,name]=SA\nstructArrayNames{end+1}=name\nstructArrayValues{end+1}=value\n\nENDFOR\nd=0\nDO\nd+=1\n\nUNTIL d>=2\nw=0\nWHILE true\nw+=1\nIF w<3\ncontinue\n\nENDIF\nbreak\n\nENDWHILE\nparallelTotal=0\nPARFOR (p=1:3,2)\nparallelTotal+=p\n\nENDPARFOR\nrowTotal\nmatrixColumns\ntextCells\ncellColumns{1}\ncellColumns{2}\npageSums\npageColumns{1}\npageColumns{4}\npageRowValues\nfieldNames\nfieldValues\nstructArrayNames\nstructArrayValues\nd\nw\nparallelTotal\n',
         );
         expect(interpreter.Unparse(interpreter.Execute(source))).toBe(
-            'rowTotal=0\n1\nmatrixColumns=[ ](0x0)\n[4,6]\ntextCells={ }(0x0)\n{a,b}\ncellColumns={ }(0x0)\n{{1;\n3},{2;\n4}}\nS=struct {\nalpha: 10\n}\nS=struct {\nalpha: 10\nbeta: 20\n}\nfieldNames={ }(0x0)\nfieldValues=[ ](0x0)\n{alpha,beta}\n[10,20]\nd=0\n2\nw=0\nparallelTotal=0\n6\n4\n[4,6]\n{a,b}\n{1;\n3}\n{2;\n4}\n{alpha,beta}\n[10,20]\n2\n3\n6\n',
+            'rowTotal=0\n1\nmatrixColumns=[ ](0x0)\n[4,6]\ntextCells={ }(0x0)\n{a,b}\ncellColumns={ }(0x0)\n{{1;\n3},{2;\n4}}\npageArray=[1,3;\n2,4] (:,:,1)\n[5,7;\n6,8] (:,:,2)\n\npageSums=[ ](0x0)\npageColumns={ }(0x0)\n[3,7,11,15]\n{[1;\n2],[3;\n4],[5;\n6],[7;\n8]}\npageRowArray=[1,2] (:,:,1)\n[3,4] (:,:,2)\n\npageRowValues=[ ](0x0)\n[1,2,3,4]\nS=struct {\nalpha: 10\n}\nS=struct {\nalpha: 10\nbeta: 20\n}\nfieldNames={ }(0x0)\nfieldValues=[ ](0x0)\n{alpha,beta}\n[10,20]\nSA=[struct {\na: 1\nb: 3\n},struct {\na: 2\nb: 4\n}]\nstructArrayNames={ }(0x0)\nstructArrayValues={ }(0x0)\n{a,b}\n{[1,2],[3,4]}\nd=0\n2\nw=0\nparallelTotal=0\n6\n4\n[4,6]\n{a,b}\n{1;\n3}\n{2;\n4}\n[3,7,11,15]\n[1;\n2]\n[7;\n8]\n[1,2,3,4]\n{alpha,beta}\n[10,20]\n{a,b}\n{[1,2],[3,4]}\n2\n3\n6\n',
         );
     });
 

@@ -24,6 +24,16 @@ const createRealMatrix = (values: number[][]): MultiArray => {
     return result;
 };
 
+const createComplexMatrix = (values: [number, number][][]): MultiArray => {
+    const result = new MultiArray([values.length, values[0].length]);
+    for (let i = 0; i < values.length; i++) {
+        for (let j = 0; j < values[i].length; j++) {
+            result.array[i][j] = Complex.create(values[i][j][0], values[i][j][1]);
+        }
+    }
+    return result;
+};
+
 const expectRealMatrix = (actual: MultiArray, expected: number[][]): void => {
     expect(actual.dimension).toEqual([expected.length, expected[0].length]);
     for (let i = 0; i < expected.length; i++) {
@@ -178,6 +188,84 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(Complex.realToNumber(LinearAlgebra.cond(rowVector))).toBeCloseTo(1, 10);
             expect(() => LinearAlgebra.cond(rowVector, Complex.create(1))).toThrow('Invalid call to cond.');
             expect(() => LinearAlgebra.cond(matrix, Complex.create(-Infinity))).toThrow('Invalid call to cond.');
+        });
+
+        it('LinearAlgebra.rcond should compute reciprocal 1-norm condition estimates for square matrices', () => {
+            const matrix = createRealMatrix([
+                [1, 2],
+                [3, 4],
+            ]);
+            const diagonal = createRealMatrix([
+                [2, 0],
+                [0, 4],
+            ]);
+            const singular = createRealMatrix([
+                [1, 2],
+                [2, 4],
+            ]);
+            const rowVector = createRealMatrix([[1, 0]]);
+
+            expect(Complex.realToNumber(LinearAlgebra.rcond(matrix))).toBeCloseTo(1 / 21, 12);
+            expect(Complex.realToNumber(LinearAlgebra.rcond(diagonal))).toBeCloseTo(0.5, 12);
+            expect(Complex.realToNumber(LinearAlgebra.rcond(singular))).toBe(0);
+            expect(() => LinearAlgebra.rcond(rowVector)).toThrow('Invalid call to rcond.');
+        });
+
+        it('LinearAlgebra.mldivide and mrdivide should handle rectangular least-squares systems', () => {
+            const overdetermined = createRealMatrix([
+                [1, 0],
+                [0, 1],
+                [1, 1],
+            ]);
+            const overdeterminedRightHandSide = createRealMatrix([[1], [2], [3]]);
+            const underdetermined = createRealMatrix([
+                [1, 0, 0],
+                [0, 1, 0],
+            ]);
+            const underdeterminedRightHandSide = createRealMatrix([[4], [5]]);
+
+            expectRealMatrix(LinearAlgebra.mldivide(overdetermined, overdeterminedRightHandSide), [[1], [2]]);
+            expectRealMatrix(LinearAlgebra.mldivide(underdetermined, underdeterminedRightHandSide), [[4], [5], [0]]);
+            expectRealMatrix(LinearAlgebra.mrdivide(LinearAlgebra.ctranspose(overdeterminedRightHandSide) as MultiArray, LinearAlgebra.ctranspose(overdetermined) as MultiArray), [[1, 2]]);
+        });
+
+        it('LinearAlgebra.mldivide should solve rectangular systems with multiple RHS and complex coefficients', () => {
+            const overdetermined = createRealMatrix([
+                [1, 0],
+                [0, 1],
+                [1, 1],
+            ]);
+            const multipleRightHandSides = createRealMatrix([
+                [1, 4],
+                [2, 5],
+                [3, 9],
+            ]);
+            const complexOverdetermined = createComplexMatrix([
+                [
+                    [1, 0],
+                    [0, 0],
+                ],
+                [
+                    [0, 0],
+                    [0, 1],
+                ],
+                [
+                    [1, 0],
+                    [0, 1],
+                ],
+            ]);
+            const complexRightHandSide = createComplexMatrix([[[1, 1]], [[-2, 2]], [[-1, 3]]]);
+
+            expectRealMatrix(LinearAlgebra.mldivide(overdetermined, multipleRightHandSides), [
+                [1, 4],
+                [2, 5],
+            ]);
+            const complexSolution = LinearAlgebra.mldivide(complexOverdetermined, complexRightHandSide);
+            expect(complexSolution.dimension).toEqual([2, 1]);
+            expect(Complex.realToNumber(complexSolution.array[0][0] as ComplexType)).toBeCloseTo(1, 10);
+            expect(Complex.imagToNumber(complexSolution.array[0][0] as ComplexType)).toBeCloseTo(1, 10);
+            expect(Complex.realToNumber(complexSolution.array[1][0] as ComplexType)).toBeCloseTo(2, 10);
+            expect(Complex.imagToNumber(complexSolution.array[1][0] as ComplexType)).toBeCloseTo(2, 10);
         });
 
         it('LinearAlgebra.rank should compute SVD-based numerical rank', () => {

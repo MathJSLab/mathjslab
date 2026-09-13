@@ -238,6 +238,14 @@ class MultiArray<ELEMENT = Elements> {
     public isCell: boolean;
 
     /**
+     * Field schema for empty structure arrays.
+     *
+     * Empty MATLAB/Octave structure arrays still remember their field names
+     * even though no concrete `Structure` elements exist in storage.
+     */
+    public emptyStructureFields?: string[];
+
+    /**
      * Optional AST-style parent pointer used by generic value handling.
      */
     public parent?: unknown;
@@ -438,6 +446,10 @@ class MultiArray<ELEMENT = Elements> {
      * @param M MultiArray to set type property.
      */
     public static readonly setType = (M: MultiArray): void => {
+        if (MultiArray.isEmpty(M) && Array.isArray(M.emptyStructureFields)) {
+            M.type = MultiArray.STRUCTURE;
+            return;
+        }
         M.type = Math.max(...M.array.map((row) => Math.max(...row.map((value) => value!.type))));
     };
 
@@ -1032,6 +1044,24 @@ class MultiArray<ELEMENT = Elements> {
         return result;
     };
 
+    /** Create an empty scalar structure carrying a set of top-level fields. */
+    private static readonly createEmptyStructureWithFields = (fields: string[]): RuntimeStructureElement => {
+        const result = MultiArray.createStructureValue({});
+        fields.forEach((field) => {
+            result.field[field] = MultiArray.emptyArray();
+        });
+        return result;
+    };
+
+    /** Copy empty-structure schema metadata to empty selection results. */
+    private static readonly preserveEmptyStructureSchema = (source: MultiArray, result: MultiArray): MultiArray => {
+        if (MultiArray.isEmpty(result) && !result.isCell && Array.isArray(source.emptyStructureFields)) {
+            result.type = MultiArray.STRUCTURE;
+            result.emptyStructureFields = source.emptyStructureFields.slice();
+        }
+        return result;
+    };
+
     /** Test whether a linearized value list contains only character scalars. */
     private static readonly isCharStringList = (values: ElementType[]): values is CharString[] => values.length > 0 && values.every((value) => CharString.isInstanceOf(value));
 
@@ -1049,11 +1079,17 @@ class MultiArray<ELEMENT = Elements> {
         return result;
     };
 
-    private static readonly structureHasField = (value: ElementType, field: string): boolean => {
-        const elements = MultiArray.structureElements(value);
-        return elements.length > 0 && elements.every((structure) => RuntimeValue.hasOwnField(structure.field, field));
-    };
-
+    /**
+     * Collect values reached by a nested structure field path.
+     *
+     * Structure arrays expand to one collected value per element, preserving
+     * linear order. Missing fields and non-structure intermediates use the
+     * common MATLAB-like dot-indexing diagnostic.
+     *
+     * @param value Structure scalar or array to read.
+     * @param field Field path to resolve.
+     * @returns Values reached by the path.
+     */
     private static readonly structureCollectFieldPath = (value: ElementType, field: string[]): ElementType[] => {
         if (field.length === 0) {
             return [value];
@@ -1072,11 +1108,29 @@ class MultiArray<ELEMENT = Elements> {
         throw new EvalError(MultiArray.invalidStructureReferenceMessage);
     };
 
+    /**
+     * Read a structure field path and collapse a single collected value.
+     *
+     * @param value Structure scalar or array to read.
+     * @param field Field path to resolve.
+     * @returns The scalar field value, or a row vector for comma-list fields.
+     */
     private static readonly getStructureField = (value: ElementType, field: string[]): ElementType => {
         const values = MultiArray.structureCollectFieldPath(value, field);
         return values.length === 1 ? values[0] : MultiArray.toRowVector(values);
     };
 
+    /**
+     * Assign a structure field path inside a scalar or every element of an array.
+     *
+     * Missing or empty intermediate fields are promoted to empty structures so
+     * chained assignments such as `S(2).b(3).c = value` can create the path
+     * incrementally while preserving the parent structure-array schema.
+     *
+     * @param target Structure scalar or structure array to mutate.
+     * @param field Field path to assign.
+     * @param value Value to store, or `[]` when omitted.
+     */
     private static readonly structureAssignFieldPath = (target: ElementType, field: string[], value?: ElementType): void => {
         if (target instanceof MultiArray) {
             const elements = MultiArray.structureElements(target);
@@ -1103,14 +1157,26 @@ class MultiArray<ELEMENT = Elements> {
         MultiArray.structureAssignFieldPath(target.field[head], field.slice(1), value);
     };
 
+    /**
+     * Complete a structure array with one top-level field.
+     *
+     * MATLAB structure arrays share a field schema. This helper fills only
+     * missing fields, deliberately preserving values that may already have
+     * been written into selected elements during indexed assignment.
+     *
+     * @param M Structure array to mutate.
+     * @param field Top-level field to ensure.
+     */
     private static readonly setEmptyStructureField = (M: MultiArray, field: string): void => {
         const elements = MultiArray.structureElements(M);
         if (elements.length === 0) {
             throw new EvalError(MultiArray.invalidStructureReferenceMessage);
         }
-        if (!M.isCell && !MultiArray.structureHasField(M, field)) {
+        if (!M.isCell) {
             elements.forEach((structure) => {
-                structure.field[field] = MultiArray.emptyArray();
+                if (!RuntimeValue.hasOwnField(structure.field, field)) {
+                    structure.field[field] = MultiArray.emptyArray();
+                }
             });
         }
     };
@@ -1210,6 +1276,7 @@ class MultiArray<ELEMENT = Elements> {
         const result = new MultiArray(M.dimension, undefined, M.isCell);
         result.array = M.array.map((row) => row.map((value) => RuntimeValue.copy(value)));
         result.type = M.type;
+        result.emptyStructureFields = M.emptyStructureFields?.slice();
         return result;
     };
 
@@ -1222,6 +1289,7 @@ class MultiArray<ELEMENT = Elements> {
         const result = new MultiArray<ELEMENT>(this.dimension, undefined, this.isCell);
         result.array = this.array.map((row) => row.map((value: ElementType<ELEMENT>) => RuntimeValue.copy(value)));
         result.type = this.type;
+        result.emptyStructureFields = this.emptyStructureFields?.slice();
         return result;
     }
 
@@ -1593,14 +1661,30 @@ class MultiArray<ELEMENT = Elements> {
      * @returns Binary element-wise result.
      */
     public static readonly elementWiseOperation = (op: TBinaryOperationName, left: MultiArray, right: MultiArray): MultiArray => {
-        /* Clone the dimensions */
-        let leftDim = left.dimension.slice();
-        let rightDim = right.dimension.slice();
-        /* Normalizes the number of dimensions. */
+        return MultiArray.mapBroadcasted(left, right, `operator ${op}`, (leftValue, rightValue) => Complex[op](leftValue as ComplexType, rightValue as ComplexType));
+    };
+
+    /**
+     * Map two arrays with MATLAB/Octave singleton expansion.
+     *
+     * The callback receives values in logical linear order while this helper
+     * translates those coordinates back to the project page-stacked physical
+     * row/column storage. Use it when an operation is element-wise but not
+     * necessarily one of the `Complex` dispatcher names.
+     *
+     * @param left Left operand.
+     * @param right Right operand.
+     * @param diagnosticName Name used in nonconformance diagnostics.
+     * @param callback Element mapper.
+     * @returns Broadcasted mapping result.
+     */
+    public static readonly mapBroadcasted = (left: MultiArray, right: MultiArray, diagnosticName: string, callback: (left: ElementType, right: ElementType) => ElementType): MultiArray => {
+        const leftDim = left.dimension.slice();
+        const rightDim = right.dimension.slice();
         const maxDim = Math.max(leftDim.length, rightDim.length);
         while (leftDim.length < maxDim) leftDim.push(1);
         while (rightDim.length < maxDim) rightDim.push(1);
-        /* It verifies conformity and determines resulting dimensions. */
+
         const resultDim = new Array<number>(maxDim);
         const leftBroadcast = new Array<boolean>(maxDim);
         const rightBroadcast = new Array<boolean>(maxDim);
@@ -1619,15 +1703,16 @@ class MultiArray<ELEMENT = Elements> {
                 leftBroadcast[i] = false;
                 rightBroadcast[i] = true;
             } else {
-                throw new EvalError(`operator ${op}: nonconformant arguments (op1 is ${leftDim.join('x')}, op2 is ${rightDim.join('x')}).`);
+                throw new EvalError(`${diagnosticName}: nonconformant arguments (op1 is ${leftDim.join('x')}, op2 is ${rightDim.join('x')}).`);
             }
         }
+
         const leftStrides = MultiArray.computeStrides(leftDim);
         const rightStrides = MultiArray.computeStrides(rightDim);
         const resultStrides = MultiArray.computeStrides(resultDim);
         const totalElements = resultDim.reduce((a, b) => a * b, 1);
         const result = new MultiArray(resultDim);
-        /* physical parameters for mapping linear -> (row,col) in physical storage (column-major) */
+
         const rowsL = leftDim[0],
             colsL = leftDim[1] || 1,
             pageLenL = rowsL * colsL;
@@ -1637,35 +1722,34 @@ class MultiArray<ELEMENT = Elements> {
         const rowsO = resultDim[0],
             colsO = resultDim[1] || 1,
             pageLenO = rowsO * colsO;
-        /* Main linear loop (optimized). */
+
         for (let n = 0; n < totalElements; n++) {
-            /* 1) compute ND coords (0-based) in column-major using forward strides */
             let leftIndexLinear = 0;
             let rightIndexLinear = 0;
             for (let d = 0; d < maxDim; d++) {
-                const coord = Math.floor(n / resultStrides[d]) % resultDim[d]; /* 0-based */
+                const coord = Math.floor(n / resultStrides[d]) % resultDim[d];
                 const lcoord = leftBroadcast[d] ? 0 : coord;
                 const rcoord = rightBroadcast[d] ? 0 : coord;
                 leftIndexLinear += lcoord * leftStrides[d];
                 rightIndexLinear += rcoord * rightStrides[d];
             }
-            /* 2) map leftLinear -> physical (i,j) */
+
             const pageL = Math.floor(leftIndexLinear / pageLenL);
-            const indexPageL = leftIndexLinear - pageL * pageLenL; /* leftIndexLinear % pageLenL */
+            const indexPageL = leftIndexLinear - pageL * pageLenL;
             const i = pageL * rowsL + (indexPageL % rowsL);
             const j = Math.floor(indexPageL / rowsL);
-            /* 3) map rightLinear -> physical (k,l) */
+
             const pageR = Math.floor(rightIndexLinear / pageLenR);
             const indexPageR = rightIndexLinear - pageR * pageLenR;
             const k = pageR * rowsR + (indexPageR % rowsR);
             const l = Math.floor(indexPageR / rowsR);
-            /* 4) map result linear n -> physical (o,p) */
+
             const pageO = Math.floor(n / pageLenO);
             const indexPageO = n - pageO * pageLenO;
             const o = pageO * rowsO + (indexPageO % rowsO);
             const p = Math.floor(indexPageO / rowsO);
-            /* 5) perform op */
-            result.array[o][p] = Complex[op](left.array[i][j] as ComplexType, right.array[k][l] as ComplexType);
+
+            result.array[o][p] = callback(left.array[i][j], right.array[k][l]);
         }
         MultiArray.setType(result);
         return result;
@@ -1829,9 +1913,7 @@ class MultiArray<ELEMENT = Elements> {
      * @returns MultiArray whose slots contain collected element lines.
      */
     public static readonly reduceToArray = (dimension: number, M: MultiArray): MultiArray<ReducedArrayLine> => {
-        /* TODO: check if subscriptC inside for can be removed and if forS can be inverted like in mapAlongDimension. */
         if (dimension >= M.dimension.length) {
-            /* TODO: check if it is consistent */
             const result = new MultiArray<ReducedArrayLine>(M.dimension);
             result.array = M.array.map((row) => row.map((element) => [element]));
             result.type = M.type;
@@ -1840,16 +1922,14 @@ class MultiArray<ELEMENT = Elements> {
             const dimResult = M.dimension.slice();
             dimResult[dimension] = 1;
             const result = new MultiArray<ReducedArrayLine>(dimResult);
-            const subscriptC = M.dimension.slice();
-            subscriptC[dimension] = 1;
-            const length = subscriptC.reduce((p, c) => p * c, 1);
+            const projectedDimension = M.dimension.slice();
+            projectedDimension[dimension] = 1;
+            const length = projectedDimension.reduce((p, c) => p * c, 1);
             for (let d = 1; d <= M.dimension[dimension]; d++) {
-                const subscriptC = M.dimension.slice();
-                subscriptC[dimension] = 1;
-                const args = subscriptC.map((s) => MultiArray.rangeArray(s));
+                const args = projectedDimension.map((s) => MultiArray.rangeArray(s));
                 args[dimension] = [d];
                 for (let n = 0; n < length; n++) {
-                    const subscriptM = MultiArray.linearIndexToSubscript(subscriptC, n).map((s, r) => args[r][s - 1]);
+                    const subscriptM = MultiArray.linearIndexToSubscript(projectedDimension, n).map((s, r) => args[r][s - 1]);
                     const linearM = MultiArray.subscriptToLinearIndex(M.dimension, subscriptM);
                     const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(M.dimension[0], M.dimension[1], linearM);
                     const [p, q] = MultiArray.linearIndexToMultiArrayRowColumn(result.dimension[0], result.dimension[1], n);
@@ -2047,6 +2127,9 @@ class MultiArray<ELEMENT = Elements> {
                 if (MultiArray.isCharStringList(values) && values.every(CharString.isChar)) {
                     const quote = values[0].quote;
                     return MultiArray.scalarToMultiArray(CharString.fromCharacterScalars(values, quote));
+                }
+                if (values.length === 0) {
+                    return new MultiArray([1, 0]);
                 }
                 return MultiArray.concatenate(1, 'evaluate', ...values.map((value) => MultiArray.scalarToMultiArray(value)));
             });
@@ -2969,18 +3052,18 @@ class MultiArray<ELEMENT = Elements> {
      */
     private static readonly linearIndexResult = (source: MultiArray, selected: ElementType[], idx: NormalizedIndexingStructure, plan: IndexingPlan): MultiArray => {
         if (plan.isColonOnly) {
-            return MultiArray.toColumnVector(selected);
+            return MultiArray.preserveEmptyStructureSchema(source, MultiArray.toColumnVector(selected));
         }
         const indexDimension = idx.linearIndexDimension ?? [1, selected.length];
         if (MultiArray.arrayIsVector(source) && indexDimension.length === 2 && (indexDimension[0] === 1 || indexDimension[1] === 1)) {
-            return MultiArray.isRowVector(source) ? MultiArray.toRowVector(selected) : MultiArray.toColumnVector(selected);
+            return MultiArray.preserveEmptyStructureSchema(source, MultiArray.isRowVector(source) ? MultiArray.toRowVector(selected) : MultiArray.toColumnVector(selected));
         }
         const result = new MultiArray(indexDimension);
         for (let n = 0; n < selected.length; n++) {
             const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(result.dimension[0], result.dimension[1], n);
             result.array[i][j] = selected[n];
         }
-        return result;
+        return MultiArray.preserveEmptyStructureSchema(source, result);
     };
 
     /**
@@ -2993,12 +3076,12 @@ class MultiArray<ELEMENT = Elements> {
      */
     private static readonly logicalIndexResult = (source: MultiArray, selected: ElementType[], mask: MultiArray): MultiArray => {
         if (MultiArray.arrayIsVector(source) && MultiArray.arrayIsVector(mask)) {
-            return MultiArray.isRowVector(source) ? MultiArray.toRowVector(selected) : MultiArray.toColumnVector(selected);
+            return MultiArray.preserveEmptyStructureSchema(source, MultiArray.isRowVector(source) ? MultiArray.toRowVector(selected) : MultiArray.toColumnVector(selected));
         }
         if (MultiArray.arrayIsVector(mask)) {
-            return MultiArray.isRowVector(mask) ? MultiArray.toRowVector(selected) : MultiArray.toColumnVector(selected);
+            return MultiArray.preserveEmptyStructureSchema(source, MultiArray.isRowVector(mask) ? MultiArray.toRowVector(selected) : MultiArray.toColumnVector(selected));
         }
-        return MultiArray.toColumnVector(selected);
+        return MultiArray.preserveEmptyStructureSchema(source, MultiArray.toColumnVector(selected));
     };
 
     /**
@@ -3567,7 +3650,11 @@ class MultiArray<ELEMENT = Elements> {
                     if (argsMax[0] > MultiArray.linearLength(entry.node)) {
                         if (MultiArray.isEmpty(entry.node)) {
                             const expansionFill =
-                                field.length > 0 ? MultiArray.createStructureValue(field) : entry.node.isCell ? undefined : MultiArray.blankValueForExpansion(assignmentValues[0]);
+                                field.length > 0
+                                    ? MultiArray.createEmptyStructureWithFields([...new Set([...(entry.node.emptyStructureFields ?? []), field[0]])])
+                                    : entry.node.isCell
+                                      ? undefined
+                                      : MultiArray.blankValueForExpansion(assignmentValues[0]);
                             MultiArray.expand(entry.node, [1, argsMax[0]], expansionFill);
                         } else if (MultiArray.arrayIsVector(entry.node)) {
                             if (entry.node.dimension[0] === 1) {
