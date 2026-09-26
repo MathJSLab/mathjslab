@@ -6835,6 +6835,25 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             );
         });
 
+        it('Should extract MATLAB and Octave leading help comments from user function files.', () => {
+            const localInterpreter = Interpreter.Create({
+                functionSourceTable: {
+                    documented: {
+                        sourceName: 'user/documented.m',
+                        source: ['function y = documented(x)', '% # documented', '% Computes $x^2$.', '%', '% [Reference](guide.md)', 'y = x^2;', 'end'].join('\n'),
+                    },
+                    octavehelp: ['## # octavehelp', '## Computes $x + 1$.', 'function y = octavehelp(x)', 'y = x + 1;', 'end'].join('\n'),
+                },
+            });
+
+            expect(localInterpreter.GetFunctionHelp('documented')).toEqual({
+                text: '# documented\nComputes $x^2$.\n\n[Reference](guide.md)',
+                sourceName: 'user/documented.m',
+            });
+            expect(localInterpreter.GetFunctionHelp('octavehelp')?.text).toBe('# octavehelp\nComputes $x + 1$.');
+            expect(localInterpreter.GetFunctionHelp('missing')).toBeUndefined();
+        });
+
         it('Should report virtual source files for returned nested function handles.', () => {
             const localInterpreter = Interpreter.Create({
                 functionSourceTable: {

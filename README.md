@@ -336,6 +336,45 @@ npm run clean:all
 After run this command you will need to do workspace setup running
 `npm run update` again.
 
+## Runtime sessions and Workers
+
+The synchronous `Interpreter` API remains available from `mathjslab`. Hosted
+applications can instead create isolated asynchronous sessions through the
+runtime entry points:
+
+```js
+import { createInProcessMathJSLabRuntime } from "mathjslab/runtime";
+import { createBrowserMathJSLabRuntime } from "mathjslab/runtime/browser";
+import { createNodeMathJSLabRuntime } from "mathjslab/runtime/node";
+```
+
+The browser runtime uses a Dedicated Module Worker, while the Node runtime uses
+`worker_threads`. Both expose the same `createSession`, `parse`, `execute`,
+`interrupt`, `reset`, and `dispose` contract. Execution accepts an
+`AbortSignal` and a timeout:
+
+```js
+const runtime = createBrowserMathJSLabRuntime();
+const session = await runtime.createSession({ parfor: "fallback" });
+const result = await session.execute("A = magic(3)", { timeoutMs: 10_000 });
+await session.dispose();
+await runtime.dispose();
+```
+
+Worker boundaries carry only versioned, serializable runtime values and output
+descriptors. Files, network access, persistence, clocks, and other external
+effects must be supplied explicitly by a host adapter. A timed-out or
+interrupted remote execution terminates its Worker; the next operation creates
+a clean session rather than reusing potentially corrupted interpreter state.
+
+Remote sessions can execute the statically proven sliced-assignment and
+associative-reduction subset of `parfor` on multiple Workers. The `strict`,
+`fallback`, and `off` policies control whether ineligible loops fail or execute
+sequentially. `spmd` currently retains its validated sequential compatibility
+fallback with `spmdIndex == 1` and `spmdSize == 1`; true SPMD execution,
+Composite values, worker-to-worker communication, and MATLAB-style Future APIs
+are not part of this release.
+
 ## Language subset
 
 The engine implements a practical subset of

@@ -1,5 +1,6 @@
 clear
 % Test markdown function
+markdown('https://raw.githubusercontent.com/MathJSLab/mathjslab-app/main/doc/en/test-mermaid.md')
 % Load using CDN
 markdown('https://cdn.jsdelivr.net/gh/MathJSLab/mathjslab-app/doc/en/trigonometric-functions.md')
 % Load from GitHub

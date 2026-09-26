@@ -3,6 +3,19 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 2.6.0
+
+- Added the platform-neutral asynchronous runtime, browser Dedicated Worker and
+  Node `worker_threads` entry points, isolated sessions, versioned value and
+  message codecs, mediated host capabilities, timeout/abort recovery, and
+  deterministic parallel execution for the statically proven `parfor` subset.
+- Kept the synchronous interpreter API compatible while isolating numeric
+  configuration per runtime session and preserving sequential `parfor` and
+  `spmd` behavior when parallel execution is unavailable or ineligible.
+- Hardened remote runtime lifecycle handling so individually disposed sessions
+  leave the runtime registry, failed Worker initialization is cleaned up, and
+  every phase of parallel `parfor` observes the same abort signal and deadline.
+
 ## 2.5.4
 
 - Broadened MATLAB/Octave-compatible numeric and linear-algebra semantics,

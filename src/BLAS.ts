@@ -4,7 +4,7 @@ import { type ElementType, MultiArray } from './MultiArray';
 /**
  * Runtime configuration for BLAS helper implementations.
  */
-type BLASConfig = {
+export type BLASConfig = {
     /**
      * Minimum operation-size estimate before blocked matrix multiplication is
      * preferred over the simple kernel.

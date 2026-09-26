@@ -127,6 +127,43 @@ type ScriptSourceProvider = SourceProvider;
 /** Table of host-provided script-file sources keyed by script name. */
 type ScriptSourceTable = SourceTable;
 
+/** MATLAB/Octave-compatible leading help text extracted from a function file. */
+type FunctionHelpText = { text: string; sourceName?: string };
+
+const extractFunctionHelpText = (source: string): string | undefined => {
+    const lines = source
+        .replace(/^\uFEFF/, '')
+        .replace(/\r\n?/g, '\n')
+        .split('\n');
+    let index = 0;
+    while (index < lines.length && /^\s*$/.test(lines[index]!)) index++;
+    if (/^\s*function(?:\s|\[|$)/i.test(lines[index] ?? '')) {
+        while (/\.\.\.\s*$/.test(lines[index] ?? '') && index < lines.length) index++;
+        index++;
+        while (index < lines.length && /^\s*$/.test(lines[index]!)) index++;
+    }
+    const first = lines[index] ?? '';
+    const block = /^\s*([%#])\{\s*$/.exec(first);
+    if (block) {
+        const marker = block[1]!;
+        const result: string[] = [];
+        for (index++; index < lines.length; index++) {
+            if (new RegExp(`^\\s*${marker}\\}\\s*$`).test(lines[index]!)) break;
+            result.push(lines[index]!.replace(new RegExp(`^\\s*${marker}?\\s?`), ''));
+        }
+        const text = result.join('\n').trimEnd();
+        return text || undefined;
+    }
+    if (!/^\s*[%#]/.test(first)) return undefined;
+    const result: string[] = [];
+    while (index < lines.length && /^\s*[%#]/.test(lines[index]!)) {
+        result.push(lines[index]!.replace(/^\s*([%#])\1*\s?/, ''));
+        index++;
+    }
+    const text = result.join('\n').trimEnd();
+    return text || undefined;
+};
+
 /** Error object carrying a MATLAB/Octave public stack captured by `rethrow`. */
 type PublicStackError = Error & { identifier?: string; publicStack?: RuntimeExpressionValue };
 
@@ -554,6 +591,7 @@ class Interpreter implements InterpreterInterface {
      * Unified virtual source resolver for browser/host-provided `.m` files.
      */
     private sourceResolver: SourceResolver = TableSourceResolver.create();
+    private readonly functionHelpText = new Map<string, FunctionHelpText>();
     /** Host path predicates used by MATLAB-style file/folder validators. */
     private pathValidationCallbacks: PathValidationCallbacks = {};
 
@@ -3297,8 +3335,22 @@ class Interpreter implements InterpreterInterface {
      * @returns Registered primary function definition.
      */
     public LoadFunctionFile(name: string, source: string, scope: Scope = this.context.globalScope ?? this.context.currentScope, sourceName = name): NodeFunctionDefinition {
+        const help = extractFunctionHelpText(source);
+        if (help) this.functionHelpText.set(name, { text: help, sourceName });
         const parsed = this.parseFunctionSource(name, source);
         return this.registerFunctionFileDefinition(parsed.primary, parsed.subfunctions, scope, sourceName);
+    }
+
+    /** Return the leading help-comment block for a user function file. */
+    public GetFunctionHelp(name: string): FunctionHelpText | undefined {
+        const canonical = this.context.aliasNameFunction(name);
+        const cached = this.functionHelpText.get(canonical) ?? this.functionHelpText.get(name);
+        if (cached) return { ...cached };
+        const source = this.sourceResolver.resolve('function', canonical) ?? this.sourceResolver.resolve('function', name);
+        if (!source) return undefined;
+        const text = extractFunctionHelpText(source.source);
+        if (!text) return undefined;
+        return { text, sourceName: source.sourceName ?? source.name ?? canonical };
     }
 
     /**
@@ -12293,6 +12345,7 @@ export type {
     FunctionSource,
     FunctionSourceProvider,
     FunctionSourceTable,
+    FunctionHelpText,
     InterpreterConfig,
     IncDecOperator,
     ScriptSource,

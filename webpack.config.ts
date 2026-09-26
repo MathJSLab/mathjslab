@@ -198,7 +198,52 @@ export const WebpackConfiguration: webpack.Configuration[] = [
             ],
         },
     },
-    /* 7. Build development mode. It's for CommonJS and ES2022 target (modern compatible node environments). */
+    /* 7. Platform-neutral asynchronous runtime contracts and in-process host. */
+    {
+        name: 'runtime.esm2022',
+        entry: path.join(__dirname, 'src', 'runtime.ts'),
+        target: ['web', 'es2022'],
+        output: { library: { type: 'module' } },
+        module: { rules: [{ use: { options: { configFile: 'tsconfig.esm.es2022.json' } }, exclude: [/.*\.es2015\.ts$/, /^lib\-node.*/] }] },
+    },
+    /* 8. Browser Dedicated Worker runtime. */
+    {
+        name: 'runtime-browser.esm2022',
+        entry: path.join(__dirname, 'src', 'runtime-browser.ts'),
+        target: ['web', 'es2022'],
+        output: { library: { type: 'module' } },
+        module: { rules: [{ use: { options: { configFile: 'tsconfig.esm.es2022.json' } }, exclude: [/.*\.es2015\.ts$/, /^lib\-node.*/] }] },
+    },
+    /* 9. Node worker_threads runtime. */
+    {
+        name: 'runtime-node.esm2022',
+        entry: path.join(__dirname, 'src', 'runtime-node.ts'),
+        target: ['node', 'es2022'],
+        output: { library: { type: 'module' } },
+        module: {
+            rules: [
+                { use: { options: { configFile: 'tsconfig.esm.es2022.json' } }, exclude: [/.*\.es2015\.ts$/] },
+                { test: /NodeRuntime\.ts$/, parser: { importMeta: false } },
+            ],
+        },
+    },
+    /* 10. Node worker_threads entrypoint. */
+    {
+        name: 'runtime-node-worker.esm2022',
+        entry: path.join(__dirname, 'src', 'runtime-node.worker.ts'),
+        target: ['node', 'es2022'],
+        output: { library: { type: 'module' } },
+        module: { rules: [{ use: { options: { configFile: 'tsconfig.esm.es2022.json' } }, exclude: [/.*\.es2015\.ts$/] }] },
+    },
+    /* 11. Explicit browser Worker entrypoint for hosts that construct URLs. */
+    {
+        name: 'runtime-worker.esm2022',
+        entry: path.join(__dirname, 'src', 'runtime-browser.worker.ts'),
+        target: ['webworker', 'es2022'],
+        output: { library: { type: 'module' } },
+        module: { rules: [{ use: { options: { configFile: 'tsconfig.esm.es2022.json' } }, exclude: [/.*\.es2015\.ts$/, /^lib\-node.*/] }] },
+    },
+    /* 12. Build development mode. It's for CommonJS and ES2022 target (modern compatible node environments). */
     {
         name: 'cjs.dev',
         entry: path.join(__dirname, 'src', 'lib-node.ts'),

@@ -1,6 +1,6 @@
 {
     "name": "mathjslab",
-    "version": "2.5.4",
+    "version": "2.6.0",
     "description": "MathJSLab - An interpreter with language syntax like MATLAB®/Octave, ISBN 978-65-00-82338-7.",
     "keywords": [
         "MathJSLab",
@@ -39,6 +39,27 @@
                 "import": "./lib/mathjslab.web.esm2022.js"
             },
             "default": "./lib/mathjslab.web.esm2022.js"
+        },
+        "./core": {
+            "types": "./lib/types/lib-core.d.ts",
+            "browser": "./lib/mathjslab.web.esm2022.js",
+            "node": "./lib/mathjslab.node.esm2022.js",
+            "default": "./lib/mathjslab.web.esm2022.js"
+        },
+        "./runtime": {
+            "types": "./lib/types/runtime.d.ts",
+            "default": "./lib/mathjslab.runtime.esm2022.js"
+        },
+        "./runtime/browser": {
+            "types": "./lib/types/runtime-browser.d.ts",
+            "default": "./lib/mathjslab.runtime-browser.esm2022.js"
+        },
+        "./runtime/node": {
+            "types": "./lib/types/runtime-node.d.ts",
+            "default": "./lib/mathjslab.runtime-node.esm2022.js"
+        },
+        "./worker": {
+            "default": "./lib/mathjslab.runtime-worker.esm2022.js"
         },
         "./node-esm": {
             "types": "./lib/types/lib.d.ts",
@@ -103,7 +124,7 @@
         "get:antlr": "npm run tsx script/get-antlr.ts",
         "install:approve:all": "npm install-scripts approve --all && npm install",
         "install:all": "npm install && npm run clone:copy:clean:repository && npm run get:antlr",
-        "update": "npx npm-check-updates -u -x typescript,@types/node,eslint,@eslint/js && npm run install:all",
+        "update": "npx npm-check-updates -u && npm run install:all",
         "format": "prettier --write **/*.{js,cjs,mjs,ts,cts,mts,json,md}",
         "lint": "eslint --fix",
         "docs": "npm run tsx script/generate-api-docs.ts",
@@ -159,42 +180,42 @@
         "globalthis": "^1.0.4"
     },
     "devDependencies": {
-        "@eslint/js": "^9.39.5",
+        "@eslint/js": "^10.0.1",
         "@types/eslint-config-prettier": "^6.11.3",
         "@types/jest": "^30.0.0",
-        "@types/node": "^26.1.1",
+        "@types/node": "^26.6.3",
         "@types/turndown": "^5.0.6",
         "@types/webpack": "^5.28.5",
         "@types/webpack-bundle-analyzer": "^4.7.0",
-        "@typescript-eslint/eslint-plugin": "^8.70.0",
-        "@typescript-eslint/parser": "^8.70.0",
+        "@typescript-eslint/eslint-plugin": "^8.70.1",
+        "@typescript-eslint/parser": "^8.70.1",
         "ajv": "^8.20.0",
         "cross-env": "^10.1.0",
-        "eslint": "^9.39.5",
+        "eslint": "^10.11.0",
         "eslint-config-prettier": "^10.1.8",
         "eslint-import-resolver-typescript": "^4.4.5",
         "eslint-plugin-import": "^2.32.0",
         "eslint-plugin-jest": "^29.16.6",
         "eslint-plugin-prettier": "^5.5.6",
         "globals": "^17.12.0",
-        "jest": "^30.5.1",
-        "jest-environment-jsdom": "^30.5.1",
-        "jsdom": "^30.0.1",
+        "jest": "^30.5.2",
+        "jest-environment-jsdom": "^30.5.2",
+        "jsdom": "^30.1.1",
         "license-webpack-plugin": "^4.0.2",
         "madge": "^8.0.0",
         "node-html-parser": "^9.0.4",
-        "prettier": "^3.9.6",
+        "prettier": "^3.9.9",
         "shx": "^0.4.0",
-        "ts-jest": "^29.4.12",
+        "ts-jest": "^29.4.14",
         "ts-loader": "^9.6.2",
         "ts-node": "^10.9.2",
         "tsconfig-paths": "^4.2.0",
-        "tsx": "^4.23.13",
+        "tsx": "^4.23.15",
         "turndown": "^7.2.4",
         "typedoc": "^0.28.20",
-        "typescript": "^6.0.3",
-        "webpack": "^5.110.3",
-        "webpack-bundle-analyzer": "^5.3.3",
+        "typescript": "npm:@typescript/typescript6@^6.0.2",
+        "webpack": "^5.111.1",
+        "webpack-bundle-analyzer": "^5.4.0",
         "webpack-cli": "^7.2.3"
     },
     "engines": {
@@ -205,6 +226,7 @@
     },
     "allowScripts": {
         "esbuild@0.28.2": true,
-        "unrs-resolver@1.12.2": true
+        "unrs-resolver@1.12.2": true,
+        "@parcel/watcher@2.6.0": true
     }
 }

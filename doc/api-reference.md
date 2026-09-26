@@ -474,6 +474,13 @@ interpreter should register before optional linear-algebra functionality.
 Each public built-in has adjacent signature metadata so call validation and
 implementation stay synchronized.
 
+## createInProcessMathJSLabRuntime
+
+- Kind: `constant`
+- Source: `src/InProcessRuntime.ts`
+
+No JSDoc documentation is available yet.
+
 ## doubleQuoteCharacter
 
 - Kind: `constant`
@@ -498,6 +505,43 @@ Runtime value accepted in array slots and expression evaluation results.
 `null` and `undefined` are tolerated because parser/evaluator paths use empty
 slots while constructing MATLAB-like empty arrays, structure fields, and
 omitted values.
+
+## EncodedRuntimeValue
+
+- Kind: `type`
+- Source: `src/RuntimeValueCodec.ts`
+
+No JSDoc documentation is available yet.
+
+## ExecutionMachine
+
+- Kind: `class`
+- Source: `src/ExecutionMachine.ts`
+
+Host-independent execution boundary. The initial implementation adapts a
+synchronous operation; evaluator subsystems can replace individual frames
+with effect/progress steps without changing RuntimeSession.
+
+## ExecutionMachineStep
+
+- Kind: `type`
+- Source: `src/ExecutionMachine.ts`
+
+No JSDoc documentation is available yet.
+
+## ExecutionOptions
+
+- Kind: `type`
+- Source: `src/runtime-contracts.ts`
+
+No JSDoc documentation is available yet.
+
+## ExecutionResult
+
+- Kind: `type`
+- Source: `src/runtime-contracts.ts`
+
+No JSDoc documentation is available yet.
 
 ## ExpressionBoundaryValue
 
@@ -617,6 +661,13 @@ This enables proper implementation of:
 - https://docs.octave.org/latest/Anonymous-Functions.html
 - https://en.wikipedia.org/wiki/Closure_(computer_programming)
 
+## FunctionHelpText
+
+- Kind: `type`
+- Source: `src/Interpreter.ts`
+
+MATLAB/Octave-compatible leading help text extracted from a function file.
+
 ## FunctionSignatureEntry
 
 - Kind: `interface`
@@ -652,6 +703,27 @@ Table of host-provided function-file sources keyed by primary function name.
 
 User-defined function table keyed by function name.
 
+## HostEffect
+
+- Kind: `type`
+- Source: `src/runtime-contracts.ts`
+
+No JSDoc documentation is available yet.
+
+## HostEffectContext
+
+- Kind: `type`
+- Source: `src/runtime-contracts.ts`
+
+No JSDoc documentation is available yet.
+
+## HostEffectResult
+
+- Kind: `type`
+- Source: `src/runtime-contracts.ts`
+
+No JSDoc documentation is available yet.
+
 ## IncDecOperator
 
 - Kind: `type`
@@ -678,6 +750,13 @@ Delimiter used by an index expression.
 
 Parentheses mean ordinary array/function indexing; braces mean cell-array
 content indexing.
+
+## InProcessMathJSLabRuntime
+
+- Kind: `class`
+- Source: `src/InProcessRuntime.ts`
+
+No JSDoc documentation is available yet.
 
 ## Interpreter
 
@@ -749,6 +828,13 @@ internal helper methods may expose more algorithm-specific shapes.
 - Source: `src/LinearAlgebra.ts`
 
 Public list of accepted `LinearAlgebra.set` configuration keys.
+
+## MathJSLabRuntime
+
+- Kind: `interface`
+- Source: `src/runtime-contracts.ts`
+
+No JSDoc documentation is available yet.
 
 ## MathML
 
@@ -1294,6 +1380,48 @@ Operators accepted by the normalized expression AST.
 Suffix/prefix encodings such as `+_`, `_++`, and `.'` disambiguate source
 syntax that shares a token but has different precedence or operand position.
 
+## ParforAnalysis
+
+- Kind: `type`
+- Source: `src/ParforAnalyzer.ts`
+
+No JSDoc documentation is available yet.
+
+## ParforAnalyzer
+
+- Kind: `class`
+- Source: `src/ParforAnalyzer.ts`
+
+Conservative analyzer for the first deterministic parallel subset.
+
+## ParforPlan
+
+- Kind: `type`
+- Source: `src/ParforAnalyzer.ts`
+
+No JSDoc documentation is available yet.
+
+## ParforPolicy
+
+- Kind: `type`
+- Source: `src/runtime-contracts.ts`
+
+No JSDoc documentation is available yet.
+
+## ParforVariableKind
+
+- Kind: `type`
+- Source: `src/ParforAnalyzer.ts`
+
+No JSDoc documentation is available yet.
+
+## ParseResult
+
+- Kind: `type`
+- Source: `src/runtime-contracts.ts`
+
+No JSDoc documentation is available yet.
+
 ## PostfixUnaryOperation
 
 - Kind: `type`
@@ -1345,6 +1473,13 @@ Lazily evaluated return values keyed by result name.
 
 Select a single output from a realized return handler result.
 
+## RuntimeDiagnostic
+
+- Kind: `type`
+- Source: `src/runtime-contracts.ts`
+
+No JSDoc documentation is available yet.
+
 ## RuntimeDisplay
 
 - Kind: `type`
@@ -1355,6 +1490,31 @@ Minimal rendering surface required by runtime values.
 Runtime values should not depend on the concrete `Interpreter` class just to
 render child values or inspect operator precedence. The interpreter implements
 this interface, but tests and future renderers can provide smaller objects.
+
+## RuntimeEnvironment
+
+- Kind: `class`
+- Source: `src/RuntimeEnvironment.ts`
+
+Interpreter-owned numeric configuration.
+
+The numeric implementation still exposes static facades for backward
+compatibility. RuntimeEnvironment scopes those facades to one synchronous
+interpreter operation and restores the previous host state afterwards.
+
+## RuntimeEnvironmentSnapshot
+
+- Kind: `type`
+- Source: `src/RuntimeEnvironment.ts`
+
+No JSDoc documentation is available yet.
+
+## RuntimeEvaluation
+
+- Kind: `type`
+- Source: `src/runtime-contracts.ts`
+
+No JSDoc documentation is available yet.
 
 ## RuntimeEvaluationContext
 
@@ -1373,6 +1533,62 @@ AST node that can appear in expression position.
 
 Runtime value shape accepted by expression evaluation before it is wrapped
 into parser-created AST containers.
+
+## RuntimeHost
+
+- Kind: `interface`
+- Source: `src/runtime-contracts.ts`
+
+No JSDoc documentation is available yet.
+
+## RuntimeOptions
+
+- Kind: `type`
+- Source: `src/runtime-contracts.ts`
+
+No JSDoc documentation is available yet.
+
+## RuntimeOutput
+
+- Kind: `type`
+- Source: `src/runtime-contracts.ts`
+
+No JSDoc documentation is available yet.
+
+## RuntimeSession
+
+- Kind: `interface`
+- Source: `src/runtime-contracts.ts`
+
+No JSDoc documentation is available yet.
+
+## RuntimeStatus
+
+- Kind: `type`
+- Source: `src/runtime-contracts.ts`
+
+No JSDoc documentation is available yet.
+
+## RuntimeValueCodec
+
+- Kind: `constant`
+- Source: `src/RuntimeValueCodec.ts`
+
+No JSDoc documentation is available yet.
+
+## RuntimeValueCodecError
+
+- Kind: `class`
+- Source: `src/RuntimeValueCodec.ts`
+
+No JSDoc documentation is available yet.
+
+## runtimeValueCodecVersion
+
+- Kind: `constant`
+- Source: `src/RuntimeValueCodec.ts`
+
+No JSDoc documentation is available yet.
 
 ## ScriptSource
 
@@ -1394,6 +1610,13 @@ Callback used to provide script-file source for a script name.
 - Source: `src/Interpreter.ts`
 
 Table of host-provided script-file sources keyed by script name.
+
+## SessionOptions
+
+- Kind: `type`
+- Source: `src/runtime-contracts.ts`
+
+No JSDoc documentation is available yet.
 
 ## singleQuoteCharacter
 
