@@ -3,6 +3,11 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 2.6.1
+
+- Build production bundles in isolated sequential processes to keep Webpack
+  memory usage bounded on CI executors.
+
 ## 2.6.0
 
 - Added the platform-neutral asynchronous runtime, browser Dedicated Worker and

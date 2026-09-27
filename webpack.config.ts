@@ -281,7 +281,12 @@ export default (env: any, argv: any): webpack.Configuration[] => {
     console.log(`Running Webpack (configuration: ${__filename} ...`);
     console.warn(`Build environment variables:`);
     console.table(env);
-    const bundlesConfiguration = WebpackConfiguration.filter((config) => buildConfiguration.bundle.includes(config.name!));
+    const requestedBundle = typeof env?.MATHJSLAB_BUNDLE === 'string' ? env.MATHJSLAB_BUNDLE : undefined;
+    if (requestedBundle && !buildConfiguration.bundle.includes(requestedBundle)) {
+        throw new Error(`Bundle '${requestedBundle}' is not configured for ${mode} builds.`);
+    }
+    const selectedBundles = requestedBundle ? [requestedBundle] : buildConfiguration.bundle;
+    const bundlesConfiguration = WebpackConfiguration.filter((config) => selectedBundles.includes(config.name!));
     console.log(`Building the following ${bundlesConfiguration.length === 1 ? `${mode} bundle` : `${bundlesConfiguration.length} ${mode} bundles`}:`);
     return bundlesConfiguration.map((config, index) => {
         console.log(`${index + 1}. ${config.name}`);
