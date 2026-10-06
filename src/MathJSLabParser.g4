@@ -22,6 +22,8 @@ import type {
     NodeFunctionParameter,
     NodeFunctionReturn,
     NodeDeclarationElement,
+    NodeDeclaration,
+    NodeAssignmentTarget,
     NodeList,
     NodeArgumentValidation,
     NodeArguments,
@@ -55,7 +57,7 @@ type ParserPrimaryExpressionNode = NodeIdentifier | ParserConstantNode | Functio
 type ParserOperatorExpressionNode = ParserPrimaryExpressionNode | NodeOperation | NodeIndexExpr | NodeSuperclassConstructor | NodeIndirectRef;
 type ParserSimpleExpressionNode = ParserOperatorExpressionNode | NodeRange;
 type ParserExpressionNode = ParserSimpleExpressionNode | FunctionHandle | NodeOperation;
-type ParserAssignmentTargetNode = ParserSimpleExpressionNode | MultiArray<ExpressionBoundaryValue>;
+type ParserAssignmentTargetNode = NodeAssignmentTarget;
 type ParserArgumentValidationNameNode = NodeIdentifier | NodeIndirectRef;
 
 /**
@@ -486,10 +488,10 @@ expression returns [node: ParserExpressionNode]
 
 assign_lhs returns [node: ParserAssignmentTargetNode]
     : simple_expr {
-        localctx.node = localctx.simple_expr().node;
+        localctx.node = AST.requireNodeAssignmentTarget(localctx.simple_expr().node);
     }
     | LBRACKET assign_list? RBRACKET {
-        localctx.node = AST.nodeFirstRow(localctx.assign_list() ? localctx.assign_list().node : AST.nodeListFirst());
+        localctx.node = AST.requireNodeAssignmentTarget(AST.nodeFirstRow(localctx.assign_list() ? localctx.assign_list().node : AST.nodeListFirst()));
     }
     ;
 
@@ -537,7 +539,7 @@ command returns [node: NodeInput]
  * Declaration statements.
  */
 
-declaration returns [node: NodeInput]
+declaration returns [node: NodeDeclaration]
     locals [i: number = 0]
     : (GLOBAL {
         localctx.node = AST.nodeDeclarationFirst('GLOBAL');

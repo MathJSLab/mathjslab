@@ -1,5 +1,20 @@
 import { createInProcessMathJSLabRuntime } from './InProcessRuntime';
 
+const abortableDelayHost = {
+    request: async (_effect: unknown, context: { signal?: AbortSignal }): Promise<{ value?: unknown }> =>
+        new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => resolve({}), 100);
+            context.signal?.addEventListener(
+                'abort',
+                () => {
+                    clearTimeout(timeout);
+                    reject(context.signal?.reason);
+                },
+                { once: true },
+            );
+        }),
+};
+
 describe('InProcessMathJSLabRuntime', () => {
     test('keeps workspaces independent and exposes structured output', async () => {
         const runtime = createInProcessMathJSLabRuntime();
@@ -36,6 +51,39 @@ describe('InProcessMathJSLabRuntime', () => {
         const controller = new AbortController();
         controller.abort('replaced');
         await expect(session.execute('x = 1', { signal: controller.signal })).resolves.toMatchObject({ status: 'cancelled' });
+        await runtime.dispose();
+    });
+
+    test('interrupts an active host effect and keeps the session reusable', async () => {
+        const runtime = createInProcessMathJSLabRuntime({ host: abortableDelayHost });
+        const session = await runtime.createSession();
+        const execution = session.execute('pause(1)');
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        await session.interrupt('stop active effect');
+        await expect(execution).resolves.toMatchObject({ status: 'cancelled', diagnostics: [{ code: 'MATHJSLAB_ABORTED', message: 'stop active effect' }] });
+        await expect(session.execute('1+1')).resolves.toMatchObject({
+            status: 'success',
+            outputs: expect.arrayContaining([expect.objectContaining({ type: 'text', text: '2\n' })]),
+        });
+        await runtime.dispose();
+    });
+
+    test('times out an active host effect and permits a retry', async () => {
+        const runtime = createInProcessMathJSLabRuntime({ host: abortableDelayHost });
+        const session = await runtime.createSession();
+        await expect(session.execute('pause(1)', { timeoutMs: 5 })).resolves.toMatchObject({ status: 'timeout', diagnostics: [{ code: 'MATHJSLAB_TIMEOUT' }] });
+        await expect(session.execute('1+1')).resolves.toMatchObject({ status: 'success' });
+        await runtime.dispose();
+    });
+
+    test('cancels active host effects when the session is disposed', async () => {
+        const runtime = createInProcessMathJSLabRuntime({ host: abortableDelayHost });
+        const session = await runtime.createSession();
+        const execution = session.execute('pause(1)');
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        await session.dispose();
+        await expect(execution).resolves.toMatchObject({ status: 'cancelled', diagnostics: [{ code: 'MATHJSLAB_DISPOSED' }] });
+        await expect(session.execute('1')).rejects.toThrow('MathJSLab runtime session is disposed.');
         await runtime.dispose();
     });
 

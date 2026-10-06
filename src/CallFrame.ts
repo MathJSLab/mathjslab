@@ -1,4 +1,4 @@
-import type { ExpressionBoundaryValue, NodeExpr } from './AST';
+import type { ExpressionBoundaryValue, NodeBase } from './AST';
 import type { Callable } from './Callable';
 import type { Scope } from './Scope';
 
@@ -34,7 +34,7 @@ class CallFrame {
     public constructor(
         public scope: Scope,
         public func?: Callable,
-        public callSite?: NodeExpr,
+        public callSite?: NodeBase,
         public name?: string,
         public nargin: number = 0,
         public nargout: number = 0,

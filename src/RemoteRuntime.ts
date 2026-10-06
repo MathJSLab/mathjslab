@@ -55,6 +55,7 @@ class RemoteRuntimeSession implements RuntimeSession {
     }
 
     public async execute(source: string, options: ExecutionOptions = {}): Promise<ExecutionResult> {
+        if (this.disposed) throw new Error('MathJSLab runtime session is disposed.');
         if (options.signal?.aborted) return { status: 'cancelled', outputs: [], diagnostics: [errorDiagnostic('MATHJSLAB_ABORTED', String(options.signal.reason ?? 'Execution cancelled'))] };
         if (/\bparfor\b/i.test(source)) {
             const parallel = await this.tryParallelParfor(source, options);
@@ -167,11 +168,15 @@ class RemoteRuntimeSession implements RuntimeSession {
             return result.result;
         } catch (error) {
             const cancelled = options.signal?.aborted === true;
+            const disposed = this.disposed;
             return {
-                status: timedOut ? 'timeout' : cancelled ? 'cancelled' : 'error',
+                status: timedOut ? 'timeout' : cancelled || disposed ? 'cancelled' : 'error',
                 outputs: [],
                 diagnostics: [
-                    errorDiagnostic(timedOut ? 'MATHJSLAB_TIMEOUT' : cancelled ? 'MATHJSLAB_ABORTED' : 'MATHJSLAB_WORKER_ERROR', error instanceof Error ? error.message : String(error)),
+                    errorDiagnostic(
+                        timedOut ? 'MATHJSLAB_TIMEOUT' : disposed ? 'MATHJSLAB_DISPOSED' : cancelled ? 'MATHJSLAB_ABORTED' : 'MATHJSLAB_WORKER_ERROR',
+                        error instanceof Error ? error.message : String(error),
+                    ),
                 ],
             };
         } finally {
@@ -193,13 +198,9 @@ class RemoteRuntimeSession implements RuntimeSession {
         if (this.disposed) return;
         if (!this.disposing) {
             this.disposing = (async () => {
-                try {
-                    if (this.worker) await this.request({ type: 'dispose', sessionId: this.sessionId });
-                } finally {
-                    this.disposed = true;
-                    this.destroyWorker();
-                    this.onDispose?.(this);
-                }
+                this.disposed = true;
+                this.destroyWorker(new Error('MathJSLab runtime session is disposed.'));
+                this.onDispose?.(this);
             })();
         }
         await this.disposing;
@@ -325,11 +326,12 @@ export class RemoteMathJSLabRuntime implements MathJSLabRuntime {
             this.options.maxWorkers ?? suggested,
             (disposed) => this.sessions.delete(disposed),
         );
+        this.sessions.add(session);
         try {
             await session.initialize();
-            this.sessions.add(session);
             return session;
         } catch (error) {
+            this.sessions.delete(session);
             await session.interrupt(error);
             throw error;
         }

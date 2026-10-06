@@ -308,6 +308,9 @@ describe('Parser AST compatibility fixtures.', () => {
         expect(identifierNode(property.class).id).toBe('double');
         expect(idsOf({ list: property.functions })).toEqual(['mustBePositive']);
         expect(numericValue(property.defaultValue)).toBe(1);
+        if (!property.class || !property.defaultValue) {
+            throw new Error('parsed property validation unexpectedly omitted its class or default value');
+        }
         expect(property.validation.parent).toBe(property);
         expect(property.name.parent).toBe(property.validation);
         expect(property.size.map((node) => node.parent)).toEqual([property.validation, property.validation]);

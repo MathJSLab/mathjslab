@@ -1,5 +1,6 @@
 /// <reference types="jest" />
 import { CharString } from '../../src/CharString';
+import { AST } from '../../src/AST';
 import { Interpreter, SyntaxError } from '../../src/Interpreter';
 
 describe('Parser compatibility fixtures.', () => {
@@ -55,6 +56,24 @@ describe('Parser compatibility fixtures.', () => {
         expect(interpreter.Unparse(interpreter.Parse("A = [1 2 3]; A(end')"))).toBe("A=[1,2,3]\nA(end')\n");
         expect(interpreter.Unparse(interpreter.Parse("A = [1 2 3]; A(1:end.')"))).toBe("A=[1,2,3]\nA(1:end.')\n");
         expect(interpreter.Unparse(interpreter.Parse("A = [1 2 3]; A(end.')"))).toBe("A=[1,2,3]\nA(end.')\n");
+    });
+
+    it('Should preserve consecutive postfix transpose operators.', () => {
+        const interpreter = Interpreter.Create();
+
+        expect(interpreter.Unparse(interpreter.Parse("A = [1 2]; A''; A.''; A'.'"))).toBe("A=[1,2]\nA''\nA.''\nA'.'\n");
+        expect(interpreter.Unparse(interpreter.Execute("A = [1 2]; A''; A.''; A'.'"))).toBe('A=[1,2]\n[1,2]\n[1,2]\n[1,2]\n');
+
+        const parsed = interpreter.Parse("A''").list[0];
+        expect(AST.isNodePostfixOperation(parsed)).toBe(true);
+        if (!AST.isNodePostfixOperation(parsed)) {
+            throw new Error('Expected the outer apostrophe to be a postfix operation.');
+        }
+        expect(parsed.type).toBe("'");
+        expect(AST.isNodePostfixOperation(parsed.left)).toBe(true);
+        expect(parsed.left.parent).toBe(parsed);
+        expect(parsed.start).toEqual({ line: 1, column: 0 });
+        expect(parsed.stop).toEqual({ line: 1, column: 2 });
     });
 
     it('Should recognize catch identifiers only for simple identifier statements without separators.', () => {

@@ -340,7 +340,19 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             });
 
             expect(AST.isNodeReturnList(returnList)).toBe(true);
+            if (!AST.isNodeReturnList(returnList)) throw new Error('Expected a lazy return list.');
             expect(() => returnList.handler(1)).toThrow("Return variable 'y' is not an expression.");
+        });
+
+        it('Should reject syntax-only carriers while building runtime return lists.', () => {
+            const returnLayout = FunctionCall.returnLayout(functionDefinition([], ['y']));
+            const returnList = FunctionCall.createReturnList(returnLayout, { y: { node: AST.nodeList([AST.nodeIdentifier('carrier')]) } } as NameTable, (message) => {
+                throw new Error(message);
+            });
+
+            expect(AST.isNodeReturnList(returnList)).toBe(true);
+            if (!AST.isNodeReturnList(returnList)) throw new Error('Expected a lazy return list.');
+            expect(() => returnList.handler(1)).toThrow("Return variable 'y' is not a strict expression.");
         });
 
         it('Should materialize ignored function returns as empty arrays when requested.', () => {
@@ -349,6 +361,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                 throw new Error(message);
             });
 
+            if (!AST.isNodeReturnList(returnList)) throw new Error('Expected a lazy return list.');
             const returned = returnList.handler(3);
 
             expect(Complex.realToNumber(returnList.selector(returned, 0) as NodeExpr)).toBe(1);
@@ -366,6 +379,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                 },
             );
 
+            if (!AST.isNodeReturnList(returnList)) throw new Error('Expected a lazy return list.');
             const returned = returnList.handler(2);
 
             expect(returned.length).toBe(2);

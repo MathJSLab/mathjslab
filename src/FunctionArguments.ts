@@ -2,7 +2,7 @@ import type {
     NodeArgumentValidation,
     NodeArguments,
     NodeDefaultedParameter,
-    NodeExpr,
+    StrictNodeExpr,
     ExpressionBoundaryValue,
     RuntimeExpressionValue,
     NodeFunctionDefinition,
@@ -25,7 +25,7 @@ type ThrowEvalError = (message: string) => never;
 /** Literal size dimension accepted by MATLAB-style `arguments` declarations. */
 type ArgumentSizeDimension = number | { type: 'symbol'; name: string } | { type: 'any' };
 /** Normalized validator call extracted from a declaration's `{mustBe...}` list. */
-type ArgumentValidatorSpec = { name: string; value?: NodeExpr; bounds?: NodeExpr[]; custom?: 'implicit' | 'explicit'; expression?: NodeExpr };
+type ArgumentValidatorSpec = { name: string; value?: StrictNodeExpr; bounds?: StrictNodeExpr[]; custom?: 'implicit' | 'explicit'; expression?: StrictNodeExpr };
 /** Resolved workspace entry used during call-time validation. */
 type ValidationEntry = { node?: NodeInput };
 /** Value that has crossed an expression boundary and can be validated as data. */
@@ -44,7 +44,7 @@ type ArgumentValidationCallbacks = PathValidationCallbacks & {
     /** Resolve the argument or return value currently being validated. */
     resolveEntry: (validation: NodeArgumentValidation, localNamesOnly: boolean) => ValidationEntry | undefined;
     /** Evaluate a validator expression or default-dependent bound. */
-    evaluate: (expr: NodeExpr) => NodeInput;
+    evaluate: (expr: StrictNodeExpr) => NodeInput;
     /** Optional class matcher that can include user-defined classes. */
     matchesClass?: (value: RuntimeArgumentValue, className: string) => boolean;
     /** Evaluation-error callback supplied by the interpreter. */
@@ -443,6 +443,12 @@ class FunctionArguments {
      */
     public static argumentValidators(validation: NodeArgumentValidation, throwSyntaxError: ThrowSyntaxError): ArgumentValidatorSpec[] {
         const validationName = this.validationDisplayName(validation, throwSyntaxError);
+        const validatorArgument = (value: ExpressionBoundaryValue, index: number): StrictNodeExpr => {
+            if (!AST.isStrictNodeExpr(value)) {
+                throwSyntaxError(`arguments block function validation for '${validationName}' has a list carrier in argument ${index + 1}.`);
+            }
+            return value;
+        };
         return validation.functions.map((node) => {
             if (AST.isNodeIdentifier(node) && this.supportedArgumentValidators.has(node.id)) {
                 return { name: node.id };
@@ -451,7 +457,7 @@ class FunctionArguments {
                 return { name: node.id, custom: 'implicit' };
             }
             if (AST.isNodeIndexExpr(node) && node.delim === '()' && AST.isNodeIdentifier(node.expr) && this.supportedComparatorValidators.has(node.expr.id) && node.args.length === 2) {
-                return { name: node.expr.id, value: node.args[0], bounds: [node.args[1]] };
+                return { name: node.expr.id, value: validatorArgument(node.args[0], 0), bounds: [validatorArgument(node.args[1], 1)] };
             }
             if (
                 AST.isNodeIndexExpr(node) &&
@@ -460,10 +466,10 @@ class FunctionArguments {
                 this.supportedRangeValidators.has(node.expr.id) &&
                 (node.args.length === 3 || node.args.length === 4)
             ) {
-                return { name: node.expr.id, value: node.args[0], bounds: node.args.slice(1) };
+                return { name: node.expr.id, value: validatorArgument(node.args[0], 0), bounds: node.args.slice(1).map((value, index) => validatorArgument(value, index + 1)) };
             }
             if (AST.isNodeIndexExpr(node) && node.delim === '()' && AST.isNodeIdentifier(node.expr) && this.supportedMembershipValidators.has(node.expr.id) && node.args.length === 2) {
-                return { name: node.expr.id, value: node.args[0], bounds: [node.args[1]] };
+                return { name: node.expr.id, value: validatorArgument(node.args[0], 0), bounds: [validatorArgument(node.args[1], 1)] };
             }
             if (
                 AST.isNodeIndexExpr(node) &&
@@ -472,7 +478,7 @@ class FunctionArguments {
                 this.supportedClassRelationshipValidators.has(node.expr.id) &&
                 node.args.length === 2
             ) {
-                return { name: node.expr.id, value: node.args[0], bounds: [node.args[1]] };
+                return { name: node.expr.id, value: validatorArgument(node.args[0], 0), bounds: [validatorArgument(node.args[1], 1)] };
             }
             if (
                 AST.isNodeIndexExpr(node) &&
@@ -1114,8 +1120,8 @@ class FunctionArguments {
     /**
      * Return ordinary input-parameter default expressions.
      */
-    public static inputArgumentDefaults(func: NodeFunctionDefinition, throwSyntaxError: ThrowSyntaxError): Map<string, NodeExpr> {
-        const result = new Map<string, NodeExpr>();
+    public static inputArgumentDefaults(func: NodeFunctionDefinition, throwSyntaxError: ThrowSyntaxError): Map<string, StrictNodeExpr> {
+        const result = new Map<string, StrictNodeExpr>();
         for (const parameter of this.functionParameters(func)) {
             if (this.isDefaultedIdentifier(parameter)) {
                 result.set(parameter.left.id, parameter.right);

@@ -177,6 +177,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                 functions: [AST.nodeIndexExpr(AST.nodeIdentifier('mustBeGreaterThan'), AST.nodeList([AST.nodeIdentifier('x')]))],
             });
             const invalidValidatorShape = argValidation({ functions: [AST.nodeOperation('+', AST.nodeIdentifier('x'), Complex.create(1))] });
+            const invalidValidatorCarrier = AST.nodeIndexExpr(AST.nodeIdentifier('mustBeGreaterThan'), AST.nodeList([AST.nodeIdentifier('x'), AST.nodeIdentifier('limit')]));
+            invalidValidatorCarrier.args[1] = AST.nodeListFirst(AST.nodeIdentifier('limit'));
 
             expect(() => FunctionArguments.nameValueTarget(nestedNameValue, throwSyntaxError)).toThrow('arguments block name-value declaration must be a single dotted identifier.');
             expect(() => FunctionArguments.literalArgumentSize(invalidSizeKind, throwSyntaxError)).toThrow(
@@ -189,6 +191,9 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             );
             expect(() => FunctionArguments.argumentValidators(invalidValidatorShape, throwSyntaxError)).toThrow(
                 "arguments block function validation for 'x' must be a validator identifier or function call.",
+            );
+            expect(() => FunctionArguments.argumentValidators(argValidation({ functions: [invalidValidatorCarrier] }), throwSyntaxError)).toThrow(
+                "arguments block function validation for 'x' has a list carrier in argument 2.",
             );
         });
 

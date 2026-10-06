@@ -1,14 +1,14 @@
-import type { FunctionTable, NodeExpr, NodeInput } from './AST';
+import type { FunctionTable, NodeBase, NodeInput } from './AST';
 import { CharString } from './CharString';
 import { Complex } from './Complex';
 import { MultiArray } from './MultiArray';
 import { Structure } from './Structure';
-import { FunctionHandle } from './FunctionHandle';
+import { FunctionHandle, type FunctionHandleClosure } from './FunctionHandle';
 
 /**
  * Minimal scope contract required by introspection helpers.
  */
-type IntrospectionScope = {
+type IntrospectionScope = FunctionHandleClosure & {
     /**
      * Functions visible from the inspected workspace.
      */
@@ -35,7 +35,7 @@ type IntrospectionFrame = {
     /**
      * AST node that originated the call, used for line information.
      */
-    callSite?: NodeExpr;
+    callSite?: NodeBase;
     /**
      * Explicit frame display name, if one was supplied by the caller.
      */
@@ -115,7 +115,7 @@ class FunctionIntrospection {
         const result = new MultiArray([names.length, 1], null, true);
         result.array = names.map((name) => {
             const closure = hasFunctionFrame ? scope : undefined;
-            return [FunctionHandle.create(name, [], null, closure as unknown as Parameters<typeof FunctionHandle.create>[3])];
+            return [FunctionHandle.create(name, [], null, closure)];
         });
         return result;
     }

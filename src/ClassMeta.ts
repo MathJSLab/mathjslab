@@ -9,7 +9,16 @@ import { CharString } from './CharString';
 import { Complex } from './Complex';
 import { MultiArray } from './MultiArray';
 import { Structure } from './Structure';
-import { AST, type ClassAttributeTable, type NodeArgumentValidation, type NodeFunctionParameter, type NodeFunctionReturn, type NodeInput, type RuntimeExpressionValue } from './AST';
+import {
+    AST,
+    type ClassAttributeTable,
+    type NodeArgumentValidation,
+    type NodeFunctionParameter,
+    type NodeFunctionReturn,
+    type NodeInput,
+    type RuntimeExpressionValue,
+    type StrictNodeExpr,
+} from './AST';
 import type { RuntimeDisplay } from './RuntimeDisplay';
 
 type ClassPropertyDefinition = ClassPropertyDefinitionBase<ClassDefinition>;
@@ -28,8 +37,8 @@ type ClassMetaPropertyValue = RuntimeExpressionValue;
  */
 type ClassPropertyDefaultProvider = (property: ClassPropertyDefinition) => RuntimeExpressionValue | undefined;
 type ValidationMetadata = Pick<NodeArgumentValidation, 'name' | 'size' | 'class' | 'functions'> & {
-    default?: ClassMetaPropertyValue | null;
-    defaultValue?: ClassMetaPropertyValue | null;
+    default?: ClassMetaPropertyValue | StrictNodeExpr | null;
+    defaultValue?: ClassMetaPropertyValue | StrictNodeExpr | null;
 };
 
 /**
@@ -148,7 +157,7 @@ const validationStruct = (validation: ValidationMetadata): Structure => {
         Class: validation.class ? CharString.create(expressionText(validation.class)) : emptyString(),
         Validators: stringArray(validation.functions.map((item) => expressionText(item))),
         HasDefault: bool(Boolean(defaultValue)),
-        DefaultValue: defaultValue ?? MultiArray.emptyArray(),
+        DefaultValue: defaultValue ? defaultExpressionValue(defaultValue) : MultiArray.emptyArray(),
     });
 };
 

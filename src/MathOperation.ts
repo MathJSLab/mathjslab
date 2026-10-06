@@ -89,10 +89,10 @@ abstract class MathOperation {
      */
     private static readonly elementWiseOperation = (op: TBinaryOperationName, left: MathObject, right: MathObject): MathObject => {
         if (CharString.isInstanceOf(left)) {
-            left = MultiArray.fromCharString(left as CharString);
+            left = MultiArray.fromCharString(left);
         }
         if (CharString.isInstanceOf(right)) {
-            right = MultiArray.fromCharString(right as CharString);
+            right = MultiArray.fromCharString(right);
         }
         MathOperation.throwIfStructureBinaryOperand(MathOperation.elementWiseOperatorSymbols[op], left, right);
         MathOperation.throwIfCellBinaryOperand(MathOperation.elementWiseOperatorSymbols[op], left, right);
@@ -102,13 +102,13 @@ abstract class MathOperation {
             }
         }
         if (Complex.isInstanceOf(left) && Complex.isInstanceOf(right)) {
-            return Complex[op](left as ComplexType, right as ComplexType);
+            return Complex[op](left, right);
         } else if (Complex.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
-            return MultiArray.scalarOpMultiArray(op, left as ComplexType, right as MultiArray);
+            return MultiArray.scalarOpMultiArray(op, left, right);
         } else if (MultiArray.isInstanceOf(left) && Complex.isInstanceOf(right)) {
-            return MultiArray.MultiArrayOpScalar(op, left as MultiArray, right as ComplexType);
+            return MultiArray.MultiArrayOpScalar(op, left, right);
         } else if (MultiArray.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
-            return MultiArray.elementWiseOperation(op, left as MultiArray, right as MultiArray);
+            return MultiArray.elementWiseOperation(op, left, right);
         } else {
             throw new EvalError(`operator ${MathOperation.elementWiseOperatorSymbols[op]} is not defined for these operands.`);
         }
@@ -160,11 +160,11 @@ abstract class MathOperation {
 
     private static readonly numericScalarValue = (value: MathObject): ComplexType | undefined => {
         if (Complex.isInstanceOf(value)) {
-            return value as ComplexType;
+            return value;
         }
         if (MultiArray.isInstanceOf(value) && RuntimeValue.isScalar(value)) {
-            const element = MultiArray.firstElement(value as MultiArray);
-            return Complex.isInstanceOf(element) ? (element as ComplexType) : undefined;
+            const element = MultiArray.firstElement(value);
+            return Complex.isInstanceOf(element) ? element : undefined;
         }
         return undefined;
     };
@@ -202,7 +202,7 @@ abstract class MathOperation {
         const rightArray = MultiArray.scalarToMultiArray(right);
         const result = MultiArray.mapBroadcasted(leftArray, rightArray, `operator ${op}`, compare);
         result.type = Complex.LOGICAL;
-        return MultiArray.MultiArrayToScalar(result) as MathObject;
+        return MultiArray.MultiArrayToScalar(result);
     };
 
     /**
@@ -213,14 +213,14 @@ abstract class MathOperation {
      */
     private static readonly leftOperation = (op: TUnaryOperationLeftName, right: MathObject): MathObject => {
         if (CharString.isInstanceOf(right)) {
-            right = MultiArray.fromCharString(right as CharString);
+            right = MultiArray.fromCharString(right);
         }
         MathOperation.throwIfStructureUnaryOperand(MathOperation.unaryOperatorSymbols[op], right);
         MathOperation.throwIfCellUnaryOperand(MathOperation.unaryOperatorSymbols[op], right);
         if (Complex.isInstanceOf(right)) {
-            return Complex[op](right as ComplexType);
+            return Complex[op](right);
         } else if (MultiArray.isInstanceOf(right)) {
-            return MultiArray.leftOperation(op, right as MultiArray);
+            return MultiArray.leftOperation(op, right);
         } else {
             throw new EvalError(`operator ${MathOperation.unaryOperatorSymbols[op]} is not defined for this operand.`);
         }
@@ -274,22 +274,23 @@ abstract class MathOperation {
      */
     public static readonly mtimes: BinaryMathOperation = (left: MathObject, right: MathObject): MathObject => {
         if (CharString.isInstanceOf(left)) {
-            left = MultiArray.fromCharString(left as CharString);
+            left = MultiArray.fromCharString(left);
         }
         if (CharString.isInstanceOf(right)) {
-            right = MultiArray.fromCharString(right as CharString);
+            right = MultiArray.fromCharString(right);
         }
         MathOperation.throwIfStructureBinaryOperand('*', left, right);
         MathOperation.throwIfCellBinaryOperand('*', left, right);
         if (Complex.isInstanceOf(left) && Complex.isInstanceOf(right)) {
-            return Complex.mul(left as ComplexType, right as ComplexType);
+            return Complex.mul(left, right);
         } else if (Complex.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
-            return MultiArray.scalarOpMultiArray('mul', left as ComplexType, right as MultiArray);
+            return MultiArray.scalarOpMultiArray('mul', left, right);
         } else if (MultiArray.isInstanceOf(left) && Complex.isInstanceOf(right)) {
-            return MultiArray.MultiArrayOpScalar('mul', left as MultiArray, right as ComplexType);
-        } else {
-            return LinearAlgebra.mul(left as MultiArray, right as MultiArray);
+            return MultiArray.MultiArrayOpScalar('mul', left, right);
+        } else if (MultiArray.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
+            return LinearAlgebra.mul(left, right);
         }
+        throw new EvalError('operator * is not defined for these operands.');
     };
 
     /**
@@ -313,22 +314,23 @@ abstract class MathOperation {
      */
     public static readonly mrdivide: BinaryMathOperation = (left: MathObject, right: MathObject): MathObject => {
         if (CharString.isInstanceOf(left)) {
-            left = MultiArray.fromCharString(left as CharString);
+            left = MultiArray.fromCharString(left);
         }
         if (CharString.isInstanceOf(right)) {
-            right = MultiArray.fromCharString(right as CharString);
+            right = MultiArray.fromCharString(right);
         }
         MathOperation.throwIfStructureBinaryOperand('/', left, right);
         MathOperation.throwIfCellBinaryOperand('/', left, right);
         if (Complex.isInstanceOf(left) && Complex.isInstanceOf(right)) {
-            return Complex.rdiv(left as ComplexType, right as ComplexType);
+            return Complex.rdiv(left, right);
         } else if (Complex.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
-            return MultiArray.scalarOpMultiArray('mul', left as ComplexType, LinearAlgebra.inv(right as MultiArray));
+            return MultiArray.scalarOpMultiArray('mul', left, LinearAlgebra.inv(right));
         } else if (MultiArray.isInstanceOf(left) && Complex.isInstanceOf(right)) {
-            return MultiArray.scalarOpMultiArray('mul', Complex.inv(right as ComplexType), left as MultiArray);
-        } else {
-            return LinearAlgebra.mrdivide(left as MultiArray, right as MultiArray);
+            return MultiArray.scalarOpMultiArray('mul', Complex.inv(right), left);
+        } else if (MultiArray.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
+            return LinearAlgebra.mrdivide(left, right);
         }
+        throw new EvalError('operator / is not defined for these operands.');
     };
 
     /**
@@ -353,22 +355,23 @@ abstract class MathOperation {
      */
     public static readonly mldivide: BinaryMathOperation = (left: MathObject, right: MathObject): MathObject => {
         if (CharString.isInstanceOf(left)) {
-            left = MultiArray.fromCharString(left as CharString);
+            left = MultiArray.fromCharString(left);
         }
         if (CharString.isInstanceOf(right)) {
-            right = MultiArray.fromCharString(right as CharString);
+            right = MultiArray.fromCharString(right);
         }
         MathOperation.throwIfStructureBinaryOperand('\\', left, right);
         MathOperation.throwIfCellBinaryOperand('\\', left, right);
         if (Complex.isInstanceOf(left) && Complex.isInstanceOf(right)) {
-            return Complex.ldiv(left as ComplexType, right as ComplexType);
+            return Complex.ldiv(left, right);
         } else if (Complex.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
-            return MultiArray.scalarOpMultiArray('ldiv', left as ComplexType, right as MultiArray);
+            return MultiArray.scalarOpMultiArray('ldiv', left, right);
         } else if (MultiArray.isInstanceOf(left) && Complex.isInstanceOf(right)) {
             throw new EvalError(`operator \\: nonconformant arguments (op1 is ${left.dimension.join('x')}, op2 is 1x1).`);
-        } else {
-            return LinearAlgebra.mldivide(left as MultiArray, right as MultiArray);
+        } else if (MultiArray.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
+            return LinearAlgebra.mldivide(left, right);
         }
+        throw new EvalError('operator \\ is not defined for these operands.');
     };
 
     /**
@@ -387,10 +390,10 @@ abstract class MathOperation {
      */
     public static readonly mpower: BinaryMathOperation = (left: MathObject, right: MathObject): MathObject => {
         if (CharString.isInstanceOf(left)) {
-            left = MultiArray.fromCharString(left as CharString);
+            left = MultiArray.fromCharString(left);
         }
         if (CharString.isInstanceOf(right)) {
-            right = MultiArray.fromCharString(right as CharString);
+            right = MultiArray.fromCharString(right);
         }
         MathOperation.throwIfStructureBinaryOperand('^', left, right);
         MathOperation.throwIfCellBinaryOperand('^', left, right);
@@ -399,9 +402,9 @@ abstract class MathOperation {
         if (leftScalar && rightScalar) {
             return Complex.power(leftScalar, rightScalar);
         } else if (MultiArray.isInstanceOf(left) && rightScalar) {
-            return LinearAlgebra.power(left as MultiArray, rightScalar);
+            return LinearAlgebra.power(left, rightScalar);
         } else if (leftScalar && MultiArray.isInstanceOf(right)) {
-            return LinearAlgebra.scalarPower(leftScalar, right as MultiArray);
+            return LinearAlgebra.scalarPower(leftScalar, right);
         } else {
             throw new Error("invalid exponent in '^'.");
         }
@@ -428,10 +431,10 @@ abstract class MathOperation {
      */
     public static readonly transpose: UnaryMathOperation = (left: MathObject): MathObject => {
         if (CharString.isInstanceOf(left)) {
-            left = MultiArray.characterVectorFromCharString(left as CharString);
+            left = MultiArray.characterVectorFromCharString(left);
         }
         if (MultiArray.isInstanceOf(left)) {
-            return LinearAlgebra.transpose(left as MultiArray);
+            return LinearAlgebra.transpose(left);
         } else {
             return RuntimeValue.copy(left);
         }
@@ -444,12 +447,12 @@ abstract class MathOperation {
      */
     public static readonly ctranspose: UnaryMathOperation = (left: MathObject): MathObject => {
         if (CharString.isInstanceOf(left)) {
-            left = MultiArray.characterVectorFromCharString(left as CharString);
+            left = MultiArray.characterVectorFromCharString(left);
         }
         if (Complex.isInstanceOf(left)) {
-            return Complex.conj(left as ComplexType);
+            return Complex.conj(left);
         } else if (MultiArray.isInstanceOf(left)) {
-            return LinearAlgebra.ctranspose(left as MultiArray);
+            return LinearAlgebra.ctranspose(left);
         } else {
             return RuntimeValue.copy(left);
         }
@@ -516,21 +519,21 @@ abstract class MathOperation {
      */
     public static readonly mand: BinaryMathOperation = (left: MathObject, right: MathObject): MathObject => {
         if (CharString.isInstanceOf(left)) {
-            left = MultiArray.fromCharString(left as CharString);
+            left = MultiArray.fromCharString(left);
         }
         if (CharString.isInstanceOf(right)) {
-            right = MultiArray.fromCharString(right as CharString);
+            right = MultiArray.fromCharString(right);
         }
         MathOperation.throwIfStructureBinaryOperand('&&', left, right);
         MathOperation.throwIfCellBinaryOperand('&&', left, right);
         if (Complex.isInstanceOf(left) && Complex.isInstanceOf(right)) {
-            return Complex.and(left as ComplexType, right as ComplexType);
+            return Complex.and(left, right);
         } else if (Complex.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
-            return Complex.and(left as ComplexType, MultiArray.toLogical(right as MultiArray));
+            return Complex.and(left, MultiArray.toLogical(right));
         } else if (MultiArray.isInstanceOf(left) && Complex.isInstanceOf(right)) {
-            return Complex.and(MultiArray.toLogical(left as MultiArray), right as ComplexType);
+            return Complex.and(MultiArray.toLogical(left), right);
         } else if (MultiArray.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
-            return Complex.and(MultiArray.toLogical(left as MultiArray), MultiArray.toLogical(right as MultiArray));
+            return Complex.and(MultiArray.toLogical(left), MultiArray.toLogical(right));
         }
         throw new EvalError('operator && is not defined for these operands.');
     };
@@ -548,21 +551,21 @@ abstract class MathOperation {
      */
     public static readonly mor: BinaryMathOperation = (left: MathObject, right: MathObject): MathObject => {
         if (CharString.isInstanceOf(left)) {
-            left = MultiArray.fromCharString(left as CharString);
+            left = MultiArray.fromCharString(left);
         }
         if (CharString.isInstanceOf(right)) {
-            right = MultiArray.fromCharString(right as CharString);
+            right = MultiArray.fromCharString(right);
         }
         MathOperation.throwIfStructureBinaryOperand('||', left, right);
         MathOperation.throwIfCellBinaryOperand('||', left, right);
         if (Complex.isInstanceOf(left) && Complex.isInstanceOf(right)) {
-            return Complex.or(left as ComplexType, right as ComplexType);
+            return Complex.or(left, right);
         } else if (Complex.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
-            return Complex.or(left as ComplexType, MultiArray.toLogical(right as MultiArray));
+            return Complex.or(left, MultiArray.toLogical(right));
         } else if (MultiArray.isInstanceOf(left) && Complex.isInstanceOf(right)) {
-            return Complex.or(MultiArray.toLogical(left as MultiArray), right as ComplexType);
+            return Complex.or(MultiArray.toLogical(left), right);
         } else if (MultiArray.isInstanceOf(left) && MultiArray.isInstanceOf(right)) {
-            return Complex.or(MultiArray.toLogical(left as MultiArray), MultiArray.toLogical(right as MultiArray));
+            return Complex.or(MultiArray.toLogical(left), MultiArray.toLogical(right));
         }
         throw new EvalError('operator || is not defined for these operands.');
     };
@@ -580,14 +583,14 @@ abstract class MathOperation {
      */
     public static readonly not: UnaryMathOperation = (right: MathObject): MathObject => {
         if (CharString.isInstanceOf(right)) {
-            right = MultiArray.fromCharString(right as CharString);
+            right = MultiArray.fromCharString(right);
         }
         MathOperation.throwIfStructureUnaryOperand(MathOperation.unaryOperatorSymbols.not, right);
         MathOperation.throwIfCellUnaryOperand(MathOperation.unaryOperatorSymbols.not, right);
         if (Complex.isInstanceOf(right)) {
-            return Complex.not(right as ComplexType);
+            return Complex.not(right);
         } else if (MultiArray.isInstanceOf(right)) {
-            return MultiArray.leftOperation('not', right as MultiArray);
+            return MultiArray.leftOperation('not', right);
         }
         throw new EvalError(`operator ${MathOperation.unaryOperatorSymbols.not} is not defined for this operand.`);
     };

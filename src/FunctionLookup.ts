@@ -8,6 +8,8 @@ import { FunctionHandle } from './FunctionHandle';
 
 /** Function-like AST node accepted by lookup helpers. */
 type LookupFunction = NodeBuiltInFunction | NodeFunctionDefinition;
+/** Resolution fields consumed by pure `exist`/`which` formatters. */
+type LookupSymbolResolution = Omit<SymbolResolution, 'tier' | 'importKind'> & Partial<Pick<SymbolResolution, 'tier' | 'importKind'>>;
 /** Callback that resolves a function name in the current interpreter context. */
 type ResolveFunction = (name: string) => LookupFunction | undefined;
 /** Callback that maps aliases such as operators or built-in shorthands to canonical names. */
@@ -101,7 +103,7 @@ class FunctionLookup {
      * @param resolved Structured symbol result, when present.
      * @returns MATLAB-like `exist` code.
      */
-    public static existCodeFromResolution(name: string, kind: string | undefined, resolved: SymbolResolution | undefined): number {
+    public static existCodeFromResolution(name: string, kind: string | undefined, resolved: LookupSymbolResolution | undefined): number {
         const variable = resolved?.kind === 'variable' ? resolved.entry : undefined;
         const func = resolved?.kind === 'function' || resolved?.kind === 'builtin' ? resolved.functionDefinition : undefined;
         const classDefined = resolved?.kind === 'class';
@@ -202,7 +204,7 @@ class FunctionLookup {
      */
     public static whichResultFromResolution(
         name: string,
-        resolved: SymbolResolution | undefined,
+        resolved: LookupSymbolResolution | undefined,
         handle: FunctionHandle | undefined,
         unparseHandle: UnparseHandle,
         staticMethod?: StaticMethodInfo,

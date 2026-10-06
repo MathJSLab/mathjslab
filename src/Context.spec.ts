@@ -77,6 +77,17 @@ describe('Context', () => {
             expect(context.aliasNameFunction('cos')).toBe('cos');
         });
 
+        it('Should preserve execution-list carriers while rejecting statement results from built-ins.', () => {
+            const context = Context.create();
+            context.defineBuiltInFunction('listresult', () => AST.nodeList([Complex.one()]));
+            context.defineBuiltInFunction('badresult', () => AST.nodeReturn());
+
+            expect(context.callCallable(Callables.builtin(context.builtInFunctionTable.listresult), [], AST.nodeIdentifier('listresult')).type).toBe('LIST');
+            expect(() => context.callCallable(Callables.builtin(context.builtInFunctionTable.badresult), [], AST.nodeIdentifier('badresult'))).toThrow(
+                "Return value 'badresult result' is not an expression.",
+            );
+        });
+
         it('Should resolve aliases from own table entries only.', () => {
             const context = Context.create();
             const aliases = Object.create({ inherited: /^leaked$/ }) as Record<string, RegExp>;
@@ -254,8 +265,10 @@ describe('Context', () => {
         it('Should reject non-expression values resolved from identifiers.', () => {
             const context = Context.create();
             context.assignName('bad', AST.nodeReturn());
+            context.assignName('listCarrier', AST.nodeList([Complex.one()]));
 
             expect(() => context.resolveIdentifier(AST.nodeIdentifier('bad'), context.currentScope)).toThrow("Identifier value 'bad' is not an expression.");
+            expect(() => context.resolveIdentifier(AST.nodeIdentifier('listCarrier'), context.currentScope)).toThrow("Identifier value 'listCarrier' is not a strict expression.");
         });
 
         it('Should preserve unresolved identifiers as call targets only.', () => {

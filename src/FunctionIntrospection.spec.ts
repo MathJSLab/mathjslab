@@ -40,6 +40,10 @@ class TestScope implements IntrospectionScope {
     public defineName(name: string, node: NodeInput): NameEntry {
         return (this.nameTable[name] = { node });
     }
+
+    public resolveFunction(name: string): unknown {
+        return this.functionTable[name];
+    }
 }
 
 const frame = (type: string | undefined, scope: TestScope, name = '', parentFrame?: IntrospectionFrame, id = name, sourceName?: string): IntrospectionFrame => ({
@@ -124,8 +128,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const outerFrame = frame('FCNDEF', scope, 'outer', globalFrame);
             const innerFrame = frame('LAMBDA', scope, '@(x)x', outerFrame);
             outerFrame.func = { type: 'FCNDEF', node: { id: 'outer', sourceName: '+pkg/outer.m' } };
-            outerFrame.callSite = { type: 'IDENT', id: 'outer', start: { line: 10, column: 1 } };
-            innerFrame.callSite = { type: 'IDENT', id: 'anon', start: { line: 12, column: 3 } };
+            outerFrame.callSite = Object.assign(AST.nodeIdentifier('outer'), { start: { line: 10, column: 1 } });
+            innerFrame.callSite = Object.assign(AST.nodeIdentifier('anon'), { start: { line: 12, column: 3 } });
 
             const result = FunctionIntrospection.dbstackResult([Complex.create(1), new CharString('-completenames')], [globalFrame, outerFrame, innerFrame], (message) => {
                 throw new Error(message);

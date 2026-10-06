@@ -145,9 +145,14 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
         });
 
         it('MathOperation.not should reject function handles instead of applying truthiness.', () => {
-            expect(() => MathOperation.not(FunctionHandle.create('sqrt'))).toThrow('operator ~ is not defined for this operand.');
-            expect(() => MathOperation.mand(FunctionHandle.create('sqrt'), Complex.true())).toThrow('operator && is not defined for these operands.');
-            expect(() => MathOperation.mor(Complex.false(), FunctionHandle.create('sqrt'))).toThrow('operator || is not defined for these operands.');
+            const handle = FunctionHandle.create('sqrt');
+
+            expect(() => MathOperation.not(handle)).toThrow('operator ~ is not defined for this operand.');
+            expect(() => MathOperation.mand(handle, Complex.true())).toThrow('operator && is not defined for these operands.');
+            expect(() => MathOperation.mor(Complex.false(), handle)).toThrow('operator || is not defined for these operands.');
+            expect(() => MathOperation.mtimes(handle, Complex.one())).toThrow('operator * is not defined for these operands.');
+            expect(() => MathOperation.mrdivide(Complex.one(), handle)).toThrow('operator / is not defined for these operands.');
+            expect(() => MathOperation.mldivide(handle, Complex.one())).toThrow('operator \\ is not defined for these operands.');
         });
 
         it('MathOperation dispatchers should reject cell-array operands explicitly.', () => {

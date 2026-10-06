@@ -3,6 +3,29 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 2.7.0
+
+- Tightened AST expression, assignment-target, control-flow, call/index, and
+  declaration/class contracts with runtime validation for untyped callers.
+  TypeScript consumers constructing AST nodes or implementing return selectors
+  may need to narrow their values to the documented strict expression types.
+- Consolidated evaluator, validator, lazy-output, class-dispatch, and numeric
+  boundaries while retaining the legacy expression carrier in unmigrated areas
+  and explicit execution carriers for dynamic evaluation and scripts.
+- Fixed indirect multi-statement execution through `feval` and `builtin` for
+  `eval`, `evalin`, `run`, and `source`, preserving workspace effects.
+- Fixed consecutive transpose/apostrophe tokenization; documented contextual
+  parser decisions and symbol/call dispatch precedence with regression tests.
+- Hardened asynchronous session interruption, timeout recovery, disposal during
+  host effects or Worker initialization, and Worker failure recovery without
+  changing runtime entry points or versioned protocols.
+- Expanded structural, compatibility, lifecycle, and distribution regression
+  coverage, including imports of public ESM entry points and real Node Workers.
+- Fixed Node entry points to preserve native `globalThis.crypto` and install a
+  fallback only when missing. CommonJS exports now target `.cjs` artifacts so
+  `require` works correctly within the ESM package; public subpath names remain
+  unchanged.
+
 ## 2.6.1
 
 - Build production bundles in isolated sequential processes to keep Webpack

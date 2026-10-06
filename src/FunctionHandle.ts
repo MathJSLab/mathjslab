@@ -402,4 +402,5 @@ class FunctionHandle {
 
 export type { AnonymousFunctionHandle };
 export { FunctionHandle };
+export type { FunctionHandleClosure };
 export default { FunctionHandle };

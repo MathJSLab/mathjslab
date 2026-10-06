@@ -292,17 +292,21 @@ export default (env: any, argv: any): webpack.Configuration[] => {
         console.log(`${index + 1}. ${config.name}`);
         config.mode = mode;
         config.output!.path = path.join(__dirname, 'lib');
-        config.output!.filename = `mathjslab.${config.name}.js`;
+        const extension = config.name!.startsWith('node.cjs') ? 'cjs' : 'js';
+        config.output!.filename = `mathjslab.${config.name}.${extension}`;
         // @ts-expect-error ignore
         if (config.output.library.type === 'module') {
             config.experiments = {
                 outputModule: true,
             };
             // @ts-expect-error ignore
-        } else if (config.output.library.type.startsWith('umd') || config.output.library.type.startsWith('commonjs')) {
+        } else if (config.output.library.type.startsWith('umd')) {
             // @ts-expect-error ignore
             config.output!.library.name = 'mathjslab';
             config.output!.globalObject = 'globalThis';
+            // @ts-expect-error ignore
+        } else if (config.output.library.type.startsWith('commonjs')) {
+            // Named exports match the ESM entry; retain the historical namespace below.
         } else {
             // @ts-expect-error ignore
             throw new Error(`invalid output.library.type: '${config.output.library.type}'`);
@@ -335,6 +339,7 @@ export default (env: any, argv: any): webpack.Configuration[] => {
             config.resolve = { extensions };
         }
         config.plugins = [
+            config.name!.startsWith('node.cjs') ? new webpack.BannerPlugin({ banner: 'module.exports.mathjslab = module.exports;', raw: true, footer: true }) : undefined,
             isProduction
                 ? (new LicenseWebpackPlugin({
                       perChunkOutput: false,

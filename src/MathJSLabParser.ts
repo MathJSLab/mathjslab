@@ -45,6 +45,8 @@ import type {
     NodeFunctionParameter,
     NodeFunctionReturn,
     NodeDeclarationElement,
+    NodeDeclaration,
+    NodeAssignmentTarget,
     NodeList,
     NodeArgumentValidation,
     NodeArguments,
@@ -78,7 +80,7 @@ type ParserPrimaryExpressionNode = NodeIdentifier | ParserConstantNode | Functio
 type ParserOperatorExpressionNode = ParserPrimaryExpressionNode | NodeOperation | NodeIndexExpr | NodeSuperclassConstructor | NodeIndirectRef;
 type ParserSimpleExpressionNode = ParserOperatorExpressionNode | NodeRange;
 type ParserExpressionNode = ParserSimpleExpressionNode | FunctionHandle | NodeOperation;
-type ParserAssignmentTargetNode = ParserSimpleExpressionNode | MultiArray<ExpressionBoundaryValue>;
+type ParserAssignmentTargetNode = NodeAssignmentTarget;
 type ParserArgumentValidationNameNode = NodeIdentifier | NodeIndirectRef;
 
 /**
@@ -3004,7 +3006,7 @@ export default class MathJSLabParser extends Parser {
                         this.state = 649;
                         this.simple_expr(0);
 
-                        localctx.node = localctx.simple_expr().node;
+                        localctx.node = AST.requireNodeAssignmentTarget(localctx.simple_expr().node);
                     }
                     break;
                 case 2:
@@ -3031,7 +3033,7 @@ export default class MathJSLabParser extends Parser {
                         this.state = 656;
                         this.match(MathJSLabParser.RBRACKET);
 
-                        localctx.node = AST.nodeFirstRow(localctx.assign_list() ? localctx.assign_list().node : AST.nodeListFirst());
+                        localctx.node = AST.requireNodeAssignmentTarget(AST.nodeFirstRow(localctx.assign_list() ? localctx.assign_list().node : AST.nodeListFirst()));
                     }
                     break;
             }
@@ -8224,7 +8226,7 @@ export class CommandContext extends ParserRuleContext {
 }
 
 export class DeclarationContext extends ParserRuleContext {
-    public node: NodeInput;
+    public node: NodeDeclaration;
     public i: number = 0;
     constructor(parser?: MathJSLabParser, parent?: ParserRuleContext, invokingState?: number) {
         super(parent, invokingState);

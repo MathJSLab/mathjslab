@@ -149,16 +149,17 @@ engine, including [Node.js](https://nodejs.org/),
 [Safari](https://www.apple.com/safari/), [Opera](https://www.opera.com), and
 [Edge](https://www.microsoft.com/edge).
 
-There are 6 different bundles:
+There are 6 interpreter bundles, plus the asynchronous runtime and Worker entry
+points described below:
 
 - For [Node.js](https://nodejs.org/) environment,
   [CommonJS](https://nodejs.org/docs/latest/api/modules.html),
   [ES2015](https://262.ecma-international.org/6.0/) target
-  ([mathjslab.node.cjs2015.js](https://cdn.jsdelivr.net/npm/mathjslab/lib/mathjslab.node.cjs2015.js)).
+  ([mathjslab.node.cjs2015.cjs](https://cdn.jsdelivr.net/npm/mathjslab/lib/mathjslab.node.cjs2015.cjs)).
 - For [Node.js](https://nodejs.org/) environment,
   [CommonJS](https://nodejs.org/docs/latest/api/modules.html),
   [ES2022](https://262.ecma-international.org/11.0/) target
-  ([mathjslab.node.cjs2022.js](https://cdn.jsdelivr.net/npm/mathjslab/lib/mathjslab.node.cjs2022.js)).
+  ([mathjslab.node.cjs2022.cjs](https://cdn.jsdelivr.net/npm/mathjslab/lib/mathjslab.node.cjs2022.cjs)).
 - For [Node.js](https://nodejs.org/) environment,
   [ES Module](https://nodejs.org/api/esm.html),
   [ES2022](https://262.ecma-international.org/11.0/) target
@@ -172,6 +173,27 @@ There are 6 different bundles:
 - For browser environment, [ES Module](https://nodejs.org/api/esm.html),
   [ES2022](https://262.ecma-international.org/11.0/) target
   ([mathjslab.web.esm2022.js](https://cdn.jsdelivr.net/npm/mathjslab/lib/mathjslab.web.esm2022.js)).
+
+CommonJS consumers can use `require('mathjslab').Interpreter`; the historical
+`require('mathjslab').mathjslab.Interpreter` namespace remains available. Node
+entry points preserve native `globalThis.crypto` and install a fallback only
+when it is missing.
+
+### TypeScript AST migration in 2.7.0
+
+AST expression fields and factory parameters now use `StrictNodeExpr` across
+control flow, calls/indexing, and declarations/classes. Loop assignment targets
+use `NodeAssignmentTarget`; lazy output selectors return strict expressions.
+Consumers constructing ASTs or implementing callbacks should narrow their
+values with the AST guards instead of casting statements or lists to
+expressions.
+
+`ExpressionBoundaryValue` deliberately permits `NodeList` at execution and
+comma-separated-list boundaries, including indirect `eval`, `evalin`, `run`,
+and `source` calls. It is not a replacement for strict expression fields.
+`NodeExpr` and `LegacyNodeExprCarrier` remain in unmigrated families. See the
+[AST compatibility guide](doc/parser-ast-compatibility.md) and
+[architecture boundary audit](doc/architecture-boundary-audit.md).
 
 ## Installation
 
@@ -366,6 +388,10 @@ descriptors. Files, network access, persistence, clocks, and other external
 effects must be supplied explicitly by a host adapter. A timed-out or
 interrupted remote execution terminates its Worker; the next operation creates
 a clean session rather than reusing potentially corrupted interpreter state.
+Disposal also terminates an active Worker immediately and includes sessions
+whose Worker creation is still pending. The complete cancellation, recovery,
+and adapter-equivalence matrix is documented in
+[`doc/async-runtime-lifecycle.md`](doc/async-runtime-lifecycle.md).
 
 Remote sessions can execute the statically proven sliced-assignment and
 associative-reduction subset of `parfor` on multiple Workers. The `strict`,

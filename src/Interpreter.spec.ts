@@ -19,6 +19,7 @@ type InterpreterReturnListHarness = {
     forLoopAssignmentValue(_target: NodeInput, _value: NodeInput): NodeInput;
     linearExpressionValues(_value: unknown, _prefix: string): NodeInput[];
     nestedAssignmentValue(_resultList: ReturnType<typeof AST.nodeListFirst>): NodeInput;
+    strictExpressionValue(_value: unknown, _name: string): NodeInput;
     Unparse(_value: NodeInput): string;
     valueReturnList(_values: unknown[]): ReturnType<typeof AST.nodeReturnList>;
 };
@@ -155,6 +156,14 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => unknownReturnList.handler(1)).toThrow("Return value 'out1' is not an expression.");
         });
 
+        it('Should reject execution lists at ordinary evaluator expression boundaries.', () => {
+            const localInterpreter = Interpreter.Create() as unknown as InterpreterReturnListHarness;
+
+            expect(Complex.realToNumber(localInterpreter.strictExpressionValue(Complex.one(), 'scalar') as ComplexType)).toBe(1);
+            expect(() => localInterpreter.strictExpressionValue(AST.nodeList([Complex.one()]), 'ordinary result')).toThrow("Expression value 'ordinary result' is not a strict expression.");
+            expect(() => localInterpreter.strictExpressionValue(AST.nodeReturn(), 'statement result')).toThrow("Expression value 'statement result' is not an expression.");
+        });
+
         it('Should preserve output masks captured by interpreter-owned comma-separated lists.', () => {
             const localInterpreter = Interpreter.Create() as unknown as InterpreterReturnListHarness;
             localInterpreter.context.pushRequestedOutputCount(2);
@@ -227,6 +236,26 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             );
         });
 
+        it.each(['direct', 'feval', 'handle', 'builtin'])('Should preserve execution carriers and workspace effects through %s dispatch.', (dispatch) => {
+            const localInterpreter = Interpreter.Create({ scriptSourceTable: { releaseScript: 'x=1; y=2;' } });
+            const invoke = (name: string, args: string): string => {
+                if (dispatch === 'feval') return `feval('${name}', ${args})`;
+                if (dispatch === 'handle') return `feval(@${name}, ${args})`;
+                if (dispatch === 'builtin') return `builtin('${name}', ${args})`;
+                return `${name}(${args})`;
+            };
+            for (const [name, args] of [
+                ['eval', "'x=1; y=2;'"],
+                ['evalin', "'base', 'x=1; y=2;'"],
+                ['run', "'releaseScript'"],
+                ['source', "'releaseScript'"],
+            ]) {
+                localInterpreter.Execute('clear x y');
+                localInterpreter.Execute(invoke(name, args));
+                expect(localInterpreter.Unparse(localInterpreter.Execute('x+y'))).toBe('3\n');
+            }
+        });
+
         it('Should reject non-expression values exposed through function handle workspace metadata.', () => {
             const localInterpreter = Interpreter.Create() as unknown as InterpreterBuiltInHarness;
             const closure = Scope.create();
@@ -251,6 +280,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
 
             expect(() => localInterpreter.assignmentValues(AST.nodeReturn(), 'assignment')).toThrow("Expression value 'assignment' is not an expression.");
             expect(() => localInterpreter.assignmentValues(invalidArray, 'assignment')).toThrow("Expression value 'assignment1' is not an expression.");
+            expect(() => localInterpreter.assignmentValues(AST.nodeList([Complex.one()]), 'assignment')).toThrow("Expression value 'assignment' is not a runtime value.");
         });
 
         it('Should reject non-expression values while cloning assignment targets.', () => {
@@ -285,6 +315,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const localInterpreter = Interpreter.Create() as unknown as InterpreterClassMethodHarness;
 
             expect(() => localInterpreter.expressionList([AST.nodeReturn()], 'field')).toThrow("Expression value 'field1' is not an expression.");
+            expect(() => localInterpreter.expressionList([AST.nodeList([Complex.one()])], 'field')).toThrow("Expression value 'field1' is not a strict expression.");
         });
 
         it('Should reject non-expression values in boolean control arguments.', () => {

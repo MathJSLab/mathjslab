@@ -6,11 +6,14 @@ import type {
     NameEntry,
     NodeBuiltInFunction,
     NodeExpr,
+    NodeBase,
     NodeInput,
+    NodeIdentifier,
     NodeFunctionDefinition,
     NodeReturnList,
     ReturnHandlerResult,
     RuntimeExpressionValue,
+    StrictNodeExpr,
 } from './AST';
 import type { ClassMethodDefinition as ClassMethodDefinitionBase } from './ClassMember';
 import { AST } from './AST';
@@ -26,7 +29,7 @@ import { ClassStaticMethod } from './ClassStaticMethod';
 import { ClassEmptyMethod } from './ClassEmptyMethod';
 import { ClassEventListener } from './ClassEventListener';
 import type { BinaryMathOperation, KeyOfTypeOfMathOperation, UnaryMathOperation } from './MathOperation';
-import { Scope } from './Scope';
+import { Scope, type ImportedNameCandidateKind } from './Scope';
 import { CallFrame } from './CallFrame';
 import { Callables, type Callable, type FunctionDefinitionCallable } from './Callable';
 import { FunctionSignature } from './FunctionSignature';
@@ -60,7 +63,7 @@ interface ContextInterpreter {
     /** Split call-site expressions into positional and name-value groups. */
     splitFunctionCallNameValueArguments(func: NodeFunctionDefinition, args: CallArgumentValue[]): { positional: CallArgumentValue[]; named: Map<string, CallArgumentValue> };
     /** Return default input expressions keyed by parameter name. */
-    getFunctionInputArgumentDefaults(func: NodeFunctionDefinition): Map<string, NodeExpr>;
+    getFunctionInputArgumentDefaults(func: NodeFunctionDefinition): Map<string, StrictNodeExpr>;
     /** Return the `arguments (Output,Repeating)` output name, when present. */
     getFunctionOutputRepeatingName(func: NodeFunctionDefinition): string | undefined;
     /** Bind evaluated name-value arguments into a function call scope. */
@@ -88,16 +91,10 @@ interface ContextInterpreter {
     /** Resolve a static class method selected by qualified name or visible imports. */
     resolveStaticMethod(name: string, scope: Scope): ClassStaticMethod | undefined;
     /** Dispatch a functional operator call through class overload semantics, when applicable. */
-    callFunctionalOperatorOverload(node: NodeBuiltInFunction, args: CallArgumentValue[], parent: NodeInput): NodeExpr | undefined;
+    callFunctionalOperatorOverload(node: NodeBuiltInFunction, args: CallArgumentValue[], parent: NodeInput): StrictNodeExpr | undefined;
     /** Convert object values used as native array indices through `subsindex`. */
     convertIndexArgument(value: NodeInput, parent: NodeInput): NodeInput;
 }
-
-/** Structural node shape used when walking parent links for diagnostics. */
-type ParentLinkedNode = NodeExpr & {
-    start?: unknown;
-    parent?: unknown;
-};
 
 /** Structural shape for debug output that only needs an optional identifier. */
 type IdentifierLikeNode = {
@@ -113,6 +110,18 @@ type SymbolResolutionKind = 'variable' | 'class' | 'function' | 'builtin' | 'scr
  * Source tier that produced a resolved symbol.
  */
 type SymbolResolutionSource = 'local' | 'import' | 'builtin';
+
+/** Concrete lookup tier selected by the symbol resolver. */
+type SymbolResolutionTier = 'variable' | 'registered-class' | 'scoped-function' | 'provider-function' | 'provider-class' | 'import' | 'builtin' | 'provider-source' | 'directory';
+
+/**
+ * Public, executable documentation of MATLAB/Octave-like name precedence.
+ *
+ * Qualified package names participate in the class/function tiers directly;
+ * simple imported aliases enter at the import tier. Static methods are
+ * considered after these symbol tiers, at the call-dispatch boundary.
+ */
+const symbolResolutionPrecedence: readonly SymbolResolutionTier[] = ['variable', 'registered-class', 'scoped-function', 'provider-function', 'provider-class', 'import', 'builtin'];
 
 /**
  * Options that tune name lookup while keeping the default MATLAB/Octave
@@ -145,6 +154,10 @@ type SymbolResolution = {
     resolvedName: string;
     /** Lookup tier that produced the result. */
     source: SymbolResolutionSource;
+    /** Exact precedence tier that selected this result. */
+    tier: SymbolResolutionTier;
+    /** Explicit versus wildcard import path, when the import tier wins. */
+    importKind?: ImportedNameCandidateKind;
     /** Variable entry when {@link kind} is `variable`. */
     entry?: NameEntry;
     /** Class definition when {@link kind} is `class`. */
@@ -160,19 +173,32 @@ type SymbolResolution = {
  */
 type CallDispatchKind = 'callable' | 'bound-method' | 'bound-method-array' | 'static-method' | 'empty-method' | 'constructor' | 'functional-class-method' | 'undefined-function' | 'indexing';
 
+/** Public ordering used when call syntax and native indexing compete. */
+const callDispatchPrecedence: readonly CallDispatchKind[] = [
+    'callable',
+    'bound-method',
+    'bound-method-array',
+    'static-method',
+    'empty-method',
+    'constructor',
+    'functional-class-method',
+    'undefined-function',
+    'indexing',
+];
+
 /**
  * Structured call/index dispatch decision.
  */
 type CallDispatch =
-    | { kind: 'callable'; callable: Callable; expr: NodeExpr }
+    | { kind: 'callable'; callable: Callable; expr: StrictNodeExpr }
     | { kind: 'bound-method'; expr: ClassBoundMethod }
     | { kind: 'bound-method-array'; expr: MultiArray }
     | { kind: 'static-method'; expr: ClassStaticMethod }
     | { kind: 'empty-method'; expr: ClassEmptyMethod }
     | { kind: 'constructor'; expr: ClassDefinition }
-    | { kind: 'functional-class-method'; expr: NodeExpr; functionalName: string; functionalReceiver: NodeInput }
-    | { kind: 'undefined-function'; expr: NodeExpr; functionalName: string }
-    | { kind: 'indexing'; expr: NodeExpr };
+    | { kind: 'functional-class-method'; expr: NodeIdentifier; functionalName: string; functionalReceiver: NodeInput }
+    | { kind: 'undefined-function'; expr: NodeIdentifier; functionalName: string }
+    | { kind: 'indexing'; expr: StrictNodeExpr };
 
 /** Optional callable metadata captured by anonymous handles. */
 type CallableClassMetadata = { className?: string };
@@ -556,12 +582,12 @@ class Context {
         const functions = options.functions ?? true;
         const imports = options.imports ?? true;
         const canonical = this.aliasNameFunction(name);
-        const resolveImportedCandidate = (importedName: string): SymbolResolution | undefined => {
+        const resolveImportedCandidate = (importedName: string, importKind: ImportedNameCandidateKind): SymbolResolution | undefined => {
             const importedCanonical = this.aliasNameFunction(importedName);
             if (classes) {
                 const importedClass = this.resolveClassDefinitionByExactName(importedCanonical, scope, false);
                 if (importedClass) {
-                    return { kind: 'class', name, resolvedName: importedCanonical, source: 'import', classDefinition: importedClass };
+                    return { kind: 'class', name, resolvedName: importedCanonical, source: 'import', tier: 'import', importKind, classDefinition: importedClass };
                 }
             }
             if (functions) {
@@ -572,20 +598,22 @@ class Context {
                         name,
                         resolvedName: importedCanonical,
                         source: importedFunction.type === 'BUILTIN' ? 'builtin' : 'import',
+                        tier: 'import',
+                        importKind,
                         functionDefinition: importedFunction,
                     };
                 }
                 if (loadFunctions) {
                     const importedLoaded = this.interpreter?.loadFunctionDefinition(importedCanonical, scope);
                     if (importedLoaded) {
-                        return { kind: 'function', name, resolvedName: importedCanonical, source: 'import', functionDefinition: importedLoaded };
+                        return { kind: 'function', name, resolvedName: importedCanonical, source: 'import', tier: 'import', importKind, functionDefinition: importedLoaded };
                     }
                 }
             }
             if (classes && loadClasses) {
                 const importedLoadedClass = this.resolveClassDefinitionByExactName(importedCanonical, scope, true);
                 if (importedLoadedClass) {
-                    return { kind: 'class', name, resolvedName: importedCanonical, source: 'import', classDefinition: importedLoadedClass };
+                    return { kind: 'class', name, resolvedName: importedCanonical, source: 'import', tier: 'import', importKind, classDefinition: importedLoadedClass };
                 }
             }
             return undefined;
@@ -594,14 +622,14 @@ class Context {
         if (variables) {
             const entry = scope.resolveName(canonical);
             if (entry && typeof entry.node !== 'undefined' && !ClassDefinition.isInstanceOf(entry.node)) {
-                return { kind: 'variable', name, resolvedName: canonical, source: 'local', entry };
+                return { kind: 'variable', name, resolvedName: canonical, source: 'local', tier: 'variable', entry };
             }
         }
 
         if (classes) {
             const directClass = this.resolveClassDefinitionByExactName(canonical, scope, false);
             if (directClass) {
-                return { kind: 'class', name, resolvedName: canonical, source: 'local', classDefinition: directClass };
+                return { kind: 'class', name, resolvedName: canonical, source: 'local', tier: 'registered-class', classDefinition: directClass };
             }
         }
 
@@ -613,13 +641,14 @@ class Context {
                     name,
                     resolvedName: canonical,
                     source: directFunction.type === 'BUILTIN' ? 'builtin' : 'local',
+                    tier: directFunction.type === 'BUILTIN' ? 'builtin' : 'scoped-function',
                     functionDefinition: directFunction,
                 };
             }
             if (loadFunctions) {
                 const loadedFunction = this.interpreter?.loadFunctionDefinition(canonical, scope);
                 if (loadedFunction) {
-                    return { kind: 'function', name, resolvedName: canonical, source: 'local', functionDefinition: loadedFunction };
+                    return { kind: 'function', name, resolvedName: canonical, source: 'local', tier: 'provider-function', functionDefinition: loadedFunction };
                 }
             }
         }
@@ -627,7 +656,7 @@ class Context {
         if (classes && loadClasses) {
             const loadedClass = this.resolveClassDefinitionByExactName(canonical, scope, true);
             if (loadedClass) {
-                return { kind: 'class', name, resolvedName: canonical, source: 'local', classDefinition: loadedClass };
+                return { kind: 'class', name, resolvedName: canonical, source: 'local', tier: 'provider-class', classDefinition: loadedClass };
             }
         }
 
@@ -635,8 +664,8 @@ class Context {
             const imported = [
                 ...new Map(
                     scope
-                        .importedNameCandidates(canonical)
-                        .map(resolveImportedCandidate)
+                        .importedNameCandidatesWithKind(canonical)
+                        .map((candidate) => resolveImportedCandidate(candidate.name, candidate.kind))
                         .filter((item): item is SymbolResolution => typeof item !== 'undefined')
                         .map((item) => [item.resolvedName, item]),
                 ).values(),
@@ -652,7 +681,7 @@ class Context {
         if (functions) {
             const builtin = this.builtInFunctionTable[canonical];
             if (builtin) {
-                return { kind: 'builtin', name, resolvedName: canonical, source: 'builtin', functionDefinition: builtin };
+                return { kind: 'builtin', name, resolvedName: canonical, source: 'builtin', tier: 'builtin', functionDefinition: builtin };
             }
         }
 
@@ -730,8 +759,11 @@ class Context {
     /**
      * Validate a resolved variable value before exposing it as an identifier expression.
      */
-    private resolvedIdentifierExpression(entry: ResolvedNameEntry, name: string, parent: NodeInput): NodeExpr {
+    private resolvedIdentifierExpression(entry: ResolvedNameEntry, name: string, parent: NodeInput): StrictNodeExpr {
         const value = expressionValue(entry.node, name, 'Identifier value', (message) => this.throwEvalError(message));
+        if (!AST.isStrictNodeExpr(value)) {
+            this.throwEvalError(`Identifier value '${name}' is not a strict expression.`);
+        }
         value.parent = parent;
         return value;
     }
@@ -739,7 +771,7 @@ class Context {
     /**
      * Keep an unresolved identifier as a call target placeholder.
      */
-    private unresolvedCallTargetExpression(tree: unknown): NodeExpr {
+    private unresolvedCallTargetExpression(tree: unknown): NodeIdentifier {
         if (!AST.isNodeIdentifier(tree)) {
             this.throwEvalError('invalid unresolved call target.');
         }
@@ -1181,7 +1213,7 @@ class Context {
      * @param arg Expression to evaluate.
      * @returns Expanded values produced by the expression.
      */
-    public evaluateCommaListExpression(arg: NodeExpr): NodeInput[] {
+    public evaluateCommaListExpression(arg: ExpressionBoundaryValue): NodeInput[] {
         this.pushRequestedOutputCount(1);
         this.pushCommaListExpansion();
         try {
@@ -1545,11 +1577,11 @@ class Context {
         }
     }
 
-    private resolveCallSite(node: NodeInput | undefined): NodeExpr | undefined {
-        let current: ParentLinkedNode | undefined = node as ParentLinkedNode | undefined;
-        while (current) {
+    private resolveCallSite(node: unknown): NodeBase | undefined {
+        let current = node;
+        while (AST.isNodeBase(current)) {
             if (current.start) return current;
-            current = current.parent as ParentLinkedNode | undefined;
+            current = current.parent;
         }
         return undefined;
     }
@@ -1611,7 +1643,7 @@ class Context {
                 if (value === undefined) {
                     AST.throwErrorIfGreaterThanReturnList(evaluated.length, index + 1, (message) => this.throwEvalError(message));
                 }
-                return value;
+                return AST.requireStrictNodeExpr(value, `size output ${index + 1}`);
             },
             (length: number) => {
                 const dims = size.slice();
@@ -1638,7 +1670,7 @@ class Context {
      * @param parent Call-site node used for diagnostics.
      * @returns Class method result when an accessible overload exists.
      */
-    private callClassBuiltinMethod(node: NodeBuiltInFunction, evaluatedArgs: ExpressionBoundaryValue[], parent: NodeInput): NodeExpr | undefined {
+    private callClassBuiltinMethod(node: NodeBuiltInFunction, evaluatedArgs: ExpressionBoundaryValue[], parent: NodeInput): StrictNodeExpr | undefined {
         const name = this.aliasNameFunction(node.id);
         if (AST.isNodeIdentifier(parent) && parent.id === 'builtin') {
             return undefined;
@@ -1661,7 +1693,7 @@ class Context {
         return this.callClassInstanceMethod(receiver, method, methodArgs, parent);
     }
 
-    private callFunctionDefinition(callable: FunctionDefinitionCallable, args: CallArgumentValue[], parent: NodeInput, requestedOutputCount: number): NodeExpr {
+    private callFunctionDefinition(callable: FunctionDefinitionCallable, args: CallArgumentValue[], parent: NodeInput, requestedOutputCount: number): StrictNodeExpr {
         const func = callable.node;
         const { inputLayout, returnLayout, callArguments, inputDefaults } = FunctionCall.prepareFunctionCall(func, args, requestedOutputCount, {
             nameValueParameters: (item) => this.interpreter!.getFunctionNameValueParameters(item),
@@ -1712,7 +1744,7 @@ class Context {
             new CallFrame(functionScope, callable, this.resolveCallSite(parent), func.id, inputCount, requestedOutputCount, args, undefined, this.requestedOutputMask(requestedOutputCount)),
         );
         this.loadPersistentVariables(func, functionScope);
-        let result: NodeExpr;
+        let result: StrictNodeExpr;
         try {
             this.interpreter!.applyScopedImports(func.statements, functionScope);
             this.interpreter!.registerNestedFunctions(func, functionScope);
@@ -1885,7 +1917,7 @@ class Context {
      * @param parent Call-site node used for stack traces.
      * @returns Method return expression or return list.
      */
-    public callClassInstanceMethod(instance: ClassInstance, method: ClassMethodDefinition, args: CallArgumentValue[], parent: NodeInput): NodeExpr {
+    public callClassInstanceMethod(instance: ClassInstance, method: ClassMethodDefinition, args: CallArgumentValue[], parent: NodeInput): StrictNodeExpr {
         if (method.isAbstract) {
             this.throwEvalError(`cannot call abstract method '${method.name}' for class ${method.classDefinition.name}.`);
         }
@@ -1903,8 +1935,8 @@ class Context {
     /**
      * Validate the implicit object argument passed to instance method bodies.
      */
-    private classMethodReceiverArgument(instance: ClassInstance): NodeExpr {
-        return expressionValue(ClassInstance.methodArgument(instance), 'obj', 'Argument value', (message) => this.throwEvalError(message));
+    private classMethodReceiverArgument(instance: ClassInstance): StrictNodeExpr {
+        return this.returnExpression(ClassInstance.methodArgument(instance), 'class method receiver');
     }
 
     /**
@@ -1915,7 +1947,7 @@ class Context {
      * @param parent Call-site node used for stack traces.
      * @returns Method return expression or return list.
      */
-    public callClassStaticMethod(method: ClassMethodDefinition, args: CallArgumentValue[], parent: NodeInput): NodeExpr {
+    public callClassStaticMethod(method: ClassMethodDefinition, args: CallArgumentValue[], parent: NodeInput): StrictNodeExpr {
         if (method.isAbstract) {
             this.throwEvalError(`cannot call abstract method '${method.name}' for class ${method.classDefinition.name}.`);
         }
@@ -2010,15 +2042,23 @@ class Context {
      * Evaluate one AST expression and validate the reduced value before it
      * crosses a context-owned argument/default/receiver boundary.
      */
-    private evaluatedExpressionValue(tree: NodeExpr, scope: Scope, name: string): ExpressionBoundaryValue {
-        return this.expressionValue(this.evaluatedExecutionResult(tree, scope), name);
+    private evaluatedExpressionValue(tree: ExpressionBoundaryValue, scope: Scope, name: string): StrictNodeExpr {
+        const value = this.expressionValue(this.evaluatedExecutionResult(tree, scope), name);
+        if (!AST.isStrictNodeExpr(value)) {
+            this.throwEvalError(`Argument value '${name}' is not a strict expression.`);
+        }
+        return value;
     }
 
     /**
      * Validate values that are exposed through lazy return-list helpers.
      */
-    private returnExpression(value: unknown, name: string): ExpressionBoundaryValue {
-        return expressionValue(value, name, 'Return value', (message) => this.throwEvalError(message));
+    private returnExpression(value: unknown, name: string): StrictNodeExpr {
+        expressionValue(value, name, 'Return value', (message) => this.throwEvalError(message));
+        if (!AST.isStrictNodeExpr(value)) {
+            this.throwEvalError(`Return value '${name}' is not a strict expression.`);
+        }
+        return value;
     }
 
     /**
@@ -2032,7 +2072,7 @@ class Context {
      * Reduce a class-dispatch result array to its scalar/array return value and
      * validate scalar 1x1 contents before exposing them as expression results.
      */
-    private scalarArrayReturnExpression(value: MultiArray, name: string): ExpressionBoundaryValue {
+    private scalarArrayReturnExpression(value: MultiArray, name: string): StrictNodeExpr {
         return this.returnExpression(MultiArray.MultiArrayToScalar(value), name);
     }
 
@@ -2080,7 +2120,7 @@ class Context {
      * @param parent AST node that owns the call.
      * @returns Scalar or array expression result.
      */
-    private callClassBoundMethodArray(expr: MultiArray, args: CallArgumentValue[], parent: NodeInput): NodeExpr {
+    private callClassBoundMethodArray(expr: MultiArray, args: CallArgumentValue[], parent: NodeInput): StrictNodeExpr {
         const methods = MultiArray.linearize(expr);
         if (methods.length > 0 && methods.every((item) => ClassBoundMethod.isInstanceOf(item) && item.method.name === 'delete')) {
             for (const item of methods) {
@@ -2123,14 +2163,14 @@ class Context {
      * @param parent AST/runtime node that owns the public descriptor call.
      * @returns Method dispatch result.
      */
-    public callClassBoundMethodValue(expr: ClassBoundMethod | MultiArray, args: CallArgumentValue[], parent: NodeInput): NodeExpr {
+    public callClassBoundMethodValue(expr: ClassBoundMethod | MultiArray, args: CallArgumentValue[], parent: NodeInput): StrictNodeExpr {
         if (ClassBoundMethod.isInstanceOf(expr)) {
             return this.callClassInstanceMethod(expr.instance, expr.method, args, parent);
         }
         return this.callClassBoundMethodArray(expr, args, parent);
     }
 
-    private callFunctionalClassMethodArray(name: string, receiver: MultiArray, args: CallArgumentValue[], parent: NodeInput): NodeExpr {
+    private callFunctionalClassMethodArray(name: string, receiver: MultiArray, args: CallArgumentValue[], parent: NodeInput): StrictNodeExpr {
         if (MultiArray.linearLength(receiver) === 0 || !MultiArray.linearize(receiver).every((item) => ClassInstance.isInstanceOf(item))) {
             this.throwUndefinedReferenceError(name);
         }
@@ -2172,7 +2212,7 @@ class Context {
      * @param parent Call-site node used for stack traces.
      * @returns Void node.
      */
-    public deleteClassInstance(instance: ClassInstance, parent: NodeInput): NodeExpr {
+    public deleteClassInstance(instance: ClassInstance, parent: NodeInput): StrictNodeExpr {
         if (!instance.classDefinition.isHandleClass()) {
             this.throwEvalError(`delete is only supported for handle class instances.`);
         }
@@ -2221,7 +2261,7 @@ class Context {
         );
     }
 
-    private callFunctionalClassMethod(name: string, args: CallArgumentValue[], parent: NodeInput, receiver = this.evaluateFunctionalClassMethodReceiver(args, parent)): NodeExpr {
+    private callFunctionalClassMethod(name: string, args: CallArgumentValue[], parent: NodeInput, receiver = this.evaluateFunctionalClassMethodReceiver(args, parent)): StrictNodeExpr {
         if (!receiver) {
             this.throwUndefinedReferenceError(name);
         }
@@ -2265,7 +2305,7 @@ class Context {
      * @param parent Call-site node used for metadata and stack traces.
      * @returns Call result.
      */
-    callCallable(callable: Callable, args: CallArgumentValue[], parent: NodeInput): NodeExpr {
+    callCallable(callable: Callable, args: CallArgumentValue[], parent: NodeInput): ExpressionBoundaryValue {
         const requestedOutputCount = this.requestedOutputCount;
         switch (callable.type) {
             case 'BUILTIN': {
@@ -2291,9 +2331,9 @@ class Context {
                     if (alias === 'size' && evaluatedArgs.length === 1 && requestedOutputCount > 1) {
                         return this.sizeReturnList(evaluatedArgs[0]);
                     }
-                    return node.mapper && evaluatedArgs.length === 1 && MultiArray.isInstanceOf(evaluatedArgs[0])
-                        ? MultiArray.rawMap(evaluatedArgs[0], node.func)
-                        : node.func(...evaluatedArgs);
+                    const result =
+                        node.mapper && evaluatedArgs.length === 1 && MultiArray.isInstanceOf(evaluatedArgs[0]) ? MultiArray.rawMap(evaluatedArgs[0], node.func) : node.func(...evaluatedArgs);
+                    return expressionValue(result, `${alias} result`, 'Return value', (message) => this.throwEvalError(message));
                 } finally {
                     /* Always restore the caller frame, even when the built-in throws. */
                     this.popCallStackFrame();
@@ -2338,7 +2378,7 @@ class Context {
                     ),
                 );
                 try {
-                    return this.rawEvaluationResult(lambda.expression, lambdaScope);
+                    return expressionValue(this.rawEvaluationResult(lambda.expression, lambdaScope), 'anonymous function result', 'Return value', (message) => this.throwEvalError(message));
                 } finally {
                     this.popCallStackFrame();
                 }
@@ -2403,12 +2443,12 @@ class Context {
         const outputIsRequested = (index: number): boolean => outputMask[index] ?? true;
         return AST.nodeCommaSeparatedReturnList(
             values.length,
-            (evaluated: ReturnHandlerResult, index: number): NodeExpr => {
+            (evaluated: ReturnHandlerResult, index: number) => {
                 const value = evaluated[`out${index}`];
                 if (typeof value === 'undefined') {
                     AST.throwErrorIfGreaterThanReturnList(index, index + 1, (message) => this.throwEvalError(message));
                 }
-                return value;
+                return AST.requireStrictNodeExpr(value, `output ${index + 1}`);
             },
             (length: number): ReturnHandlerResult => {
                 AST.throwErrorIfGreaterThanReturnList(values.length, length, (message) => this.throwEvalError(message));
@@ -2424,7 +2464,7 @@ class Context {
         );
     }
 
-    private callFunctionalOperatorOverload(dispatch: CallDispatch, parent: NodeInput, args: CallArgumentValue[]): NodeExpr | undefined {
+    private callFunctionalOperatorOverload(dispatch: CallDispatch, parent: NodeInput, args: CallArgumentValue[]): StrictNodeExpr | undefined {
         if (parent.delim !== '()' || dispatch.kind !== 'callable' || !Callables.isBuiltin(dispatch.callable) || !Context.operatorFunctionNames.has(dispatch.callable.node.id)) {
             return undefined;
         }
@@ -2435,7 +2475,7 @@ class Context {
      * Dispatch built-in operator functions reached without an index-expression
      * wrapper, such as `feval('plus', obj, obj)`.
      */
-    private callCallableFunctionalOperatorOverload(node: NodeBuiltInFunction, args: CallArgumentValue[], parent: NodeInput): NodeExpr | undefined {
+    private callCallableFunctionalOperatorOverload(node: NodeBuiltInFunction, args: CallArgumentValue[], parent: NodeInput): StrictNodeExpr | undefined {
         if ((AST.isNodeIdentifier(parent) && parent.id === 'builtin') || !Context.operatorFunctionNames.has(node.id)) {
             return undefined;
         }
@@ -2455,7 +2495,7 @@ class Context {
      * @param args Raw call/index arguments, used only to classify functional method calls.
      * @returns Structured dispatch decision.
      */
-    public resolveCallDispatch(expr: NodeExpr, parent: NodeInput, args: CallArgumentValue[] = []): CallDispatch {
+    public resolveCallDispatch(expr: StrictNodeExpr, parent: NodeInput, args: CallArgumentValue[] = []): CallDispatch {
         const callable = this.resolveCallable(expr);
         if (!callable && FunctionHandle.isInstanceOf(expr)) {
             throw new Error('Unexpected non-callable FunctionHandle.');
@@ -2495,7 +2535,7 @@ class Context {
      * @param parent Index expression node carrying delimiter metadata.
      * @returns Call result, or `undefined` when native indexing should handle it.
      */
-    private applyCallDispatch(dispatch: CallDispatch, args: CallArgumentValue[], parent: NodeInput): NodeExpr | undefined {
+    private applyCallDispatch(dispatch: CallDispatch, args: CallArgumentValue[], parent: NodeInput): ExpressionBoundaryValue | undefined {
         switch (dispatch.kind) {
             case 'callable':
                 return this.callCallable(dispatch.callable, args, parent);
@@ -2526,25 +2566,26 @@ class Context {
      * @param parent Index expression node carrying delimiter metadata.
      * @returns Indexed value or comma-separated return list.
      */
-    private applyNativeIndexing(expr: NodeExpr, args: CallArgumentValue[], parent: NodeInput): NodeExpr {
+    private applyNativeIndexing(expr: StrictNodeExpr, args: CallArgumentValue[], parent: NodeInput): StrictNodeExpr {
         const evaluatedIndexArguments = (): ReturnType<typeof MultiArray.indexArguments> => {
             const values = this.evaluateArgs(args, parent, 'all').map((value) => this.interpreter?.convertIndexArgument(value, parent) ?? value);
             return MultiArray.indexArguments(values);
         };
-        if (CharString.isInstanceOf(expr)) {
+        const runtimeExpr = this.runtimeExpressionValue(expr, 'indexed expression');
+        if (CharString.isInstanceOf(runtimeExpr)) {
             if (parent.delim === '{}') {
                 this.throwEvalError('matrix cannot be indexed with {');
             }
-            const array = MultiArray.characterVectorFromCharString(expr);
+            const array = MultiArray.characterVectorFromCharString(runtimeExpr);
             const evaluatedArgs = evaluatedIndexArguments();
             const result = MultiArray.getElements(array, parent.expr.id, [], evaluatedArgs);
             result!.parent = parent;
-            return MultiArray.charStringFromCharacterVectorResult(result, expr.quote);
+            return MultiArray.charStringFromCharacterVectorResult(result, runtimeExpr.quote);
         }
-        if (parent.delim === '{}' && !(MultiArray.isInstanceOf(expr) && expr.isCell)) {
+        if (parent.delim === '{}' && !(MultiArray.isInstanceOf(runtimeExpr) && runtimeExpr.isCell)) {
             this.throwEvalError('matrix cannot be indexed with {');
         }
-        const array = MultiArray.scalarOrCellToMultiArray(expr);
+        const array = MultiArray.scalarOrCellToMultiArray(runtimeExpr);
         const evaluatedArgs = evaluatedIndexArguments();
         const result = MultiArray.getElements(array, parent.expr.id, [], evaluatedArgs);
         result!.parent = parent;
@@ -2561,7 +2602,7 @@ class Context {
                 return this.valueReturnList(this.returnExpressions(values, 'out'));
             }
         }
-        return MultiArray.MultiArrayToScalar(result);
+        return this.returnExpression(MultiArray.MultiArrayToScalar(result), 'indexed output');
     }
 
     /**
@@ -2576,7 +2617,7 @@ class Context {
      * @param parent Index expression node carrying delimiter metadata.
      * @returns Call or indexing result.
      */
-    apply(expr: NodeExpr, args: CallArgumentValue[], parent: NodeInput): NodeExpr {
+    apply(expr: StrictNodeExpr, args: CallArgumentValue[], parent: NodeInput): ExpressionBoundaryValue {
         /* Debug-only structural trace for call/index dispatch. */
         if (this.interpreter!.debug) {
             console.log('[APPLY]', {
@@ -2643,9 +2684,9 @@ class Context {
             id,
             mapper: false,
             ev: [],
-            func: (...operand: NodeExpr) => {
+            func: (...operand: RuntimeExpressionValue[]): StrictNodeExpr => {
                 if (operand.length === 1) {
-                    return func(operand[0]);
+                    return AST.requireStrictNodeExpr(func(operand[0]), `${id} result`);
                 } else {
                     this.throwEvalError(`Invalid call to ${id}. Type 'help ${id}' to see correct usage.`);
                 }
@@ -2666,9 +2707,9 @@ class Context {
             id,
             mapper: false,
             ev: [],
-            func: (left: NodeExpr, ...right: NodeExpr) => {
+            func: (left: RuntimeExpressionValue, ...right: RuntimeExpressionValue[]): StrictNodeExpr => {
                 if (right.length === 1) {
-                    return func(left, right[0]);
+                    return AST.requireStrictNodeExpr(func(left, right[0]), `${id} result`);
                 } else {
                     this.throwEvalError(`Invalid call to ${id}. Type 'help ${id}' to see correct usage.`);
                 }
@@ -2689,13 +2730,14 @@ class Context {
             id,
             mapper: false,
             ev: [],
-            func: (left: NodeExpr, ...right: NodeExpr) => {
+            func: (left: RuntimeExpressionValue, ...right: RuntimeExpressionValue[]): StrictNodeExpr => {
                 if (right.length === 1) {
-                    return func(left, right[0]);
+                    return AST.requireStrictNodeExpr(func(left, right[0]), `${id} result`);
                 } else if (right.length > 1) {
-                    let result = func(left, right[0]);
+                    let result = AST.requireStrictNodeExpr(func(left, right[0]), `${id} result`);
                     for (let i = 1; i < right.length; i++) {
-                        result = func(result, right[i]);
+                        const runtimeResult = runtimeExpressionValue(result, `${id} intermediate result`, 'Operator value', (message) => this.throwEvalError(message));
+                        result = AST.requireStrictNodeExpr(func(runtimeResult, right[i]), `${id} result`);
                     }
                     return result;
                 } else {
@@ -2741,6 +2783,6 @@ class Context {
     }
 }
 
-export type { CallDispatch, CallDispatchKind, SymbolResolution, SymbolResolutionKind, SymbolResolutionOptions, SymbolResolutionSource };
-export { Context, ReturnSignal, BreakSignal, ContinueSignal };
+export type { CallDispatch, CallDispatchKind, SymbolResolution, SymbolResolutionKind, SymbolResolutionOptions, SymbolResolutionSource, SymbolResolutionTier };
+export { callDispatchPrecedence, Context, symbolResolutionPrecedence, ReturnSignal, BreakSignal, ContinueSignal };
 export default Context;

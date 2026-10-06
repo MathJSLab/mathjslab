@@ -6,7 +6,7 @@ import type {
     NodeClassEvent,
     NodeClassProperty,
     NodeClassSection,
-    NodeExpr,
+    StrictNodeExpr,
     NodeFunctionDefinition,
     NodeInput,
     NodeMetaClass,
@@ -34,7 +34,7 @@ interface ClassPropertyDefinition<OWNER = unknown> {
     /** AST node that originated the property declaration. */
     node: NodeClassProperty;
     /** Default value expression, when one was declared. */
-    defaultValue: NodeExpr | null;
+    defaultValue: StrictNodeExpr | null;
     /** Literal/symbolic size declaration from the property validation syntax. */
     size: ExpressionBoundaryValue[];
     /** Class declaration from the property validation syntax. */

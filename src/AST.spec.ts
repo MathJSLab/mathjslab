@@ -318,6 +318,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(reduced).toBe(first);
             expect(reduced.parent).toBe(parent);
             expect(() => AST.ensureReturnList(first).selector(AST.ensureReturnList(first).handler(2), 1)).toThrow('element number 2 undefined in return list');
+            expect(() => AST.ensureReturnList(AST.nodeList([AST.nodeIdentifier('carrier')]))).toThrow('return-list value is not an expression node.');
+            expect(() => AST.ensureReturnList(AST.nodeReturn())).toThrow('return-list value is not an expression node.');
         });
 
         it('Should create comma-separated return lists with expansion metadata.', () => {
@@ -325,7 +327,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const second = AST.nodeIdentifier('second');
             const returnList = AST.nodeCommaSeparatedReturnList(
                 2,
-                (evaluated, index) => (index === 0 ? evaluated.first : evaluated.second),
+                (evaluated, index) => AST.requireStrictNodeExpr(index === 0 ? evaluated.first : evaluated.second, 'test return value'),
                 (length) => ({ length, first, second }),
             );
 
@@ -343,7 +345,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             const second = AST.nodeIdentifier('second');
             const returnList = AST.nodeBoundedReturnList(
                 2,
-                (evaluated, index) => (index === 0 ? evaluated.first : evaluated.second),
+                (evaluated, index) => AST.requireStrictNodeExpr(index === 0 ? evaluated.first : evaluated.second, 'test return value'),
                 (length) => ({ length, first, second }),
             );
 

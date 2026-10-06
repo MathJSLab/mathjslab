@@ -693,6 +693,26 @@ export default class MathJSLabLexer extends Lexer {
         MathJSLabLexer.EPOW,
     ]);
     /**
+     * Tokens that complete an expression and therefore make a following
+     * apostrophe a conjugate-transpose operator rather than a string opener.
+     *
+     * Keep postfix operators here as well: MATLAB/Octave permit chains such
+     * as `A''`, `A.''`, and `A'.'`.
+     */
+    private static readonly hermitianLeftOperandTypes: Set<number> = new Set([
+        MathJSLabLexer.RPAREN,
+        MathJSLabLexer.RBRACKET,
+        MathJSLabLexer.RCURLYBR,
+        MathJSLabLexer.IDENTIFIER,
+        MathJSLabLexer.FLOAT_NUMBER,
+        MathJSLabLexer.STRING,
+        MathJSLabLexer.ENDRANGE,
+        MathJSLabLexer.PLUS_PLUS,
+        MathJSLabLexer.MINUS_MINUS,
+        MathJSLabLexer.TRANSPOSE,
+        MathJSLabLexer.HERMITIAN,
+    ]);
+    /**
      * Lexer context.
      */
     /* Type of previous token. */
@@ -1495,15 +1515,7 @@ export default class MathJSLabLexer extends Lexer {
     private HERMITIAN_action(localctx: RuleContext, actionIndex: number): void {
         switch (actionIndex) {
             case 50:
-                if (
-                    this.previousTokenType === MathJSLabLexer.RPAREN ||
-                    this.previousTokenType === MathJSLabLexer.RBRACKET ||
-                    this.previousTokenType === MathJSLabLexer.RCURLYBR ||
-                    this.previousTokenType === MathJSLabLexer.IDENTIFIER ||
-                    this.previousTokenType === MathJSLabLexer.FLOAT_NUMBER ||
-                    this.previousTokenType === MathJSLabLexer.STRING ||
-                    this.previousTokenType === MathJSLabLexer.ENDRANGE
-                ) {
+                if (MathJSLabLexer.hermitianLeftOperandTypes.has(this.previousTokenType)) {
                     this.previousTokenType = MathJSLabLexer.HERMITIAN;
                 } else {
                     this.pushMode(MathJSLabLexer.SQ_STRING);

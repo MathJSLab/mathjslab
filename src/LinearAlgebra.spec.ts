@@ -66,6 +66,18 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(LinearAlgebra.dot).toBeDefined();
         });
 
+        it('LinearAlgebra lazy selectors should reject unavailable or unmaterialized outputs.', () => {
+            const matrix = createRealMatrix([
+                [2, 0],
+                [0, 4],
+            ]);
+            const fixture = LinearAlgebra.test(matrix);
+            const pageInverse = LinearAlgebra.pageinv(matrix);
+
+            expect(() => fixture.selector(fixture.handler(3), 3)).toThrow('test output 4 is unavailable.');
+            expect(() => pageInverse.selector({ length: 1 }, 0)).toThrow('pageinv 1 output is not an expression node.');
+        });
+
         it('LinearAlgebra.transpose and ctranspose should accept scalars, matrices, and character vectors.', () => {
             const matrix = createRealMatrix([
                 [1, 2],

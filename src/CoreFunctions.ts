@@ -1483,8 +1483,8 @@ abstract class CoreFunctions {
         const rows = entries.map(({ index }) => Complex.create(MultiArray.linearIndexToSubscript(MA.dimension, index)[0] ?? 1));
         const columns = entries.map(({ index }) => Complex.create(MultiArray.linearIndexToSubscript(MA.dimension, index)[1] ?? 1));
         const foundValues = entries.map(({ value }) => value);
-        const toColumn = (items: ElementType[]): ElementType => MultiArray.MultiArrayToScalar(MultiArray.toColumnVector(items));
-        return AST.nodeBoundedReturnList(3, (evaluated: ReturnHandlerResult, index: number): ElementType => {
+        const toColumn = (items: ElementType[]) => AST.requireStrictNodeExpr(MultiArray.MultiArrayToScalar(MultiArray.toColumnVector(items)), 'find output');
+        return AST.nodeBoundedReturnList(3, (evaluated: ReturnHandlerResult, index: number) => {
             if (evaluated.length === 1) {
                 return toColumn(indices);
             }
@@ -1581,8 +1581,8 @@ abstract class CoreFunctions {
         }
         MultiArray.setType(sorted);
         indices.type = Complex.REAL;
-        return AST.nodeBoundedReturnList(2, (evaluated: ReturnHandlerResult, index: number): ElementType => {
-            return index === 0 || evaluated.length === 1 ? MultiArray.MultiArrayToScalar(sorted) : MultiArray.MultiArrayToScalar(indices);
+        return AST.nodeBoundedReturnList(2, (evaluated: ReturnHandlerResult, index: number) => {
+            return AST.requireStrictNodeExpr(index === 0 || evaluated.length === 1 ? MultiArray.MultiArrayToScalar(sorted) : MultiArray.MultiArrayToScalar(indices), 'sort output');
         });
     };
 
@@ -1609,9 +1609,9 @@ abstract class CoreFunctions {
      */
     public static readonly ind2sub = (DIMS?: ElementType, IND?: ElementType): NodeReturnList => {
         AST.throwInvalidCallError('ind2sub', !(typeof DIMS !== 'undefined' && typeof IND !== 'undefined'));
-        return AST.nodeReturnList((evaluated: ReturnHandlerResult, index: number): ElementType => {
+        return AST.nodeReturnList((evaluated: ReturnHandlerResult, index: number) => {
             if (evaluated.length === 1) {
-                return IND;
+                return AST.requireStrictNodeExpr(IND, 'ind2sub index');
             } else {
                 let dims = (MultiArray.linearize(DIMS) as ComplexType[]).map((value) => Complex.realToNumber(value));
                 let lenghtGreater = false;
@@ -1630,7 +1630,7 @@ abstract class CoreFunctions {
                     result.array = subscript.map((row) => row.map((value) => Complex.create(value[index])));
                 }
                 result.type = Complex.REAL;
-                return MultiArray.MultiArrayToScalar(result);
+                return AST.requireStrictNodeExpr(MultiArray.MultiArrayToScalar(result), 'ind2sub output');
             }
         });
     };
@@ -1950,7 +1950,7 @@ abstract class CoreFunctions {
                 break;
             }
         }
-        return AST.nodeBoundedReturnList(3, (evaluated: ReturnHandlerResult, index: number): ElementType => {
+        return AST.nodeBoundedReturnList(3, (evaluated: ReturnHandlerResult, index: number) => {
             const args: ElementType[][] = argsLinearized;
             while (args.length < evaluated.length) {
                 args[args.length] = args[args.length - 1];
@@ -1977,7 +1977,7 @@ abstract class CoreFunctions {
                     }
                     break;
             }
-            return MultiArray.MultiArrayToScalar(result);
+            return AST.requireStrictNodeExpr(MultiArray.MultiArrayToScalar(result), 'meshgrid output');
         });
     };
 
@@ -2001,7 +2001,7 @@ abstract class CoreFunctions {
                 argsLinearized[i] = MultiArray.scalarToMultiArray(args[i]);
             }
         }
-        return AST.nodeReturnList((evaluated: ReturnHandlerResult, index: number): ElementType => {
+        return AST.nodeReturnList((evaluated: ReturnHandlerResult, index: number) => {
             const args: MultiArray[] = argsLinearized;
             if (args.length === 1) {
                 while (args.length < evaluated.length) {
@@ -2015,7 +2015,7 @@ abstract class CoreFunctions {
             const r: number[] = new Array(args.length).fill(1);
             r[index] = shape[index];
             shape[index] = 1;
-            return MultiArray.evaluate(new MultiArray(shape, MultiArray.reshape(args[index], r)));
+            return AST.requireStrictNodeExpr(MultiArray.evaluate(new MultiArray(shape, MultiArray.reshape(args[index], r))), 'ndgrid output');
         });
     };
 
@@ -2458,7 +2458,9 @@ abstract class CoreFunctions {
         if (typeof n === 'undefined') {
             const removed = CoreFunctions.leadingSingletonDimensions(source.dimension);
             const shifted = CoreFunctions.shiftDimensions(source, removed);
-            return AST.nodeBoundedReturnList(2, (_evaluated: ReturnHandlerResult, index: number): ElementType => (index === 0 ? shifted : Complex.create(removed)));
+            return AST.nodeBoundedReturnList(2, (_evaluated: ReturnHandlerResult, index: number) =>
+                AST.requireStrictNodeExpr(index === 0 ? shifted : Complex.create(removed), 'shiftdim output'),
+            );
         }
         const shift = CoreFunctions.integerScalar(n, 'shiftdim', 'N');
         return CoreFunctions.shiftDimensions(source, shift);

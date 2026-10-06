@@ -28,15 +28,23 @@ const abortResult = (timeout: boolean, reason: unknown): ExecutionResult => ({
     status: timeout ? 'timeout' : 'cancelled',
     outputs: [],
     diagnostics: [
-        { code: timeout ? 'MATHJSLAB_TIMEOUT' : 'MATHJSLAB_ABORTED', severity: 'error', message: reason instanceof Error ? reason.message : String(reason ?? 'Execution cancelled') },
+        {
+            code: timeout
+                ? 'MATHJSLAB_TIMEOUT'
+                : typeof reason === 'object' && reason !== null && typeof Reflect.get(reason, 'code') === 'string'
+                  ? String(Reflect.get(reason, 'code'))
+                  : 'MATHJSLAB_ABORTED',
+            severity: 'error',
+            message: reason instanceof Error ? reason.message : String(reason ?? 'Execution cancelled'),
+        },
     ],
 });
 
-const containsParfor = (node: NodeInput): boolean => {
+const containsParfor = (node: unknown): boolean => {
     if (!AST.isNodeBase(node)) return false;
     if (node.type === 'FOR' && Reflect.get(node, 'parallel') === true) return true;
     for (const value of Object.values(node)) {
-        if (Array.isArray(value) && value.some((entry) => entry && typeof entry === 'object' && containsParfor(entry as NodeInput))) return true;
+        if (Array.isArray(value) && value.some((entry) => containsParfor(entry))) return true;
         if (value && typeof value === 'object' && value !== node.parent && AST.isNodeBase(value) && containsParfor(value)) return true;
     }
     return false;
@@ -45,6 +53,7 @@ const containsParfor = (node: NodeInput): boolean => {
 class InProcessSession implements RuntimeSession {
     private interpreter: Interpreter;
     private environment = new RuntimeEnvironment();
+    private readonly activeExecutions = new Set<AbortController>();
     private disposed = false;
     private interrupted: unknown;
 
@@ -77,6 +86,20 @@ class InProcessSession implements RuntimeSession {
             this.interrupted = undefined;
             return abortResult(false, reason);
         }
+        const externalSignal = options.signal;
+        const controller = new AbortController();
+        let timedOut = false;
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        const abort = (): void => controller.abort(externalSignal?.reason ?? 'Execution cancelled');
+        externalSignal?.addEventListener('abort', abort, { once: true });
+        if (options.timeoutMs !== undefined) {
+            timeout = setTimeout(() => {
+                timedOut = true;
+                controller.abort(new Error(`Execution exceeded ${options.timeoutMs} ms`));
+            }, options.timeoutMs);
+        }
+        options = { ...options, signal: controller.signal };
+        this.activeExecutions.add(controller);
         const started = Date.now();
         try {
             const parsed = this.environment.run(() => this.interpreter.Parse(source));
@@ -104,7 +127,7 @@ class InProcessSession implements RuntimeSession {
                     })(),
                 };
             });
-            if (options.timeoutMs !== undefined && Date.now() - started > options.timeoutMs) return abortResult(true, `Execution exceeded ${options.timeoutMs} ms`);
+            if (timedOut || (options.timeoutMs !== undefined && Date.now() - started > options.timeoutMs)) return abortResult(true, `Execution exceeded ${options.timeoutMs} ms`);
             const standardOutputs: RuntimeOutput[] =
                 evaluated.type === 'VOID' && extraOutputs.length > 0
                     ? []
@@ -124,7 +147,12 @@ class InProcessSession implements RuntimeSession {
                         : [],
             };
         } catch (error) {
+            if (controller.signal.aborted) return abortResult(timedOut, controller.signal.reason ?? error);
             return { status: 'error', outputs: [], diagnostics: [diagnostic(error)] };
+        } finally {
+            if (timeout !== undefined) clearTimeout(timeout);
+            externalSignal?.removeEventListener('abort', abort);
+            this.activeExecutions.delete(controller);
         }
     }
 
@@ -147,6 +175,7 @@ class InProcessSession implements RuntimeSession {
                     ...(options.signal ? { signal: options.signal } : {}),
                     ...(deadline !== undefined ? { deadline } : {}),
                 });
+                if (options.signal?.aborted) throw options.signal.reason ?? new Error('Execution cancelled');
                 const resumed = step.resume(hostResult);
                 if (resumed.state !== 'completed') throw new Error(resumed.state === 'error' ? resumed.diagnostics[0]?.message : 'Runtime effect did not complete.');
                 const result = resumed.value;
@@ -163,13 +192,13 @@ class InProcessSession implements RuntimeSession {
                 const machine = ExecutionMachine.effect({ type: 'delay', milliseconds }, () => undefined);
                 const step = machine.runUntilYield();
                 if (step.state !== 'effect') throw new Error('Runtime delay machine did not yield.');
-                step.resume(
-                    await this.host.request(step.effect, {
-                        sessionId: this.options.id ?? 'in-process',
-                        ...(options.signal ? { signal: options.signal } : {}),
-                        ...(deadline !== undefined ? { deadline } : {}),
-                    }),
-                );
+                const hostResult = await this.host.request(step.effect, {
+                    sessionId: this.options.id ?? 'in-process',
+                    ...(options.signal ? { signal: options.signal } : {}),
+                    ...(deadline !== undefined ? { deadline } : {}),
+                });
+                if (options.signal?.aborted) throw options.signal.reason ?? new Error('Execution cancelled');
+                step.resume(hostResult);
                 continue;
             }
             const result = this.environment.run(() =>
@@ -182,7 +211,8 @@ class InProcessSession implements RuntimeSession {
     }
 
     public async interrupt(reason: unknown = 'Execution interrupted'): Promise<void> {
-        this.interrupted = reason;
+        if (this.activeExecutions.size === 0) this.interrupted = reason;
+        for (const controller of this.activeExecutions) controller.abort(reason);
     }
 
     public async reset(): Promise<void> {
@@ -194,8 +224,10 @@ class InProcessSession implements RuntimeSession {
 
     public async dispose(): Promise<void> {
         if (this.disposed) return;
-        this.interpreter.Clear('all');
         this.disposed = true;
+        const reason = Object.assign(new Error('MathJSLab runtime session is disposed.'), { code: 'MATHJSLAB_DISPOSED' });
+        for (const controller of this.activeExecutions) controller.abort(reason);
+        this.interpreter.Clear('all');
         this.onDispose?.(this);
     }
 

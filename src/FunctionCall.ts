@@ -1,4 +1,14 @@
-import type { ExpressionBoundaryValue, NodeExpr, NodeFunctionDefinition, NodeFunctionParameter, NodeFunctionReturn, NodeIdentifier, NodeInput, ReturnHandlerResult, NameTable } from './AST';
+import type {
+    ExpressionBoundaryValue,
+    NodeFunctionDefinition,
+    NodeFunctionParameter,
+    NodeFunctionReturn,
+    NodeIdentifier,
+    NodeInput,
+    ReturnHandlerResult,
+    NameTable,
+    StrictNodeExpr,
+} from './AST';
 import { AST } from './AST';
 import { expressionValue } from './ExpressionValue';
 import { MultiArray } from './MultiArray';
@@ -10,7 +20,7 @@ type ThrowEvalError = (message: string) => never;
 
 type ReturnName = NodeFunctionReturn;
 type FunctionParameter = NodeFunctionParameter;
-type DefaultedFunctionParameter = NodeFunctionParameter & { type: '='; left: NodeIdentifier; right: NodeExpr };
+type DefaultedFunctionParameter = NodeFunctionParameter & { type: '='; left: NodeIdentifier; right: StrictNodeExpr };
 type EvaluatedArgumentValue = ExpressionBoundaryValue | DefaultArgumentMarker;
 type CallArgumentValue = ExpressionBoundaryValue;
 
@@ -30,7 +40,7 @@ type DefineName = (name: string, value: ExpressionBoundaryValue) => void;
 /**
  * Expression evaluator callback supplied by the interpreter.
  */
-type EvaluateExpression = (expression: NodeExpr) => NodeInput;
+type EvaluateExpression = (expression: ExpressionBoundaryValue) => NodeInput;
 
 /**
  * Default-argument evaluator callback.
@@ -38,7 +48,7 @@ type EvaluateExpression = (expression: NodeExpr) => NodeInput;
  * The parameter name is passed so interpreter diagnostics can report which
  * default expression failed.
  */
-type EvaluateDefault = (name: string, expression: NodeExpr) => NodeInput;
+type EvaluateDefault = (name: string, expression: StrictNodeExpr) => NodeInput;
 
 /**
  * Static input layout derived from a function definition.
@@ -132,7 +142,7 @@ type PreparedFunctionCall = {
     /**
      * Default expressions keyed by parameter name.
      */
-    inputDefaults: Map<string, NodeExpr>;
+    inputDefaults: Map<string, StrictNodeExpr>;
     /**
      * Minimum number of positional arguments required after trailing defaults.
      */
@@ -158,7 +168,7 @@ type FunctionCallPreparationCallbacks = {
     /**
      * Return default expressions keyed by input parameter name.
      */
-    inputDefaults: (func: NodeFunctionDefinition) => Map<string, NodeExpr>;
+    inputDefaults: (func: NodeFunctionDefinition) => Map<string, StrictNodeExpr>;
     /**
      * Return the `arguments (Output,Repeating)` output name, when present.
      */
@@ -211,12 +221,16 @@ class FunctionCall {
     /**
      * Ensure a workspace value can be exposed through a lazy return list.
      *
-     * `eval`/`evalin` can legitimately hand back a `NodeList` execution result,
-     * so the return channel accepts strict expression values plus that explicit
-     * carrier while still rejecting control-flow statements.
+     * Lazy output slots accept strict expressions only. `NodeList` execution
+     * results from `eval`/`evalin` belong to the callable execution boundary,
+     * not to a function's named return variables.
      */
-    private static returnExpression(value: unknown, name: string, throwEvalError: ThrowEvalError): NodeExpr {
-        return expressionValue(value, name, 'Return variable', throwEvalError);
+    private static returnExpression(value: unknown, name: string, throwEvalError: ThrowEvalError): StrictNodeExpr {
+        expressionValue(value, name, 'Return variable', throwEvalError);
+        if (!AST.isStrictNodeExpr(value)) {
+            throwEvalError(`Return variable '${name}' is not a strict expression.`);
+        }
+        return value;
     }
 
     /**
@@ -305,7 +319,7 @@ class FunctionCall {
     /**
      * Determine the minimum required positional count after trailing defaults.
      */
-    public static minimumPositionalCount(positionalParams: FunctionParameter[], inputDefaults: Map<string, NodeExpr>): number {
+    public static minimumPositionalCount(positionalParams: FunctionParameter[], inputDefaults: Map<string, StrictNodeExpr>): number {
         let minFixedParamCount = positionalParams.length;
         while (minFixedParamCount > 0) {
             const param = positionalParams[minFixedParamCount - 1];
@@ -496,7 +510,7 @@ class FunctionCall {
         func: NodeFunctionDefinition,
         inputLayout: FunctionInputLayout,
         evaluatedArgs: EvaluatedArgumentValue[],
-        inputDefaults: Map<string, NodeExpr>,
+        inputDefaults: Map<string, StrictNodeExpr>,
         defineName: DefineName,
         evaluateDefault: EvaluateDefault,
         throwEvalError: ThrowEvalError,
@@ -575,7 +589,7 @@ class FunctionCall {
      * not force validation of later outputs, while requesting an unassigned
      * output must raise an error.
      */
-    public static createReturnList(returnLayout: FunctionReturnLayout, nameTable: NameTable, throwEvalError: ThrowEvalError, outputMask: boolean[] = []): NodeExpr {
+    public static createReturnList(returnLayout: FunctionReturnLayout, nameTable: NameTable, throwEvalError: ThrowEvalError, outputMask: boolean[] = []): StrictNodeExpr {
         const { fixedReturnCount, names, variableOutputName } = returnLayout;
         const hasVariableOutput = typeof variableOutputName !== 'undefined';
         const outputIsRequested = (index: number): boolean => outputMask[index] ?? true;
@@ -593,14 +607,14 @@ class FunctionCall {
                         if (value === undefined) {
                             throwEvalError(`Undefined return value '${names[index]}'`);
                         }
-                        return value;
+                        return AST.requireStrictNodeExpr(value, `return value '${names[index]}'`);
                     }
                     const varargoutIndex = index - fixedReturnCount;
                     const value = evaluated[this.variableReturnKey(returnLayout, varargoutIndex)];
                     if (typeof value === 'undefined') {
                         AST.throwErrorIfGreaterThanReturnList(index, index + 1, throwEvalError);
                     }
-                    return value;
+                    return AST.requireStrictNodeExpr(value, `variable return value ${varargoutIndex + 1}`);
                 }
                 const key = names[index];
                 if (key === '~') {
@@ -610,7 +624,7 @@ class FunctionCall {
                 if (value === undefined) {
                     throwEvalError(`Undefined return value '${key}'`);
                 }
-                return value;
+                return AST.requireStrictNodeExpr(value, `return value '${key}'`);
             },
             (length: number) => {
                 if (!hasVariableOutput && length > names.length) {

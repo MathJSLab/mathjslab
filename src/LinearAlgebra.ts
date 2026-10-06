@@ -3,7 +3,7 @@ import { CharString } from './CharString';
 import { type ElementType, MultiArray } from './MultiArray';
 import { BLAS } from './BLAS';
 import { LAPACK } from './LAPACK';
-import { type BuiltInFunctionSignature, type NodeExpr, type NodeReturnList, AST, type FunctionSignatureEntry, ReturnHandlerResult } from './AST';
+import { type BuiltInFunctionSignature, type StrictNodeExpr, type NodeReturnList, AST, type FunctionSignatureEntry, ReturnHandlerResult } from './AST';
 import { RuntimeValue } from './RuntimeValue';
 
 /**
@@ -48,6 +48,8 @@ const defaultSettings: Partial<LinearAlgebraConfig> = {
  * * [Linear algebra at Wikipedia](https://en.wikipedia.org/wiki/Linear_algebra)
  */
 abstract class LinearAlgebra {
+    /** Select and validate one materialized lazy output. */
+    private static readonly returnListOutput = (evaluated: ReturnHandlerResult, key: string, name: string): StrictNodeExpr => AST.requireStrictNodeExpr(evaluated[key], `${name} output`);
     /**
      * Immutable snapshot of default linear-algebra settings.
      */
@@ -674,14 +676,19 @@ abstract class LinearAlgebra {
     public static readonly pageinv = (X: ElementType): NodeReturnList => {
         return AST.nodeBoundedReturnList(
             2,
-            (evaluated: ReturnHandlerResult, index: number): NodeExpr => (index === 0 ? evaluated.inverse : evaluated.reciprocalCondition),
+            (evaluated: ReturnHandlerResult, index: number): StrictNodeExpr =>
+                LinearAlgebra.returnListOutput(evaluated, index === 0 ? 'inverse' : 'reciprocalCondition', `pageinv ${index + 1}`),
             (length: number): ReturnHandlerResult => {
                 const source = LinearAlgebra.pageNumericArray(X, 'pageinv');
                 const dimensions = source.dimension.slice();
                 MultiArray.appendSingletonTail(dimensions, 2);
                 const inverse = LinearAlgebra.pageinvValue(source);
                 const reciprocalCondition = length > 1 ? LinearAlgebra.pageReciprocalCondition('pageinv', source, dimensions) : undefined;
-                return { length, inverse, reciprocalCondition };
+                return {
+                    length,
+                    inverse: AST.requireStrictNodeExpr(inverse, 'pageinv inverse'),
+                    reciprocalCondition: typeof reciprocalCondition === 'undefined' ? undefined : AST.requireStrictNodeExpr(reciprocalCondition, 'pageinv reciprocal condition'),
+                };
             },
         );
     };
@@ -795,7 +802,8 @@ abstract class LinearAlgebra {
         AST.throwInvalidCallError('pagemldivide', args.length !== 2 && args.length !== 3);
         return AST.nodeBoundedReturnList(
             2,
-            (evaluated: ReturnHandlerResult, index: number): NodeExpr => (index === 0 ? evaluated.solution : evaluated.reciprocalCondition),
+            (evaluated: ReturnHandlerResult, index: number): StrictNodeExpr =>
+                LinearAlgebra.returnListOutput(evaluated, index === 0 ? 'solution' : 'reciprocalCondition', `pagemldivide ${index + 1}`),
             (length: number): ReturnHandlerResult => {
                 const leftOption = args.length === 3 ? LinearAlgebra.pageTransposeOption(args[1], 'pagemldivide') : 'none';
                 const left = LinearAlgebra.applyPageTransposeOption(LinearAlgebra.pageNumericArray(args[0], 'pagemldivide'), leftOption);
@@ -803,7 +811,11 @@ abstract class LinearAlgebra {
                 const leftDimensions = left.dimension.slice();
                 MultiArray.appendSingletonTail(leftDimensions, 2);
                 const reciprocalCondition = length > 1 ? LinearAlgebra.pageReciprocalCondition('pagemldivide', left, leftDimensions) : undefined;
-                return { length, solution, reciprocalCondition };
+                return {
+                    length,
+                    solution: AST.requireStrictNodeExpr(solution, 'pagemldivide solution'),
+                    reciprocalCondition: typeof reciprocalCondition === 'undefined' ? undefined : AST.requireStrictNodeExpr(reciprocalCondition, 'pagemldivide reciprocal condition'),
+                };
             },
         );
     };
@@ -832,7 +844,8 @@ abstract class LinearAlgebra {
         AST.throwInvalidCallError('pagemrdivide', args.length !== 2 && args.length !== 3);
         return AST.nodeBoundedReturnList(
             2,
-            (evaluated: ReturnHandlerResult, index: number): NodeExpr => (index === 0 ? evaluated.solution : evaluated.reciprocalCondition),
+            (evaluated: ReturnHandlerResult, index: number): StrictNodeExpr =>
+                LinearAlgebra.returnListOutput(evaluated, index === 0 ? 'solution' : 'reciprocalCondition', `pagemrdivide ${index + 1}`),
             (length: number): ReturnHandlerResult => {
                 const rightOption = args.length === 3 ? LinearAlgebra.pageTransposeOption(args[2], 'pagemrdivide') : 'none';
                 const right = LinearAlgebra.applyPageTransposeOption(LinearAlgebra.pageNumericArray(args[1], 'pagemrdivide'), rightOption);
@@ -840,7 +853,11 @@ abstract class LinearAlgebra {
                 const rightDimensions = right.dimension.slice();
                 MultiArray.appendSingletonTail(rightDimensions, 2);
                 const reciprocalCondition = length > 1 ? LinearAlgebra.pageReciprocalCondition('pagemrdivide', right, rightDimensions) : undefined;
-                return { length, solution, reciprocalCondition };
+                return {
+                    length,
+                    solution: AST.requireStrictNodeExpr(solution, 'pagemrdivide solution'),
+                    reciprocalCondition: typeof reciprocalCondition === 'undefined' ? undefined : AST.requireStrictNodeExpr(reciprocalCondition, 'pagemrdivide reciprocal condition'),
+                };
             },
         );
     };
@@ -1071,19 +1088,20 @@ abstract class LinearAlgebra {
         }
         return AST.nodeBoundedReturnList(
             3,
-            (evaluated: ReturnHandlerResult, index: number): NodeExpr => {
+            (evaluated: ReturnHandlerResult, index: number): StrictNodeExpr => {
                 if (evaluated.length === 1) {
-                    return evaluated.U;
+                    return LinearAlgebra.returnListOutput(evaluated, 'U', 'lu');
                 } else {
                     switch (index) {
                         case 0:
-                            return evaluated.L;
+                            return LinearAlgebra.returnListOutput(evaluated, 'L', 'lu');
                         case 1:
-                            return evaluated.U;
+                            return LinearAlgebra.returnListOutput(evaluated, 'U', 'lu');
                         case 2:
-                            return evaluated.P;
+                            return LinearAlgebra.returnListOutput(evaluated, 'P', 'lu');
                     }
                 }
+                throw new RangeError(`lu output ${index + 1} is unavailable.`);
             },
             (length: number): ReturnHandlerResult => {
                 const { L, U, P } = LinearAlgebra.luDecomposition(M);
@@ -2188,26 +2206,27 @@ abstract class LinearAlgebra {
         }
         return AST.nodeBoundedReturnList(
             3,
-            (evaluated: ReturnHandlerResult, index: number): NodeExpr => {
+            (evaluated: ReturnHandlerResult, index: number): StrictNodeExpr => {
                 if (evaluated.length === 1) {
                     if (index === 0) {
-                        return evaluated.R;
+                        return LinearAlgebra.returnListOutput(evaluated, 'R', 'qr');
                     }
                 } else if (evaluated.length === 2) {
                     if (index === 0) {
-                        return evaluated.Q;
+                        return LinearAlgebra.returnListOutput(evaluated, 'Q', 'qr');
                     } else if (index === 1) {
-                        return evaluated.R;
+                        return LinearAlgebra.returnListOutput(evaluated, 'R', 'qr');
                     }
                 } else if (evaluated.length === 3) {
                     if (index === 0) {
-                        return evaluated.Q;
+                        return LinearAlgebra.returnListOutput(evaluated, 'Q', 'qr');
                     } else if (index === 1) {
-                        return evaluated.R;
+                        return LinearAlgebra.returnListOutput(evaluated, 'R', 'qr');
                     } else if (index === 2) {
-                        return evaluated.P;
+                        return LinearAlgebra.returnListOutput(evaluated, 'P', 'qr');
                     }
                 }
+                throw new RangeError(`qr output ${index + 1} is unavailable.`);
             },
             (length: number): ReturnHandlerResult => {
                 if (length === 1) {
@@ -2447,28 +2466,27 @@ abstract class LinearAlgebra {
     public static eig = (M: MultiArray): NodeReturnList => {
         return AST.nodeBoundedReturnList(
             3,
-            (evaluated: ReturnHandlerResult, index: number): NodeExpr | undefined => {
+            (evaluated: ReturnHandlerResult, index: number): StrictNodeExpr => {
                 if (evaluated.length === 1) {
                     if (index === 0) {
-                        return evaluated.values;
+                        return LinearAlgebra.returnListOutput(evaluated, 'values', 'eig');
                     }
                 } else if (evaluated.length === 2) {
                     if (index === 0) {
-                        return evaluated.vectors;
+                        return LinearAlgebra.returnListOutput(evaluated, 'vectors', 'eig');
                     } else if (index === 1) {
-                        return evaluated.values;
+                        return LinearAlgebra.returnListOutput(evaluated, 'values', 'eig');
                     }
                 } else if (evaluated.length === 3) {
                     if (index === 0) {
-                        return evaluated.vectors;
+                        return LinearAlgebra.returnListOutput(evaluated, 'vectors', 'eig');
                     } else if (index === 1) {
-                        return evaluated.values;
+                        return LinearAlgebra.returnListOutput(evaluated, 'values', 'eig');
                     } else if (index === 2) {
-                        return evaluated.T; // Tridiagonal value for debugging and inspection.
+                        return LinearAlgebra.returnListOutput(evaluated, 'T', 'eig'); // Tridiagonal value for debugging and inspection.
                     }
                 }
-                // Invalid indexes return undefined by the NodeReturnList convention.
-                return undefined;
+                throw new RangeError(`eig output ${index + 1} is unavailable.`);
             },
             (length: number): ReturnHandlerResult => {
                 if (length === 1) {
@@ -2501,7 +2519,7 @@ abstract class LinearAlgebra {
     public static test(A: MultiArray) {
         return AST.nodeBoundedReturnList(
             3,
-            (evaluated: ReturnHandlerResult, index: number): NodeExpr | undefined => {
+            (evaluated: ReturnHandlerResult, index: number): StrictNodeExpr => {
                 if (evaluated.length === 1) {
                     if (index === 0) {
                         return Complex.zero();
@@ -2521,8 +2539,7 @@ abstract class LinearAlgebra {
                         return Complex.two();
                     }
                 }
-                // Invalid indexes return undefined by the NodeReturnList convention.
-                return undefined;
+                throw new RangeError(`test output ${index + 1} is unavailable.`);
             },
             (length: number): ReturnHandlerResult => {
                 return { length };

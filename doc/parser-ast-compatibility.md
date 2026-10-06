@@ -107,10 +107,42 @@ The AST layer normalizes parse output into node contracts exported from
   `Structure` elements;
 - `NodeFor` preserves `parallel === true` for `parfor` and stores optional
   worker expressions separately from the loop target/range;
-- `NodeOperation` consumers should narrow through the AST binary, prefix, and
-  postfix guards before reading operands. Parser actions still produce one
-  operation family, while interpreter and unparser paths now enforce the
-  refined shapes they consume;
+- control-flow expression slots are now strict AST boundaries: `if`/`elseif`
+  conditions, `switch`/`case` expressions, `while`/`do-until` conditions, loop
+  ranges, and optional `parfor` worker expressions store `StrictNodeExpr`
+  rather than the legacy `NodeExpr` carrier. `NodeFor.target` stores the
+  narrower `NodeAssignmentTarget`, and both the grammar and the public AST
+  factory retain runtime guards for untyped callers;
+- call/index expression structure is now strict: `NodeIndexExpr.expr`, explicit
+  superclass-constructor instances, range components, indirect-reference
+  objects and dynamic fields, and unary operands store `StrictNodeExpr`;
+- binary operations are a discriminated union. `BinaryExpressionOperation`
+  stores two strict operands, while `AssignmentOperation` alone may carry an
+  `ExpressionBoundaryValue` on its right side. Use
+  `AST.isNodeBinaryExpressionOperation` and `AST.isNodeAssignmentOperation`
+  when the distinction matters;
+- `NodeList` remains an explicit execution-result carrier only at boundaries
+  that use `ExpressionBoundaryValue`; in this migrated family it is accepted
+  only as an assignment result/right-hand carrier and in validated call/index
+  argument arrays. Receivers, ranges, dynamic fields, and ordinary operator
+  operands reject it even when an untyped caller bypasses TypeScript;
+- `NodeOperation` consumers should narrow through the AST binary, assignment,
+  prefix, and postfix guards before reading operands. Parser actions still
+  produce one operation family, while interpreter and unparser paths enforce
+  the refined shapes they consume;
+- declaration and class defaults are strict expression slots:
+  `NodeArgumentValidation.default`, `NodeClassProperty.defaultValue`, and
+  `NodeClassAttribute.value` store `StrictNodeExpr | null`. Anonymous-function
+  bodies cross the same strict factory boundary before entering the
+  deliberately AST-opaque `FunctionHandle` runtime object;
+- `arguments` declaration names use `NodeArgumentValidationName` (identifier or
+  dotted indirect reference), while class constraints use `NodeArgumentClass`
+  (identifier, metaclass, or the legacy empty-list absence marker). Factories
+  retain runtime guards for JavaScript callers and generated-parser inputs;
+- `global` and `persistent` declarations store only `NodeDeclarationElement[]`.
+  Their parser rule now returns `NodeDeclaration` directly, while the
+  compatibility helper still accepts the historical `{ node }` wrapper after
+  validating its contained declaration element;
 - `RuntimeExpressionValue` names evaluated runtime values accepted in
   expression position, while `StrictNodeExpr` is the documented expression
   contract for new hand-written AST code. `LegacyNodeExprCarrier` names the
@@ -229,6 +261,10 @@ The AST layer normalizes parse output into node contracts exported from
 
 ## Compatibility Tests
 
+The executable symbol/call ordering and its source-resolver, import, handle,
+method, constructor, and indexing boundaries are documented in
+`doc/dispatch-precedence.md`.
+
 The release-facing parser/AST compatibility fixtures are concentrated in:
 
 - `src/ParserCompatibility.spec.ts` for parse, unparse, and execution fixtures;
@@ -238,6 +274,8 @@ The release-facing parser/AST compatibility fixtures are concentrated in:
   assignment compatibility fixtures;
 - `src/DispatchCompatibility.spec.ts` for function/class dispatch precedence
   and operator compatibility fixtures;
+- `src/DispatchPrecedence.spec.ts` for the exported precedence matrices and
+  structured resolution-tier provenance;
 - `src/CompatibilityStability.spec.ts` for integrated parser/AST/runtime
   stability scenarios that combine imports, class sources, functions, and
   control flow;
@@ -264,6 +302,17 @@ npm run test:unit
 ```
 
 ## Known Boundaries
+
+Context-dependent lexer/parser decisions and their regression matrix are
+documented in `doc/parser-contextual-boundaries.md`. That audit is the required
+reference for command-form syntax, apostrophe/string disambiguation,
+matrix/cell whitespace, class and arguments blocks, exception/cleanup blocks,
+and parallel block headers.
+
+The remaining permissive casts and the staged exit path from
+`LegacyNodeExprCarrier` are classified in `doc/architecture-boundary-audit.md`.
+New code must follow the invariants in that audit rather than extending the
+legacy carrier into new APIs.
 
 The parser, AST, and interpreter now share explicit contracts for many high
 value language forms, but MathJSLab is not yet a complete MATLAB/Octave

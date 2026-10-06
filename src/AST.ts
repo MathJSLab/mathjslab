@@ -70,6 +70,20 @@ type OperatorType =
     | '_++'
     | '_--';
 
+type AssignmentOperatorType = '=' | '+=' | '-=' | '*=' | '/=' | '\\=' | '^=' | '**=' | '.*=' | './=' | '.\\=' | '.^=' | '.**=' | '&=' | '|=';
+
+/** Prefix unary operators, including parenthesized expressions. */
+type PrefixOperatorType = '()' | '!' | '~' | '+_' | '-_' | '++_' | '--_';
+
+/** Postfix transpose and increment/decrement operators. */
+type PostfixOperatorType = ".'" | "'" | '_++' | '_--';
+
+/** Binary expression operators excluding assignment and unary forms. */
+type BinaryExpressionOperatorType = Exclude<OperatorType, AssignmentOperatorType | PrefixOperatorType | PostfixOperatorType>;
+
+/** Binary expression and assignment operator discriminants. */
+type BinaryOperatorType = BinaryExpressionOperatorType | AssignmentOperatorType;
+
 const operatorTypes: readonly OperatorType[] = [
     '+',
     '-',
@@ -122,7 +136,7 @@ const operatorTypes: readonly OperatorType[] = [
     '_--',
 ];
 
-const binaryOperatorTypes: readonly OperatorType[] = [
+const binaryOperatorTypes: readonly BinaryOperatorType[] = [
     '+',
     '-',
     '.*',
@@ -163,9 +177,11 @@ const binaryOperatorTypes: readonly OperatorType[] = [
     '|=',
 ];
 
-const prefixOperatorTypes: readonly OperatorType[] = ['()', '!', '~', '+_', '-_', '++_', '--_'];
+const assignmentOperatorTypes: readonly AssignmentOperatorType[] = ['=', '+=', '-=', '*=', '/=', '\\=', '^=', '**=', '.*=', './=', '.\\=', '.^=', '.**=', '&=', '|='];
 
-const postfixOperatorTypes: readonly OperatorType[] = [".'", "'", '_++', '_--'];
+const prefixOperatorTypes: readonly PrefixOperatorType[] = ['()', '!', '~', '+_', '-_', '++_', '--_'];
+
+const postfixOperatorTypes: readonly PostfixOperatorType[] = [".'", "'", '_++', '_--'];
 
 /**
  * Delimiter used by an index expression.
@@ -415,8 +431,8 @@ interface NodeCmdWList extends NodeBase {
  */
 interface NodeIndexExpr extends NodeBase {
     type: 'IDX';
-    expr: NodeExpr;
-    exprEvaluated?: NodeExpr;
+    expr: StrictNodeExpr;
+    exprEvaluated?: StrictNodeExpr;
     args: ExpressionBoundaryValue[];
     delim: IndexingDelimiterType;
 }
@@ -426,7 +442,7 @@ interface NodeIndexExpr extends NodeBase {
  */
 interface NodeSuperclassConstructor extends NodeBase {
     type: 'SUPERCLASS_CTOR';
-    instance: NodeExpr;
+    instance: StrictNodeExpr;
     superclass: NodeIdentifier;
     args: ExpressionBoundaryValue[];
 }
@@ -444,9 +460,9 @@ interface NodeMetaClass extends NodeBase {
  */
 interface NodeRange extends NodeBase {
     type: 'RANGE';
-    start_: NodeExpr;
-    stop_: NodeExpr;
-    stride_: NodeExpr | null;
+    start_: StrictNodeExpr;
+    stop_: StrictNodeExpr;
+    stride_: StrictNodeExpr | null;
 }
 
 /**
@@ -487,23 +503,36 @@ type PostfixUnaryOperation = UnaryOperationL;
  * Right unary operation node.
  */
 interface UnaryOperationR extends NodeBase {
-    right: NodeExpr;
+    type: PrefixOperatorType;
+    right: StrictNodeExpr;
 }
 
 /**
  * Left unary operation node.
  */
 interface UnaryOperationL extends NodeBase {
-    left: NodeExpr;
+    type: PostfixOperatorType;
+    left: StrictNodeExpr;
 }
 
 /**
  * Binary operation.
  */
-interface BinaryOperation extends NodeBase {
-    left: NodeExpr;
-    right: NodeExpr;
+interface BinaryExpressionOperation extends NodeBase {
+    type: BinaryExpressionOperatorType;
+    left: StrictNodeExpr;
+    right: StrictNodeExpr;
 }
+
+/** Assignment with a strict left-hand expression and explicit boundary value. */
+interface AssignmentOperation extends NodeBase {
+    type: AssignmentOperatorType;
+    left: StrictNodeExpr;
+    right: ExpressionBoundaryValue;
+}
+
+/** Discriminated union of ordinary binary expressions and assignments. */
+type BinaryOperation = BinaryExpressionOperation | AssignmentOperation;
 
 /**
  * Ignored return target (`~`) in a return or assignment list.
@@ -522,6 +551,12 @@ type NodeFunctionReturn = NodeIdentifier | NodeIgnoredTarget;
  */
 type NodeDeclarationElement = NodeIdentifier | NodeDefaultedParameter;
 
+/** Name forms accepted by `arguments` declarations. */
+type NodeArgumentValidationName = NodeIdentifier | NodeIndirectRef;
+
+/** Class forms accepted by argument and property validation declarations. */
+type NodeArgumentClass = NodeIdentifier | NodeMetaClass | NodeList | null;
+
 /**
  * Parameter-list entry accepted by MATLAB/Octave function definitions.
  */
@@ -530,7 +565,7 @@ type NodeFunctionParameter = NodeIdentifier | NodeIgnoredTarget | NodeOperation;
 /**
  * Defaulted parameter form accepted in MATLAB/Octave function headers.
  */
-type NodeDefaultedParameter = BinaryOperation & { type: '='; left: NodeIdentifier; right: NodeExpr };
+type NodeDefaultedParameter = AssignmentOperation & { type: '='; left: NodeIdentifier; right: StrictNodeExpr };
 
 /**
  * Left-hand-side expression forms accepted by assignment validation.
@@ -550,8 +585,8 @@ interface NodeList extends NodeBase {
  */
 interface NodeIndirectRef extends NodeBase {
     type: '.';
-    obj: NodeExpr;
-    field: (string | NodeExpr)[];
+    obj: StrictNodeExpr;
+    field: (string | StrictNodeExpr)[];
 }
 
 /**
@@ -561,13 +596,13 @@ interface NodeIndirectRef extends NodeBase {
  */
 type ReturnHandlerResult = {
     length: number;
-    [name: string]: NodeExpr | number | undefined;
+    [name: string]: StrictNodeExpr | number | undefined;
 };
 
 /**
  * Select a single output from a realized return handler result.
  */
-type ReturnSelector = (evaluated: ReturnHandlerResult, index: number) => NodeExpr;
+type ReturnSelector = (evaluated: ReturnHandlerResult, index: number) => StrictNodeExpr;
 
 /**
  * Materialize the outputs requested by a caller.
@@ -880,7 +915,7 @@ interface NodeArgumentValidation extends NodeBase {
     /**
      * Identifier or name-value target such as `opts.Name`.
      */
-    name: NodeExpr;
+    name: NodeArgumentValidationName;
     /**
      * Literal/symbolic size declaration.
      */
@@ -888,7 +923,7 @@ interface NodeArgumentValidation extends NodeBase {
     /**
      * Class declaration. May be a single identifier or a list.
      */
-    class: NodeInput | null;
+    class: NodeArgumentClass;
     /**
      * Validator function declarations.
      */
@@ -896,7 +931,7 @@ interface NodeArgumentValidation extends NodeBase {
     /**
      * Default expression, when declared for an input argument.
      */
-    default: NodeExpr | null;
+    default: StrictNodeExpr | null;
 }
 
 /**
@@ -920,7 +955,7 @@ interface NodeArguments extends NodeBase {
  */
 interface NodeDeclaration extends NodeBase {
     type: 'GLOBAL' | 'PERSIST';
-    list: NodeExpr[];
+    list: NodeDeclarationElement[];
 }
 
 /**
@@ -961,7 +996,7 @@ interface NodeContinue extends NodeBase {
  */
 interface NodeIf extends NodeBase {
     type: 'IF';
-    expression: NodeExpr[];
+    expression: StrictNodeExpr[];
     then: NodeList[];
     else: NodeList | null;
 }
@@ -971,7 +1006,7 @@ interface NodeIf extends NodeBase {
  */
 interface NodeElseIf extends NodeBase {
     type: 'ELSEIF';
-    expression: NodeExpr;
+    expression: StrictNodeExpr;
     then: NodeList;
 }
 
@@ -988,7 +1023,7 @@ interface NodeElse extends NodeBase {
  */
 interface NodeSwitchCase extends NodeBase {
     type: 'CASE';
-    expression: NodeExpr;
+    expression: StrictNodeExpr;
     then: NodeList;
 }
 
@@ -997,7 +1032,7 @@ interface NodeSwitchCase extends NodeBase {
  */
 interface NodeSwitch extends NodeBase {
     type: 'SWITCH';
-    expression: NodeExpr;
+    expression: StrictNodeExpr;
     cases: NodeSwitchCase[];
     otherwise: NodeList | null;
 }
@@ -1007,7 +1042,7 @@ interface NodeSwitch extends NodeBase {
  */
 interface NodeWhile extends NodeBase {
     type: 'WHILE';
-    expression: NodeExpr;
+    expression: StrictNodeExpr;
     body: NodeList;
 }
 
@@ -1017,7 +1052,7 @@ interface NodeWhile extends NodeBase {
 interface NodeDoUntil extends NodeBase {
     type: 'DO_UNTIL';
     body: NodeList;
-    expression: NodeExpr;
+    expression: StrictNodeExpr;
 }
 
 /**
@@ -1025,9 +1060,9 @@ interface NodeDoUntil extends NodeBase {
  */
 interface NodeFor extends NodeBase {
     type: 'FOR';
-    target: NodeExpr;
-    expression: NodeExpr;
-    workers: NodeExpr | null;
+    target: NodeAssignmentTarget;
+    expression: StrictNodeExpr;
+    workers: StrictNodeExpr | null;
     body: NodeList;
     parallel: boolean;
 }
@@ -1125,11 +1160,11 @@ interface NodeClassProperty extends NodeBase {
     /** Literal/symbolic size validation list. */
     size: ExpressionBoundaryValue[];
     /** Class validation node, or an empty list/null when absent. */
-    class: NodeInput | null;
+    class: NodeArgumentClass;
     /** Validator function declarations. */
     functions: ExpressionBoundaryValue[];
     /** Default value expression, when declared. */
-    defaultValue: NodeExpr | null;
+    defaultValue: StrictNodeExpr | null;
 }
 
 /**
@@ -1160,7 +1195,7 @@ interface NodeClassAttribute extends NodeBase {
     /** Attribute name as declared in source. */
     id: string;
     /** Optional attribute value, including identifiers, strings, cells, or negated markers. */
-    value: NodeExpr | null;
+    value: StrictNodeExpr | null;
 }
 
 /**
@@ -1285,19 +1320,27 @@ abstract class AST {
      * Test whether an unknown value is a binary operator expression.
      */
     public static readonly isNodeBinaryOperation = (value: unknown): value is BinaryOperation =>
-        AST.isNodeOperation(value) && binaryOperatorTypes.includes(value.type as OperatorType) && 'left' in value && 'right' in value;
+        AST.isNodeOperation(value) && binaryOperatorTypes.includes(value.type as BinaryOperatorType) && 'left' in value && 'right' in value;
+
+    /** Test whether an unknown value is a non-assignment binary expression. */
+    public static readonly isNodeBinaryExpressionOperation = (value: unknown): value is BinaryExpressionOperation =>
+        AST.isNodeBinaryOperation(value) && !assignmentOperatorTypes.includes(value.type as AssignmentOperatorType);
+
+    /** Test whether an unknown value is an assignment operation. */
+    public static readonly isNodeAssignmentOperation = (value: unknown): value is AssignmentOperation =>
+        AST.isNodeBinaryOperation(value) && assignmentOperatorTypes.includes(value.type as AssignmentOperatorType);
 
     /**
      * Test whether an unknown value is a prefix unary operator expression.
      */
     public static readonly isNodePrefixOperation = (value: unknown): value is PrefixUnaryOperation =>
-        AST.isNodeOperation(value) && prefixOperatorTypes.includes(value.type as OperatorType) && 'right' in value;
+        AST.isNodeOperation(value) && prefixOperatorTypes.includes(value.type as PrefixOperatorType) && 'right' in value;
 
     /**
      * Test whether an unknown value is a postfix unary operator expression.
      */
     public static readonly isNodePostfixOperation = (value: unknown): value is PostfixUnaryOperation =>
-        AST.isNodeOperation(value) && postfixOperatorTypes.includes(value.type as OperatorType) && 'left' in value;
+        AST.isNodeOperation(value) && postfixOperatorTypes.includes(value.type as PostfixOperatorType) && 'left' in value;
 
     /**
      * Test whether an unknown value is a function return-list entry.
@@ -1309,11 +1352,14 @@ abstract class AST {
      */
     public static readonly isNodeDeclarationElement = (value: unknown): value is NodeDeclarationElement => AST.isNodeIdentifier(value) || AST.isNodeDefaultedParameter(value);
 
+    /** Test whether an unknown value is a valid `arguments` declaration name. */
+    public static readonly isNodeArgumentValidationName = (value: unknown): value is NodeArgumentValidationName => AST.isNodeIdentifier(value) || AST.isNodeIndirectRef(value);
+
     /**
      * Test whether an unknown value is a defaulted function parameter.
      */
     public static readonly isNodeDefaultedParameter = (value: unknown): value is NodeDefaultedParameter =>
-        AST.isNodeBinaryOperation(value) && value.type === '=' && AST.isNodeIdentifier(value.left);
+        AST.isNodeAssignmentOperation(value) && value.type === '=' && AST.isNodeIdentifier(value.left) && AST.isStrictNodeExpr(value.right);
 
     /**
      * Test whether an unknown value is a function parameter-list entry.
@@ -1326,6 +1372,20 @@ abstract class AST {
      */
     public static readonly isNodeAssignmentTarget = (value: unknown): value is NodeAssignmentTarget =>
         AST.isNodeIdentifier(value) || AST.isNodeIgnoredTarget(value) || AST.isNodeIndexExpr(value) || AST.isNodeIndirectRef(value) || MultiArray.isInstanceOf(value);
+
+    /**
+     * Require one assignment target at a parser or public factory boundary.
+     *
+     * @param value Candidate assignment target.
+     * @param role Description used in the diagnostic.
+     * @returns The same value narrowed to `NodeAssignmentTarget`.
+     */
+    public static readonly requireNodeAssignmentTarget = (value: unknown, role = 'expression'): NodeAssignmentTarget => {
+        if (!AST.isNodeAssignmentTarget(value)) {
+            throw new TypeError(`${role} is not an assignment target.`);
+        }
+        return value;
+    };
 
     /**
      * Test whether an unknown value is a declaration statement.
@@ -1523,11 +1583,30 @@ abstract class AST {
      * guard keeps hand-written factories from preserving control-flow or block
      * nodes in expression-only fields.
      */
-    private static readonly factoryExpression = (value: NodeInput, role: string, allowNodeList = false): ExpressionBoundaryValue => {
-        if (allowNodeList && AST.isNodeList(value)) {
-            return value;
+    private static readonly factoryExpression = (value: NodeInput, role: string): StrictNodeExpr => AST.requireStrictNodeExpr(value, role);
+
+    /**
+     * Validate one expression boundary that explicitly permits a `NodeList`
+     * execution-result carrier.
+     */
+    private static readonly factoryExpressionBoundary = (value: NodeInput, role: string): ExpressionBoundaryValue => (AST.isNodeList(value) ? value : AST.factoryExpression(value, role));
+
+    /**
+     * Validate one assignment target before storing it in a typed AST slot.
+     */
+    private static readonly factoryAssignmentTarget = (value: unknown, role: string): NodeAssignmentTarget => {
+        if (!AST.isNodeAssignmentTarget(value)) {
+            throw new TypeError(`${role} is not an expression node.`);
         }
-        return AST.requireStrictNodeExpr(value, role);
+        return value;
+    };
+
+    /** Validate an identifier or dotted name-value target. */
+    private static readonly factoryArgumentValidationName = (value: unknown, role: string): NodeArgumentValidationName => {
+        if (!AST.isNodeArgumentValidationName(value)) {
+            throw new TypeError(`${role} is not an expression node.`);
+        }
+        return value;
     };
 
     /**
@@ -1573,7 +1652,7 @@ abstract class AST {
     /**
      * Validate an optional class declaration in `arguments` and class property syntax.
      */
-    private static readonly factoryArgumentClass = (value: NodeInput | null, role: string): NodeInput | null => {
+    private static readonly factoryArgumentClass = (value: NodeInput | null, role: string): NodeArgumentClass => {
         if (value === null || (AST.isNodeList(value) && value.list.length === 0)) {
             return value;
         }
@@ -1637,12 +1716,14 @@ abstract class AST {
     };
 
     /**
-     * Create expression and arguments node.
-     * @param nodeexpr
-     * @param nodelist
-     * @returns
+     * Create a call/index node with a strict receiver and validated arguments.
+     * @param nodeexpr Strict expression being called or indexed.
+     * @param nodelist Argument list; explicit execution carriers are allowed in arguments.
+     * @param delimiter Parentheses for calls/indexing or braces for cell indexing.
+     * @returns A node with parent/index metadata attached to its expression and arguments.
+     * @throws TypeError When an untyped caller supplies a non-expression receiver or argument.
      */
-    public static readonly nodeIndexExpr = (nodeexpr: NodeExpr, nodelist: NodeList | null = null, delimiter: IndexingDelimiterType = '()'): NodeIndexExpr => {
+    public static readonly nodeIndexExpr = (nodeexpr: StrictNodeExpr, nodelist: NodeList | null = null, delimiter: IndexingDelimiterType = '()'): NodeIndexExpr => {
         const result: NodeIndexExpr = {
             type: 'IDX',
             expr: AST.factoryExpression(nodeexpr, 'indexed expression'),
@@ -1664,7 +1745,7 @@ abstract class AST {
     /**
      * Create an explicit superclass constructor call node.
      */
-    public static readonly nodeSuperclassConstructor = (instance: NodeExpr, superclass: NodeIdentifier, args: NodeList | null = null): NodeSuperclassConstructor => {
+    public static readonly nodeSuperclassConstructor = (instance: StrictNodeExpr, superclass: NodeIdentifier, args: NodeList | null = null): NodeSuperclassConstructor => {
         const result: NodeSuperclassConstructor = {
             type: 'SUPERCLASS_CTOR',
             instance: AST.factoryExpression(instance, 'superclass constructor instance'),
@@ -1690,7 +1771,7 @@ abstract class AST {
      * @param stride_
      * @returns NodeRange.
      */
-    public static readonly nodeRange = (start_: NodeExpr, stop_: NodeExpr, stride_?: NodeExpr): NodeRange => {
+    public static readonly nodeRange = (start_: StrictNodeExpr, stop_: StrictNodeExpr, stride_?: StrictNodeExpr): NodeRange => {
         const result: NodeRange = {
             type: 'RANGE',
             start_: AST.factoryExpression(start_, 'range start'),
@@ -1701,7 +1782,7 @@ abstract class AST {
         };
         result.start_.parent = result;
         result.stop_.parent = result;
-        if (stride_) {
+        if (result.stride_) {
             result.stride_.parent = result;
         }
         return result;
@@ -1750,12 +1831,6 @@ abstract class AST {
         '_++',
         '_--',
     ]);
-
-    /**
-     * Assignment-like operations whose right side may temporarily carry a
-     * `NodeList` execution-result value produced by `eval`/`evalin`.
-     */
-    private static readonly assignmentNodeOperation = new Set<NodeType | number>(['=', '+=', '-=', '*=', '/=', '\\=', '^=', '**=', '.*=', './=', '.\\=', '.^=', '.**=', '&=', '|=']);
 
     /**
      * Operations that MATLAB/Octave reject inside anonymous function bodies.
@@ -1877,7 +1952,11 @@ abstract class AST {
      * @param data2
      * @returns
      */
-    public static readonly nodeOperation = (op: OperatorType, data1: NodeExpr, data2?: NodeExpr): NodeOperation => {
+    public static readonly nodeOperation = <T extends OperatorType>(
+        op: T,
+        data1: StrictNodeExpr,
+        data2?: T extends AssignmentOperatorType ? ExpressionBoundaryValue : StrictNodeExpr,
+    ): NodeOperation => {
         let result: NodeOperation;
         switch (op) {
             case '+':
@@ -1903,6 +1982,17 @@ abstract class AST {
             case '|':
             case '&&':
             case '||':
+                if (typeof data2 === 'undefined') {
+                    throw new TypeError(`right operand for ${op} is missing.`);
+                }
+                result = {
+                    type: op,
+                    left: AST.factoryExpression(data1, `left operand for ${op}`),
+                    right: AST.factoryExpression(data2, `right operand for ${op}`),
+                };
+                result.left.parent = result;
+                result.right.parent = result;
+                break;
             case '=':
             case '+=':
             case '-=':
@@ -1924,10 +2014,10 @@ abstract class AST {
                 result = {
                     type: op,
                     left: AST.factoryExpression(data1, `left operand for ${op}`),
-                    right: AST.factoryExpression(data2, `right operand for ${op}`, AST.assignmentNodeOperation.has(op)),
+                    right: AST.factoryExpressionBoundary(data2, `right operand for ${op}`),
                 };
-                (result as BinaryOperation).left.parent = result;
-                (result as BinaryOperation).right.parent = result;
+                result.left.parent = result;
+                result.right.parent = result;
                 break;
             case '()':
             case '!':
@@ -1967,7 +2057,7 @@ abstract class AST {
      * @param value Default expression.
      * @returns Defaulted parameter/declaration node.
      */
-    public static readonly nodeDefaultedParameter = (id: NodeIdentifier, value: NodeExpr): NodeDefaultedParameter => {
+    public static readonly nodeDefaultedParameter = (id: NodeIdentifier, value: StrictNodeExpr): NodeDefaultedParameter => {
         const result = AST.nodeOperation('=', id, value);
         if (!AST.isNodeDefaultedParameter(result)) {
             throw new TypeError('defaulted parameter has invalid node type.');
@@ -2053,7 +2143,7 @@ abstract class AST {
      * @param right
      * @returns
      */
-    public static readonly nodeIndirectRef = (left: NodeExpr, right: string | NodeExpr): NodeIndirectRef => {
+    public static readonly nodeIndirectRef = (left: StrictNodeExpr, right: string | StrictNodeExpr): NodeIndirectRef => {
         if (AST.isNodeIndirectRef(left)) {
             left.field.push(typeof right === 'string' ? right : AST.factoryExpression(right, 'indirect reference field'));
             if (typeof right !== 'string') {
@@ -2128,7 +2218,7 @@ abstract class AST {
      */
     public static readonly nodeBoundedReturnList = (maxLength: number, selector: ReturnSelector, handler?: ReturnHandler, throwError?: ThrowError): NodeReturnList => {
         return AST.nodeReturnList(
-            (evaluated: ReturnHandlerResult, index: number): NodeExpr => {
+            (evaluated: ReturnHandlerResult, index: number): StrictNodeExpr => {
                 AST.throwErrorIfGreaterThanReturnList(maxLength, evaluated.length, throwError);
                 return selector(evaluated, index);
             },
@@ -2144,12 +2234,13 @@ abstract class AST {
      * @param node A `NodeExpr`
      * @returns A lazy return-list wrapper for `node`.
      */
-    public static readonly ensureReturnList = (node: NodeExpr): NodeReturnList => {
-        if (AST.isNodeReturnList(node)) {
-            return node;
+    public static readonly ensureReturnList = (node: unknown): NodeReturnList => {
+        const expression = AST.requireStrictNodeExpr(node, 'return-list value');
+        if (AST.isNodeReturnList(expression)) {
+            return expression;
         }
-        const result = node;
-        return AST.nodeReturnList((evaluated: ReturnHandlerResult, index: number): NodeExpr | never => {
+        const result = expression;
+        return AST.nodeReturnList((evaluated: ReturnHandlerResult, index: number): StrictNodeExpr | never => {
             if (index === 0) {
                 return result;
             } else {
@@ -2212,7 +2303,7 @@ abstract class AST {
      * @param expression
      * @returns
      */
-    public static readonly nodeFunctionHandle = (id: NodeIdentifier | null = null, parameter_list: NodeList | null = null, expression: NodeExpr | null = null): FunctionHandle => {
+    public static readonly nodeFunctionHandle = (id: NodeIdentifier | null = null, parameter_list: NodeList | null = null, expression: StrictNodeExpr | null = null): FunctionHandle => {
         const parameters = parameter_list ? AST.factoryNodeList(parameter_list, AST.isNodeFunctionParameter, 'function handle parameter ') : [];
         const body = expression ? AST.factoryExpression(expression, 'function handle expression') : null;
         if (!id) {
@@ -2316,15 +2407,15 @@ abstract class AST {
      * @returns Argument validation node.
      */
     public static readonly nodeArgumentValidation = (
-        name: NodeExpr,
+        name: NodeArgumentValidationName,
         size: NodeList,
         cl: NodeInput | null = null,
         functions: NodeList,
-        dflt: NodeExpr | null = null,
+        dflt: StrictNodeExpr | null = null,
     ): NodeArgumentValidation => {
         const result = {
             type: 'ARGVALID',
-            name: AST.factoryExpression(name, 'argument validation name'),
+            name: AST.factoryArgumentValidationName(name, 'argument validation name'),
             size: AST.factoryExpressionList(size, 'argument validation size '),
             class: AST.factoryArgumentClass(cl, 'argument validation class'),
             functions: AST.factoryExpressionList(functions, 'argument validation function '),
@@ -2420,7 +2511,8 @@ abstract class AST {
      * @param declaration Declaration list entry.
      * @returns AST node for the declaration entry.
      */
-    public static readonly getDeclarationNode = (declaration: NodeExpr | { node: NodeExpr }): NodeExpr => ('node' in declaration ? declaration.node : declaration);
+    public static readonly getDeclarationNode = (declaration: NodeDeclarationElement | { node: NodeDeclarationElement }): NodeDeclarationElement =>
+        'node' in declaration ? declaration.node : declaration;
 
     /**
      *
@@ -2428,7 +2520,7 @@ abstract class AST {
      * @param declaration
      * @returns
      */
-    public static readonly nodeAppendDeclaration = (node: NodeDeclaration, declaration: NodeExpr): NodeDeclaration => {
+    public static readonly nodeAppendDeclaration = (node: NodeDeclaration, declaration: NodeDeclarationElement | { node: NodeDeclarationElement }): NodeDeclaration => {
         const declarationNode = AST.getDeclarationNode(declaration);
         if (!AST.isNodeDeclarationElement(declarationNode)) {
             throw new TypeError('declaration entry has invalid node type.');
@@ -2478,7 +2570,7 @@ abstract class AST {
      * @param then
      * @returns
      */
-    public static readonly nodeIfBegin = (expression: NodeExpr, then: NodeList): NodeIf => {
+    public static readonly nodeIfBegin = (expression: StrictNodeExpr, then: NodeList): NodeIf => {
         AST.factoryProgramElementList(then, 'if body ');
         const result = {
             type: 'IF',
@@ -2527,7 +2619,7 @@ abstract class AST {
      * @param then
      * @returns
      */
-    public static readonly nodeElseIf = (expression: NodeExpr, then: NodeList): NodeElseIf => {
+    public static readonly nodeElseIf = (expression: StrictNodeExpr, then: NodeList): NodeElseIf => {
         AST.factoryProgramElementList(then, 'elseif body ');
         const result: NodeElseIf = {
             type: 'ELSEIF',
@@ -2561,7 +2653,7 @@ abstract class AST {
     /**
      * Create a `switch` statement node.
      */
-    public static readonly nodeSwitch = (expression: NodeExpr, cases: NodeList, otherwise: NodeList | null = null): NodeSwitch => {
+    public static readonly nodeSwitch = (expression: StrictNodeExpr, cases: NodeList, otherwise: NodeList | null = null): NodeSwitch => {
         if (otherwise) {
             AST.factoryProgramElementList(otherwise, 'otherwise body ');
         }
@@ -2584,7 +2676,7 @@ abstract class AST {
     /**
      * Create a `case` clause node.
      */
-    public static readonly nodeSwitchCase = (expression: NodeExpr, then: NodeList): NodeSwitchCase => {
+    public static readonly nodeSwitchCase = (expression: StrictNodeExpr, then: NodeList): NodeSwitchCase => {
         AST.factoryProgramElementList(then, 'case body ');
         const result = {
             type: 'CASE',
@@ -2601,7 +2693,7 @@ abstract class AST {
     /**
      * Create a `while` statement node.
      */
-    public static readonly nodeWhile = (expression: NodeExpr, body: NodeList): NodeWhile => {
+    public static readonly nodeWhile = (expression: StrictNodeExpr, body: NodeList): NodeWhile => {
         AST.factoryProgramElementList(body, 'while body ');
         const result = {
             type: 'WHILE',
@@ -2618,7 +2710,7 @@ abstract class AST {
     /**
      * Create a `do ... until` statement node.
      */
-    public static readonly nodeDoUntil = (body: NodeList, expression: NodeExpr): NodeDoUntil => {
+    public static readonly nodeDoUntil = (body: NodeList, expression: StrictNodeExpr): NodeDoUntil => {
         AST.factoryProgramElementList(body, 'do body ');
         const result = {
             type: 'DO_UNTIL',
@@ -2635,11 +2727,17 @@ abstract class AST {
     /**
      * Create a `for` statement node.
      */
-    public static readonly nodeFor = (target: NodeExpr, expression: NodeExpr, body: NodeList, parallel: boolean = false, workers: NodeExpr | null = null): NodeFor => {
+    public static readonly nodeFor = (
+        target: NodeAssignmentTarget,
+        expression: StrictNodeExpr,
+        body: NodeList,
+        parallel: boolean = false,
+        workers: StrictNodeExpr | null = null,
+    ): NodeFor => {
         AST.factoryProgramElementList(body, 'for body ');
         const result = {
             type: 'FOR',
-            target: AST.factoryExpression(target, 'for target'),
+            target: AST.factoryAssignmentTarget(target, 'for target'),
             expression: AST.factoryExpression(expression, 'for expression'),
             workers: workers ? AST.factoryExpression(workers, 'for workers') : null,
             body,
@@ -2772,10 +2870,10 @@ abstract class AST {
      */
     public static readonly nodeClassProperty = (
         id: NodeIdentifier,
-        sizeOrDefaultValue: NodeList | NodeExpr | null = AST.nodeListFirst(),
+        sizeOrDefaultValue: NodeList | StrictNodeExpr | null = AST.nodeListFirst(),
         cl: NodeInput | null = null,
         functions: NodeList = AST.nodeListFirst(),
-        defaultValue: NodeExpr | null = null,
+        defaultValue: StrictNodeExpr | null = null,
     ): NodeClassProperty => {
         const legacyDefaultValue = sizeOrDefaultValue && sizeOrDefaultValue.type !== 'LIST' ? AST.factoryExpression(sizeOrDefaultValue, 'argument validation default') : null;
         const size = AST.isNodeList(sizeOrDefaultValue) ? sizeOrDefaultValue : AST.nodeListFirst();
@@ -2784,7 +2882,7 @@ abstract class AST {
             type: 'CLASS_PROPERTY',
             id: id.id,
             validation,
-            name: validation.name as NodeIdentifier,
+            name: id,
             size: validation.size,
             class: validation.class,
             functions: validation.functions,
@@ -2828,7 +2926,7 @@ abstract class AST {
     /**
      * Create a class attribute declaration.
      */
-    public static readonly nodeClassAttribute = (id: NodeIdentifier, value: NodeExpr | null = null): NodeClassAttribute => {
+    public static readonly nodeClassAttribute = (id: NodeIdentifier, value: StrictNodeExpr | null = null): NodeClassAttribute => {
         const result = {
             type: 'CLASS_ATTRIBUTE',
             id: id.id,
@@ -2845,6 +2943,11 @@ abstract class AST {
 
 export type {
     OperatorType,
+    AssignmentOperatorType,
+    BinaryExpressionOperatorType,
+    BinaryOperatorType,
+    PrefixOperatorType,
+    PostfixOperatorType,
     IndexingDelimiterType,
     NodeType,
     AliasNameTable,
@@ -2875,10 +2978,14 @@ export type {
     PostfixUnaryOperation,
     UnaryOperationR,
     UnaryOperationL,
+    BinaryExpressionOperation,
+    AssignmentOperation,
     BinaryOperation,
     NodeIgnoredTarget,
     NodeFunctionReturn,
     NodeDeclarationElement,
+    NodeArgumentValidationName,
+    NodeArgumentClass,
     NodeFunctionParameter,
     NodeDefaultedParameter,
     NodeAssignmentTarget,

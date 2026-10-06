@@ -25,6 +25,7 @@ import type {
     NodeFunctionReturn,
     NodeList,
     NodeDeclaration,
+    NodeDeclarationElement,
     NodeImport,
     NodeClassDef,
     NodeArgumentValidation,
@@ -46,6 +47,8 @@ import type {
     IndexingDelimiterType,
     ExpressionBoundaryValue,
     RuntimeExpressionValue,
+    StrictNodeExpr,
+    NodeAssignmentTarget,
 } from './AST';
 import { AST } from './AST';
 import { CharString } from './CharString';
@@ -92,7 +95,7 @@ import { TableSourceResolver } from './SourceResolver';
 import { BreakSignal, Context, ContinueSignal, ReturnSignal } from './Context';
 import type { SymbolResolution, SymbolResolutionOptions } from './Context';
 import { CircularReferenceError, EvalError, InterpreterError, ReferenceError, SyntaxError, UndefinedReferenceError } from './InterpreterError';
-import { expressionValue, runtimeExpressionValue } from './ExpressionValue';
+import { expressionValue, optionalRuntimeExpressionValue, runtimeExpressionValue } from './ExpressionValue';
 import type { CallArgumentValue } from './FunctionCall';
 
 /**
@@ -684,11 +687,11 @@ class Interpreter implements InterpreterInterface {
      */
     private incDecOpFactory(pre: boolean, operation: 'plus' | 'minus'): IncDecOperator {
         return (tree: NodeExpr, scope: Scope): NodeInput => {
-            const value = pre ? undefined : RuntimeValue.copy(this.evaluatedExpressionValue(tree, scope, `${operation === 'plus' ? 'increment' : 'decrement'} target`));
+            const value = pre ? undefined : RuntimeValue.copy(this.evaluatedExpressionBoundaryValue(tree, scope, `${operation === 'plus' ? 'increment' : 'decrement'} target`));
             const assignment = AST.nodeOperation(operation === 'plus' ? '+=' : '-=', this.cloneAssignmentTarget(tree), Complex.one());
             assignment.parent = tree.parent;
             this.Evaluator(assignment, scope);
-            return pre ? this.evaluatedExpressionValue(tree, scope, `${operation === 'plus' ? 'increment' : 'decrement'} target`) : value;
+            return pre ? this.evaluatedExpressionBoundaryValue(tree, scope, `${operation === 'plus' ? 'increment' : 'decrement'} target`) : value;
         };
     }
 
@@ -1798,7 +1801,8 @@ class Interpreter implements InterpreterInterface {
         if (validator === 'scalar' && CharString.isString(value)) {
             return true;
         }
-        return FunctionValidation.matchesBuiltInValidator(value as RuntimeExpressionValue, validator);
+        const runtimeValue = optionalRuntimeExpressionValue(value);
+        return runtimeValue ? FunctionValidation.matchesBuiltInValidator(runtimeValue, validator) : false;
     }
 
     /**
@@ -1891,17 +1895,18 @@ class Interpreter implements InterpreterInterface {
      * Test a `validateattributes` class constraint against runtime values.
      */
     private validateattributesMatchesClass(value: NodeInput, className: string): boolean {
+        const runtimeValue = optionalRuntimeExpressionValue(value);
         switch (className.toLowerCase()) {
             case 'numeric':
-                return FunctionValidation.matchesBuiltInValidator(value as RuntimeExpressionValue, 'numeric');
+                return runtimeValue ? FunctionValidation.matchesBuiltInValidator(runtimeValue, 'numeric') : false;
             case 'float':
-                return FunctionValidation.matchesBuiltInValidator(value as RuntimeExpressionValue, 'float');
+                return runtimeValue ? FunctionValidation.matchesBuiltInValidator(runtimeValue, 'float') : false;
             case 'integer':
-                return FunctionValidation.matchesBuiltInValidator(value as RuntimeExpressionValue, 'integer');
+                return runtimeValue ? FunctionValidation.matchesBuiltInValidator(runtimeValue, 'integer') : false;
             case 'object':
                 return ClassInstance.isInstanceOf(value) || (MultiArray.isInstanceOf(value) && MultiArray.linearize(value).some(ClassInstance.isInstanceOf));
             default:
-                return FunctionValidation.matchesClass(value as RuntimeExpressionValue, className) || this.valueIsRuntimeClass(value, className);
+                return (runtimeValue ? FunctionValidation.matchesClass(runtimeValue, className) : false) || this.valueIsRuntimeClass(value, className);
         }
     }
 
@@ -2199,7 +2204,9 @@ class Interpreter implements InterpreterInterface {
         }
         const returnList = AST.ensureReturnList(this.expressionValue(called, 'nthargout result'));
         const evaluated = returnList.handler(totalOutputCount);
-        const selected = indexes.map((index) => this.returnListValue(returnList.selector(evaluated, index - 1), `nthargout output ${index}`));
+        const selected = indexes.map((index) =>
+            this.runtimeExpressionValue(this.returnListValue(returnList.selector(evaluated, index - 1), `nthargout output ${index}`), `nthargout output ${index}`),
+        );
         if (!vector) {
             return selected[0];
         }
@@ -2216,6 +2223,18 @@ class Interpreter implements InterpreterInterface {
     }
 
     /**
+     * Validate an ordinary expression result after any explicitly supported
+     * execution carrier has been reduced by its owning boundary.
+     */
+    private strictExpressionValue(value: unknown, name: string): StrictNodeExpr {
+        this.expressionValue(value, name);
+        if (!AST.isStrictNodeExpr(value)) {
+            this.context.throwEvalError(`Expression value '${name}' is not a strict expression.`);
+        }
+        return value;
+    }
+
+    /**
      * Validate an evaluated value that must be stored in runtime data
      * containers such as structures.
      */
@@ -2227,7 +2246,12 @@ class Interpreter implements InterpreterInterface {
      * Evaluate an expression, reduce return-list carriers, and validate the
      * resulting value before it crosses an interpreter expression boundary.
      */
-    private evaluatedExpressionValue(tree: NodeExpr, scope: Scope, name: string): NodeExpr {
+    private evaluatedExpressionValue(tree: ExpressionBoundaryValue, scope: Scope, name: string): StrictNodeExpr {
+        return this.strictExpressionValue(AST.reduceToFirstIfReturnList(this.Evaluator(tree, scope)), name);
+    }
+
+    /** Evaluate a context that deliberately preserves a `NodeList` carrier. */
+    private evaluatedExpressionBoundaryValue(tree: ExpressionBoundaryValue, scope: Scope, name: string): ExpressionBoundaryValue {
         return this.expressionValue(AST.reduceToFirstIfReturnList(this.Evaluator(tree, scope)), name);
     }
 
@@ -2245,12 +2269,12 @@ class Interpreter implements InterpreterInterface {
     /**
      * Read a scope entry and validate it before reusing it as an expression.
      */
-    private scopedExpressionValue(scope: Scope, id: string, name: string): NodeExpr {
+    private scopedExpressionValue(scope: Scope, id: string, name: string): StrictNodeExpr {
         const entry = scope.resolveName(id);
         if (!entry || typeof entry.node === 'undefined') {
             this.context.throwEvalError(`internal error: missing scoped expression '${id}'.`);
         }
-        return this.expressionValue(entry.node, name);
+        return this.strictExpressionValue(entry.node, name);
     }
 
     /**
@@ -2445,8 +2469,8 @@ class Interpreter implements InterpreterInterface {
     /**
      * Validate and linearize values before assigning them to object arrays.
      */
-    private assignmentValues(value: unknown, prefix: string): NodeExpr[] {
-        return MultiArray.linearize(this.expressionValue(value, prefix)).map((item, index) => this.expressionValue(item, `${prefix}${index + 1}`));
+    private assignmentValues(value: unknown, prefix: string): RuntimeExpressionValue[] {
+        return MultiArray.linearize(this.runtimeExpressionValue(value, prefix)).map((item, index) => this.runtimeExpressionValue(item, `${prefix}${index + 1}`));
     }
 
     /**
@@ -2456,9 +2480,9 @@ class Interpreter implements InterpreterInterface {
      * each selected property. In that position `[]` is a scalar deletion value
      * to apply per target, not a zero-length list to distribute.
      */
-    private classPropertyPathAssignmentValues(value: NodeInput, selectedCount: number, chain: ClassPropertyDescriptorChain): NodeExpr[] {
+    private classPropertyPathAssignmentValues(value: NodeInput, selectedCount: number, chain: ClassPropertyDescriptorChain): RuntimeExpressionValue[] {
         if (selectedCount === 1 || (chain.tailDescriptors && chain.tailDescriptors.length > 0 && MultiArray.isInstanceOf(value) && MultiArray.isEmpty(value))) {
-            return [this.expressionValue(value, 'assignment')];
+            return [this.runtimeExpressionValue(value, 'assignment')];
         }
         return this.assignmentValues(value, 'assignment');
     }
@@ -2466,25 +2490,25 @@ class Interpreter implements InterpreterInterface {
     /**
      * Validate a sequence before storing it in an AST expression list.
      */
-    private expressionList(values: unknown[], prefix: string): NodeExpr[] {
-        return values.map((value, index) => this.expressionValue(value, `${prefix}${index + 1}`));
+    private expressionList(values: unknown[], prefix: string): StrictNodeExpr[] {
+        return values.map((value, index) => this.strictExpressionValue(value, `${prefix}${index + 1}`));
     }
 
     /**
      * Validate and linearize an expression value without crossing the generic
      * `MathObject` operation surface.
      */
-    private linearExpressionValues(value: unknown, prefix: string): NodeExpr[] {
-        const expression = this.expressionValue(value, prefix);
-        return MultiArray.isInstanceOf(expression) ? MultiArray.linearize(expression).map((item, index) => this.expressionValue(item, `${prefix}${index + 1}`)) : [expression];
+    private linearExpressionValues(value: unknown, prefix: string): StrictNodeExpr[] {
+        const expression = this.strictExpressionValue(value, prefix);
+        return MultiArray.isInstanceOf(expression) ? MultiArray.linearize(expression).map((item, index) => this.strictExpressionValue(item, `${prefix}${index + 1}`)) : [expression];
     }
 
     /**
      * Validate and copy one expression value through the runtime copy protocol.
      */
-    private copyExpressionValue(value: unknown, name: string): NodeExpr {
-        const expression = this.expressionValue(value, name);
-        return this.expressionValue(RuntimeValue.copy(expression), name);
+    private copyExpressionValue(value: unknown, name: string): StrictNodeExpr {
+        const expression = this.strictExpressionValue(value, name);
+        return this.strictExpressionValue(RuntimeValue.copy(expression), name);
     }
 
     /**
@@ -2499,7 +2523,7 @@ class Interpreter implements InterpreterInterface {
      * @param target Loop assignment target.
      * @returns Values assigned on each loop iteration.
      */
-    private forLoopValues(value: NodeInput, target: NodeExpr): NodeExpr[] {
+    private forLoopValues(value: NodeInput, target: NodeAssignmentTarget): StrictNodeExpr[] {
         if (Structure.isInstanceOf(value) || (MultiArray.isInstanceOf(value) && Structure.isStructure(value))) {
             const targetWidth = MultiArray.isRowVector(target) ? MultiArray.linearize(this.expressionValue(target, 'for target')).length : 1;
             const elements = Structure.structureElements(value);
@@ -2508,23 +2532,23 @@ class Interpreter implements InterpreterInterface {
             }
             const firstStructure = elements[0];
             return Object.keys(firstStructure.field).map((field) => {
-                const valueExpression = this.expressionValue(Structure.getField(value, [field]), field);
-                return targetWidth > 1 ? this.expressionValue(new MultiArray([1, 2], [[valueExpression, CharString.create(field)]]), field) : valueExpression;
+                const valueExpression = this.runtimeExpressionValue(Structure.getField(value, [field]), field);
+                return targetWidth > 1 ? this.strictExpressionValue(new MultiArray([1, 2], [[valueExpression, CharString.create(field)]]), field) : valueExpression;
             });
         }
         if (CharString.isInstanceOf(value)) {
             return value.toCharacterScalars();
         }
         if (!MultiArray.isInstanceOf(value)) {
-            return [this.expressionValue(value, 'for')];
+            return [this.strictExpressionValue(value, 'for')];
         }
         if (value.dimension[0] === 0 || value.dimension[1] === 0) {
             return [];
         }
         if (value.dimension[0] === 1 && !value.isCell) {
-            return MultiArray.linearize(value).map((item, index) => this.expressionValue(item, `for${index + 1}`));
+            return MultiArray.linearize(value).map((item, index) => this.strictExpressionValue(item, `for${index + 1}`));
         }
-        const result: NodeExpr[] = [];
+        const result: StrictNodeExpr[] = [];
         const rows = value.dimension[0];
         const columns = value.dimension.slice(1).reduce((product, dimension) => product * dimension, 1);
         for (let column = 0; column < columns; column++) {
@@ -2532,9 +2556,9 @@ class Interpreter implements InterpreterInterface {
             for (let row = 0; row < rows; row++) {
                 const linearIndex = column * rows + row;
                 const [sourceRow, sourceColumn] = MultiArray.linearIndexToMultiArrayRowColumn(value.dimension[0], value.dimension[1], linearIndex);
-                columnValue.array[row][0] = RuntimeValue.copy(value.array[sourceRow][sourceColumn]) as NodeExpr;
+                columnValue.array[row][0] = this.runtimeExpressionValue(RuntimeValue.copy(value.array[sourceRow][sourceColumn]), `for${column + 1} row ${row + 1}`);
             }
-            result.push(this.expressionValue(columnValue, `for${column + 1}`));
+            result.push(this.strictExpressionValue(columnValue, `for${column + 1}`));
         }
         return result;
     }
@@ -2551,7 +2575,7 @@ class Interpreter implements InterpreterInterface {
      * @param value Iteration value to assign.
      * @returns Scalar assignment value or lazy return-list carrier.
      */
-    private forLoopAssignmentValue(target: NodeExpr, value: NodeExpr): NodeExpr {
+    private forLoopAssignmentValue(target: NodeAssignmentTarget, value: StrictNodeExpr): StrictNodeExpr {
         if (!MultiArray.isRowVector(target)) {
             return this.copyExpressionValue(value, 'for');
         }
@@ -2562,6 +2586,7 @@ class Interpreter implements InterpreterInterface {
                     return this.copyExpressionValue(values[index], `for${index + 1}`);
                 }
                 AST.throwErrorIfGreaterThanReturnList(values.length, index + 1, (message) => this.context.throwEvalError(message));
+                throw new EvalError('unreachable for-loop return-list selector branch.');
             },
             (length: number) => {
                 if (length > values.length) {
@@ -2584,7 +2609,7 @@ class Interpreter implements InterpreterInterface {
      * @param target Loop assignment target from the parser.
      * @param value Evaluated loop expression.
      */
-    private validateParforHeader(target: NodeExpr, value: NodeInput): void {
+    private validateParforHeader(target: NodeAssignmentTarget, value: NodeInput): void {
         if (!AST.isNodeIdentifier(target)) {
             this.context.throwEvalError('parfor loop variable must be a simple identifier.');
         }
@@ -2890,7 +2915,7 @@ class Interpreter implements InterpreterInterface {
      * @param target Assignment target or runtime value to clone.
      * @returns Copied target constrained to expression position.
      */
-    private cloneAssignmentTarget(target: unknown): NodeExpr {
+    private cloneAssignmentTarget(target: unknown): StrictNodeExpr {
         if (
             Complex.isInstanceOf(target) ||
             CharString.isInstanceOf(target) ||
@@ -2926,24 +2951,27 @@ class Interpreter implements InterpreterInterface {
         }
         if (MultiArray.isInstanceOf(target)) {
             const source = target;
-            const result = new MultiArray(source.dimension, undefined, source.isCell);
+            const result = new MultiArray<StrictNodeExpr>(source.dimension, undefined, source.isCell);
             for (let row = 0; row < source.dimension[0]; row++) {
                 for (let column = 0; column < source.dimension[1]; column++) {
                     result.array[row][column] = this.cloneAssignmentTarget(source.array[row][column]);
                 }
             }
-            MultiArray.setType(result);
-            return this.expressionValue(result, 'assignment target');
+            return this.strictExpressionValue(result, 'assignment target');
         }
-        return this.expressionValue(AST.nodeCopy(this.expressionValue(target, 'assignment target')), 'assignment target');
+        return this.strictExpressionValue(AST.nodeCopy(this.strictExpressionValue(target, 'assignment target')), 'assignment target');
     }
 
     /**
      * Validate values before exposing them through an interpreter-owned comma
      * separated return list.
      */
-    private returnListValue(value: unknown, name: string): NodeExpr {
-        return expressionValue(value, name, 'Return value', (message) => this.context.throwEvalError(message));
+    private returnListValue(value: unknown, name: string): StrictNodeExpr {
+        expressionValue(value, name, 'Return value', (message) => this.context.throwEvalError(message));
+        if (!AST.isStrictNodeExpr(value)) {
+            this.context.throwEvalError(`Return value '${name}' is not a strict expression.`);
+        }
+        return value;
     }
 
     /**
@@ -2961,12 +2989,12 @@ class Interpreter implements InterpreterInterface {
         const outputIsRequested = (index: number): boolean => capturedOutputMask[index] ?? true;
         return AST.nodeCommaSeparatedReturnList(
             values.length,
-            (evaluated: ReturnHandlerResult, index: number): NodeExpr => {
+            (evaluated: ReturnHandlerResult, index: number): StrictNodeExpr => {
                 const value = evaluated[`out${index}`];
                 if (typeof value === 'undefined') {
                     AST.throwErrorIfGreaterThanReturnList(index, index + 1, (message) => this.context.throwEvalError(message));
                 }
-                return value;
+                return AST.requireStrictNodeExpr(value, `return-list output ${index + 1}`);
             },
             (length: number): ReturnHandlerResult => {
                 AST.throwErrorIfGreaterThanReturnList(values.length, length, (message) => this.context.throwEvalError(message));
@@ -2990,15 +3018,15 @@ class Interpreter implements InterpreterInterface {
      * can participate in `+`, `-`, etc., so the selected list is materialized in
      * the same row-vector shape used by explicit concatenation contexts.
      */
-    private compoundAssignmentOperand(value: NodeInput, name: string): NodeExpr {
+    private compoundAssignmentOperand(value: NodeInput, name: string): RuntimeExpressionValue {
         if (!AST.isNodeReturnList(value) || !value.commaSeparated) {
-            return this.expressionValue(value, name);
+            return this.runtimeExpressionValue(value, name);
         }
         const length = value.returnListLength ?? value.handler(0).length;
         const evaluated = value.handler(length);
-        const values: NodeExpr[] = [];
+        const values: RuntimeExpressionValue[] = [];
         for (let index = 0; index < length; index++) {
-            values.push(this.expressionValue(value.selector(evaluated, index), `${name}${index + 1}`));
+            values.push(this.runtimeExpressionValue(value.selector(evaluated, index), `${name}${index + 1}`));
         }
         return MultiArray.toRowVector(values);
     }
@@ -3006,12 +3034,12 @@ class Interpreter implements InterpreterInterface {
     /**
      * Read the assigned value from an internal assignment-result list.
      */
-    private nestedAssignmentValue(resultList: NodeList): NodeExpr {
+    private nestedAssignmentValue(resultList: NodeList): StrictNodeExpr {
         const assignment = resultList.list[0];
         if (!AST.isNodeBinaryOperation(assignment) || assignment.type !== '=') {
             this.context.throwEvalError('invalid nested assignment result.');
         }
-        return this.expressionValue(assignment.right, 'assignment result');
+        return this.strictExpressionValue(assignment.right, 'assignment result');
     }
 
     /**
@@ -3143,7 +3171,10 @@ class Interpreter implements InterpreterInterface {
                       ? capturedValues[0]
                       : AST.nodeList(capturedValues.map((value) => this.returnListValue(value, 'evalc display value')));
         } else if (result.type !== 'VOID') {
-            evaluatedValues[0] = this.returnListValue(result, 'evalc output 1');
+            capturedValue = this.expressionValue(result, 'evalc display result');
+            if (AST.isStrictNodeExpr(result)) {
+                evaluatedValues[0] = result;
+            }
         }
         const capture = new CharString(this.Unparse(capturedValue));
         return requestedOutputCount > 1 ? this.valueReturnList([capture, ...evaluatedValues], callerOutputMask) : capture;
@@ -4118,7 +4149,7 @@ class Interpreter implements InterpreterInterface {
         const canonical = this.context.aliasNameFunction(name);
         const directSource = resolveValidSource(canonical);
         if (directSource) {
-            return { kind, name, resolvedName: canonical, source: 'local', sourceName: directSource.sourceName ?? directSource.name ?? canonical };
+            return { kind, name, resolvedName: canonical, source: 'local', tier: 'provider-source', sourceName: directSource.sourceName ?? directSource.name ?? canonical };
         }
         if (!canonical.includes('.')) {
             const imported = [
@@ -4130,7 +4161,14 @@ class Interpreter implements InterpreterInterface {
                         .filter((item): item is { importedCanonical: string; source: SourceEntry } => typeof item.source !== 'undefined')
                         .map(({ importedCanonical, source }) => [
                             importedCanonical,
-                            { kind, name, resolvedName: importedCanonical, source: 'import' as const, sourceName: source.sourceName ?? source.name ?? importedCanonical },
+                            {
+                                kind,
+                                name,
+                                resolvedName: importedCanonical,
+                                source: 'import' as const,
+                                tier: 'import' as const,
+                                sourceName: source.sourceName ?? source.name ?? importedCanonical,
+                            },
                         ]),
                 ).values(),
             ];
@@ -4156,7 +4194,7 @@ class Interpreter implements InterpreterInterface {
         const canonical = this.context.aliasNameFunction(name);
         const source = this.validScriptSource(canonical);
         if (source) {
-            return { kind: 'script', name, resolvedName: canonical, source: 'local', sourceName: source.sourceName ?? source.name ?? canonical };
+            return { kind: 'script', name, resolvedName: canonical, source: 'local', tier: 'provider-source', sourceName: source.sourceName ?? source.name ?? canonical };
         }
         return undefined;
     }
@@ -4166,7 +4204,7 @@ class Interpreter implements InterpreterInterface {
      */
     private lookupDirectorySourceResolution(name: string): SymbolResolution | undefined {
         const canonical = this.context.aliasNameFunction(name);
-        return this.sourceResolver.hasDirectory(canonical) ? { kind: 'directory', name, resolvedName: canonical, source: 'local' } : undefined;
+        return this.sourceResolver.hasDirectory(canonical) ? { kind: 'directory', name, resolvedName: canonical, source: 'local', tier: 'directory' } : undefined;
     }
 
     private resolveLookupSymbol(name: string, kind?: string, scope: Scope = this.context.currentScope): SymbolResolution | undefined {
@@ -4177,7 +4215,7 @@ class Interpreter implements InterpreterInterface {
         if (normalizedKind === 'builtin') {
             const canonical = this.context.aliasNameFunction(name);
             const builtin = this.context.builtInFunctionTable[canonical];
-            return builtin ? { kind: 'builtin', name, resolvedName: canonical, source: 'builtin', functionDefinition: builtin } : undefined;
+            return builtin ? { kind: 'builtin', name, resolvedName: canonical, source: 'builtin', tier: 'builtin', functionDefinition: builtin } : undefined;
         }
         const classes = normalizedKind === 'class' || typeof normalizedKind === 'undefined';
         const classSources = classes || normalizedKind === 'file';
@@ -5604,7 +5642,8 @@ class Interpreter implements InterpreterInterface {
             },
         },
         builtin: {
-            func: (...args: NodeInput[]): NodeExpr => {
+            /** Preserve explicit execution carriers from dynamic evaluation and scripts. */
+            func: (...args: NodeInput[]): ExpressionBoundaryValue => {
                 const source = this.charControlArgument(args[0], 'builtin function').str.trim();
                 if (source.length === 0) {
                     this.context.throwEvalError('builtin: function name cannot be empty.');
@@ -5614,7 +5653,12 @@ class Interpreter implements InterpreterInterface {
                 if (!builtin) {
                     this.context.throwEvalError(`builtin: '${source}' is not a built-in function.`);
                 }
-                return this.context.callCallable(Callables.builtin(builtin), this.callArgumentValues(args.slice(1), 'builtin'), AST.nodeIdentifier('builtin'));
+                return expressionValue(
+                    this.context.callCallable(Callables.builtin(builtin), this.callArgumentValues(args.slice(1), 'builtin'), AST.nodeIdentifier('builtin')),
+                    'builtin result',
+                    'Return value',
+                    (message) => this.context.throwEvalError(message),
+                );
             },
             signature: {
                 inputs: {
@@ -5629,7 +5673,8 @@ class Interpreter implements InterpreterInterface {
             },
         },
         feval: {
-            func: (...args: NodeInput[]): NodeExpr => {
+            /** Callable execution may return a NodeList; static-method outputs remain strict. */
+            func: (...args: NodeInput[]): ExpressionBoundaryValue => {
                 let target = this.expressionValue(args[0], 'feval target');
                 if (CharString.isInstanceOf(target)) {
                     const source = target.str.trim();
@@ -5638,7 +5683,10 @@ class Interpreter implements InterpreterInterface {
                     }
                     const staticMethod = source.startsWith('@') ? undefined : this.resolveStaticMethod(source, this.context.currentScope);
                     if (staticMethod) {
-                        return this.context.callClassStaticMethod(staticMethod.method, this.callArgumentValues(args.slice(1), 'feval'), AST.nodeIdentifier('feval'));
+                        return AST.requireStrictNodeExpr(
+                            this.context.callClassStaticMethod(staticMethod.method, this.callArgumentValues(args.slice(1), 'feval'), AST.nodeIdentifier('feval')),
+                            'feval result',
+                        );
                     }
                     target = source.startsWith('@') ? this.functionHandleFromString(target) : this.createResolvedFunctionHandle(source, this.context.currentScope, undefined, false, true);
                 }
@@ -5646,7 +5694,12 @@ class Interpreter implements InterpreterInterface {
                 if (!callable) {
                     this.context.throwEvalError('feval: first argument must be a function handle or function name.');
                 }
-                return this.context.callCallable(callable, this.callArgumentValues(args.slice(1), 'feval'), AST.nodeIdentifier('feval'));
+                return expressionValue(
+                    this.context.callCallable(callable, this.callArgumentValues(args.slice(1), 'feval'), AST.nodeIdentifier('feval')),
+                    'feval result',
+                    'Return value',
+                    (message) => this.context.throwEvalError(message),
+                );
             },
             signature: {
                 inputs: {
@@ -5661,7 +5714,7 @@ class Interpreter implements InterpreterInterface {
             },
         },
         spfun: {
-            func: (...args: NodeInput[]): NodeExpr => {
+            func: (...args: NodeInput[]): StrictNodeExpr => {
                 const callable = this.context.resolveCallable(this.expressionValue(args[0], 'spfun function'));
                 if (!callable) {
                     this.context.throwEvalError('spfun: first argument must be a function handle.');
@@ -5683,7 +5736,7 @@ class Interpreter implements InterpreterInterface {
                     result.array[row][column] = RuntimeValue.copy(scalar as ElementType);
                 }
                 MultiArray.setType(result);
-                return MultiArray.MultiArrayToScalar(result);
+                return AST.requireStrictNodeExpr(MultiArray.MultiArrayToScalar(result), 'spfun result');
             },
             signature: {
                 inputs: {
@@ -6870,12 +6923,12 @@ class Interpreter implements InterpreterInterface {
      * @param shallow True if tree is a left root of assignment.
      * @returns An object with four properties: `left`, `id`, `args` and `field`.
      */
-    private validateAssignment(tree: NodeExpr, shallow: boolean, scope: Scope = this.context.currentScope): AssignmentTarget[] {
+    private validateAssignment(tree: StrictNodeExpr, shallow: boolean, scope: Scope = this.context.currentScope): AssignmentTarget[] {
         const invalidLeftAssignmentMessage = 'invalid left hand side of assignment';
-        const scalarSelectionTarget = (node: NodeExpr, delimiter: IndexingDelimiterType, linearIndex: number, mode: 'insert-at-identifier' | 'replace-first-index'): NodeExpr => {
+        const scalarSelectionTarget = (node: StrictNodeExpr, delimiter: IndexingDelimiterType, linearIndex: number, mode: 'insert-at-identifier' | 'replace-first-index'): StrictNodeExpr => {
             const state = { done: false };
             const indexList = (): NodeList => AST.nodeList([this.expressionValue(Complex.create(linearIndex + 1), 'index')]);
-            const clone = (current: NodeExpr): NodeExpr => {
+            const clone = (current: StrictNodeExpr): StrictNodeExpr => {
                 if (AST.isNodeIdentifier(current)) {
                     const identifier = AST.nodeIdentifier(current.id);
                     if (mode === 'insert-at-identifier' && !state.done) {
@@ -6955,12 +7008,13 @@ class Interpreter implements InterpreterInterface {
                 },
             ];
         } else if (AST.isNodeIndexExpr(tree) && AST.isNodeIdentifier(tree.expr)) {
+            const indexedIdentifier = tree.expr;
             if (!shallow && tree.delim === '{}') {
-                const entry = scope.resolveName(tree.expr.id);
+                const entry = scope.resolveName(indexedIdentifier.id);
                 if (entry && MultiArray.isInstanceOf(entry.node) && entry.node.isCell) {
                     const evaluatedIndex = this.evaluatedIndexArguments(tree.args, scope);
-                    return MultiArray.resolveLinearIndices(entry.node, tree.expr.id, evaluatedIndex).map((linearIndex) => ({
-                        id: tree.expr.id,
+                    return MultiArray.resolveLinearIndices(entry.node, indexedIdentifier.id, evaluatedIndex).map((linearIndex) => ({
+                        id: indexedIdentifier.id,
                         index: [this.expressionValue(Complex.create(linearIndex + 1), 'index')],
                         delimiter: tree.delim,
                         field: [],
@@ -6969,7 +7023,7 @@ class Interpreter implements InterpreterInterface {
             }
             return [
                 {
-                    id: tree.expr.id,
+                    id: indexedIdentifier.id,
                     index: tree.args,
                     delimiter: tree.delim,
                     field: [],
@@ -6983,11 +7037,12 @@ class Interpreter implements InterpreterInterface {
                 return this.evaluatedDynamicFieldName(field, scope, `${invalidLeftAssignmentMessage}: dynamic structure field names must be strings.`);
             });
             if (AST.isNodeIdentifier(tree.obj)) {
+                const objectIdentifier = tree.obj;
                 if (!shallow) {
-                    const entry = scope.resolveName(tree.obj.id);
+                    const entry = scope.resolveName(objectIdentifier.id);
                     if (entry && MultiArray.isInstanceOf(entry.node) && (Structure.isStructure(entry.node) || this.hasClassInstanceElement(entry.node))) {
-                        return MultiArray.resolveLinearIndices(entry.node, tree.obj.id, [MultiArray.expandColon(MultiArray.linearLength(entry.node))], this).map((linearIndex) => ({
-                            id: tree.obj.id,
+                        return MultiArray.resolveLinearIndices(entry.node, objectIdentifier.id, [MultiArray.expandColon(MultiArray.linearLength(entry.node))], this).map((linearIndex) => ({
+                            id: objectIdentifier.id,
                             index: [this.expressionValue(Complex.create(linearIndex + 1), 'index')],
                             delimiter: '()',
                             field,
@@ -6996,38 +7051,43 @@ class Interpreter implements InterpreterInterface {
                 }
                 return [
                     {
-                        id: tree.obj.id,
+                        id: objectIdentifier.id,
                         field,
                     },
                 ];
             } else if (AST.isNodeIndexExpr(tree.obj) && AST.isNodeIdentifier(tree.obj.expr)) {
-                if (!shallow && tree.obj.delim === '{}') {
-                    const entry = scope.resolveName(tree.obj.expr.id);
+                const indexedObject = tree.obj;
+                const indexedObjectIdentifier = indexedObject.expr;
+                if (!AST.isNodeIdentifier(indexedObjectIdentifier)) {
+                    throw new TypeError('indexed assignment object identifier has invalid node type.');
+                }
+                if (!shallow && indexedObject.delim === '{}') {
+                    const entry = scope.resolveName(indexedObjectIdentifier.id);
                     if (entry && MultiArray.isInstanceOf(entry.node) && entry.node.isCell) {
-                        const evaluatedIndex = this.evaluatedIndexArguments(tree.obj.args, scope);
-                        return MultiArray.resolveLinearIndices(entry.node, tree.obj.expr.id, evaluatedIndex, this).map((linearIndex) => ({
-                            id: tree.obj.expr.id,
+                        const evaluatedIndex = this.evaluatedIndexArguments(indexedObject.args, scope);
+                        return MultiArray.resolveLinearIndices(entry.node, indexedObjectIdentifier.id, evaluatedIndex, this).map((linearIndex) => ({
+                            id: indexedObjectIdentifier.id,
                             index: [this.expressionValue(Complex.create(linearIndex + 1), 'index')],
-                            delimiter: tree.obj.delim,
+                            delimiter: indexedObject.delim,
                             field: [],
                             descriptors: [
-                                this.createSubscriptDescriptor(tree.obj.delim, [this.expressionValue(Complex.create(linearIndex + 1), 'index')], tree.obj, scope),
+                                this.createSubscriptDescriptor(indexedObject.delim, [this.expressionValue(Complex.create(linearIndex + 1), 'index')], indexedObject, scope),
                                 ...field.map((item: string) => this.createDotSubscriptDescriptor(item, tree, scope)),
                             ],
                         }));
                     }
                 }
-                if (!shallow && tree.obj.delim === '()') {
-                    const entry = scope.resolveName(tree.obj.expr.id);
+                if (!shallow && indexedObject.delim === '()') {
+                    const entry = scope.resolveName(indexedObjectIdentifier.id);
                     if (entry && MultiArray.isInstanceOf(entry.node) && (Structure.isStructure(entry.node) || this.hasClassInstanceElement(entry.node))) {
-                        const evaluatedIndex = this.evaluatedIndexArguments(tree.obj.args, scope);
-                        return MultiArray.resolveLinearIndices(entry.node, tree.obj.expr.id, evaluatedIndex, this).map((linearIndex) => ({
-                            id: tree.obj.expr.id,
+                        const evaluatedIndex = this.evaluatedIndexArguments(indexedObject.args, scope);
+                        return MultiArray.resolveLinearIndices(entry.node, indexedObjectIdentifier.id, evaluatedIndex, this).map((linearIndex) => ({
+                            id: indexedObjectIdentifier.id,
                             index: [this.expressionValue(Complex.create(linearIndex + 1), 'index')],
-                            delimiter: tree.obj.delim,
+                            delimiter: indexedObject.delim,
                             field,
                             descriptors: [
-                                this.createSubscriptDescriptor(tree.obj.delim, [this.expressionValue(Complex.create(linearIndex + 1), 'index')], tree.obj, scope),
+                                this.createSubscriptDescriptor(indexedObject.delim, [this.expressionValue(Complex.create(linearIndex + 1), 'index')], indexedObject, scope),
                                 ...field.map((item: string) => this.createDotSubscriptDescriptor(item, tree, scope)),
                             ],
                         }));
@@ -7035,9 +7095,9 @@ class Interpreter implements InterpreterInterface {
                 }
                 return [
                     {
-                        id: tree.obj.expr.id,
-                        index: tree.obj.args,
-                        delimiter: tree.obj.delim,
+                        id: indexedObjectIdentifier.id,
+                        index: indexedObject.args,
+                        delimiter: indexedObject.delim,
                         field,
                         descriptors: [
                             this.createSubscriptDescriptor(tree.obj.delim, tree.obj.args, tree.obj, scope),
@@ -7059,7 +7119,7 @@ class Interpreter implements InterpreterInterface {
                     field: [],
                 },
             ];
-        } else if (shallow && MultiArray.isRowVector(tree)) {
+        } else if (shallow && MultiArray.isInstanceOf(tree) && MultiArray.isRowVector(tree)) {
             return tree.array[0].flatMap((left: NodeExpr) => this.validateAssignment(left, false, scope));
         } else {
             const target = this.collectSubsasgnAssignmentTarget(tree, scope);
@@ -7075,7 +7135,7 @@ class Interpreter implements InterpreterInterface {
      * @param tree Evaluated expression.
      * @returns Boolean truth value.
      */
-    private toBoolean(tree: NodeExpr): boolean {
+    private toBoolean(tree: RuntimeExpressionValue): boolean {
         if (MultiArray.isInstanceOf(tree)) {
             if (tree.isCell) {
                 this.context.throwEvalError('invalid conversion from cell to logical.');
@@ -7083,7 +7143,7 @@ class Interpreter implements InterpreterInterface {
             if (this.hasClassInstanceElement(tree)) {
                 const converted = this.classUnaryOperatorArray(tree, 'logical', AST.nodeIdentifier('logical'));
                 if (converted) {
-                    return this.toBoolean(this.expressionValue(converted, 'logical conversion'));
+                    return this.toBoolean(this.runtimeExpressionValue(converted, 'logical conversion'));
                 }
                 this.context.throwEvalError(`invalid conversion from ${this.getValueClassName(tree)} to logical.`);
             }
@@ -7098,7 +7158,9 @@ class Interpreter implements InterpreterInterface {
         if (ClassInstance.isInstanceOf(tree)) {
             const overload = this.classUnaryOperatorMethod(tree, 'logical');
             if (overload) {
-                return this.toBoolean(this.expressionValue(this.reducedClassMethodResult(overload.receiver, overload.method, [], AST.nodeIdentifier('logical')), 'logical conversion'));
+                return this.toBoolean(
+                    this.runtimeExpressionValue(this.reducedClassMethodResult(overload.receiver, overload.method, [], AST.nodeIdentifier('logical')), 'logical conversion'),
+                );
             }
         }
         this.context.throwEvalError(`invalid conversion from ${this.getValueClassName(tree)} to logical.`);
@@ -7127,7 +7189,7 @@ class Interpreter implements InterpreterInterface {
      * @param name Human-readable expression name for diagnostics.
      * @returns Boolean condition value.
      */
-    private evaluatedCondition(tree: NodeExpr, scope: Scope, name: string): boolean {
+    private evaluatedCondition(tree: StrictNodeExpr, scope: Scope, name: string): boolean {
         return this.toBoolean(this.evaluatedConditionExpression(tree, scope, name));
     }
 
@@ -7139,11 +7201,11 @@ class Interpreter implements InterpreterInterface {
      * @param name Human-readable expression name for diagnostics.
      * @returns Evaluated condition value.
      */
-    private evaluatedConditionExpression(tree: NodeExpr, scope: Scope, name: string): NodeExpr {
+    private evaluatedConditionExpression(tree: StrictNodeExpr, scope: Scope, name: string): RuntimeExpressionValue {
         if (AST.isNodeBinaryOperation(tree) && (tree.type === '&' || tree.type === '|' || tree.type === '&&' || tree.type === '||')) {
             return this.evaluateConditionalLogicalOperation(tree, scope);
         }
-        return this.evaluatedExpressionValue(tree, scope, name);
+        return this.runtimeExpressionValue(this.evaluatedExpressionValue(tree, scope, name), name);
     }
 
     /**
@@ -7153,18 +7215,18 @@ class Interpreter implements InterpreterInterface {
      * @param scope Scope used while evaluating operands.
      * @returns Logical scalar result.
      */
-    private evaluateConditionalLogicalOperation(tree: BinaryOperation, scope: Scope): NodeExpr {
+    private evaluateConditionalLogicalOperation(tree: BinaryOperation, scope: Scope): ComplexType {
         const leftValue = this.evaluatedCondition(tree.left, scope, 'left condition operand');
         if (tree.type === '&' || tree.type === '&&') {
             if (!leftValue) {
                 return Complex.false();
             }
-            return this.evaluatedCondition(tree.right, scope, 'right condition operand') ? Complex.true() : Complex.false();
+            return this.evaluatedCondition(AST.requireStrictNodeExpr(tree.right, 'right condition operand'), scope, 'right condition operand') ? Complex.true() : Complex.false();
         }
         if (leftValue) {
             return Complex.true();
         }
-        return this.evaluatedCondition(tree.right, scope, 'right condition operand') ? Complex.true() : Complex.false();
+        return this.evaluatedCondition(AST.requireStrictNodeExpr(tree.right, 'right condition operand'), scope, 'right condition operand') ? Complex.true() : Complex.false();
     }
 
     private switchComparableValue(value: NodeInput): NodeInput {
@@ -7342,7 +7404,7 @@ class Interpreter implements InterpreterInterface {
      * the already evaluated arguments, avoiding duplicate evaluation for calls
      * such as `plus(f(), g())`.
      */
-    public callFunctionalOperatorOverload(node: NodeBuiltInFunction, args: CallArgumentValue[], parent: NodeInput): NodeInput | undefined {
+    public callFunctionalOperatorOverload(node: NodeBuiltInFunction, args: CallArgumentValue[], parent: NodeInput): StrictNodeExpr | undefined {
         const name = node.id;
         const unaryOperation = MathOperation.unaryOperations[name as KeyOfTypeOfMathOperation];
         const binaryOperation = MathOperation.binaryOperations[name as KeyOfTypeOfMathOperation];
@@ -7393,7 +7455,7 @@ class Interpreter implements InterpreterInterface {
             if (overload) {
                 return this.context.callClassInstanceMethod(overload.receiver, overload.method, [], parent);
             }
-            return unaryOperation(value as MathObject);
+            return this.strictExpressionValue(unaryOperation(value as MathObject), `${name} result`);
         }
         if (binaryOperation) {
             if (evaluatedArgs.length !== 2) {
@@ -7442,7 +7504,7 @@ class Interpreter implements InterpreterInterface {
         if (methodName) {
             return this.evaluateBinaryOperatorWithClassDispatch(left, right, methodName, methodName, tree);
         }
-        return (this.opTable[tree.type] as BinaryMathOperation)(left, right);
+        return (this.opTable[tree.type] as BinaryMathOperation)(this.runtimeExpressionValue(left, 'left operand'), this.runtimeExpressionValue(right, 'right operand'));
     }
 
     /**
@@ -7456,19 +7518,23 @@ class Interpreter implements InterpreterInterface {
      * @param scope Scope used while evaluating operands.
      * @returns Logical scalar result.
      */
-    private evaluateShortCircuitOperation(tree: BinaryOperation, scope: Scope): NodeInput {
-        const left = this.evaluatedExpressionValue(tree.left, scope, 'left operand');
+    private evaluateShortCircuitOperation(tree: BinaryOperation, scope: Scope): ComplexType {
+        const left = this.runtimeExpressionValue(this.evaluatedExpressionValue(tree.left, scope, 'left operand'), 'left operand');
         const leftValue = this.toBoolean(left);
         if (tree.type === '&&') {
             if (!leftValue) {
                 return Complex.false();
             }
-            return this.toBoolean(this.evaluatedExpressionValue(tree.right, scope, 'right operand')) ? Complex.true() : Complex.false();
+            return this.toBoolean(this.runtimeExpressionValue(this.evaluatedExpressionValue(AST.requireStrictNodeExpr(tree.right, 'right operand'), scope, 'right operand'), 'right operand'))
+                ? Complex.true()
+                : Complex.false();
         }
         if (leftValue) {
             return Complex.true();
         }
-        return this.toBoolean(this.evaluatedExpressionValue(tree.right, scope, 'right operand')) ? Complex.true() : Complex.false();
+        return this.toBoolean(this.runtimeExpressionValue(this.evaluatedExpressionValue(AST.requireStrictNodeExpr(tree.right, 'right operand'), scope, 'right operand'), 'right operand'))
+            ? Complex.true()
+            : Complex.false();
     }
 
     private classUnaryOperatorMethod(value: NodeInput, methodName: string): { receiver: ClassInstance; method: ClassMethodDefinition } | undefined {
@@ -7520,7 +7586,7 @@ class Interpreter implements InterpreterInterface {
                 return this.context.callClassInstanceMethod(overload.receiver, overload.method, [], tree);
             }
         }
-        return (this.opTable[tree.type] as UnaryMathOperation)(value);
+        return (this.opTable[tree.type] as UnaryMathOperation)(this.runtimeExpressionValue(value, 'unary operand'));
     }
 
     private resolveClassInstanceField(instance: ClassInstance, field: string, parent: NodeInput): NodeInput {
@@ -7849,7 +7915,7 @@ class Interpreter implements InterpreterInterface {
     /**
      * Evaluate one dynamic field-name expression and normalize it to text.
      */
-    private evaluatedDynamicFieldName(field: NodeExpr, scope: Scope, message: string): string {
+    private evaluatedDynamicFieldName(field: StrictNodeExpr, scope: Scope, message: string): string {
         const evaluated = this.evaluatedExpressionValue(field, scope, 'dynamic field name');
         if (!CharString.isInstanceOf(evaluated)) {
             this.context.throwEvalError(message);
@@ -7864,7 +7930,7 @@ class Interpreter implements InterpreterInterface {
      * following subscript to every comma-list element instead of reducing the
      * receiver to its first value.
      */
-    private evaluatedCommaSeparatedReceiver(expr: NodeExpr, scope: Scope): NodeInput[] | undefined {
+    private evaluatedCommaSeparatedReceiver(expr: StrictNodeExpr, scope: Scope): NodeInput[] | undefined {
         this.context.pushRequestedOutputCount(1);
         this.context.pushCommaListExpansion();
         try {
@@ -7910,8 +7976,8 @@ class Interpreter implements InterpreterInterface {
      * than by the first receiver `S`. Returning the remaining field suffix lets
      * the caller apply `method` to every expanded object.
      */
-    private dottedCommaReceiver(node: NodeIndirectRef, scope: Scope): { values: NodeInput[]; fields: (string | NodeExpr)[] } | undefined {
-        const commaReceiverOrUndefined = (expr: NodeExpr): NodeInput[] | undefined => {
+    private dottedCommaReceiver(node: NodeIndirectRef, scope: Scope): { values: NodeInput[]; fields: (string | StrictNodeExpr)[] } | undefined {
+        const commaReceiverOrUndefined = (expr: StrictNodeExpr): NodeInput[] | undefined => {
             try {
                 return this.evaluatedCommaSeparatedReceiver(expr, scope);
             } catch {
@@ -8037,8 +8103,8 @@ class Interpreter implements InterpreterInterface {
     /**
      * Evaluate arguments passed to inherited handle pseudo-methods.
      */
-    private evaluatedCallArguments(args: ExpressionBoundaryValue[], scope: Scope, prefix: string): NodeInput[] {
-        return args.map((arg: NodeExpr, index) => this.evaluatedExpressionValue(arg, scope, `${prefix}${index + 1}`));
+    private evaluatedCallArguments(args: ExpressionBoundaryValue[], scope: Scope, prefix: string): StrictNodeExpr[] {
+        return args.map((arg, index) => this.evaluatedExpressionValue(AST.requireStrictNodeExpr(arg, `${prefix}${index + 1}`), scope, `${prefix}${index + 1}`));
     }
 
     /**
@@ -8072,7 +8138,7 @@ class Interpreter implements InterpreterInterface {
         if (typeof methodName !== 'string' || !['addlistener', 'delete', 'isvalid', 'notify'].includes(methodName)) {
             return undefined;
         }
-        const receiverFields = methodRef.field.slice(0, -1).map((field: string | NodeExpr) => {
+        const receiverFields = methodRef.field.slice(0, -1).map((field: string | StrictNodeExpr) => {
             if (typeof field === 'string') {
                 return field;
             }
@@ -8221,7 +8287,7 @@ class Interpreter implements InterpreterInterface {
         subs.isCell = true;
         for (let i = 0; i < args.length; i++) {
             const arg = args[i];
-            subs.array[0][i] = arg.type === ':' ? CharString.create(':') : this.evaluatedExpressionValue(arg, scope, `subscript${i + 1}`);
+            subs.array[0][i] = arg.type === ':' ? CharString.create(':') : this.runtimeExpressionValue(this.evaluatedExpressionValue(arg, scope, `subscript${i + 1}`), `subscript${i + 1}`);
         }
         MultiArray.setType(subs);
         return new Structure({
@@ -8318,12 +8384,12 @@ class Interpreter implements InterpreterInterface {
         const outputIsRequested = (index: number): boolean => outputMask[index] ?? true;
 
         return AST.nodeReturnList(
-            (evaluated: ReturnHandlerResult, index: number): NodeExpr => {
+            (evaluated: ReturnHandlerResult, index: number): StrictNodeExpr => {
                 const value = evaluated[`out${index}`];
                 if (typeof value === 'undefined') {
                     AST.throwErrorIfGreaterThanReturnList(index, index + 1, (message) => this.context.throwEvalError(message));
                 }
-                return value;
+                return AST.requireStrictNodeExpr(value, `subsref output ${index + 1}`);
             },
             (length: number): ReturnHandlerResult => {
                 AST.throwErrorIfGreaterThanReturnList(maxOutputCount, length, (message) => this.context.throwEvalError(message));
@@ -8391,7 +8457,7 @@ class Interpreter implements InterpreterInterface {
         return this.callClassSubsrefMethod(instance, method, descriptor, parent);
     }
 
-    private collectClassSubsrefChain(node: NodeExpr, scope: Scope): { instance: ClassInstance; descriptors: Structure[] } | undefined {
+    private collectClassSubsrefChain(node: StrictNodeExpr, scope: Scope): { instance: ClassInstance; descriptors: Structure[] } | undefined {
         if (node.type === 'IDX') {
             const base = this.collectClassSubsrefChain(node.expr, scope);
             if (!base) {
@@ -8422,8 +8488,8 @@ class Interpreter implements InterpreterInterface {
         return ClassInstance.isInstanceOf(value) ? { instance: value, descriptors: [] } : undefined;
     }
 
-    private collectSubsasgnAssignmentTarget(node: NodeExpr, scope: Scope): AssignmentTarget | undefined {
-        const collect = (current: NodeExpr): { id: string; descriptors: Structure[] } | undefined => {
+    private collectSubsasgnAssignmentTarget(node: StrictNodeExpr, scope: Scope): AssignmentTarget | undefined {
+        const collect = (current: StrictNodeExpr): { id: string; descriptors: Structure[] } | undefined => {
             if (AST.isNodeIdentifier(current)) {
                 return { id: current.id, descriptors: [] };
             }
@@ -9427,7 +9493,10 @@ class Interpreter implements InterpreterInterface {
             const tempScope = Scope.create();
             tempScope.defineName('__subsasgn__', result);
             MultiArray.setElements(tempScope, '__subsasgn__', [], this.nativeDescriptorIndexList(descriptor, result), this.charStringAssignmentRhs(value, target.quote), undefined, this);
-            return MultiArray.charStringFromCharacterVectorResult(this.scopedExpressionValue(tempScope, '__subsasgn__', 'character assignment result'), target.quote);
+            return MultiArray.charStringFromCharacterVectorResult(
+                this.runtimeExpressionValue(this.scopedExpressionValue(tempScope, '__subsasgn__', 'character assignment result'), 'character assignment result'),
+                target.quote,
+            );
         }
         if (descriptor.type === '{}' && !target.isCell) {
             this.context.throwEvalError('matrix cannot be indexed with {');
@@ -9970,7 +10039,7 @@ class Interpreter implements InterpreterInterface {
      * @param declarationKind Display name for diagnostics.
      * @returns Declared identifier.
      */
-    private declarationName(declaration: NodeExpr, declarationKind: string): string {
+    private declarationName(declaration: NodeDeclarationElement | { node: NodeDeclarationElement }, declarationKind: string): string {
         const declarationNode = AST.getDeclarationNode(declaration);
         if (AST.isNodeIdentifier(declarationNode)) {
             return declarationNode.id;
@@ -10396,7 +10465,7 @@ class Interpreter implements InterpreterInterface {
     /**
      * Walk a statement tree and collect assignment/declaration root names.
      */
-    private collectStaticWorkspaceTextNames(node: NodeInput, names: Set<string>): void {
+    private collectStaticWorkspaceTextNames(node: unknown, names: Set<string>): void {
         if (AST.isNodeFunctionDefinition(node)) {
             return;
         }
@@ -10423,11 +10492,11 @@ class Interpreter implements InterpreterInterface {
             if (Array.isArray(value)) {
                 for (const item of value) {
                     if (item && typeof item === 'object') {
-                        this.collectStaticWorkspaceTextNames(item as NodeInput, names);
+                        this.collectStaticWorkspaceTextNames(item, names);
                     }
                 }
             } else if (value && typeof value === 'object') {
-                this.collectStaticWorkspaceTextNames(value as NodeInput, names);
+                this.collectStaticWorkspaceTextNames(value, names);
             }
         }
     }
@@ -10518,7 +10587,7 @@ class Interpreter implements InterpreterInterface {
         });
     }
 
-    public getFunctionInputArgumentDefaults(func: NodeFunctionDefinition): Map<string, NodeExpr> {
+    public getFunctionInputArgumentDefaults(func: NodeFunctionDefinition): Map<string, StrictNodeExpr> {
         return FunctionArguments.inputArgumentDefaults(func, (message) => this.context.throwSyntaxError(message));
     }
 
@@ -10658,14 +10727,16 @@ class Interpreter implements InterpreterInterface {
                         if (assignment.length > 1 && op.length > 0) {
                             this.context.throwEvalError('computed multiple assignment not allowed.');
                         }
-                        let right: NodeExpr;
+                        let right: StrictNodeExpr;
                         let undefinedReference: string | undefined;
                         let error: Error | undefined;
                         this.context.pushForwardReferenceTargets(assignment.map(({ id }) => id).filter((id) => id !== '~'));
                         this.context.pushRequestedOutputCount(assignment.length);
                         this.context.pushRequestedOutputMask(assignment.map(({ id }) => id !== '~'));
                         try {
-                            right = AST.isNodeReturnList(assignmentTree.right) ? assignmentTree.right : MathOperation.copy(this.Evaluator(assignmentTree.right, scope));
+                            right = AST.isNodeReturnList(assignmentTree.right)
+                                ? assignmentTree.right
+                                : this.strictExpressionValue(MathOperation.copy(this.Evaluator(assignmentTree.right, scope)), 'assignment right-hand side');
                         } catch (e: unknown) {
                             if (!this.context.allowForwardReference) {
                                 throw e as Error;
@@ -10674,7 +10745,7 @@ class Interpreter implements InterpreterInterface {
                                 throw e as Error;
                             }
                             error = e as Error;
-                            right = MathOperation.copy(assignmentTree.right);
+                            right = this.strictExpressionValue(RuntimeValue.copy(assignmentTree.right), 'forward assignment right-hand side');
                             undefinedReference = e.identifier;
                         } finally {
                             this.context.popRequestedOutputMask();
@@ -10684,12 +10755,12 @@ class Interpreter implements InterpreterInterface {
                         const rightReturnList = AST.ensureReturnList(right);
                         const resultList = AST.nodeListFirst();
                         const evaluated = rightReturnList.handler(assignment.length);
-                        const selectRightValue = (index: number): NodeExpr => {
+                        const selectRightValue = (index: number): StrictNodeExpr => {
                             const value = rightReturnList.selector(evaluated, index);
                             if (typeof value === 'undefined') {
                                 AST.throwErrorIfGreaterThanReturnList(index, index + 1, (message) => this.context.throwEvalError(message));
                             }
-                            return value;
+                            return AST.requireStrictNodeExpr(value, `assignment output ${index + 1}`);
                         };
                         for (let n = 0; n < assignment.length; n++) {
                             const { id, index, delimiter, field, descriptors } = assignment[n];
@@ -10781,8 +10852,16 @@ class Interpreter implements InterpreterInterface {
                                                         const computedValue = this.evaluatedExpressionValue(
                                                             AST.nodeOperation(
                                                                 op,
-                                                                MultiArray.getElements(fieldValue, '__field_assignment__', [], evaluatedIndex, this),
-                                                                MultiArray.scalarToMultiArray(this.evaluatedExpressionValue(selectRightValue(n), scope, 'assignment value')),
+                                                                AST.requireStrictNodeExpr(
+                                                                    MultiArray.getElements(fieldValue, '__field_assignment__', [], evaluatedIndex, this),
+                                                                    'compound field assignment value',
+                                                                ),
+                                                                MultiArray.scalarToMultiArray(
+                                                                    this.runtimeExpressionValue(
+                                                                        this.evaluatedExpressionValue(selectRightValue(n), scope, 'assignment value'),
+                                                                        'assignment value',
+                                                                    ),
+                                                                ),
                                                             ),
                                                             scope,
                                                             'compound field assignment value',
@@ -10817,13 +10896,21 @@ class Interpreter implements InterpreterInterface {
                                                     field,
                                                     evaluatedIndex,
                                                     MultiArray.scalarToMultiArray(
-                                                        this.evaluatedExpressionValue(
-                                                            AST.nodeOperation(
-                                                                op,
-                                                                MultiArray.getElements(entry.node, id, field, evaluatedIndex),
-                                                                MultiArray.scalarToMultiArray(this.evaluatedExpressionValue(selectRightValue(n), scope, 'assignment value')),
+                                                        this.runtimeExpressionValue(
+                                                            this.evaluatedExpressionValue(
+                                                                AST.nodeOperation(
+                                                                    op,
+                                                                    AST.requireStrictNodeExpr(MultiArray.getElements(entry.node, id, field, evaluatedIndex), 'compound assignment value'),
+                                                                    MultiArray.scalarToMultiArray(
+                                                                        this.runtimeExpressionValue(
+                                                                            this.evaluatedExpressionValue(selectRightValue(n), scope, 'assignment value'),
+                                                                            'assignment value',
+                                                                        ),
+                                                                    ),
+                                                                ),
+                                                                scope,
+                                                                'compound assignment value',
                                                             ),
-                                                            scope,
                                                             'compound assignment value',
                                                         ),
                                                     ),
@@ -11267,13 +11354,19 @@ class Interpreter implements InterpreterInterface {
                         return result;
                     }
                     case 'RANGE': {
-                        const start = this.evaluatedExpressionValue(tree.start_, scope, 'range start');
-                        const stop = this.evaluatedExpressionValue(tree.stop_, scope, 'range stop');
-                        const stride = tree.stride_ ? this.evaluatedExpressionValue(tree.stride_, scope, 'range stride') : null;
-                        const overload = this.evaluateColonWithClassDispatch(stride ? [start, stride, stop] : [start, stop], tree);
+                        const startValue = this.runtimeExpressionValue(this.evaluatedExpressionValue(tree.start_, scope, 'range start'), 'range start');
+                        const stopValue = this.runtimeExpressionValue(this.evaluatedExpressionValue(tree.stop_, scope, 'range stop'), 'range stop');
+                        const strideValue = tree.stride_ ? this.runtimeExpressionValue(this.evaluatedExpressionValue(tree.stride_, scope, 'range stride'), 'range stride') : null;
+                        const overload = this.evaluateColonWithClassDispatch(strideValue ? [startValue, strideValue, stopValue] : [startValue, stopValue], tree);
                         if (overload) {
                             return overload;
                         }
+                        if (!Complex.isInstanceOf(startValue) || !Complex.isInstanceOf(stopValue) || (strideValue !== null && !Complex.isInstanceOf(strideValue))) {
+                            this.context.throwEvalError('range bounds must be numeric scalars.');
+                        }
+                        const start = startValue;
+                        const stop = stopValue;
+                        const stride = strideValue;
                         return MultiArray.expandRange(start, stop, stride);
                     }
                     case 'ENDRANGE': {
@@ -11285,7 +11378,7 @@ class Interpreter implements InterpreterInterface {
                             parent = parent.parent;
                         }
                         if (AST.isNodeIndexExpr(parent)) {
-                            const expr = this.evaluatedExpressionValue(parent.expr, scope, 'indexed expression');
+                            const expr = this.evaluatedExpressionBoundaryValue(parent.expr, scope, 'indexed expression');
                             if (ClassInstance.isInstanceOf(expr)) {
                                 const customEnd = this.callClassEnd(expr, index + 1, parent.args.length, parent);
                                 if (typeof customEnd !== 'undefined') {
@@ -11305,7 +11398,7 @@ class Interpreter implements InterpreterInterface {
                     }
                     case ':':
                         if (AST.isNodeIndexExpr(tree.parent)) {
-                            const expr = this.evaluatedExpressionValue(tree.parent.expr, scope, 'indexed expression');
+                            const expr = this.evaluatedExpressionBoundaryValue(tree.parent.expr, scope, 'indexed expression');
                             if (MultiArray.isInstanceOf(expr)) {
                                 return tree.parent.args.length === 1
                                     ? MultiArray.expandColon(MultiArray.linearLength(expr))
@@ -11635,7 +11728,8 @@ class Interpreter implements InterpreterInterface {
      * @returns Normalized source-like text.
      */
     public Unparse(tree: NodeInput, parentPrecedence = 0): string {
-        const declarationUnparse = (keyword: string, tree: NodeInput): string => keyword + ' ' + tree.list.map((node: NodeExpr) => this.Unparse(AST.getDeclarationNode(node))).join(' ');
+        const declarationUnparse = (keyword: string, tree: NodeInput): string =>
+            keyword + ' ' + tree.list.map((node: NodeDeclarationElement | { node: NodeDeclarationElement }) => this.Unparse(AST.getDeclarationNode(node))).join(' ');
         const nodeListInlineUnparse = (list: NodeInput[]): string => list.map((node) => this.Unparse(node)).join(',');
         const isEmptyListNode = (node: NodeInput | null): boolean => !!node && node.type === 'LIST' && node.list.length === 0;
         const classAttributeListUnparse = (attributes: NodeClassAttribute[]): string =>
@@ -11804,7 +11898,9 @@ class Interpreter implements InterpreterInterface {
                             return tree.id;
                         case '.':
                             return (
-                                this.Unparse(tree.obj) + '.' + tree.field.map((value: string | NodeExpr) => (typeof value === 'string' ? value : '(' + this.Unparse(value) + ')')).join('.')
+                                this.Unparse(tree.obj) +
+                                '.' +
+                                tree.field.map((value: string | StrictNodeExpr) => (typeof value === 'string' ? value : '(' + this.Unparse(value) + ')')).join('.')
                             );
                         case 'LIST':
                             return tree.list.map((value: NodeInput) => this.Unparse(value)).join('\n') + '\n';
@@ -11825,10 +11921,15 @@ class Interpreter implements InterpreterInterface {
                         case '<~>':
                             return '~';
                         case 'IDX':
-                            return this.Unparse(tree.expr) + tree.delim[0] + tree.args.map((value: NodeExpr) => this.Unparse(value)).join(',') + tree.delim[1];
+                            return this.Unparse(tree.expr) + tree.delim[0] + tree.args.map((value: ExpressionBoundaryValue) => this.Unparse(value)).join(',') + tree.delim[1];
                         case 'SUPERCLASS_CTOR':
                             return (
-                                this.Unparse(tree.instance) + '@' + this.Unparse(tree.superclass) + '(' + tree.args.map((value: NodeExpr) => this.Unparse(value).trimEnd()).join(',') + ')'
+                                this.Unparse(tree.instance) +
+                                '@' +
+                                this.Unparse(tree.superclass) +
+                                '(' +
+                                tree.args.map((value: ExpressionBoundaryValue) => this.Unparse(value).trimEnd()).join(',') +
+                                ')'
                             );
                         case 'METACLASS':
                             return '?' + this.Unparse(tree.className);
@@ -11947,7 +12048,7 @@ class Interpreter implements InterpreterInterface {
                         case 'CLASS_EVENT':
                             return tree.id;
                         case 'CLASS_ENUMERATION':
-                            return tree.id + (tree.args.length > 0 ? '(' + tree.args.map((arg: NodeExpr) => this.Unparse(arg).trimEnd()).join(',') + ')' : '');
+                            return tree.id + (tree.args.length > 0 ? '(' + tree.args.map((arg: ExpressionBoundaryValue) => this.Unparse(arg).trimEnd()).join(',') + ')' : '');
                         case 'CLASS_ATTRIBUTE': {
                             if (tree.value && (tree.value.type === '~' || tree.value.type === '!')) {
                                 return tree.value.type + tree.id;
@@ -11982,7 +12083,7 @@ class Interpreter implements InterpreterInterface {
      */
     public UnparserMathML(tree: NodeInput, parentPrecedence = 0): string {
         const declarationUnparseMathML = (keyword: string, tree: NodeInput): string =>
-            `<mrow><mi>${keyword}</mi><mspace width="0.4em"/>${tree.list.map((node: NodeExpr) => this.UnparserMathML(AST.getDeclarationNode(node))).join('<mspace width="0.4em"/>')}</mrow>`;
+            `<mrow><mi>${keyword}</mi><mspace width="0.4em"/>${tree.list.map((node: NodeDeclarationElement | { node: NodeDeclarationElement }) => this.UnparserMathML(AST.getDeclarationNode(node))).join('<mspace width="0.4em"/>')}</mrow>`;
         const inlineListMathML = (list: NodeInput[]): string => list.map((node) => this.UnparserMathML(node)).join('<mo>,</mo>');
         const isEmptyListNode = (node: NodeInput | null): boolean => !!node && node.type === 'LIST' && node.list.length === 0;
         const keywordRow = (keyword: string, expression?: string): string =>
@@ -12123,7 +12224,7 @@ class Interpreter implements InterpreterInterface {
                         case '.':
                             return MathML.format['.'](
                                 this.UnparserMathML(tree.obj),
-                                tree.field.map((value: string | NodeExpr) =>
+                                tree.field.map((value: string | StrictNodeExpr) =>
                                     typeof value === 'string' ? MathML.format['IDENT'](value) : MathML.format['()']('(', this.UnparserMathML(value), ')'),
                                 ),
                             );
@@ -12153,12 +12254,12 @@ class Interpreter implements InterpreterInterface {
                                     if (aliasTreeName in this.context.builtInFunctionTable && this.context.builtInFunctionTable[aliasTreeName].UnparserMathML) {
                                         unparse = this.context.builtInFunctionTable[aliasTreeName].UnparserMathML(tree);
                                     } else if (aliasTreeName in this.context.builtInFunctionTable && MathML.formatFunction(aliasTreeName)) {
-                                        unparse = MathML.formatDynamic(aliasTreeName, ...tree.args.map((arg: NodeExpr) => this.UnparserMathML(arg)));
+                                        unparse = MathML.formatDynamic(aliasTreeName, ...tree.args.map((arg: ExpressionBoundaryValue) => this.UnparserMathML(arg)));
                                     } else {
                                         unparse = MathML.format['IDX'](
                                             MathML.format['IDENT'](substSymbol(tree.expr.id)),
                                             tree.delim[0],
-                                            tree.args.map((arg: NodeExpr) => this.UnparserMathML(arg)),
+                                            tree.args.map((arg: ExpressionBoundaryValue) => this.UnparserMathML(arg)),
                                             tree.delim[1],
                                         );
                                     }
@@ -12166,7 +12267,7 @@ class Interpreter implements InterpreterInterface {
                                     unparse = MathML.format['IDX'](
                                         this.UnparserMathML(tree.expr, parentPrecedence),
                                         tree.delim[0],
-                                        tree.args.map((arg: NodeExpr) => this.UnparserMathML(arg)),
+                                        tree.args.map((arg: ExpressionBoundaryValue) => this.UnparserMathML(arg)),
                                         tree.delim[1],
                                     );
                                 }

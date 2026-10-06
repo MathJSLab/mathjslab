@@ -10,6 +10,13 @@ type ImportTable = {
     wildcard: string[];
 };
 
+type ImportedNameCandidateKind = 'explicit' | 'wildcard';
+
+type ImportedNameCandidate = {
+    name: string;
+    kind: ImportedNameCandidateKind;
+};
+
 /**
  * Represents a lexical workspace/scope.
  *
@@ -457,16 +464,21 @@ class Scope {
      * @returns Candidate fully qualified imported names.
      */
     public importedNameCandidates(name: string): string[] {
-        const result: string[] = [];
+        return this.importedNameCandidatesWithKind(name).map((candidate) => candidate.name);
+    }
+
+    /** Return imported candidates together with their precedence category. */
+    public importedNameCandidatesWithKind(name: string): ImportedNameCandidate[] {
+        const result: ImportedNameCandidate[] = [];
         let scope: Scope | undefined = this;
         while (scope) {
             const explicit = scope.importTable.explicit[name];
             if (explicit?.length) {
-                result.push(...explicit);
+                result.push(...explicit.map((candidate) => ({ name: candidate, kind: 'explicit' as const })));
                 break;
             }
             for (const prefix of scope.importTable.wildcard) {
-                result.push(`${prefix}.${name}`);
+                result.push({ name: `${prefix}.${name}`, kind: 'wildcard' });
             }
             scope = scope.parent;
         }
@@ -553,5 +565,5 @@ class Scope {
 }
 
 export { Scope };
-export type { ImportTable };
+export type { ImportedNameCandidate, ImportedNameCandidateKind, ImportTable };
 export default Scope;
