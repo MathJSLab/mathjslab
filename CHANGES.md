@@ -3,6 +3,19 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 2.8.1
+
+- Refresh the README feature inventory to reflect the implemented parser,
+  numeric/array model, functions, classes, asynchronous sessions, resumable
+  execution, parallel loop subset and native plotting.
+- Correct public API examples to use `Interpreter.Create`, update development
+  and pre-release commands, and add an executable host-delay integration
+  example.
+- Add a documentation index and consolidate architecture and execution guides
+  around the current supported subset and remaining synchronous boundaries.
+- Correct symbol-resolution documentation, clarify generated API reference
+  scope, and refresh contributor work fronts and testing guidance.
+
 ## 2.8.0
 
 - Register native, session-owned `plot`, `plot3`, `surf`, `plot2d` and

@@ -27,7 +27,7 @@
 
 **[ISBN 978-65-00-82338-7](https://grp.isbn-international.org/search/piid_solr?keys=978-65-00-82338-7)**
 
-This package emulates an interpreter for a subset of
+This package implements an interpreter for a subset of
 [MATLAB&reg;](https://www.mathworks.com/products/matlab.html)/[Octave](https://www.gnu.org/software/octave/)
 language. It is written completely in
 [TypeScript](https://www.typescriptlang.org/).
@@ -46,14 +46,14 @@ trademark of [The MathWorks, Inc.](https://www.mathworks.com/) For more
 information about [MATLAB](https://www.mathworks.com/products/matlab.html),
 visit [www.mathworks.com](https://www.mathworks.com/).
 
-The [MathJSLab](https://mathjslab.com/) can run in the browser environment and
+The [MathJSLab](https://mathjslab.com/) runs in browsers and Node.js and
 implements arbitrary precision arithmetic using the
 [decimal.js](https://www.npmjs.com/package/decimal.js) package in addition to
 the native `number` type.
 
 It uses the [ANTLR](https://www.antlr.org/)
 [parser generator](https://en.wikipedia.org/wiki/Compiler-compiler) to generate
-a [parser](https://en.wikipedia.org/wiki/Parsing) that create an
+a [parser](https://en.wikipedia.org/wiki/Parsing) that creates an
 [AST](https://en.wikipedia.org/wiki/Abstract_syntax_tree)
 ([Abstract Syntax Tree](https://en.wikipedia.org/wiki/Abstract_syntax_tree)) of
 input.
@@ -63,21 +63,19 @@ are the evaluator, which computes the inputs, and the
 [MathML](https://www.w3.org/Math/) unparser, that generates mathematical
 representations of the inputs and results.
 
-The [MathJSLab engine](https://www.npmjs.com/package/mathjslab) is being
-architected similarly to
-[MATLAB&reg;](https://www.mathworks.com/products/matlab.html)/[Octave](https://www.gnu.org/software/octave/):
-based on the [BLAS](https://www.netlib.org/blas/) (Basic Linear Algebra
-Subprograms) and [LAPACK](https://www.netlib.org/lapack/) (Linear Algebra
-PACKage) routines.
+The [MathJSLab engine](https://www.npmjs.com/package/mathjslab) includes
+numerical routines based on [BLAS](https://www.netlib.org/blas/) (Basic Linear
+Algebra Subprograms) and [LAPACK](https://www.netlib.org/lapack/) (Linear
+Algebra PACKage).
 
 This software is intended for **educational purposes**, to provide teachers and
 students with a computer aided calculation tool that is capable of running in a
 browser environment. So it can be easily adapted to be used on different
 devices and environments.
 
-All [MathJSLab](https://mathjslab.com/)
+[MathJSLab](https://mathjslab.com/)
 [interpreter](<https://en.wikipedia.org/wiki/Interpreter_(computing)>)
-operations, functions and commands are documented in the
+operations, functions and commands have user-facing help in the
 [demo Web application's](https://github.com/MathJSLab/mathjslab-app) command
 `help NAME`. It's in
 [english](https://github.com/MathJSLab/mathjslab-app/tree/main/help/en),
@@ -94,63 +92,87 @@ generated Markdown API reference.
 
 ## Features
 
-- Runs on any
-  [JavaScript](https://www.ecma-international.org/publications-and-standards/standards/ecma-262/)
-  engine. All `mathjslab` code was written synchronously. Asynchronous
-  functions were used only at build time.
-- Improved demo
-  [Web application](https://en.wikipedia.org/wiki/Web_application) at project
-  page: [mathjslab.com](https://mathjslab.com/)
-  ([repository](https://github.com/MathJSLab/mathjslab-app)). The demo
-  [Web application](https://en.wikipedia.org/wiki/Web_application) was coded as
-  a
-  [Progressive Web App (PWA)](https://pt.wikipedia.org/wiki/Progressive_web_app),
-  with the most modern web programming features, such as:
-    - Reusable
-      [Web Components](https://developer.mozilla.org/en-US/docs/Web/API/Web_components)
-      to structure the user interface.
-    - [Responsive](https://en.wikipedia.org/wiki/Responsive_web_design)
-      [HTML](https://developer.mozilla.org/en-US/docs/Web/HTML) elements and
-      [components](https://developer.mozilla.org/en-US/docs/Web/API/Web_components).
-    - [Styles](https://www.w3.org/TR/css/) defined by
-      [SASS](https://sass-lang.com/) templates, with definitions in a more
-      rationalized and modular manner.
-    - [Nunjucks](https://mozilla.github.io/nunjucks/) templates processed by
-      [Eleventy](https://www.11ty.dev/) to dynamically configure values at
-      build time.
-- Comes with a large set of built-in operations, functions and commands well
-  documented in the demo
-  [Web application](https://en.wikipedia.org/wiki/Web_application) in
-  [english](https://github.com/MathJSLab/mathjslab-app/tree/main/help/en),
-  [portuguese](https://github.com/MathJSLab/mathjslab-app/tree/main/help/pt)
-  and [spanish](https://github.com/MathJSLab/mathjslab-app/tree/main/help/es).
-- Includes test suite using [Jest](https://jestjs.io/)
-  [framework](https://en.wikipedia.org/wiki/Software_framework), covering
-  source, compatibility, runtime lifecycle and distribution behavior.
-- Is easily extensible through configuration parameters passed to
-  [`Interpreter` constructor](https://github.com/MathJSLab/mathjslab/blob/main/src/Interpreter.ts).
-- [Open source](https://opensource.org/) software with fully documented code:
-  [MIT License](https://github.com/MathJSLab/mathjslab/blob/main/LICENSE).
-- Software with assigned
+- **MATLAB/Octave-like parser and AST.** Expressions, matrix and cell literals,
+  structures, command syntax, imports, comma-separated lists, control flow,
+  functions, argument blocks and class declarations. Contextual parsing handles
+  transpose versus strings, matrix whitespace and block boundaries. AST
+  metadata preserves statement source ranges and semicolon output suppression;
+  source and MathML unparsing support inspection and presentation.
+- **Numeric and array operations.** Native-number and arbitrary-precision
+  decimal complex backends, N-D arrays, column-major logical indexing
+  semantics, broadcasting, growth and deletion, cells and structure arrays.
+  Numerical routines include BLAS/LAPACK-based linear algebra, matrix division
+  and page-wise division. See the
+  [numeric array model](doc/numeric-array-model.md).
+- **Functions and workspaces.** User, local and nested functions; named and
+  anonymous handles; multiple and ignored outputs; local, global, persistent,
+  caller and base workspaces. Declarative built-in signatures and `arguments`
+  blocks support arity, defaults, name-value inputs, validation, repeating and
+  output-repeating forms. Host-provided source APIs resolve `.m` scripts,
+  functions, classes and external class methods.
+- **Classes and dispatch.** Substantial `classdef` support, including
+  inheritance, properties, methods, events, enumerations, metadata, listeners,
+  accessors, SetGet mixins and common static/instance dispatch paths.
+  Descriptor indexing through `substruct`, `subsref` and `subsasgn` supports
+  chained native/object access. MATLAB/Octave library and toolbox coverage
+  remains incomplete.
+- **Synchronous and asynchronous execution.** `Interpreter` provides direct
+  parsing/evaluation. In-process, browser Module Worker and Node
+  `worker_threads` runtimes provide isolated asynchronous sessions with
+  structured outputs, diagnostics, interruption, abort signals, timeouts, reset
+  and disposal.
+- **Suspension and resumption.** The shared execution machine retains supported
+  control flow, ordinary/anonymous calls, arguments/defaults, expressions,
+  native indexing/assignments and matrix/cell literal elements across host
+  waits without replaying completed work. `pause` and `load` request explicit
+  host capabilities; cooperative checkpoints allow cancellation. Continuations
+  are single-use in-memory objects. Class/script frames and other synchronous
+  boundaries remain documented in the
+  [execution guide](doc/resumable-execution.md).
+- **Parallel loop subset.** Remote runtimes distribute statically proven sliced
+  assignments and associative reductions in `parfor` across Workers. `strict`,
+  `fallback` and `off` policies control execution; synchronous execution and
+  `spmd` retain sequential compatibility behavior.
+- **Host-owned visualization.** Native `plot`, `plot3`, `surf`, `plot2d` and
+  `histogram` prepare serializable visualization descriptions. Runtime outputs
+  carry those descriptions; the host supplies the renderer and manages its
+  resources. The core has no DOM or Plotly dependency.
+- **Embedding and extension.** Public TypeScript contracts, interpreter
+  configuration, function registration, source providers and runtime host
+  adapters let applications supply their own integration. Runtime ESM bundles
+  share the public core and its numeric/value identity.
+- **Compatibility and regression coverage.** Jest suites cover numerical
+  routines, parser/AST structure, functions, classes, `.m` fixtures, runtime
+  lifecycle and package distributions. Circular source dependencies are a
+  release gate.
+- **Open educational software.** MIT licensed, with
   [ISBN](https://grp.isbn-international.org/search/piid_solr?keys=978-65-00-82338-7)
-  and [DOI](https://doi.org/10.5281/zenodo.8396265), so that it can be used in
-  academic work and research, being referenced appropriately. Any inclusion of
-  authors will result in an update of the
-  [ISBN](https://grp.isbn-international.org/) records.
+  and [DOI](https://doi.org/10.5281/zenodo.8396265) for academic citation. A
+  [demo application](https://mathjslab.com/) and multilingual help are
+  maintained in the
+  [application repository](https://github.com/MathJSLab/mathjslab-app).
+
+See the [documentation index](doc/README.md) for language, runtime, integration
+and maintainer guides.
 
 ## Supported environments
 
-[MathJSLab](https://mathjslab.com/) works on any
+The synchronous core has bundles targeting
 [ES2015](https://262.ecma-international.org/6.0/) compatible
 [JavaScript](https://www.ecma-international.org/publications-and-standards/standards/ecma-262/)
-engine, including [Node.js](https://nodejs.org/),
-[Chrome](https://www.google.com/chrome/),
+engines and ES2022 bundles for modern environments, including
+[Node.js](https://nodejs.org/), [Chrome](https://www.google.com/chrome/),
 [Firefox](https://www.mozilla.org/en-US/firefox/),
 [Safari](https://www.apple.com/safari/), [Opera](https://www.opera.com), and
 [Edge](https://www.microsoft.com/edge).
 
-There are 6 interpreter bundles, plus the asynchronous runtime and Worker entry
-points described below:
+Choose a bundle matching your environment and JavaScript target. Asynchronous
+runtime entry points target ES2022 and require host support for Promises,
+AbortController and, for remote sessions, the relevant Worker API. The package
+declares Node.js >=16 and npm >=8 for consumers; development tools can have
+newer requirements.
+
+There are six interpreter bundles, plus runtime and Worker entry points:
 
 - For [Node.js](https://nodejs.org/) environment,
   [CommonJS](https://nodejs.org/docs/latest/api/modules.html),
@@ -205,44 +227,26 @@ npm install mathjslab
 
 ## Usage
 
-The basic [API](https://en.wikipedia.org/wiki/API) is an instantiation of
-`Interpreter` class with optional configuration.
-
-Import **[MathJSLab](https://mathjslab.com/)
-[API](https://en.wikipedia.org/wiki/API)**:
+Create an interpreter with the public factory. Configuration is optional; the
+constructor is private.
 
 ```typescript
-import { Interpreter, TInterpreterConfig } from "mathjslab";
+import { Interpreter, type InterpreterConfig } from "mathjslab";
+
+const config: InterpreterConfig = {};
+const interpreter = Interpreter.Create(config);
+const input = interpreter.Parse("x=sqrt(1+2*3)");
+const result = interpreter.Evaluate(input);
+const source = interpreter.Unparse(result);
+const mathmlInput = interpreter.UnparseMathML(input);
+const mathmlResult = interpreter.UnparseMathML(result);
 ```
 
-Instantiate the `Interpreter` class with:
+The workspace persists between evaluations of the same interpreter. `Evaluate`
+is synchronous: a supported host wait requires the asynchronous runtime
+described below and reports `MATHJSLAB_EFFECT_REQUIRES_ASYNC` here.
 
-```typescript
-let interpreter: Interpreter = new Interpreter(InterpreterConfiguration);
-```
-
-### Examples
-
-- **Parsing**:
-
-```typescript
-let input: AST.NodeInput = interpreter.Parse("x=sqrt(1+2*3)");
-```
-
-- **Evaluation**:
-
-```typescript
-let result: AST.NodeInput = interpreter.Evaluate(input);
-```
-
-- **[MathML](https://www.w3.org/Math/) generation**:
-
-```typescript
-let mathmlInput: string = interpreter.UnparseMathML(input);
-let mathmlResult: string = interpreter.UnparseMathML(result);
-```
-
-You can try [some basic examples](https://codepen.io/collection/BaNkVd) on
+You can try [basic examples](https://codepen.io/collection/BaNkVd) on
 [CodePen](https://codepen.io/).
 
 ## Using a [CDN](https://en.wikipedia.org/wiki/Content_delivery_network)
@@ -285,7 +289,7 @@ The [UMD module](https://github.com/umdjs/umd) will be loaded with `mathjslab`
 name. You can instantiate `Interpreter` with:
 
 ```typescript
-let interpreter = new mathjslab.Evaluator(InterpreterConfiguration);
+const interpreter = mathjslab.Interpreter.Create();
 ```
 
 ## Contributing
@@ -299,64 +303,33 @@ Join the community chat:
 
 ## Project build and test
 
-To build the project, you only need [Node.js](https://nodejs.org/) and the
-[Java Runtime Environment](https://www.oracle.com/java/) installed. The project
-build and dependencies are managed by [npm](https://www.npmjs.com/package/npm)
-through scripts in the
-[`package.json`](https://github.com/MathJSLab/mathjslab/blob/main/package.json)
-file. The build scripts download the latest version of
-[ANTLR](https://www.antlr.org/) into the resources directory for use by the
-project. The test suite uses the [Jest](https://jestjs.io/)
-[framework](https://en.wikipedia.org/wiki/Software_framework).
-
-### Build scripts
-
-The following build scripts are defined:
-
-1. **Before building and testing** `mathjslab`, to **initialize** the project
-   workspace, run:
+Use Node.js, npm and Java for ANTLR parser generation. Development commands are
+defined in [package.json](package.json).
 
 ```bash
-npm run update
-```
-
-This will update the dependencies, install all of them, and download the latest
-version of [ANTLR](https://www.antlr.org/), preparing any resources needed to
-build the project.
-
-2. Run the `mathjslab` **tests**:
-
-```bash
-npm run test
-```
-
-3. **Format** and **lint** `mathjslab` code:
-
-```bash
-npm run format:lint
-```
-
-4. **Build** `mathjslab` package:
-
-```bash
+npm ci
+npm run get:antlr
+npm run build:parser:key:types
+npm run test:circ:unit:integration
+npm run docs
 npm run build
+npm run test:bundle
 ```
 
-5. To **cleanup** all build files in workspace use:
+Source checks precede bundle construction; distribution tests run against built
+artifacts. There is no `npm run test` script. Focused suites and release checks
+are described in the [testing guide](doc/testing-strategy.md).
 
-```bash
-npm run clean
-```
+`npm run format:lint` formats files and applies lint fixes. `npm run docs`
+regenerates the Markdown API reference. `npm run install:all` also copies
+shared organization resources and downloads ANTLR; `npm run update`
+additionally updates dependency ranges, so it is a maintenance operation rather
+than the normal locked-dependency setup.
 
-6. To **delete resources and dependencies**, the `package-lock.json` file and
-   `node_modules` directory too, use:
-
-```bash
-npm run clean:all
-```
-
-After run this command you will need to do workspace setup running
-`npm run update` again.
+`npm run clean` removes bundles, reports, generated parser/key files and the
+generated API reference. `npm run clean:all` additionally removes downloaded
+resources, the lockfile/dependencies via its helper and copied shared files.
+Regenerate the required artifacts after cleaning.
 
 ## Runtime sessions and Workers
 
@@ -383,6 +356,52 @@ await session.dispose();
 await runtime.dispose();
 ```
 
+### Host waits and retained execution
+
+A runtime needs an explicit host adapter for `pause` and `load`. For example,
+this in-process host handles delay effects:
+
+```js
+const runtime = createInProcessMathJSLabRuntime({
+    host: {
+        async request(effect) {
+            if (effect.type !== "delay") {
+                throw new Error(`Unsupported host effect: ${effect.type}`);
+            }
+            await new Promise((resolve) =>
+                setTimeout(resolve, effect.milliseconds),
+            );
+            return {};
+        },
+    },
+});
+const session = await runtime.createSession();
+try {
+    const result = await session.execute("x=1; pause(0.01); x+=1", {
+        timeoutMs: 1_000,
+    });
+    console.log(result.status, result.outputs, result.diagnostics);
+} finally {
+    await runtime.dispose();
+}
+```
+
+The delay suspends supported execution and resumes from retained state. The
+runtime races host waits against cancellation even when an adapter ignores its
+signal; this minimal timer adapter does not cancel its timer. A resource host
+handles `read-text` by returning `{ value: sourceText }` for `load(reference)`.
+Loaded code runs in the same workspace. Direct `pause`/`load` value operands
+and `load` inside user functions remain unsupported.
+
+Suspension is internal to `execute`; sessions expose interruption and reset,
+while `CreateExecutionMachine` provides the lower-level continuation contract.
+Continuations cannot be serialized or persisted. Supported calls, expressions,
+indexing, assignments and literals retain completed values; class/script
+frames, validation, indirect forwarding and some output/preparation paths
+remain synchronous. Long numerical operations are indivisible. See
+[resumable execution](doc/resumable-execution.md) for the exact supported
+subset.
+
 Worker boundaries carry only versioned, serializable runtime values and output
 descriptors. Files, network access, persistence, clocks, and other external
 effects must be supplied explicitly by a host adapter. A timed-out or
@@ -406,22 +425,22 @@ are not part of this release.
 The engine implements a practical subset of
 [MATLAB&reg;](https://www.mathworks.com/products/matlab.html)/[Octave](https://www.gnu.org/software/octave/)
 syntax, including expressions, arrays, cell arrays, structures, control flow,
-loops, sequential `parfor`/`spmd` fallbacks, user functions, anonymous
-functions, function handles, `arguments` blocks including repeating and
-output-repeating forms, imports, command syntax, comma-separated lists,
-descriptor-based indexing with `substruct`/`subsref`/`subsasgn`, browser-hosted
-`.m` sources, and substantial `classdef` support, including class metadata,
-properties, methods, events, enumerations, listeners, accessors, SetGet mixins,
-common static/instance dispatch paths, and stricter AST/runtime expression
-boundary validation. Parser/AST metadata preserves statement source ranges and
-semicolon output suppression for diagnostics and round trips. Descriptor
-indexing covers chained native and object paths with scalar broadcast,
-deletion, implicit path creation, indexed `getfield`/`setfield`, empty
-structure-array schemas, and comma-separated-list expansion. Runtime array
-helpers preserve MATLAB/Octave column-major logical semantics over MathJSLab's
-page-stacked internal storage, including N-D slicing, expansion, logical
-indexing, deletion, cells, structures, matrix division, page-wise division, and
-non-finite numeric cases.
+loops, Worker-backed `parfor` for eligible bodies and sequential fallbacks,
+user functions, anonymous functions, function handles, `arguments` blocks
+including repeating and output-repeating forms, imports, command syntax,
+comma-separated lists, descriptor-based indexing with
+`substruct`/`subsref`/`subsasgn`, browser-hosted `.m` sources, and substantial
+`classdef` support, including class metadata, properties, methods, events,
+enumerations, listeners, accessors, SetGet mixins, common static/instance
+dispatch paths, and stricter AST/runtime expression boundary validation.
+Parser/AST metadata preserves statement source ranges and semicolon output
+suppression for diagnostics and round trips. Descriptor indexing covers chained
+native and object paths with scalar broadcast, deletion, implicit path
+creation, indexed `getfield`/`setfield`, empty structure-array schemas, and
+comma-separated-list expansion. Runtime array helpers preserve MATLAB/Octave
+column-major logical semantics over MathJSLab's page-stacked internal storage,
+including N-D slicing, expansion, logical indexing, deletion, cells,
+structures, matrix division, page-wise division, and non-finite numeric cases.
 
 The main remaining limitations are general external filesystem access,
 incomplete MATLAB/Octave library and toolbox coverage, and less common class

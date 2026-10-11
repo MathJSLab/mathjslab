@@ -105,18 +105,22 @@ export default class ClassName {}
 
 ## Work fronts
 
-The **MathJSLab** project started almost a decade ago, but it is still in its
-infancy. There are several work fronts, some already open, others yet to begin,
-none yet completed.
+MathJSLab includes a substantial parser, function/class runtime, numerical
+routines and asynchronous sessions. Current work should extend these contracts
+and their regression coverage. Useful fronts include:
 
-Some are listed below:
-
-- Optimize the ComplexDecimal class so that methods avoid using other functions
-  in the class. To do this, it will be necessary to deduce the definitions of
-  each function in terms of the real and imaginary parts.
-- All operations over array elements are complex. Create and use real
-  operations for arrays with only real elements.
-- Integer types and bitwise operations and functions.
+- Extend resumable execution across the remaining class/script, validation,
+  indirect-call and indexed multiple-output boundaries listed in the
+  [execution guide](doc/resumable-execution.md).
+- Expand MATLAB/Octave library and less common class compatibility with focused
+  fixtures and explicit semantics.
+- Improve numerical performance while preserving native-number and decimal
+  backend behavior, N-D indexing and BLAS/LAPACK contracts.
+- Validate host integrations and real browser Worker lifecycle behavior,
+  including cancellation, output rendering and resource cleanup.
+- Keep public examples, JSDoc and [documentation](doc/README.md) consistent
+  with implemented exports and supported subsets. See the
+  [testing strategy](doc/testing-strategy.md) for available checks.
 
 You are welcome to contribute to this project. I will be very grateful if you
 participate in some way.

@@ -1,12 +1,31 @@
 # Resumable execution: shared calls and retained expressions
 
-The current support inventory is summarized under Audited remaining frontiers
-and Receivers returned by calls. Bounded increments migrate sequences,
-control-flow blocks, ordinary function bodies and argument/default binding with
-a limited expression subset, not the entire language. Previously
-`InProcessSession.evaluateWithEffects` recognized `load` and `pause` from
-syntax and ran isolated effect machines, bypassing name resolution and
-evaluating pause arguments outside normal call dispatch.
+## Current support
+
+The shared machine supports instruction sequences, conditionals, loops,
+try/catch and unwind cleanup; ordinary and anonymous calls; argument/default
+binding; supported unary/binary/range expressions; native numeric/string/cell/
+structure receiver chains and assignment preparation; matrix/cell literal
+elements; and native receivers returned by normally dispatched calls.
+
+`pause` and top-level `load` use explicit host effects in supported statement
+positions. Arguments, selected branches, loop cursors and completed expression
+values survive waits without replay. Progress checkpoints enable cooperative
+cancellation. Continuations are single-use, in-memory state; no public session
+API serializes a suspension or exposes a manual pause/resume handle.
+
+Class/script frames, validation callbacks, raw `feval`/`builtin` forwarding,
+indexed multiple-output destinations, synthetic loop destinations, SPMD count
+preparation and `load` inside user functions remain synchronous boundaries.
+Direct `pause`/`load` value operands are unsupported; numerical operations are
+indivisible. See [audited frontiers](#audited-remaining-frontiers) and
+[returned receivers](#receivers-returned-by-calls) for the precise inventory.
+
+The sections below describe the shared contracts and their implementation
+increments. Earlier increment limits are superseded where later sections
+explicitly integrate the same path.
+
+## Shared sequence driver
 
 `Interpreter.CreateExecutionMachine` drives the same `executionList` reduction
 used by recursive evaluation. It retains script-local function registration,
@@ -252,12 +271,12 @@ indirect forwarding remain synchronous boundaries. Direct pause/load calls used
 as value operands are rejected before a host request. load within a user
 function remains unsupported. Long numeric operations remain indivisible.
 
-The next increment must migrate native cell/structure/dynamic receiver chains
-and chained assignment destinations, then class and script call lifecycles.
-Matrix storage, numeric types, BLAS/LAPACK and backends are unchanged.
-mathjslab-app consumption and real browser Dedicated Worker verification remain
-pending. This does not complete the architecture stage or publication
-milestone.
+Native cell/structure/dynamic receiver chains and chained assignment
+destinations are integrated in the next section. Class and script call
+lifecycles remain migration boundaries. Matrix storage, numeric types,
+BLAS/LAPACK and backends are unchanged. mathjslab-app consumption and real
+browser Dedicated Worker verification remain pending. This does not complete
+the architecture stage or publication milestone.
 
 ## Native field/cell destinations and receiver chains
 

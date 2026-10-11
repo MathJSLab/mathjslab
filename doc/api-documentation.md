@@ -4,9 +4,13 @@ MathJSLab keeps public API documentation close to the TypeScript source by
 using JSDoc comments as the primary source of truth.
 
 The generated API reference uses `src/lib.ts`, `src/lib-core.ts` and
-`src/runtime-contracts.ts` as public entry points. This keeps internal
-implementation modules out of the default API surface unless they are
-explicitly exported by the package.
+`src/runtime-contracts.ts` as public entry points. The reference inventories
+exported declarations and their leading JSDoc; it does not list every class
+member or reproduce complete TypeScript signatures. Platform factories from
+`runtime/browser` and `runtime/node`, and protocol-only exports, are outside
+these generator entry points. Consult the [README](../README.md),
+[lifecycle guide](async-runtime-lifecycle.md) and source entry points for those
+APIs.
 
 ## Generating the Reference
 

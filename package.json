@@ -1,6 +1,6 @@
 {
     "name": "mathjslab",
-    "version": "2.8.0",
+    "version": "2.8.1",
     "description": "MathJSLab - An interpreter with language syntax like MATLAB®/Octave, ISBN 978-65-00-82338-7.",
     "keywords": [
         "MathJSLab",

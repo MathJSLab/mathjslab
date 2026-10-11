@@ -42,14 +42,24 @@ function path that triggered the failure.
 
 ## Function Dispatch
 
-Function calls are resolved through a layered lookup:
-
-1. local and nested user-defined functions;
-2. function handles and anonymous functions;
-3. registered built-ins and class-like function groups;
-4. unresolved references, which may become forward references or errors.
+Symbol lookup and call/index dispatch are separate decisions. Visible variables
+precede registered classes, scoped functions, source-provider
+functions/classes, built-ins and forward references. Resolved values then
+select callable, method, constructor, overload or native indexing paths. The
+authoritative matrices and examples are in
+[dispatch precedence](dispatch-precedence.md).
 
 Declarative signatures should describe arity, optional arguments, repeated
 groups, validators, output counts, and invalid-call messages. Implementation
 code should rely on those signatures where possible instead of duplicating
 ad-hoc validation.
+
+## Shared execution drivers
+
+`Evaluate` drains the shared execution machine synchronously. Runtime sessions
+advance the same supported frames asynchronously, yielding at cooperative
+checkpoints and handling explicit host effects. Retained scopes, arguments,
+receivers and cursors prevent completed work from replaying after a wait.
+Class/script frames and several callbacks remain synchronous boundaries; see
+[resumable execution](resumable-execution.md). Cancellation and remote Worker
+recreation follow the [runtime lifecycle](async-runtime-lifecycle.md) contract.
