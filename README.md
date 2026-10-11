@@ -125,8 +125,8 @@ generated Markdown API reference.
   [portuguese](https://github.com/MathJSLab/mathjslab-app/tree/main/help/pt)
   and [spanish](https://github.com/MathJSLab/mathjslab-app/tree/main/help/es).
 - Includes test suite using [Jest](https://jestjs.io/)
-  [framework](https://en.wikipedia.org/wiki/Software_framework) (most tests not
-  yet implemented).
+  [framework](https://en.wikipedia.org/wiki/Software_framework), covering
+  source, compatibility, runtime lifecycle and distribution behavior.
 - Is easily extensible through configuration parameters passed to
   [`Interpreter` constructor](https://github.com/MathJSLab/mathjslab/blob/main/src/Interpreter.ts).
 - [Open source](https://opensource.org/) software with fully documented code:

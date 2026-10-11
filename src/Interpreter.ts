@@ -51,6 +51,10 @@ import type {
     NodeAssignmentTarget,
 } from './AST';
 import { AST } from './AST';
+import { createPlotFunctionTable, type PlotOutputRequest } from './PlotFunctions';
+import { ExecutionMachine, ExecutionCancellation } from './ExecutionMachine';
+import type { ExecutionYieldRequest, ExecutionFrame } from './ExecutionMachine';
+import type { HostEffect, HostEffectResult } from './execution-contracts';
 import { CharString } from './CharString';
 import { Complex, type ComplexType } from './Complex';
 import { MultiArray, type ElementType, type IndexArgument } from './MultiArray';
@@ -97,6 +101,21 @@ import type { SymbolResolution, SymbolResolutionOptions } from './Context';
 import { CircularReferenceError, EvalError, InterpreterError, ReferenceError, SyntaxError, UndefinedReferenceError } from './InterpreterError';
 import { expressionValue, optionalRuntimeExpressionValue, runtimeExpressionValue } from './ExpressionValue';
 import type { CallArgumentValue } from './FunctionCall';
+
+interface InterpreterExecutionFrame {
+    kind: 'sequence' | 'block' | 'loop' | 'call' | 'expression';
+    nodeType: string;
+    scope: Scope;
+    cursor: number;
+    phase: string;
+    previousValue?: NodeInput;
+}
+interface InterpreterExecutionState {
+    evaluate: (operation: () => NodeInput) => NodeInput;
+    frames: InterpreterExecutionFrame[];
+    completed: number;
+    effectValues: WeakSet<NodeInput>;
+}
 
 /**
  * Numeric exit status used by the public `exitStatus` property.
@@ -275,6 +294,13 @@ type InterpretsResult = {
 /**
  * Normalized assignment target produced while evaluating assignment syntax.
  */
+/** Private requests from the shared assignment writer. */
+type AssignmentExecutionRequest =
+    | { readonly kind: 'rhs'; readonly tree: NodeInput; readonly scope: Scope; readonly targets: AssignmentTarget[] }
+    | { readonly kind: 'index'; readonly index: ExpressionBoundaryValue[]; readonly scope: Scope }
+    | { readonly kind: 'value'; readonly tree: NodeInput; readonly scope: Scope };
+type AssignmentExecutionValue = NodeInput | IndexArgument[];
+
 type AssignmentTarget = {
     /** Base variable or pseudo-target identifier. */
     id: string;
@@ -376,6 +402,25 @@ interface InterpreterInterface {
  * class coordinates them around one active `Context`.
  */
 class Interpreter implements InterpreterInterface {
+    public plotFunctions!: BuiltInFunctionTable;
+    private plotOutputHandler: ((request: PlotOutputRequest) => void) | undefined;
+    /**
+     * Capture native plot requests during one synchronous operation.
+     * @param sink Host callback receiving serializable plot descriptions.
+     * @param operation Operation to execute with the sink installed.
+     * @returns The operation result. The previous sink is restored on return or error.
+     * @remarks Async continuations must install their own sink when advancing.
+     */
+    public withPlotOutput<T>(sink: (request: PlotOutputRequest) => void, operation: () => T): T {
+        const previous = this.plotOutputHandler;
+        this.plotOutputHandler = sink;
+        try {
+            return operation();
+        } finally {
+            this.plotOutputHandler = previous;
+        }
+    }
+
     /** MATLAB-compatible maximum identifier length exposed by `namelengthmax`. */
     private static readonly nameLengthMax = 63;
     /** Sorted language keywords as recognized by the lexer. */
@@ -6118,6 +6163,28 @@ class Interpreter implements InterpreterInterface {
         for (const func in this.unparseMathMLFunctions) {
             this.context.builtInFunctionTable[func].UnparserMathML = this.unparseMathMLFunctions[func];
         }
+        for (const name of ['pause', 'load']) {
+            this.context.defineBuiltInFunction(
+                name,
+                () => {
+                    throw Object.assign(new Error(`${name} requires an asynchronous host effect driver.`), { code: 'MATHJSLAB_EFFECT_REQUIRES_ASYNC' });
+                },
+                false,
+                [],
+                {
+                    inputs: {
+                        arity: 1,
+                        parameters: [
+                            name === 'pause' ? { name: 'seconds', validators: ['numeric', 'scalar', 'real', 'finite', 'nonnegative'] } : { name: 'reference', validators: ['textScalar'] },
+                        ],
+                    },
+                    outputs: { arity: 0 },
+                },
+            );
+            this.effectBuiltins.add(this.context.builtInFunctionTable[name]);
+        }
+        this.plotFunctions = createPlotFunctionTable(this, (request) => this.plotOutputHandler?.(request));
+        this.context.assignBuiltInFunctionTable(this.plotFunctions);
         if (config) {
             this.context.setAliasNameTable(config.aliasNameTable);
             this.context.assignBuiltInFunctionTable(config.externalFunctionTable);
@@ -6923,7 +6990,7 @@ class Interpreter implements InterpreterInterface {
      * @param shallow True if tree is a left root of assignment.
      * @returns An object with four properties: `left`, `id`, `args` and `field`.
      */
-    private validateAssignment(tree: StrictNodeExpr, shallow: boolean, scope: Scope = this.context.currentScope): AssignmentTarget[] {
+    private *validateAssignment(tree: StrictNodeExpr, shallow: boolean, scope: Scope): Generator<AssignmentExecutionRequest, AssignmentTarget[], AssignmentExecutionValue> {
         const invalidLeftAssignmentMessage = 'invalid left hand side of assignment';
         const scalarSelectionTarget = (node: StrictNodeExpr, delimiter: IndexingDelimiterType, linearIndex: number, mode: 'insert-at-identifier' | 'replace-first-index'): StrictNodeExpr => {
             const state = { done: false };
@@ -6961,7 +7028,7 @@ class Interpreter implements InterpreterInterface {
             };
             return clone(node);
         };
-        const expandChainedTarget = (target: AssignmentTarget): AssignmentTarget[] => {
+        const expandChainedTarget = function* (this: Interpreter, target: AssignmentTarget): Generator<AssignmentExecutionRequest, AssignmentTarget[], AssignmentExecutionValue> {
             if (shallow || !target.descriptors || target.descriptors.length === 0) {
                 return [target];
             }
@@ -6985,20 +7052,23 @@ class Interpreter implements InterpreterInterface {
                     ? MultiArray.resolveLinearIndices(entry.node, target.id, this.nativeDescriptorIndexList(firstDescriptor, entry.node), this)
                     : MultiArray.resolveLinearIndices(entry.node, target.id, [MultiArray.expandColon(MultiArray.linearLength(entry.node))], this);
             const leadingDelimiter: IndexingDelimiterType = hasLeadingCellIndex ? '{}' : '()';
-            return selectedIndices.map((linearIndex) => {
+            const expanded: AssignmentTarget[] = [];
+            for (const linearIndex of selectedIndices) {
                 const selectedTree = scalarSelectionTarget(tree, leadingDelimiter, linearIndex, hasLeadingIndex || hasLeadingCellIndex ? 'replace-first-index' : 'insert-at-identifier');
-                const selectedTarget = this.collectSubsasgnAssignmentTarget(selectedTree, scope);
+                const selectedTarget = yield* this.collectSubsasgnAssignmentTarget(selectedTree, scope);
                 if (selectedTarget) {
-                    return selectedTarget;
+                    expanded.push(selectedTarget);
+                    continue;
                 }
-                return {
+                expanded.push({
                     id: target.id,
                     index: [this.expressionValue(Complex.create(linearIndex + 1), 'index')],
                     delimiter: leadingDelimiter,
                     field: [],
-                    descriptors: [this.createSubscriptDescriptor(leadingDelimiter, [this.expressionValue(Complex.create(linearIndex + 1), 'index')], tree, scope)],
-                };
-            });
+                    descriptors: [yield* this.assignmentDescriptor(leadingDelimiter, [this.expressionValue(Complex.create(linearIndex + 1), 'index')], scope)],
+                });
+            }
+            return expanded;
         };
         if (AST.isNodeIdentifier(tree)) {
             return [
@@ -7012,7 +7082,7 @@ class Interpreter implements InterpreterInterface {
             if (!shallow && tree.delim === '{}') {
                 const entry = scope.resolveName(indexedIdentifier.id);
                 if (entry && MultiArray.isInstanceOf(entry.node) && entry.node.isCell) {
-                    const evaluatedIndex = this.evaluatedIndexArguments(tree.args, scope);
+                    const evaluatedIndex = yield* this.assignmentIndexRequest(tree.args, scope);
                     return MultiArray.resolveLinearIndices(entry.node, indexedIdentifier.id, evaluatedIndex).map((linearIndex) => ({
                         id: indexedIdentifier.id,
                         index: [this.expressionValue(Complex.create(linearIndex + 1), 'index')],
@@ -7030,12 +7100,10 @@ class Interpreter implements InterpreterInterface {
                 },
             ];
         } else if (AST.isNodeIndirectRef(tree)) {
-            const field = tree.field.map((field: NodeExpr) => {
-                if (typeof field === 'string') {
-                    return field;
-                }
-                return this.evaluatedDynamicFieldName(field, scope, `${invalidLeftAssignmentMessage}: dynamic structure field names must be strings.`);
-            });
+            const field: string[] = [];
+            for (const item of tree.field) {
+                field.push(typeof item === 'string' ? item : yield* this.assignmentFieldName(item, scope, `${invalidLeftAssignmentMessage}: dynamic structure field names must be strings.`));
+            }
             if (AST.isNodeIdentifier(tree.obj)) {
                 const objectIdentifier = tree.obj;
                 if (!shallow) {
@@ -7064,7 +7132,7 @@ class Interpreter implements InterpreterInterface {
                 if (!shallow && indexedObject.delim === '{}') {
                     const entry = scope.resolveName(indexedObjectIdentifier.id);
                     if (entry && MultiArray.isInstanceOf(entry.node) && entry.node.isCell) {
-                        const evaluatedIndex = this.evaluatedIndexArguments(indexedObject.args, scope);
+                        const evaluatedIndex = yield* this.assignmentIndexRequest(indexedObject.args, scope);
                         return MultiArray.resolveLinearIndices(entry.node, indexedObjectIdentifier.id, evaluatedIndex, this).map((linearIndex) => ({
                             id: indexedObjectIdentifier.id,
                             index: [this.expressionValue(Complex.create(linearIndex + 1), 'index')],
@@ -7080,7 +7148,7 @@ class Interpreter implements InterpreterInterface {
                 if (!shallow && indexedObject.delim === '()') {
                     const entry = scope.resolveName(indexedObjectIdentifier.id);
                     if (entry && MultiArray.isInstanceOf(entry.node) && (Structure.isStructure(entry.node) || this.hasClassInstanceElement(entry.node))) {
-                        const evaluatedIndex = this.evaluatedIndexArguments(indexedObject.args, scope);
+                        const evaluatedIndex = yield* this.assignmentIndexRequest(indexedObject.args, scope);
                         return MultiArray.resolveLinearIndices(entry.node, indexedObjectIdentifier.id, evaluatedIndex, this).map((linearIndex) => ({
                             id: indexedObjectIdentifier.id,
                             index: [this.expressionValue(Complex.create(linearIndex + 1), 'index')],
@@ -7100,15 +7168,15 @@ class Interpreter implements InterpreterInterface {
                         delimiter: indexedObject.delim,
                         field,
                         descriptors: [
-                            this.createSubscriptDescriptor(tree.obj.delim, tree.obj.args, tree.obj, scope),
+                            yield* this.assignmentDescriptor(tree.obj.delim, tree.obj.args, scope, tree.obj),
                             ...field.map((item: string) => this.createDotSubscriptDescriptor(item, tree, scope)),
                         ],
                     },
                 ];
             } else {
-                const target = this.collectSubsasgnAssignmentTarget(tree, scope);
+                const target = yield* this.collectSubsasgnAssignmentTarget(tree, scope);
                 if (target) {
-                    return expandChainedTarget(target);
+                    return yield* expandChainedTarget.call(this, target);
                 }
                 this.context.throwEvalError(`${invalidLeftAssignmentMessage}.`);
             }
@@ -7120,11 +7188,13 @@ class Interpreter implements InterpreterInterface {
                 },
             ];
         } else if (shallow && MultiArray.isInstanceOf(tree) && MultiArray.isRowVector(tree)) {
-            return tree.array[0].flatMap((left: NodeExpr) => this.validateAssignment(left, false, scope));
+            const targets: AssignmentTarget[] = [];
+            for (const left of tree.array[0]) targets.push(...(yield* this.validateAssignment(AST.requireStrictNodeExpr(left, 'assignment target'), false, scope)));
+            return targets;
         } else {
-            const target = this.collectSubsasgnAssignmentTarget(tree, scope);
+            const target = yield* this.collectSubsasgnAssignmentTarget(tree, scope);
             if (target) {
-                return expandChainedTarget(target);
+                return yield* expandChainedTarget.call(this, target);
             }
             this.context.throwEvalError(`${invalidLeftAssignmentMessage}.`);
         }
@@ -7404,7 +7474,7 @@ class Interpreter implements InterpreterInterface {
      * the already evaluated arguments, avoiding duplicate evaluation for calls
      * such as `plus(f(), g())`.
      */
-    public callFunctionalOperatorOverload(node: NodeBuiltInFunction, args: CallArgumentValue[], parent: NodeInput): StrictNodeExpr | undefined {
+    public callFunctionalOperatorOverload(node: NodeBuiltInFunction, args: CallArgumentValue[], parent: NodeInput, evaluated?: ExpressionBoundaryValue[]): StrictNodeExpr | undefined {
         const name = node.id;
         const unaryOperation = MathOperation.unaryOperations[name as KeyOfTypeOfMathOperation];
         const binaryOperation = MathOperation.binaryOperations[name as KeyOfTypeOfMathOperation];
@@ -7415,7 +7485,7 @@ class Interpreter implements InterpreterInterface {
         if (!unaryOperation && !binaryOperation && !leftAssociativeOperation && !isColon && !isCat && !isConcatenation) {
             return undefined;
         }
-        const evaluatedArgs = this.context.evaluateBuiltInArgs(node, args, parent).map((value, index) => this.expressionValue(value, `operator argument ${index + 1}`));
+        const evaluatedArgs = (evaluated ?? this.context.evaluateBuiltInArgs(node, args, parent)).map((value, index) => this.expressionValue(value, `operator argument ${index + 1}`));
         this.context.validateBuiltInInputArity(node, evaluatedArgs.length);
         const hasClassOperand = evaluatedArgs.some((value) => this.hasClassInstanceElement(value));
         if (!hasClassOperand || isCat || isConcatenation) {
@@ -8488,21 +8558,34 @@ class Interpreter implements InterpreterInterface {
         return ClassInstance.isInstanceOf(value) ? { instance: value, descriptors: [] } : undefined;
     }
 
-    private collectSubsasgnAssignmentTarget(node: StrictNodeExpr, scope: Scope): AssignmentTarget | undefined {
-        const collect = (current: StrictNodeExpr): { id: string; descriptors: Structure[] } | undefined => {
+    private *collectSubsasgnAssignmentTarget(node: StrictNodeExpr, scope: Scope): Generator<AssignmentExecutionRequest, AssignmentTarget | undefined, AssignmentExecutionValue> {
+        const collect = function* (
+            this: Interpreter,
+            current: StrictNodeExpr,
+        ): Generator<AssignmentExecutionRequest, { id: string; descriptors: Structure[] } | undefined, AssignmentExecutionValue> {
             if (AST.isNodeIdentifier(current)) {
                 return { id: current.id, descriptors: [] };
             }
             if (AST.isNodeIndexExpr(current)) {
-                const base = collect(current.expr);
+                const base = yield* collect.call(this, current.expr);
                 if (!base) {
                     return undefined;
                 }
-                base.descriptors.push(this.createSubscriptDescriptor(current.delim, current.args, current, scope));
+                base.descriptors.push(
+                    yield* this.assignmentDescriptor(current.delim, current.args, scope, current, () => {
+                        const value = this.evaluatedExpressionValue(AST.nodeIdentifier(base.id), scope, 'descriptor receiver');
+                        this.context.pushCommaListExpansion();
+                        try {
+                            return base.descriptors.length ? this.nativeSubsrefDescriptors(value, base.descriptors) : value;
+                        } finally {
+                            this.context.popCommaListExpansion();
+                        }
+                    }),
+                );
                 return base;
             }
             if (AST.isNodeIndirectRef(current)) {
-                const base = collect(current.obj);
+                const base = yield* collect.call(this, current.obj);
                 if (!base) {
                     return undefined;
                 }
@@ -8510,14 +8593,14 @@ class Interpreter implements InterpreterInterface {
                     const fieldName =
                         typeof field === 'string'
                             ? field
-                            : this.evaluatedDynamicFieldName(field, scope, 'invalid left hand side of assignment: dynamic structure field names must be strings.');
+                            : yield* this.assignmentFieldName(field, scope, 'invalid left hand side of assignment: dynamic structure field names must be strings.');
                     base.descriptors.push(this.createDotSubscriptDescriptor(fieldName, current, scope));
                 }
                 return base;
             }
             return undefined;
         };
-        const result = collect(node);
+        const result = yield* collect.call(this, node);
         return result && result.descriptors.length > 0 ? { id: result.id, field: [], descriptors: result.descriptors } : undefined;
     }
 
@@ -10370,6 +10453,19 @@ class Interpreter implements InterpreterInterface {
     }
 
     public bindFunctionNameValueArguments(func: NodeFunctionDefinition, scope: Scope, values: Map<string, ExpressionBoundaryValue>): void {
+        const execution = this.executeFunctionNameValueArguments(func, scope, values);
+        let next = execution.next();
+        while (!next.done) {
+            this.context.pushRequestedOutputCount(1);
+            try {
+                next = execution.next(this.evaluatedExpressionValue(next.value, scope, 'name-value default'));
+            } finally {
+                this.context.popRequestedOutputCount();
+            }
+        }
+    }
+
+    public *executeFunctionNameValueArguments(func: NodeFunctionDefinition, scope: Scope, values: Map<string, ExpressionBoundaryValue>): Generator<StrictNodeExpr, void, NodeInput> {
         const declarations = this.getFunctionNameValueDeclarations(func);
         for (const [parameter, fields] of declarations) {
             const options = new Structure({});
@@ -10377,19 +10473,8 @@ class Interpreter implements InterpreterInterface {
                 if (!validation.default) {
                     continue;
                 }
-                this.context.pushRequestedOutputCount(1);
-                try {
-                    Structure.setNewField(
-                        options,
-                        [field],
-                        this.runtimeExpressionValue(
-                            this.evaluatedExpressionValue(validation.default, scope, `name-value default ${parameter}.${field}`),
-                            `name-value default ${parameter}.${field}`,
-                        ),
-                    );
-                } finally {
-                    this.context.popRequestedOutputCount();
-                }
+                const value = yield validation.default;
+                Structure.setNewField(options, [field], this.runtimeExpressionValue(value, `name-value default ${parameter}.${field}`));
             }
             for (const [field, value] of values) {
                 if (fields.has(field)) {
@@ -10595,6 +10680,1318 @@ class Interpreter implements InterpreterInterface {
         return FunctionArguments.outputRepeatingName(func, (message) => this.context.throwSyntaxError(message));
     }
 
+    /** Shared resumable execution of instruction lists, blocks and loops. */
+    public CreateExecutionMachine(tree: NodeInput, evaluate: (operation: () => NodeInput) => NodeInput = (operation) => operation(), preserveList = true): ExecutionMachine<NodeInput> {
+        tree.parent = null;
+        this.validateDeclarationPlacement(tree);
+        return ExecutionMachine.sequence(
+            this.executionNode(tree, this.context.currentScope, { evaluate, frames: [], completed: 0, effectValues: new WeakSet<NodeInput>() }, !preserveList),
+            () => [],
+            (signal) =>
+                signal instanceof ReturnSignal
+                    ? { kind: 'return', signal }
+                    : signal instanceof BreakSignal
+                      ? { kind: 'break', signal }
+                      : signal instanceof ContinueSignal
+                        ? { kind: 'continue', signal }
+                        : undefined,
+        );
+    }
+
+    private executionFrames(state: InterpreterExecutionState): readonly ExecutionFrame[] {
+        return state.frames.map((frame) => ({ ...frame }));
+    }
+
+    private *executionCheckpoint(state: InterpreterExecutionState): Generator<ExecutionYieldRequest, void, HostEffectResult> {
+        state.completed++;
+        if (state.completed % 64 === 0) yield { checkpoint: true, completed: state.completed, frames: this.executionFrames(state) };
+    }
+
+    private *executionNode(
+        tree: NodeInput,
+        scope: Scope,
+        state: InterpreterExecutionState,
+        lastOnly = false,
+        preserveReturns = false,
+    ): Generator<ExecutionYieldRequest, NodeInput, HostEffectResult> {
+        const loop = tree.type === 'WHILE' || tree.type === 'DO_UNTIL' || tree.type === 'FOR';
+        const frame: InterpreterExecutionFrame = {
+            kind: tree.type === 'LIST' ? 'sequence' : loop ? 'loop' : 'block',
+            nodeType: typeof tree.type === 'string' ? tree.type : MultiArray.isInstanceOf(tree) ? (tree.isCell ? 'CELL' : 'MATRIX') : 'VALUE',
+            scope,
+            cursor: 0,
+            phase: 'enter',
+        };
+        state.frames.push(frame);
+        try {
+            yield* this.executionCheckpoint(state);
+            if (tree.type === 'LIST') {
+                const list = this.executionList(tree, scope);
+                let next = list.next();
+                let previous: NodeInput = AST.nodeVoid();
+                while (!next.done) {
+                    let value: NodeInput;
+                    frame.phase = 'instruction';
+                    try {
+                        value = yield* this.executionNode(next.value, scope, state);
+                    } catch (error) {
+                        next = list.throw(error);
+                        continue;
+                    }
+                    frame.cursor++;
+                    frame.previousValue = state.effectValues.has(value) ? previous : value;
+                    // VOID effect results preserve the preceding instruction result.
+                    if (!state.effectValues.has(value)) previous = value;
+                    next = list.next(value);
+                }
+                return lastOnly ? previous : next.value;
+            }
+            if (MultiArray.isInstanceOf(tree) && this.hasExecutionCall(tree)) {
+                frame.kind = 'expression';
+                const elements = MultiArray.evaluateElements(tree, this);
+                let next: IteratorResult<{ readonly element: ElementType }, ElementType>;
+                const advance = (values?: ElementType[]): NodeInput => {
+                    next = values ? elements.next(values) : elements.next();
+                    return AST.nodeVoid();
+                };
+                frame.phase = 'literal-construction';
+                yield* this.executionLeaf(tree, scope, state, () => advance());
+                const count = this.context.requestedOutputCount;
+                const mask = this.context.requestedOutputMask();
+                while (!next!.done) {
+                    frame.phase = 'literal-element';
+                    const element = next!.value.element;
+                    if (!AST.isExpressionBoundaryValue(element)) throw new TypeError('Invalid array literal element.');
+                    const value = yield* this.executionRequestedValue(element, scope, state, count, mask, undefined, true, true);
+                    let values: ElementType[] = [];
+                    state.evaluate(() => {
+                        // Syntax containers retain executed expressions and intentional LIST carriers from evalin.
+                        // Validate before adapting to the legacy structural array-slot contract.
+                        values = this.context.expandCommaSeparatedList(value).map((entry) => this.expressionValue(entry, 'array literal element')) as ElementType[];
+                        return AST.nodeVoid();
+                    });
+                    frame.cursor++;
+                    frame.phase = 'literal-construction';
+                    yield* this.executionLeaf(tree, scope, state, () => advance(values));
+                }
+                return this.strictExpressionValue(next!.value, 'array literal result');
+            }
+            if (AST.isNodeAssignmentOperation(tree) && this.isExecutionWriteTarget(tree.left, scope) && (this.hasExecutionCall(tree.right) || this.hasExecutionTargetCall(tree.left))) {
+                frame.kind = 'expression';
+                return yield* this.executionAssignment(tree, scope, state, frame);
+            }
+            if (AST.isNodeBinaryExpressionOperation(tree)) {
+                frame.kind = 'expression';
+                frame.phase = 'left';
+                const left = this.expressionValue(this.reducedExecutionValue(yield* this.executionNode(tree.left, scope, state)), 'left operand');
+                if (tree.type === '&&' || tree.type === '||') {
+                    const truth = this.toBoolean(this.runtimeExpressionValue(left, 'left operand'));
+                    if ((tree.type === '&&' && !truth) || (tree.type === '||' && truth)) return truth ? Complex.true() : Complex.false();
+                }
+                frame.phase = 'right';
+                const right = this.expressionValue(this.reducedExecutionValue(yield* this.executionNode(tree.right, scope, state)), 'right operand');
+                return state.evaluate(() => this.evaluatedExecutionResult({ ...tree, left, right }, scope));
+            }
+            if ((AST.isNodePrefixOperation(tree) && ['!', '~', '+_', '-_'].includes(tree.type)) || (AST.isNodePostfixOperation(tree) && ["'", ".'"].includes(tree.type))) {
+                frame.kind = 'expression';
+                frame.phase = 'operand';
+                const operand = AST.isNodePrefixOperation(tree) ? tree.right : tree.left;
+                const value = this.strictExpressionValue(this.reducedExecutionValue(yield* this.executionNode(operand, scope, state)), 'unary operand');
+                const operation = AST.isNodePrefixOperation(tree) ? { ...tree, right: value } : { ...tree, left: value };
+                return state.evaluate(() => this.evaluatedExecutionResult(operation, scope));
+            }
+            if (AST.isNodeRange(tree)) {
+                frame.kind = 'expression';
+                frame.phase = 'start';
+                const start_ = this.strictExpressionValue(this.reducedExecutionValue(yield* this.executionNode(tree.start_, scope, state)), 'range start');
+                frame.phase = 'stop';
+                const stop_ = this.strictExpressionValue(this.reducedExecutionValue(yield* this.executionNode(tree.stop_, scope, state)), 'range stop');
+                frame.phase = 'stride';
+                const stride_ = tree.stride_ ? this.strictExpressionValue(this.reducedExecutionValue(yield* this.executionNode(tree.stride_, scope, state)), 'range stride') : null;
+                return state.evaluate(() => this.evaluatedExecutionResult({ ...tree, start_, stop_, stride_ }, scope));
+            }
+            if (AST.isNodePrefixOperation(tree) && tree.type === '()') {
+                frame.kind = 'expression';
+                frame.phase = 'operand';
+                return this.reducedExecutionValue(yield* this.executionNode(tree.right, scope, state));
+            }
+            if (AST.isNodeIndirectRef(tree) && this.isExecutionReadChain(tree, scope)) {
+                frame.kind = 'expression';
+                frame.phase = 'field';
+                const fields: string[] = [];
+                for (const field of tree.field) {
+                    if (typeof field === 'string') fields.push(field);
+                    else {
+                        const value = this.expressionValue(this.reducedExecutionValue(yield* this.executionRequestedValue(field, scope, state, 1, [true])), 'dynamic field name');
+                        if (!CharString.isInstanceOf(value)) this.context.throwEvalError('Dynamic structure field names must be strings.');
+                        fields.push(value.str);
+                    }
+                }
+                frame.phase = 'receiver';
+                const received = yield* this.executionRequestedValue(tree.obj, scope, state, 1, [true], undefined, true, true);
+                return yield* this.executionLeaf(
+                    tree,
+                    scope,
+                    state,
+                    () => {
+                        const resolve = (value: NodeInput): NodeInput =>
+                            this.isNativeExecutionValue(value)
+                                ? this.resolveDotFieldChain(value, fields, tree, scope)
+                                : this.Evaluator({ ...tree, obj: this.strictExpressionValue(value, 'field receiver'), field: fields }, scope);
+                        if (AST.isNodeReturnList(received) && received.commaSeparated) {
+                            return this.chainedCommaListResult(this.context.expandCommaSeparatedList(received).map(resolve));
+                        }
+                        return resolve(this.reducedExecutionValue(received));
+                    },
+                    preserveReturns,
+                );
+            }
+            if (
+                AST.isNodeIndexExpr(tree) &&
+                (this.isSimpleExecutionCallee(tree.expr) || this.isNativeExecutionValue(tree.expr) || this.isExecutionReadChain(tree.expr, scope)) &&
+                (tree.delim === '()' || tree.delim === '{}')
+            ) {
+                frame.kind = 'expression';
+                frame.phase = 'receiver';
+                let expr: StrictNodeExpr;
+                if (AST.isNodeIndexExpr(tree.expr) || AST.isNodeIndirectRef(tree.expr)) {
+                    const received = yield* this.executionRequestedValue(tree.expr, scope, state, 1, [true], undefined, true, true);
+                    if (AST.isNodeReturnList(received) && received.commaSeparated) {
+                        const values: NodeInput[] = [];
+                        for (const value of this.context.expandCommaSeparatedList(received)) {
+                            values.push(yield* this.executionRequestedValue({ ...tree, expr: this.strictExpressionValue(value, 'comma receiver') }, scope, state, 1, [true]));
+                        }
+                        return this.chainedCommaListResult(values);
+                    }
+                    expr = this.strictExpressionValue(this.reducedExecutionValue(received), 'indexed receiver');
+                } else expr = state.evaluate(() => this.evaluatedExpressionValue(tree.expr, scope, 'indexed expression'));
+                const callable = this.context.resolveCallable(expr);
+                const nativeIndexing = !callable && !AST.isNodeIdentifier(expr) && !this.hasClassInstanceElement(expr) && this.context.resolveCallDispatch(expr, tree).kind === 'indexing';
+                if (callable?.type === 'FCNDEF' || callable?.type === 'LAMBDA' || callable?.type === 'BUILTIN' || nativeIndexing) {
+                    frame.kind = 'call';
+                    frame.phase = 'binding';
+                    const call =
+                        callable?.type === 'FCNDEF'
+                            ? this.context.executeFunctionDefinition(callable, tree.args, tree, this.context.requestedOutputCount)
+                            : callable?.type === 'LAMBDA'
+                              ? this.context.executeAnonymousFunction(callable, tree.args, tree, this.context.requestedOutputCount)
+                              : callable?.type === 'BUILTIN'
+                                ? this.context.executeBuiltInFunction(callable, tree.args, tree, this.context.requestedOutputCount)
+                                : this.context.executeNativeIndexing(expr, tree.args, tree);
+                    let next = call.next();
+                    while (!next.done) {
+                        const request = next.value;
+                        if (request.kind === 'operation') {
+                            frame.phase = 'operation';
+                            try {
+                                next = call.next(yield* this.executionLeaf(tree, request.scope, state, request.operation, true));
+                            } catch (error) {
+                                next = call.throw(error);
+                            }
+                            continue;
+                        }
+                        frame.scope = request.scope;
+                        frame.phase = request.kind;
+                        const body = this.executionNode(request.tree, request.scope, state, false, request.kind === 'expression' || Boolean(request.commaList));
+                        const advanceBody = (error?: { value: unknown }, response?: HostEffectResult): IteratorResult<ExecutionYieldRequest, NodeInput> => {
+                            if (request.kind !== 'body' && request.kind !== 'expression') {
+                                if (request.kind === 'default') this.context.pushCallStackFrame(new CallFrame(request.scope));
+                                this.context.pushRequestedOutputCount(1);
+                                // Argument output selection must not inherit the caller's ignored output mask.
+                                this.context.pushRequestedOutputMask([true]);
+                                if (request.commaList) this.context.pushCommaListExpansion();
+                            }
+                            try {
+                                return error ? body.throw(error.value) : response ? body.next(response) : body.next();
+                            } finally {
+                                if (request.kind !== 'body' && request.kind !== 'expression') {
+                                    if (request.commaList) this.context.popCommaListExpansion();
+                                    this.context.popRequestedOutputMask();
+                                    this.context.popRequestedOutputCount();
+                                    if (request.kind === 'default') this.context.popCallStackFrame();
+                                }
+                            }
+                        };
+                        try {
+                            let bodyStep = advanceBody();
+                            while (!bodyStep.done) {
+                                // A suspended call owns its frame, but does not leave it active in Context.
+                                if (request.frame) this.context.popCallStackFrame();
+                                let response: HostEffectResult;
+                                try {
+                                    response = yield bodyStep.value;
+                                } catch (error) {
+                                    if (request.frame) this.context.pushCallStackFrame(request.frame);
+                                    bodyStep = advanceBody({ value: error });
+                                    continue;
+                                }
+                                if (request.frame) this.context.pushCallStackFrame(request.frame);
+                                bodyStep = advanceBody(undefined, response);
+                            }
+                            next = call.next(bodyStep.value);
+                        } catch (error) {
+                            next = call.throw(error);
+                        }
+                    }
+                    frame.phase = 'return';
+                    return preserveReturns ? next.value : this.reducedExecutionValue(next.value);
+                }
+                // Class subsref and comma receivers belong to the full indexing evaluator.
+                if (!callable) return yield* this.executionLeaf(tree, scope, state, () => this.Evaluator({ ...tree, expr }, scope), preserveReturns);
+                // Keep the resolved callee: arguments and dispatch are still performed once.
+                return yield* this.executionLeaf(tree, scope, state, () => this.context.apply(this.strictExpressionValue(expr, 'callee'), tree.args, tree), preserveReturns);
+            }
+            switch (tree.type) {
+                case 'IF': {
+                    for (let ifTest = 0; ifTest < tree.expression.length; ifTest++) {
+                        frame.cursor = ifTest;
+                        frame.phase = 'condition';
+                        if (yield* this.executionCondition(tree.expression[ifTest], scope, state, 'if condition')) {
+                            frame.cursor = ifTest;
+                            frame.phase = 'then';
+                            return yield* this.executionNode(tree.then[ifTest], scope, state);
+                        }
+                    }
+                    /* No one `then` clause. */
+                    if (tree.else) {
+                        frame.phase = 'else';
+                        return yield* this.executionNode(tree.else, scope, state);
+                    }
+                    /* Return null NodeList. */
+                    return {
+                        type: 'LIST',
+                        list: [],
+                        parent: tree,
+                    };
+                }
+                case 'SWITCH': {
+                    frame.phase = 'selector';
+                    const switchValue = this.expressionValue(this.reducedExecutionValue(yield* this.executionNode(tree.expression, scope, state)), 'switch expression');
+                    for (const switchCase of tree.cases) {
+                        frame.cursor = tree.cases.indexOf(switchCase);
+                        frame.phase = 'case-test';
+                        const caseValue = this.expressionValue(this.reducedExecutionValue(yield* this.executionNode(switchCase.expression, scope, state)), 'switch case');
+                        if (this.switchCaseMatches(switchValue, caseValue)) {
+                            frame.cursor = tree.cases.indexOf(switchCase);
+                            frame.phase = 'case';
+                            return yield* this.executionNode(switchCase.then, scope, state);
+                        }
+                    }
+                    if (tree.otherwise) {
+                        frame.phase = 'otherwise';
+                        return yield* this.executionNode(tree.otherwise, scope, state);
+                    }
+                    return {
+                        type: 'LIST',
+                        list: [],
+                        parent: tree,
+                    };
+                }
+                case 'WHILE': {
+                    let result: NodeInput = {
+                        type: 'LIST',
+                        list: [],
+                        parent: tree,
+                    };
+                    while (true) {
+                        frame.cursor++;
+                        frame.phase = 'condition';
+                        yield* this.executionCheckpoint(state);
+                        if (!(yield* this.executionCondition(tree.expression, scope, state, 'while condition'))) {
+                            return result;
+                        }
+                        try {
+                            frame.phase = 'body';
+                            result = yield* this.executionNode(tree.body, scope, state);
+                        } catch (e: unknown) {
+                            if (e instanceof ContinueSignal) {
+                                continue;
+                            }
+                            if (e instanceof BreakSignal) {
+                                return result;
+                            }
+                            throw e;
+                        }
+                    }
+                }
+                case 'DO_UNTIL': {
+                    let result: NodeInput = {
+                        type: 'LIST',
+                        list: [],
+                        parent: tree,
+                    };
+                    while (true) {
+                        frame.cursor++;
+                        frame.phase = 'condition';
+                        yield* this.executionCheckpoint(state);
+                        try {
+                            frame.phase = 'body';
+                            result = yield* this.executionNode(tree.body, scope, state);
+                        } catch (e: unknown) {
+                            if (e instanceof BreakSignal) {
+                                return result;
+                            }
+                            if (!(e instanceof ContinueSignal)) {
+                                throw e;
+                            }
+                        }
+                        frame.phase = 'condition';
+                        if (yield* this.executionCondition(tree.expression, scope, state, 'until condition')) {
+                            return result;
+                        }
+                    }
+                }
+                case 'FOR': {
+                    let result: NodeInput = {
+                        type: 'LIST',
+                        list: [],
+                        parent: tree,
+                    };
+                    if (tree.workers) {
+                        frame.phase = 'workers';
+                        this.workerCountControlArgument(
+                            this.expressionValue(this.reducedExecutionValue(yield* this.executionNode(tree.workers, scope, state)), 'parfor workers'),
+                            'parfor workers',
+                        );
+                    }
+                    frame.phase = 'header';
+                    const loopExpression = this.expressionValue(this.reducedExecutionValue(yield* this.executionNode(tree.expression, scope, state)), 'for expression');
+                    if (tree.parallel) {
+                        this.validateParforHeader(tree.target, loopExpression);
+                        this.validateParforBody(tree.body, (tree.target as NodeIdentifier).id);
+                    }
+                    const values = this.forLoopValues(loopExpression, tree.target);
+                    for (const value of values) {
+                        frame.cursor++;
+                        frame.phase = 'advance';
+                        yield* this.executionCheckpoint(state);
+                        const assignment = AST.nodeOperation('=', this.cloneAssignmentTarget(tree.target), this.forLoopAssignmentValue(tree.target, value));
+                        this.Evaluator(assignment, scope);
+                        try {
+                            frame.phase = 'body';
+                            result = yield* this.executionNode(tree.body, scope, state);
+                        } catch (e: unknown) {
+                            if (e instanceof ContinueSignal) {
+                                continue;
+                            }
+                            if (e instanceof BreakSignal) {
+                                return result;
+                            }
+                            throw e;
+                        }
+                    }
+                    return result;
+                }
+                case 'SPMD':
+                    this.validateSpmdBody(tree.body);
+                    if (tree.workers) {
+                        const workerCounts = tree.workers.list.map((worker: NodeInput, index: number) =>
+                            this.workerCountControlArgument(
+                                this.evaluatedExpressionValue(this.expressionValue(worker, `spmd worker ${index + 1}`), scope, `spmd worker ${index + 1}`),
+                                `spmd worker ${index + 1}`,
+                            ),
+                        );
+                        if (workerCounts.length === 2 && workerCounts[0] > workerCounts[1]) {
+                            this.context.throwEvalError('spmd minimum worker count cannot exceed maximum worker count.');
+                        }
+                    }
+                    const localSpmdNames = ['spmdIndex', 'spmdSize'];
+                    const savedSpmdNames = new Map<string, NameEntry | undefined>();
+                    localSpmdNames.forEach((name: string) => {
+                        savedSpmdNames.set(name, scope.hasLocalName(name) ? { ...scope.nameTable[name] } : undefined);
+                    });
+                    scope.defineName('spmdIndex', Complex.one());
+                    scope.defineName('spmdSize', Complex.one());
+                    try {
+                        return yield* this.executionNode(tree.body, scope, state);
+                    } finally {
+                        localSpmdNames.forEach((name: string) => {
+                            const saved = savedSpmdNames.get(name);
+                            if (saved) {
+                                scope.nameTable[name] = saved;
+                            } else {
+                                scope.removeName(name);
+                            }
+                        });
+                    }
+                case 'TRY': {
+                    try {
+                        return yield* this.executionNode(tree.body, scope, state);
+                    } catch (e: unknown) {
+                        if (e instanceof ExecutionCancellation || e instanceof ReturnSignal || e instanceof BreakSignal || e instanceof ContinueSignal) {
+                            throw e;
+                        }
+                        const errorStruct = this.rememberLastError(e);
+                        if (tree.catchBody) {
+                            frame.phase = 'catch';
+                            if (tree.catchIdentifier) {
+                                scope.defineName(tree.catchIdentifier.id, errorStruct);
+                            }
+                            return yield* this.executionNode(tree.catchBody, scope, state);
+                        }
+                        return {
+                            type: 'LIST',
+                            list: [],
+                            parent: tree,
+                        };
+                    }
+                }
+                case 'UNWIND_PROTECT': {
+                    let result: NodeInput = {
+                        type: 'LIST',
+                        list: [],
+                        parent: tree,
+                    };
+                    let thrown: unknown;
+                    let didThrow = false;
+                    try {
+                        frame.phase = 'body';
+                        result = yield* this.executionNode(tree.body, scope, state);
+                    } catch (e: unknown) {
+                        thrown = e;
+                        didThrow = true;
+                    }
+                    frame.phase = 'cleanup';
+                    yield* this.executionNode(tree.cleanup, scope, state);
+                    if (didThrow) {
+                        throw thrown;
+                    }
+                    return result;
+                }
+
+                default:
+                    return yield* this.executionLeaf(tree, scope, state, () => this.Evaluator(tree, scope), preserveReturns);
+            }
+        } finally {
+            state.frames.pop();
+        }
+    }
+
+    /** Preserve the condition-only short-circuit rules for &, |, && and ||. */
+    private *executionCondition(tree: StrictNodeExpr, scope: Scope, state: InterpreterExecutionState, name: string): Generator<ExecutionYieldRequest, boolean, HostEffectResult> {
+        if (AST.isNodeBinaryOperation(tree) && ['&', '|', '&&', '||'].includes(tree.type)) {
+            const left = yield* this.executionCondition(tree.left, scope, state, 'left condition operand');
+            const and = tree.type === '&' || tree.type === '&&';
+            if ((and && !left) || (!and && left)) return left;
+            return yield* this.executionCondition(AST.requireStrictNodeExpr(tree.right, 'right condition operand'), scope, state, 'right condition operand');
+        }
+        const value = this.reducedExecutionValue(yield* this.executionNode(tree, scope, state));
+        return this.toBoolean(this.runtimeExpressionValue(value, name));
+    }
+
+    /** Normalize a completed resumable node without evaluating it again. */
+    private reducedExecutionValue(value: NodeInput): NodeInput {
+        return AST.reduceToFirstIfReturnList(value);
+    }
+
+    /** One writer owns selection, copying, dispatch and mutations in both drivers. */
+    private *assignmentWriter(tree: NodeInput, scope: Scope): Generator<AssignmentExecutionRequest, NodeInput, AssignmentExecutionValue> {
+        /* `tree` is an assignment */
+        const assignmentTree = this.requireBinaryOperation(tree);
+        const assignment = yield* this.validateAssignment(assignmentTree.left, true, scope);
+        const assignmentOperator = assignmentTree.type as OperatorType;
+        const op: OperatorType | '' = assignmentOperator.substring(0, assignmentOperator.length - 1) as OperatorType | '';
+        if (assignment.length > 1 && op.length > 0) {
+            this.context.throwEvalError('computed multiple assignment not allowed.');
+        }
+        let right: StrictNodeExpr;
+        let undefinedReference: string | undefined;
+        let error: Error | undefined;
+        try {
+            right = AST.isNodeReturnList(assignmentTree.right)
+                ? assignmentTree.right
+                : this.strictExpressionValue(
+                      MathOperation.copy(this.expressionValue(yield { kind: 'rhs', tree: assignmentTree.right, scope, targets: assignment }, 'assignment RHS')),
+                      'assignment right-hand side',
+                  );
+        } catch (e: unknown) {
+            if (!this.context.allowForwardReference) {
+                throw e as Error;
+            }
+            if (!this.isLocalUndefinedReference(e)) {
+                throw e as Error;
+            }
+            error = e as Error;
+            right = this.strictExpressionValue(RuntimeValue.copy(assignmentTree.right), 'forward assignment right-hand side');
+            undefinedReference = e.identifier;
+        }
+        const rightReturnList = AST.ensureReturnList(right);
+        const resultList = AST.nodeListFirst();
+        const evaluated = rightReturnList.handler(assignment.length);
+        const selectRightValue = (index: number): StrictNodeExpr => {
+            const value = rightReturnList.selector(evaluated, index);
+            if (typeof value === 'undefined') {
+                AST.throwErrorIfGreaterThanReturnList(index, index + 1, (message) => this.context.throwEvalError(message));
+            }
+            return AST.requireStrictNodeExpr(value, `assignment output ${index + 1}`);
+        };
+        for (let n = 0; n < assignment.length; n++) {
+            const { id, index, delimiter, field, descriptors } = assignment[n];
+            if (id !== '~') {
+                /* Apply one assignment target. */
+                if (descriptors && descriptors.length > 0 && !op) {
+                    const entry = scope.resolveName(id);
+                    const rightValue = this.evaluatedExpressionValue(selectRightValue(n), scope, 'assignment value');
+                    if (entry && ClassInstance.isInstanceOf(entry.node) && !this.context.canAccessClassMember(entry.node.classDefinition, 'private')) {
+                        const updated = this.callClassSubsasgnDescriptors(entry.node, descriptors, rightValue, tree);
+                        if (updated) {
+                            entry.node = updated;
+                            AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(entry.node)));
+                            continue;
+                        }
+                    }
+                    if (entry && (ClassInstance.isInstanceOf(entry.node) || (MultiArray.isInstanceOf(entry.node) && this.hasClassInstanceElement(entry.node)))) {
+                        const assigned = this.assignClassSubsasgnDescriptors(
+                            entry.node,
+                            descriptors.map((item) => this.readNativeSubscriptDescriptor(item, 'subsasgn')),
+                            rightValue,
+                            tree,
+                        );
+                        if (typeof assigned !== 'undefined') {
+                            entry.node = assigned;
+                            AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(entry.node)));
+                            continue;
+                        }
+                    }
+                    if (!entry && this.shouldUseNativeChainedSubsasgn(descriptors)) {
+                        const firstDescriptor = this.readNativeSubscriptDescriptor(descriptors[0]);
+                        const initialValue = this.blankNativeSubsasgnValue(firstDescriptor);
+                        const assigned = this.assignNativeSubsasgnDescriptors(initialValue, descriptors, rightValue);
+                        const newEntry = scope.defineName(id, assigned);
+                        AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), newEntry.node));
+                        continue;
+                    }
+                    if (
+                        entry &&
+                        this.shouldUseNativeChainedSubsasgn(descriptors) &&
+                        (MultiArray.isInstanceOf(entry.node) || Structure.isInstanceOf(entry.node) || Structure.isStructure(entry.node)) &&
+                        !(MultiArray.isInstanceOf(entry.node) && this.hasClassInstanceElement(entry.node))
+                    ) {
+                        entry.node = this.assignNativeSubsasgnDescriptors(entry.node, descriptors, rightValue);
+                        AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(entry.node)));
+                        continue;
+                    }
+                }
+                if (descriptors && descriptors.length > 0 && op) {
+                    const entry = scope.resolveName(id);
+                    if (!entry) {
+                        this.context.throwEvalError(`in computed assignment ${id} OP= X, ${id} must be defined first.`);
+                    }
+                    if (
+                        this.shouldUseNativeChainedSubsasgn(descriptors) &&
+                        (MultiArray.isInstanceOf(entry.node) || Structure.isInstanceOf(entry.node) || Structure.isStructure(entry.node)) &&
+                        !(MultiArray.isInstanceOf(entry.node) && this.hasClassInstanceElement(entry.node))
+                    ) {
+                        const currentValue = this.nativeSubsrefDescriptors(entry.node, descriptors);
+                        const computedValue = this.evaluatedExpressionValue(
+                            AST.nodeOperation(
+                                op,
+                                this.compoundAssignmentOperand(currentValue, 'compound assignment target value'),
+                                this.evaluatedExpressionValue(selectRightValue(n), scope, 'assignment value'),
+                            ),
+                            scope,
+                            'compound assignment value',
+                        );
+                        entry.node = this.assignNativeSubsasgnDescriptors(entry.node, descriptors, computedValue);
+                        AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(entry.node)));
+                        continue;
+                    }
+                }
+                if (index) {
+                    /* Computed assignment to an indexed matrix element. */
+                    if (op) {
+                        const entry = scope.resolveName(id);
+                        if (typeof entry !== 'undefined') {
+                            if (!FunctionHandle.isInstanceOf(entry.node)) {
+                                const evaluatedIndex = yield* this.assignmentIndexRequest(index, scope);
+                                if (
+                                    field.length > 0 &&
+                                    AST.isNodeIndexExpr(assignmentTree.left) &&
+                                    AST.isNodeIndirectRef(assignmentTree.left.expr) &&
+                                    (Structure.isInstanceOf(entry.node) || (MultiArray.isInstanceOf(entry.node) && Structure.isStructure(entry.node)))
+                                ) {
+                                    const fieldValue = Structure.getField(entry.node, field);
+                                    if (MultiArray.isInstanceOf(fieldValue) && !MultiArray.isEmpty(fieldValue)) {
+                                        const computedValue = this.evaluatedExpressionValue(
+                                            AST.nodeOperation(
+                                                op,
+                                                AST.requireStrictNodeExpr(
+                                                    MultiArray.getElements(fieldValue, '__field_assignment__', [], evaluatedIndex, this),
+                                                    'compound field assignment value',
+                                                ),
+                                                MultiArray.scalarToMultiArray(
+                                                    this.runtimeExpressionValue(this.evaluatedExpressionValue(selectRightValue(n), scope, 'assignment value'), 'assignment value'),
+                                                ),
+                                            ),
+                                            scope,
+                                            'compound field assignment value',
+                                        );
+                                        const tempScope = Scope.create();
+                                        tempScope.defineName('__field_assignment__', fieldValue);
+                                        MultiArray.setElements(
+                                            tempScope,
+                                            '__field_assignment__',
+                                            [],
+                                            evaluatedIndex,
+                                            this.indexedAssignmentRhs(delimiter, computedValue, fieldValue),
+                                            undefined,
+                                            this,
+                                        );
+                                        Structure.setNewField(
+                                            entry.node,
+                                            field,
+                                            this.runtimeExpressionValue(this.scopedExpressionValue(tempScope, '__field_assignment__', 'field assignment result'), 'field assignment result'),
+                                        );
+                                        AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(entry.node)));
+                                        continue;
+                                    }
+                                }
+                                /* Read-modify-write assignment on an indexed matrix element. */
+                                MultiArray.setElements(
+                                    scope,
+                                    id,
+                                    field,
+                                    evaluatedIndex,
+                                    MultiArray.scalarToMultiArray(
+                                        this.runtimeExpressionValue(
+                                            this.evaluatedExpressionValue(
+                                                AST.nodeOperation(
+                                                    op,
+                                                    AST.requireStrictNodeExpr(MultiArray.getElements(entry.node, id, field, evaluatedIndex), 'compound assignment value'),
+                                                    MultiArray.scalarToMultiArray(
+                                                        this.runtimeExpressionValue(this.evaluatedExpressionValue(selectRightValue(n), scope, 'assignment value'), 'assignment value'),
+                                                    ),
+                                                ),
+                                                scope,
+                                                'compound assignment value',
+                                            ),
+                                            'compound assignment value',
+                                        ),
+                                    ),
+                                );
+                                AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(entry.node)));
+                                continue;
+                            } else {
+                                this.context.throwEvalError(`can't perform indexed assignment for function handle type.`);
+                            }
+                        } else {
+                            this.context.throwEvalError(`in computed assignment ${id}(index) OP= X, ${id} must be defined first.`);
+                        }
+                    } else {
+                        /* Direct assignment to an indexed matrix element. */
+                        const rightValue = this.evaluatedExpressionValue(selectRightValue(n), scope, 'assignment value');
+                        const entry = scope.resolveName(id);
+                        if (entry && ClassInstance.isInstanceOf(entry.node) && field.length === 0) {
+                            const updated = this.callClassSubsasgn(entry.node, index, delimiter ?? '()', rightValue, tree, scope);
+                            if (updated) {
+                                entry.node = updated;
+                                AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(entry.node)));
+                                continue;
+                            }
+                        }
+                        if (entry && MultiArray.isInstanceOf(entry.node) && field.length === 0 && this.hasClassInstanceElement(entry.node)) {
+                            const evaluatedIndex = yield* this.assignmentIndexRequest(index, scope);
+                            try {
+                                const selected = MultiArray.MultiArrayToScalar(this.reducedIndexingResult(MultiArray.getElements(entry.node, id, [], evaluatedIndex)));
+                                if (ClassInstance.isInstanceOf(selected)) {
+                                    const updated = this.callClassSubsasgn(selected, index, delimiter ?? '()', rightValue, tree, scope);
+                                    if (updated) {
+                                        MultiArray.setElements(scope, id, [], evaluatedIndex, MultiArray.scalarToMultiArray(updated));
+                                        AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), scope.resolveName(id)!.node));
+                                        continue;
+                                    }
+                                }
+                            } catch (error) {
+                                if (!(error instanceof RangeError)) {
+                                    throw error;
+                                }
+                            }
+                        }
+                        if (entry && MultiArray.isInstanceOf(entry.node) && field.length > 0 && this.hasClassInstanceElement(entry.node)) {
+                            entry.node = this.assignClassArrayIndexedNestedField(id, entry.node, index, field, rightValue, assignmentTree.left, scope);
+                            AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(entry.node)));
+                            continue;
+                        }
+                        if (entry && CharString.isInstanceOf(entry.node) && field.length === 0) {
+                            if (delimiter === '{}') {
+                                this.context.throwEvalError('matrix cannot be indexed with {');
+                            }
+                            const target = MultiArray.characterVectorFromCharString(entry.node);
+                            const tempScope = Scope.create();
+                            tempScope.defineName('__char_assignment__', target);
+                            MultiArray.setElements(
+                                tempScope,
+                                '__char_assignment__',
+                                [],
+                                yield* this.assignmentIndexRequest(index, scope),
+                                this.charStringAssignmentRhs(rightValue, entry.node.quote),
+                                undefined,
+                                this,
+                            );
+                            entry.node = MultiArray.charStringFromCharacterVectorResult(
+                                this.scopedMultiArrayValue(tempScope, '__char_assignment__', 'character assignment result'),
+                                entry.node.quote,
+                            );
+                            AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(entry.node)));
+                            continue;
+                        }
+                        if (
+                            entry &&
+                            field.length > 0 &&
+                            AST.isNodeIndexExpr(assignmentTree.left) &&
+                            AST.isNodeIndirectRef(assignmentTree.left.expr) &&
+                            (Structure.isInstanceOf(entry.node) || (MultiArray.isInstanceOf(entry.node) && Structure.isStructure(entry.node)))
+                        ) {
+                            const fieldValue = Structure.getField(entry.node, field);
+                            if (MultiArray.isInstanceOf(fieldValue) && !MultiArray.isEmpty(fieldValue)) {
+                                const tempScope = Scope.create();
+                                tempScope.defineName('__field_assignment__', fieldValue);
+                                MultiArray.setElements(
+                                    tempScope,
+                                    '__field_assignment__',
+                                    [],
+                                    yield* this.assignmentIndexRequest(index, scope),
+                                    this.indexedAssignmentRhs(delimiter, rightValue, fieldValue),
+                                );
+                                Structure.setNewField(
+                                    entry.node,
+                                    field,
+                                    this.runtimeExpressionValue(this.scopedExpressionValue(tempScope, '__field_assignment__', 'field assignment result'), 'field assignment result'),
+                                );
+                                AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(entry.node)));
+                                continue;
+                            }
+                        }
+                        MultiArray.setElements(
+                            scope,
+                            id,
+                            field,
+                            yield* this.assignmentIndexRequest(index, scope),
+                            this.indexedAssignmentRhs(delimiter, rightValue, field.length === 0 ? entry?.node : undefined, field.length > 0),
+                        );
+                        AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(scope.resolveName(id)!.node)));
+                    }
+                } else {
+                    /* Name or structure-field assignment. */
+                    const rightN = selectRightValue(n);
+                    rightN.parent = assignmentTree.right;
+                    let catchAssignmentValue: NodeInput = rightN;
+                    try {
+                        if (field.length > 0) {
+                            let entry = scope.resolveName(id);
+                            if (op.length && typeof entry === 'undefined') {
+                                this.context.throwEvalError(`in computed assignment ${id}.${field.join('.')} OP= X, ${id}.${field.join('.')} must be defined first.`);
+                            }
+                            if (typeof entry === 'undefined') {
+                                entry = scope.defineName(id, new Structure({}));
+                            } else if (MultiArray.isInstanceOf(entry.node) && !entry.node.isCell && MultiArray.isEmpty(entry.node) && !Structure.isStructure(entry.node)) {
+                                entry.node = new Structure({});
+                            }
+                            const fieldExpressionValue = (): NodeExpr => {
+                                if (Structure.isInstanceOf(entry.node) || (MultiArray.isInstanceOf(entry.node) && Structure.isStructure(entry.node))) {
+                                    return this.expressionValue(Structure.getField(entry.node, field), `field ${field.join('.')}`);
+                                }
+                                if (ClassInstance.isInstanceOf(entry.node)) {
+                                    return this.expressionValue(this.resolveClassFieldChain(entry.node, field, tree), `field ${field.join('.')}`);
+                                }
+                                if (MultiArray.isInstanceOf(entry.node) && this.hasClassInstanceElement(entry.node)) {
+                                    return this.expressionValue(this.resolveClassFieldChain(entry.node, field, tree), `field ${field.join('.')}`);
+                                }
+                                this.context.throwEvalError('in indexed assignment.');
+                            };
+                            const expr = op.length
+                                ? typeof error !== 'undefined'
+                                    ? AST.nodeOperation(op as OperatorType, fieldExpressionValue(), rightN)
+                                    : this.Evaluator(AST.nodeOperation(op as OperatorType, fieldExpressionValue(), rightN))
+                                : rightN;
+                            catchAssignmentValue = expr;
+                            if (Structure.isInstanceOf(entry.node)) {
+                                this.assignStructureFieldValue(entry.node, field, this.structureAssignmentValue(expr, `field ${field.join('.')}`), false);
+                            } else if (MultiArray.isInstanceOf(entry.node) && Structure.isStructure(entry.node)) {
+                                this.assignStructureFieldValue(entry.node, field, this.structureAssignmentValue(expr, `field ${field.join('.')}`), op.length > 0);
+                            } else if (ClassInstance.isInstanceOf(entry.node)) {
+                                const value = this.reducedAssignmentValue(expr);
+                                entry.node = this.assignNestedClassInstanceField(entry.node, field, value, tree, scope);
+                            } else if (MultiArray.isInstanceOf(entry.node) && this.hasClassInstanceElement(entry.node)) {
+                                entry.node = this.assignNestedClassArrayField(entry.node, field, this.reducedAssignmentValue(expr), tree, scope);
+                            } else if (ClassEventListener.isInstanceOf(entry.node)) {
+                                if (field.length !== 1) {
+                                    this.context.throwEvalError(`cannot assign nested property '${field.join('.')}' for ${entry.node.kind}.`);
+                                }
+                                this.setClassEventListenerField(entry.node, field[0], this.reducedAssignmentValue(expr));
+                            } else if (ClassEventData.isInstanceOf(entry.node) || ClassPropertyEvent.isInstanceOf(entry.node)) {
+                                if (field.length !== 1) {
+                                    this.context.throwEvalError(
+                                        `cannot assign nested property '${field.join('.')}' for ${ClassPropertyEvent.isInstanceOf(entry.node) ? 'event.PropertyEvent' : 'event.EventData'}.`,
+                                    );
+                                }
+                                this.setClassEventDataField(entry.node, field[0]);
+                            } else {
+                                this.context.throwEvalError('in indexed assignment.');
+                            }
+                            AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(entry.node)));
+                        } else {
+                            const expr = op.length
+                                ? typeof error !== 'undefined'
+                                    ? AST.nodeOperation(op as OperatorType, AST.nodeIdentifier(id), rightN)
+                                    : this.Evaluator(AST.nodeOperation(op as OperatorType, AST.nodeIdentifier(id), rightN))
+                                : rightN;
+                            catchAssignmentValue = expr;
+                            let entry: NameEntry;
+                            if (undefinedReference) {
+                                if (this.context.allowForwardReference) {
+                                    scope.defineUndefinedReference(undefinedReference, id);
+                                    entry = scope.assignName(id, this.reducedAssignmentValue(expr), undefinedReference);
+                                } else {
+                                    if (error) throw error;
+                                    this.context.throwUndefinedReferenceError(undefinedReference);
+                                }
+                            } else {
+                                entry = scope.assignName(id, this.reducedAssignmentValue(expr));
+                            }
+                            this.solveUndefined(id, scope);
+                            AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(entry.node)));
+                            if (error) throw error;
+                        }
+                    } catch (e: unknown) {
+                        if (this.context.allowForwardReference && this.isLocalUndefinedReference(e)) {
+                            scope.assignName(id, catchAssignmentValue, undefinedReference);
+                        }
+                        throw e as Error;
+                    }
+                }
+            }
+        }
+        if (!tree.parent || !tree.parent.parent) {
+            /* Assignment at the root expression returns the assignment result. */
+            if (resultList.list.length === 1) {
+                /* Single assignment returns its only assignment node. */
+                return resultList.list[0];
+            } else {
+                /* Multiple assignment returns the whole result list. */
+                return resultList;
+            }
+        } else {
+            /* Nested assignment returns the assigned value. */
+            return this.nestedAssignmentValue(resultList);
+        }
+    }
+
+    private *assignmentFieldName(field: StrictNodeExpr, scope: Scope, message: string): Generator<AssignmentExecutionRequest, string, AssignmentExecutionValue> {
+        const value = yield { kind: 'value', tree: field, scope };
+        if (Array.isArray(value)) throw new TypeError('invalid dynamic field carrier.');
+        const evaluated = this.expressionValue(this.reducedExecutionValue(value), 'dynamic field name');
+        if (!CharString.isInstanceOf(evaluated)) this.context.throwEvalError(message);
+        return evaluated.str;
+    }
+
+    /** End inside a nested index belongs to that index, not this descriptor. */
+    private hasDescriptorEnd(tree: NodeInput): boolean {
+        if (tree.type === 'ENDRANGE') return true;
+        if (AST.isNodeIndexExpr(tree)) return false;
+        if (AST.isNodeBinaryExpressionOperation(tree)) return this.hasDescriptorEnd(tree.left) || this.hasDescriptorEnd(tree.right);
+        if (AST.isNodePrefixOperation(tree)) return this.hasDescriptorEnd(tree.right);
+        if (AST.isNodePostfixOperation(tree)) return this.hasDescriptorEnd(tree.left);
+        if (AST.isNodeRange(tree)) return this.hasDescriptorEnd(tree.start_) || this.hasDescriptorEnd(tree.stop_) || Boolean(tree.stride_ && this.hasDescriptorEnd(tree.stride_));
+        return false;
+    }
+
+    private *assignmentDescriptor(
+        delimiter: IndexingDelimiterType,
+        args: ExpressionBoundaryValue[],
+        scope: Scope,
+        parent?: NodeIndexExpr,
+        receiver?: () => NodeInput,
+    ): Generator<AssignmentExecutionRequest, Structure, AssignmentExecutionValue> {
+        const subs = new MultiArray([1, args.length]);
+        subs.isCell = true;
+        for (let i = 0; i < args.length; i++) {
+            const arg = args[i];
+            if (arg.type === ':') subs.array[0][i] = CharString.create(':');
+            else {
+                if (parent && this.hasDescriptorEnd(arg) && this.isNativeExecutionChain(parent, scope)) {
+                    const expr = receiver ? receiver() : this.evaluatedExpressionValue(parent.expr, scope, 'descriptor receiver');
+                    const retainedParent = { ...parent, exprEvaluated: this.strictExpressionValue(this.reducedExecutionValue(expr), 'descriptor receiver') };
+                    if (AST.isNodeBase(arg)) {
+                        arg.parent = retainedParent;
+                        arg.index = i;
+                    }
+                }
+                const value = yield { kind: 'value', tree: arg, scope };
+                if (Array.isArray(value)) throw new TypeError('invalid subscript carrier.');
+                subs.array[0][i] = this.runtimeExpressionValue(this.expressionValue(this.reducedExecutionValue(value), 'subscript'), 'subscript');
+            }
+        }
+        MultiArray.setType(subs);
+        return new Structure({ type: CharString.create(delimiter), subs });
+    }
+
+    private *assignmentIndexRequest(index: ExpressionBoundaryValue[], scope: Scope): Generator<AssignmentExecutionRequest, IndexArgument[], AssignmentExecutionValue> {
+        const value = yield { kind: 'index', index, scope };
+        if (!Array.isArray(value)) this.context.throwEvalError('invalid retained assignment index result.');
+        return value;
+    }
+
+    private driveAssignmentWriter(tree: NodeInput, scope: Scope): NodeInput {
+        return this.driveAssignmentRequests(this.assignmentWriter(tree, scope));
+    }
+
+    private driveAssignmentRequests<T>(writer: Generator<AssignmentExecutionRequest, T, AssignmentExecutionValue>): T {
+        let next = writer.next();
+        while (!next.done) {
+            const request = next.value;
+            try {
+                let value: AssignmentExecutionValue;
+                if (request.kind === 'index') value = this.evaluatedIndexArguments(request.index, request.scope);
+                else if (request.kind === 'value') value = this.Evaluator(request.tree, request.scope);
+                else {
+                    this.context.pushForwardReferenceTargets(request.targets.map(({ id }) => id).filter((id) => id !== '~'));
+                    this.context.pushRequestedOutputCount(request.targets.length);
+                    this.context.pushRequestedOutputMask(request.targets.map(({ id }) => id !== '~'));
+                    try {
+                        value = this.Evaluator(request.tree, request.scope);
+                    } finally {
+                        this.context.popRequestedOutputMask();
+                        this.context.popRequestedOutputCount();
+                        this.context.popForwardReferenceTargets();
+                    }
+                }
+                next = writer.next(value);
+            } catch (error) {
+                next = writer.throw(error);
+            }
+        }
+        return next.value;
+    }
+
+    private *executionAssignment(
+        tree: NodeInput,
+        scope: Scope,
+        state: InterpreterExecutionState,
+        frame: InterpreterExecutionFrame,
+    ): Generator<ExecutionYieldRequest, NodeInput, HostEffectResult> {
+        const writer = this.assignmentWriter(tree, scope);
+        let next: IteratorResult<AssignmentExecutionRequest, NodeInput>;
+        const advance = (value?: AssignmentExecutionValue, error?: { value: unknown }): NodeInput => {
+            next = error ? writer.throw(error.value) : writer.next(value);
+            return AST.nodeVoid();
+        };
+        frame.phase = 'prepare';
+        yield* this.executionLeaf(tree, scope, state, () => advance());
+        while (!next!.done) {
+            const request = next!.value;
+            let value: AssignmentExecutionValue;
+            try {
+                if (request.kind === 'rhs') {
+                    frame.phase = 'rhs';
+                    value = yield* this.executionRequestedValue(
+                        request.tree,
+                        request.scope,
+                        state,
+                        request.targets.length,
+                        request.targets.map(({ id }) => id !== '~'),
+                        request.targets.map(({ id }) => id).filter((id) => id !== '~'),
+                        true,
+                    );
+                } else if (request.kind === 'value') {
+                    frame.phase = 'target';
+                    value = yield* this.executionRequestedValue(request.tree, request.scope, state, 1, [true]);
+                } else {
+                    frame.phase = 'index';
+                    const count = this.context.requestedOutputCount;
+                    const mask = this.context.requestedOutputMask();
+                    const values: NodeInput[] = [];
+                    for (let index = 0; index < request.index.length; index++) {
+                        frame.cursor = index;
+                        values.push(yield* this.executionRequestedValue(request.index[index], request.scope, state, count, mask));
+                    }
+                    let converted: IndexArgument[];
+                    yield* this.executionLeaf(tree, request.scope, state, () => {
+                        converted = MultiArray.indexArguments(
+                            values.map((value, index) => this.convertIndexArgument(value, request.index[index])),
+                            'index',
+                        );
+                        return AST.nodeVoid();
+                    });
+                    value = converted!;
+                }
+            } catch (error) {
+                frame.phase = 'write';
+                yield* this.executionLeaf(tree, scope, state, () => advance(undefined, { value: error }));
+                continue;
+            }
+            frame.phase = 'write';
+            yield* this.executionLeaf(tree, scope, state, () => advance(value));
+        }
+        return this.reducedExecutionValue(next!.value);
+    }
+
+    /** Install call-output metadata only while advancing an expression, never across a wait. */
+    private *executionRequestedValue(
+        tree: NodeInput,
+        scope: Scope,
+        state: InterpreterExecutionState,
+        count: number,
+        mask: boolean[],
+        forward?: string[],
+        preserveReturns = false,
+        commaList = false,
+    ): Generator<ExecutionYieldRequest, NodeInput, HostEffectResult> {
+        const value = this.executionNode(tree, scope, state, false, preserveReturns);
+        const advance = (error?: { value: unknown }, response?: HostEffectResult): IteratorResult<ExecutionYieldRequest, NodeInput> => {
+            if (forward) this.context.pushForwardReferenceTargets(forward);
+            this.context.pushRequestedOutputCount(count);
+            this.context.pushRequestedOutputMask(mask);
+            if (commaList) this.context.pushCommaListExpansion();
+            try {
+                return error ? value.throw(error.value) : response ? value.next(response) : value.next();
+            } finally {
+                if (commaList) this.context.popCommaListExpansion();
+                this.context.popRequestedOutputMask();
+                this.context.popRequestedOutputCount();
+                if (forward) this.context.popForwardReferenceTargets();
+            }
+        };
+        let step = advance();
+        while (!step.done) {
+            let response: HostEffectResult;
+            try {
+                response = yield step.value;
+            } catch (error) {
+                step = advance({ value: error });
+                continue;
+            }
+            step = advance(undefined, response);
+        }
+        return step.value;
+    }
+
+    private isExecutionWriteTarget(tree: StrictNodeExpr, scope: Scope): boolean {
+        if (this.isSimpleExecutionTarget(tree)) return true;
+        let base: StrictNodeExpr = tree;
+        while (AST.isNodeIndexExpr(base) || AST.isNodeIndirectRef(base)) base = AST.isNodeIndexExpr(base) ? base.expr : base.obj;
+        if (!AST.isNodeIdentifier(base)) return false;
+        const entry = scope.resolveName(base.id);
+        return (
+            !entry ||
+            (!ClassInstance.isInstanceOf(entry.node) && !(MultiArray.isInstanceOf(entry.node) && this.hasClassInstanceElement(entry.node)) && !FunctionHandle.isInstanceOf(entry.node))
+        );
+    }
+
+    private hasExecutionTargetCall(tree: StrictNodeExpr): boolean {
+        if (AST.isNodeIndexExpr(tree)) return tree.args.some((arg) => this.hasExecutionCall(arg)) || this.hasExecutionTargetCall(tree.expr);
+        if (AST.isNodeIndirectRef(tree)) return tree.field.some((field) => typeof field !== 'string' && this.hasExecutionCall(field)) || this.hasExecutionTargetCall(tree.obj);
+        return false;
+    }
+
+    /** Native chains retain normal class/callable dispatch boundaries. */
+    private isNativeExecutionValue(value: NodeInput, seen = new Set<NodeInput>()): boolean {
+        if (seen.has(value)) return true;
+        seen.add(value);
+        if (Complex.isInstanceOf(value) || CharString.isInstanceOf(value)) return true;
+        if (MultiArray.isInstanceOf(value)) return (!value.isCell && value.type <= Complex.COMPLEX) || MultiArray.linearize(value).every((item) => this.isNativeExecutionValue(item, seen));
+        if (Structure.isInstanceOf(value)) return Object.values(value.field).every((item) => this.isNativeExecutionValue(item, seen));
+        return false;
+    }
+
+    private isNativeExecutionChain(tree: StrictNodeExpr, scope: Scope): boolean {
+        if (!AST.isNodeIndexExpr(tree) && !AST.isNodeIndirectRef(tree)) return false;
+        let base: StrictNodeExpr = tree;
+        while (AST.isNodeIndexExpr(base) || AST.isNodeIndirectRef(base)) base = AST.isNodeIndexExpr(base) ? base.expr : base.obj;
+        if (!AST.isNodeIdentifier(base)) return false;
+        const value = scope.resolveName(base.id)?.node;
+        return Boolean(value && this.isNativeExecutionValue(value));
+    }
+
+    /** Eligibility is syntactic; retained values still pass through ordinary call/index dispatch. */
+    private isExecutionReadChain(tree: StrictNodeExpr, scope: Scope): boolean {
+        if (this.isNativeExecutionChain(tree, scope)) return true;
+        if (AST.isNodeIndexExpr(tree) && (tree.delim === '()' || tree.delim === '{}'))
+            return this.isExecutionReadCallee(tree.expr, scope) || this.isNativeExecutionValue(tree.expr) || this.isExecutionReadChain(tree.expr, scope);
+        return AST.isNodeIndirectRef(tree) && this.isExecutionReadChain(tree.obj, scope);
+    }
+    /** Stored class/overloaded receivers keep their complete subsref descriptor chain. */
+    private isExecutionReadCallee(tree: StrictNodeExpr, scope: Scope): boolean {
+        if (AST.isNodeIdentifier(tree)) {
+            const value = scope.resolveName(tree.id)?.node;
+            return !value || this.isNativeExecutionValue(value) || FunctionHandle.isInstanceOf(value) || AST.isNodeFunctionDefinition(value);
+        }
+        return (
+            FunctionHandle.isInstanceOf(tree) || (AST.isNodePrefixOperation(tree) && tree.type === '()' && AST.isStrictNodeExpr(tree.right) && this.isExecutionReadCallee(tree.right, scope))
+        );
+    }
+    private isSimpleExecutionTarget(tree: StrictNodeExpr): boolean {
+        if (AST.isNodeIdentifier(tree) || AST.isNodeIgnoredTarget(tree)) return true;
+        return MultiArray.isInstanceOf(tree) && MultiArray.linearize(tree).every((item) => AST.isNodeIdentifier(item) || AST.isNodeIgnoredTarget(item));
+    }
+
+    private isSimpleExecutionCallee(tree: StrictNodeExpr): boolean {
+        return (
+            AST.isNodeIdentifier(tree) ||
+            FunctionHandle.isInstanceOf(tree) ||
+            (AST.isNodePrefixOperation(tree) && tree.type === '()' && AST.isStrictNodeExpr(tree.right) && this.isSimpleExecutionCallee(tree.right))
+        );
+    }
+
+    private hasExecutionCall(tree: NodeInput, seen = new Set<MultiArray>()): boolean {
+        if (MultiArray.isInstanceOf(tree)) {
+            if (seen.has(tree)) return false;
+            seen.add(tree);
+            return MultiArray.linearize(tree).some((element) => AST.isExpressionBoundaryValue(element) && this.hasExecutionCall(element, seen));
+        }
+        if (AST.isNodeIndirectRef(tree)) return tree.field.some((field) => typeof field !== 'string' && this.hasExecutionCall(field)) || this.hasExecutionCall(tree.obj);
+        if (AST.isNodeIndexExpr(tree))
+            return (this.isSimpleExecutionCallee(tree.expr) || AST.isNodeIndexExpr(tree.expr) || AST.isNodeIndirectRef(tree.expr)) && (tree.delim === '()' || tree.delim === '{}');
+        if (AST.isNodeBinaryExpressionOperation(tree)) return this.hasExecutionCall(tree.left) || this.hasExecutionCall(tree.right);
+        if (AST.isNodePrefixOperation(tree) && ['()', '!', '~', '+_', '-_'].includes(tree.type)) return this.hasExecutionCall(tree.right);
+        if (AST.isNodePostfixOperation(tree) && ["'", ".'"].includes(tree.type)) return this.hasExecutionCall(tree.left);
+        if (AST.isNodeRange(tree)) return this.hasExecutionCall(tree.start_) || this.hasExecutionCall(tree.stop_) || Boolean(tree.stride_ && this.hasExecutionCall(tree.stride_));
+        return false;
+    }
+
+    private *executionLeaf(
+        tree: NodeInput,
+        scope: Scope,
+        state: InterpreterExecutionState,
+        operation: () => NodeInput,
+        preserveReturns = false,
+    ): Generator<ExecutionYieldRequest, NodeInput, HostEffectResult> {
+        let pending: HostEffect | undefined;
+        const saved = this.context.hostEffectDispatch;
+        this.context.hostEffectDispatch = (node, args, parent) => {
+            if (node.id !== 'pause' && node.id !== 'load') return undefined;
+            // Replacements supplied by clients remain ordinary built-ins.
+            if (!this.effectBuiltins.has(node)) return undefined;
+            if (
+                parent !== tree ||
+                state.frames[state.frames.length - 2]?.kind === 'expression' ||
+                state.frames[state.frames.length - 2]?.nodeType === '=' ||
+                ['condition', 'selector', 'case-test', 'header', 'workers'].includes(state.frames[state.frames.length - 2]?.phase ?? '') ||
+                (state.frames[state.frames.length - 2]?.kind === 'call' && state.frames[state.frames.length - 2]?.phase !== 'body') ||
+                (node.id === 'load' && this.context.isInsideUserFunction())
+            )
+                throw Object.assign(new Error('Host effects currently require a direct sequence instruction.'), { code: 'MATHJSLAB_EFFECT_POSITION' });
+            if (args.length !== 1) throw new Error(`${node.id} requires one argument.`);
+            if (node.id === 'load') {
+                if (!CharString.isInstanceOf(args[0])) throw new Error('load reference must be text.');
+                pending = { type: 'read-text', reference: args[0].str };
+            } else {
+                const milliseconds = Number(this.Unparse(args[0])) * 1000;
+                if (!Number.isFinite(milliseconds) || milliseconds < 0) throw new Error('pause duration must be a finite nonnegative scalar.');
+                pending = { type: 'delay', milliseconds };
+            }
+            return AST.nodeVoid();
+        };
+        let value: NodeInput;
+        try {
+            value = state.evaluate(() => {
+                const result = operation();
+                return preserveReturns ? result : this.reducedExecutionValue(result);
+            });
+        } finally {
+            this.context.hostEffectDispatch = saved;
+        }
+
+        if (pending) {
+            state.effectValues.add(value);
+            const sequence = [...state.frames].reverse().find((entry) => entry.kind === 'sequence');
+            yield {
+                effect: pending,
+                frame: { kind: 'sequence', nextInstruction: (sequence?.cursor ?? 0) + 1, previousValue: sequence?.previousValue },
+                frames: this.executionFrames(state),
+            };
+        }
+        return value;
+    }
+
+    private readonly effectBuiltins = new Set<NodeBuiltInFunction>();
+
+    private *executionList(tree: NodeList, scope: Scope): Generator<NodeInput, NodeInput, NodeInput> {
+        this.preregisterScriptLocalFunctions(tree, scope);
+        const statements = tree.list.map((node: unknown) => {
+            if (!AST.isNodeProgramElement(node) && !AST.isNodeList(node)) throw new Error('Invalid execution sequence element.');
+            return node;
+        });
+        const result: NodeList & { list: NodeInput[] } = {
+            type: 'LIST',
+            list: new Array<NodeInput>(tree.list.length),
+            parent: tree.parent === null ? null : tree,
+        };
+        let n = 0;
+        let stoppedByTopLevelReturn = false;
+        for (let i = 0; i < tree.list.length; i++) {
+            /* Convert undefined name, defined in word-list command, to word-list command.
+             * (Null length word-list command) */
+            if (AST.isNodeIdentifier(tree.list[i]) && !scope.resolveName(tree.list[i].id) && this.commandWordListNameSet.has(tree.list[i].id)) {
+                tree.list[i] = AST.nodeEmptyCmdWList(tree.list[i]);
+                statements[i] = tree.list[i];
+            }
+            /* PHASE 1: Prepare input node. */
+            tree.list[i].index = i;
+            /* Evaluate */
+            let item: NodeInput;
+            try {
+                const statement = statements[i];
+
+                item = yield statement;
+            } catch (e: unknown) {
+                if (e instanceof ReturnSignal && tree.parent === null && !this.context.isInsideUserFunction() && this.scriptExecutionDepth === 0) {
+                    stoppedByTopLevelReturn = true;
+                    break;
+                }
+                throw e;
+            }
+            if (item.type === 'LIST') {
+                /* Flatten list. */
+                for (let j = 0; j < item.list.length; j++) {
+                    const sub: unknown = item.list[j];
+                    if (!AST.isNodeProgramElement(sub) && !AST.isNodeList(sub)) throw new Error('Invalid execution result element.');
+                    if (sub.type === 'VOID') continue;
+                    /* PHASE 2: Adjust evaluated node. */
+                    sub.parent = result;
+                    sub.index = n;
+                    result.list[n] = sub;
+                    if (tree.parent === null && !sub.omitAnswer) {
+                        scope.defineName('ans', sub);
+                    }
+                    n++;
+                }
+            } else {
+                if (item.type === 'VOID') {
+                    const placeholder = statements[i];
+                    placeholder.omitAnswer = true;
+                    placeholder.omitOutput = true;
+                    placeholder.parent = result;
+                    placeholder.index = n;
+                    result.list[n] = placeholder;
+                    n++;
+                } else {
+                    /* PHASE 2: Adjust evaluated node. */
+                    item.parent = result;
+                    item.index = n;
+                    result.list[n] = item;
+                    if (tree.parent === null && !item.omitAnswer) {
+                        scope.defineName('ans', item);
+                    }
+                    n++;
+                }
+            }
+        }
+        result.list.length = n;
+        if (stoppedByTopLevelReturn && n === 0) {
+            return AST.nodeVoid();
+        }
+        const visible = result.list.filter((node: NodeInput) => !node.omitOutput);
+        if (visible.length > 0 && visible.length < result.list.length) {
+            result.list = visible;
+            result.list.forEach((node: NodeInput, index: number) => {
+                node.parent = result;
+                node.index = index;
+            });
+        }
+        return result;
+    }
+
     /**
      * Expression tree recursive interpreter.
      * @param tree Expression to evaluate.
@@ -10602,6 +11999,11 @@ class Interpreter implements InterpreterInterface {
      * @returns Expression `tree` evaluated.
      */
     public Evaluator(tree: NodeInput, scope: Scope = this.context.currentScope): NodeInput {
+        return this.evaluateNode(tree, scope);
+    }
+
+    /** An assignment continuation supplies its evaluated RHS explicitly. */
+    private evaluateNode(tree: NodeInput, scope: Scope): NodeInput {
         if (this._debug) {
             console.log(`Interpreter(\ntree:${JSON.stringify(tree, (key: string, value: NodeInput) => (key !== 'parent' ? value : value === null ? 'root' : true), 2)},\n);`);
         }
@@ -10719,411 +12121,7 @@ class Interpreter implements InterpreterInterface {
                     case '.**=':
                     case '&=':
                     case '|=': {
-                        /* `tree` is an assignment */
-                        const assignmentTree = this.requireBinaryOperation(tree);
-                        const assignment = this.validateAssignment(assignmentTree.left, true, scope);
-                        const assignmentOperator = assignmentTree.type as OperatorType;
-                        const op: OperatorType | '' = assignmentOperator.substring(0, assignmentOperator.length - 1) as OperatorType | '';
-                        if (assignment.length > 1 && op.length > 0) {
-                            this.context.throwEvalError('computed multiple assignment not allowed.');
-                        }
-                        let right: StrictNodeExpr;
-                        let undefinedReference: string | undefined;
-                        let error: Error | undefined;
-                        this.context.pushForwardReferenceTargets(assignment.map(({ id }) => id).filter((id) => id !== '~'));
-                        this.context.pushRequestedOutputCount(assignment.length);
-                        this.context.pushRequestedOutputMask(assignment.map(({ id }) => id !== '~'));
-                        try {
-                            right = AST.isNodeReturnList(assignmentTree.right)
-                                ? assignmentTree.right
-                                : this.strictExpressionValue(MathOperation.copy(this.Evaluator(assignmentTree.right, scope)), 'assignment right-hand side');
-                        } catch (e: unknown) {
-                            if (!this.context.allowForwardReference) {
-                                throw e as Error;
-                            }
-                            if (!this.isLocalUndefinedReference(e)) {
-                                throw e as Error;
-                            }
-                            error = e as Error;
-                            right = this.strictExpressionValue(RuntimeValue.copy(assignmentTree.right), 'forward assignment right-hand side');
-                            undefinedReference = e.identifier;
-                        } finally {
-                            this.context.popRequestedOutputMask();
-                            this.context.popRequestedOutputCount();
-                            this.context.popForwardReferenceTargets();
-                        }
-                        const rightReturnList = AST.ensureReturnList(right);
-                        const resultList = AST.nodeListFirst();
-                        const evaluated = rightReturnList.handler(assignment.length);
-                        const selectRightValue = (index: number): StrictNodeExpr => {
-                            const value = rightReturnList.selector(evaluated, index);
-                            if (typeof value === 'undefined') {
-                                AST.throwErrorIfGreaterThanReturnList(index, index + 1, (message) => this.context.throwEvalError(message));
-                            }
-                            return AST.requireStrictNodeExpr(value, `assignment output ${index + 1}`);
-                        };
-                        for (let n = 0; n < assignment.length; n++) {
-                            const { id, index, delimiter, field, descriptors } = assignment[n];
-                            if (id !== '~') {
-                                /* Apply one assignment target. */
-                                if (descriptors && descriptors.length > 0 && !op) {
-                                    const entry = scope.resolveName(id);
-                                    const rightValue = this.evaluatedExpressionValue(selectRightValue(n), scope, 'assignment value');
-                                    if (entry && ClassInstance.isInstanceOf(entry.node) && !this.context.canAccessClassMember(entry.node.classDefinition, 'private')) {
-                                        const updated = this.callClassSubsasgnDescriptors(entry.node, descriptors, rightValue, tree);
-                                        if (updated) {
-                                            entry.node = updated;
-                                            AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(entry.node)));
-                                            continue;
-                                        }
-                                    }
-                                    if (entry && (ClassInstance.isInstanceOf(entry.node) || (MultiArray.isInstanceOf(entry.node) && this.hasClassInstanceElement(entry.node)))) {
-                                        const assigned = this.assignClassSubsasgnDescriptors(
-                                            entry.node,
-                                            descriptors.map((item) => this.readNativeSubscriptDescriptor(item, 'subsasgn')),
-                                            rightValue,
-                                            tree,
-                                        );
-                                        if (typeof assigned !== 'undefined') {
-                                            entry.node = assigned;
-                                            AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(entry.node)));
-                                            continue;
-                                        }
-                                    }
-                                    if (!entry && this.shouldUseNativeChainedSubsasgn(descriptors)) {
-                                        const firstDescriptor = this.readNativeSubscriptDescriptor(descriptors[0]);
-                                        const initialValue = this.blankNativeSubsasgnValue(firstDescriptor);
-                                        const assigned = this.assignNativeSubsasgnDescriptors(initialValue, descriptors, rightValue);
-                                        const newEntry = scope.defineName(id, assigned);
-                                        AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), newEntry.node));
-                                        continue;
-                                    }
-                                    if (
-                                        entry &&
-                                        this.shouldUseNativeChainedSubsasgn(descriptors) &&
-                                        (MultiArray.isInstanceOf(entry.node) || Structure.isInstanceOf(entry.node) || Structure.isStructure(entry.node)) &&
-                                        !(MultiArray.isInstanceOf(entry.node) && this.hasClassInstanceElement(entry.node))
-                                    ) {
-                                        entry.node = this.assignNativeSubsasgnDescriptors(entry.node, descriptors, rightValue);
-                                        AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(entry.node)));
-                                        continue;
-                                    }
-                                }
-                                if (descriptors && descriptors.length > 0 && op) {
-                                    const entry = scope.resolveName(id);
-                                    if (!entry) {
-                                        this.context.throwEvalError(`in computed assignment ${id} OP= X, ${id} must be defined first.`);
-                                    }
-                                    if (
-                                        this.shouldUseNativeChainedSubsasgn(descriptors) &&
-                                        (MultiArray.isInstanceOf(entry.node) || Structure.isInstanceOf(entry.node) || Structure.isStructure(entry.node)) &&
-                                        !(MultiArray.isInstanceOf(entry.node) && this.hasClassInstanceElement(entry.node))
-                                    ) {
-                                        const currentValue = this.nativeSubsrefDescriptors(entry.node, descriptors);
-                                        const computedValue = this.evaluatedExpressionValue(
-                                            AST.nodeOperation(
-                                                op,
-                                                this.compoundAssignmentOperand(currentValue, 'compound assignment target value'),
-                                                this.evaluatedExpressionValue(selectRightValue(n), scope, 'assignment value'),
-                                            ),
-                                            scope,
-                                            'compound assignment value',
-                                        );
-                                        entry.node = this.assignNativeSubsasgnDescriptors(entry.node, descriptors, computedValue);
-                                        AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(entry.node)));
-                                        continue;
-                                    }
-                                }
-                                if (index) {
-                                    /* Computed assignment to an indexed matrix element. */
-                                    if (op) {
-                                        const entry = scope.resolveName(id);
-                                        if (typeof entry !== 'undefined') {
-                                            if (!FunctionHandle.isInstanceOf(entry.node)) {
-                                                const evaluatedIndex = this.evaluatedIndexArguments(index, scope);
-                                                if (
-                                                    field.length > 0 &&
-                                                    AST.isNodeIndexExpr(assignmentTree.left) &&
-                                                    AST.isNodeIndirectRef(assignmentTree.left.expr) &&
-                                                    (Structure.isInstanceOf(entry.node) || (MultiArray.isInstanceOf(entry.node) && Structure.isStructure(entry.node)))
-                                                ) {
-                                                    const fieldValue = Structure.getField(entry.node, field);
-                                                    if (MultiArray.isInstanceOf(fieldValue) && !MultiArray.isEmpty(fieldValue)) {
-                                                        const computedValue = this.evaluatedExpressionValue(
-                                                            AST.nodeOperation(
-                                                                op,
-                                                                AST.requireStrictNodeExpr(
-                                                                    MultiArray.getElements(fieldValue, '__field_assignment__', [], evaluatedIndex, this),
-                                                                    'compound field assignment value',
-                                                                ),
-                                                                MultiArray.scalarToMultiArray(
-                                                                    this.runtimeExpressionValue(
-                                                                        this.evaluatedExpressionValue(selectRightValue(n), scope, 'assignment value'),
-                                                                        'assignment value',
-                                                                    ),
-                                                                ),
-                                                            ),
-                                                            scope,
-                                                            'compound field assignment value',
-                                                        );
-                                                        const tempScope = Scope.create();
-                                                        tempScope.defineName('__field_assignment__', fieldValue);
-                                                        MultiArray.setElements(
-                                                            tempScope,
-                                                            '__field_assignment__',
-                                                            [],
-                                                            evaluatedIndex,
-                                                            this.indexedAssignmentRhs(delimiter, computedValue, fieldValue),
-                                                            undefined,
-                                                            this,
-                                                        );
-                                                        Structure.setNewField(
-                                                            entry.node,
-                                                            field,
-                                                            this.runtimeExpressionValue(
-                                                                this.scopedExpressionValue(tempScope, '__field_assignment__', 'field assignment result'),
-                                                                'field assignment result',
-                                                            ),
-                                                        );
-                                                        AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(entry.node)));
-                                                        continue;
-                                                    }
-                                                }
-                                                /* Read-modify-write assignment on an indexed matrix element. */
-                                                MultiArray.setElements(
-                                                    scope,
-                                                    id,
-                                                    field,
-                                                    evaluatedIndex,
-                                                    MultiArray.scalarToMultiArray(
-                                                        this.runtimeExpressionValue(
-                                                            this.evaluatedExpressionValue(
-                                                                AST.nodeOperation(
-                                                                    op,
-                                                                    AST.requireStrictNodeExpr(MultiArray.getElements(entry.node, id, field, evaluatedIndex), 'compound assignment value'),
-                                                                    MultiArray.scalarToMultiArray(
-                                                                        this.runtimeExpressionValue(
-                                                                            this.evaluatedExpressionValue(selectRightValue(n), scope, 'assignment value'),
-                                                                            'assignment value',
-                                                                        ),
-                                                                    ),
-                                                                ),
-                                                                scope,
-                                                                'compound assignment value',
-                                                            ),
-                                                            'compound assignment value',
-                                                        ),
-                                                    ),
-                                                );
-                                                AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(entry.node)));
-                                                continue;
-                                            } else {
-                                                this.context.throwEvalError(`can't perform indexed assignment for function handle type.`);
-                                            }
-                                        } else {
-                                            this.context.throwEvalError(`in computed assignment ${id}(index) OP= X, ${id} must be defined first.`);
-                                        }
-                                    } else {
-                                        /* Direct assignment to an indexed matrix element. */
-                                        const rightValue = this.evaluatedExpressionValue(selectRightValue(n), scope, 'assignment value');
-                                        const entry = scope.resolveName(id);
-                                        if (entry && ClassInstance.isInstanceOf(entry.node) && field.length === 0) {
-                                            const updated = this.callClassSubsasgn(entry.node, index, delimiter ?? '()', rightValue, tree, scope);
-                                            if (updated) {
-                                                entry.node = updated;
-                                                AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(entry.node)));
-                                                continue;
-                                            }
-                                        }
-                                        if (entry && MultiArray.isInstanceOf(entry.node) && field.length === 0 && this.hasClassInstanceElement(entry.node)) {
-                                            const evaluatedIndex = this.evaluatedIndexArguments(index, scope);
-                                            try {
-                                                const selected = MultiArray.MultiArrayToScalar(this.reducedIndexingResult(MultiArray.getElements(entry.node, id, [], evaluatedIndex)));
-                                                if (ClassInstance.isInstanceOf(selected)) {
-                                                    const updated = this.callClassSubsasgn(selected, index, delimiter ?? '()', rightValue, tree, scope);
-                                                    if (updated) {
-                                                        MultiArray.setElements(scope, id, [], evaluatedIndex, MultiArray.scalarToMultiArray(updated));
-                                                        AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), scope.resolveName(id)!.node));
-                                                        continue;
-                                                    }
-                                                }
-                                            } catch (error) {
-                                                if (!(error instanceof RangeError)) {
-                                                    throw error;
-                                                }
-                                            }
-                                        }
-                                        if (entry && MultiArray.isInstanceOf(entry.node) && field.length > 0 && this.hasClassInstanceElement(entry.node)) {
-                                            entry.node = this.assignClassArrayIndexedNestedField(id, entry.node, index, field, rightValue, assignmentTree.left, scope);
-                                            AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(entry.node)));
-                                            continue;
-                                        }
-                                        if (entry && CharString.isInstanceOf(entry.node) && field.length === 0) {
-                                            if (delimiter === '{}') {
-                                                this.context.throwEvalError('matrix cannot be indexed with {');
-                                            }
-                                            const target = MultiArray.characterVectorFromCharString(entry.node);
-                                            const tempScope = Scope.create();
-                                            tempScope.defineName('__char_assignment__', target);
-                                            MultiArray.setElements(
-                                                tempScope,
-                                                '__char_assignment__',
-                                                [],
-                                                this.evaluatedIndexArguments(index, scope),
-                                                this.charStringAssignmentRhs(rightValue, entry.node.quote),
-                                                undefined,
-                                                this,
-                                            );
-                                            entry.node = MultiArray.charStringFromCharacterVectorResult(
-                                                this.scopedMultiArrayValue(tempScope, '__char_assignment__', 'character assignment result'),
-                                                entry.node.quote,
-                                            );
-                                            AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(entry.node)));
-                                            continue;
-                                        }
-                                        if (
-                                            entry &&
-                                            field.length > 0 &&
-                                            AST.isNodeIndexExpr(assignmentTree.left) &&
-                                            AST.isNodeIndirectRef(assignmentTree.left.expr) &&
-                                            (Structure.isInstanceOf(entry.node) || (MultiArray.isInstanceOf(entry.node) && Structure.isStructure(entry.node)))
-                                        ) {
-                                            const fieldValue = Structure.getField(entry.node, field);
-                                            if (MultiArray.isInstanceOf(fieldValue) && !MultiArray.isEmpty(fieldValue)) {
-                                                const tempScope = Scope.create();
-                                                tempScope.defineName('__field_assignment__', fieldValue);
-                                                MultiArray.setElements(
-                                                    tempScope,
-                                                    '__field_assignment__',
-                                                    [],
-                                                    this.evaluatedIndexArguments(index, scope),
-                                                    this.indexedAssignmentRhs(delimiter, rightValue, fieldValue),
-                                                );
-                                                Structure.setNewField(
-                                                    entry.node,
-                                                    field,
-                                                    this.runtimeExpressionValue(
-                                                        this.scopedExpressionValue(tempScope, '__field_assignment__', 'field assignment result'),
-                                                        'field assignment result',
-                                                    ),
-                                                );
-                                                AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(entry.node)));
-                                                continue;
-                                            }
-                                        }
-                                        MultiArray.setElements(
-                                            scope,
-                                            id,
-                                            field,
-                                            this.evaluatedIndexArguments(index, scope),
-                                            this.indexedAssignmentRhs(delimiter, rightValue, field.length === 0 ? entry?.node : undefined, field.length > 0),
-                                        );
-                                        AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(scope.resolveName(id)!.node)));
-                                    }
-                                } else {
-                                    /* Name or structure-field assignment. */
-                                    const rightN = selectRightValue(n);
-                                    rightN.parent = assignmentTree.right;
-                                    let catchAssignmentValue: NodeInput = rightN;
-                                    try {
-                                        if (field.length > 0) {
-                                            let entry = scope.resolveName(id);
-                                            if (op.length && typeof entry === 'undefined') {
-                                                this.context.throwEvalError(`in computed assignment ${id}.${field.join('.')} OP= X, ${id}.${field.join('.')} must be defined first.`);
-                                            }
-                                            if (typeof entry === 'undefined') {
-                                                entry = scope.defineName(id, new Structure({}));
-                                            } else if (MultiArray.isInstanceOf(entry.node) && !entry.node.isCell && MultiArray.isEmpty(entry.node) && !Structure.isStructure(entry.node)) {
-                                                entry.node = new Structure({});
-                                            }
-                                            const fieldExpressionValue = (): NodeExpr => {
-                                                if (Structure.isInstanceOf(entry.node) || (MultiArray.isInstanceOf(entry.node) && Structure.isStructure(entry.node))) {
-                                                    return this.expressionValue(Structure.getField(entry.node, field), `field ${field.join('.')}`);
-                                                }
-                                                if (ClassInstance.isInstanceOf(entry.node)) {
-                                                    return this.expressionValue(this.resolveClassFieldChain(entry.node, field, tree), `field ${field.join('.')}`);
-                                                }
-                                                if (MultiArray.isInstanceOf(entry.node) && this.hasClassInstanceElement(entry.node)) {
-                                                    return this.expressionValue(this.resolveClassFieldChain(entry.node, field, tree), `field ${field.join('.')}`);
-                                                }
-                                                this.context.throwEvalError('in indexed assignment.');
-                                            };
-                                            const expr = op.length
-                                                ? typeof error !== 'undefined'
-                                                    ? AST.nodeOperation(op as OperatorType, fieldExpressionValue(), rightN)
-                                                    : this.Evaluator(AST.nodeOperation(op as OperatorType, fieldExpressionValue(), rightN))
-                                                : rightN;
-                                            catchAssignmentValue = expr;
-                                            if (Structure.isInstanceOf(entry.node)) {
-                                                this.assignStructureFieldValue(entry.node, field, this.structureAssignmentValue(expr, `field ${field.join('.')}`), false);
-                                            } else if (MultiArray.isInstanceOf(entry.node) && Structure.isStructure(entry.node)) {
-                                                this.assignStructureFieldValue(entry.node, field, this.structureAssignmentValue(expr, `field ${field.join('.')}`), op.length > 0);
-                                            } else if (ClassInstance.isInstanceOf(entry.node)) {
-                                                const value = this.reducedAssignmentValue(expr);
-                                                entry.node = this.assignNestedClassInstanceField(entry.node, field, value, tree, scope);
-                                            } else if (MultiArray.isInstanceOf(entry.node) && this.hasClassInstanceElement(entry.node)) {
-                                                entry.node = this.assignNestedClassArrayField(entry.node, field, this.reducedAssignmentValue(expr), tree, scope);
-                                            } else if (ClassEventListener.isInstanceOf(entry.node)) {
-                                                if (field.length !== 1) {
-                                                    this.context.throwEvalError(`cannot assign nested property '${field.join('.')}' for ${entry.node.kind}.`);
-                                                }
-                                                this.setClassEventListenerField(entry.node, field[0], this.reducedAssignmentValue(expr));
-                                            } else if (ClassEventData.isInstanceOf(entry.node) || ClassPropertyEvent.isInstanceOf(entry.node)) {
-                                                if (field.length !== 1) {
-                                                    this.context.throwEvalError(
-                                                        `cannot assign nested property '${field.join('.')}' for ${ClassPropertyEvent.isInstanceOf(entry.node) ? 'event.PropertyEvent' : 'event.EventData'}.`,
-                                                    );
-                                                }
-                                                this.setClassEventDataField(entry.node, field[0]);
-                                            } else {
-                                                this.context.throwEvalError('in indexed assignment.');
-                                            }
-                                            AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(entry.node)));
-                                        } else {
-                                            const expr = op.length
-                                                ? typeof error !== 'undefined'
-                                                    ? AST.nodeOperation(op as OperatorType, AST.nodeIdentifier(id), rightN)
-                                                    : this.Evaluator(AST.nodeOperation(op as OperatorType, AST.nodeIdentifier(id), rightN))
-                                                : rightN;
-                                            catchAssignmentValue = expr;
-                                            let entry: NameEntry;
-                                            if (undefinedReference) {
-                                                if (this.context.allowForwardReference) {
-                                                    scope.defineUndefinedReference(undefinedReference, id);
-                                                    entry = scope.assignName(id, this.reducedAssignmentValue(expr), undefinedReference);
-                                                } else {
-                                                    if (error) throw error;
-                                                    this.context.throwUndefinedReferenceError(undefinedReference);
-                                                }
-                                            } else {
-                                                entry = scope.assignName(id, this.reducedAssignmentValue(expr));
-                                            }
-                                            this.solveUndefined(id, scope);
-                                            AST.appendNodeList(resultList, AST.nodeOperation('=', AST.nodeIdentifier(id), RuntimeValue.copy(entry.node)));
-                                            if (error) throw error;
-                                        }
-                                    } catch (e: unknown) {
-                                        if (this.context.allowForwardReference && this.isLocalUndefinedReference(e)) {
-                                            scope.assignName(id, catchAssignmentValue, undefinedReference);
-                                        }
-                                        throw e as Error;
-                                    }
-                                }
-                            }
-                        }
-                        if (!tree.parent || !tree.parent.parent) {
-                            /* Assignment at the root expression returns the assignment result. */
-                            if (resultList.list.length === 1) {
-                                /* Single assignment returns its only assignment node. */
-                                return resultList.list[0];
-                            } else {
-                                /* Multiple assignment returns the whole result list. */
-                                return resultList;
-                            }
-                        } else {
-                            /* Nested assignment returns the assigned value. */
-                            return this.nestedAssignmentValue(resultList);
-                        }
+                        return this.driveAssignmentWriter(tree, scope);
                     }
                     case 'IDENT':
                         return this.context.resolveIdentifier(tree, scope);
@@ -11277,81 +12275,16 @@ class Interpreter implements InterpreterInterface {
                         return this.resolveMetaclassLiteral(tree.className.id, scope);
                     }
                     case 'LIST': {
-                        this.preregisterScriptLocalFunctions(tree, scope);
-                        const result = {
-                            type: 'LIST',
-                            list: new Array(tree.list.length),
-                            parent: tree.parent === null ? null : tree,
-                        };
-                        let n = 0;
-                        let stoppedByTopLevelReturn = false;
-                        for (let i = 0; i < tree.list.length; i++) {
-                            /* Convert undefined name, defined in word-list command, to word-list command.
-                             * (Null length word-list command) */
-                            if (AST.isNodeIdentifier(tree.list[i]) && !scope.resolveName(tree.list[i].id) && this.commandWordListNameSet.has(tree.list[i].id)) {
-                                tree.list[i] = AST.nodeEmptyCmdWList(tree.list[i]);
-                            }
-                            /* PHASE 1: Prepare input node. */
-                            tree.list[i].index = i;
-                            /* Evaluate */
-                            let item: NodeInput;
+                        const execution = this.executionList(tree, scope);
+                        let next = execution.next();
+                        while (!next.done) {
                             try {
-                                item = this.evaluatedExecutionResult(tree.list[i], scope);
-                            } catch (e: unknown) {
-                                if (e instanceof ReturnSignal && tree.parent === null && !this.context.isInsideUserFunction() && this.scriptExecutionDepth === 0) {
-                                    stoppedByTopLevelReturn = true;
-                                    break;
-                                }
-                                throw e;
-                            }
-                            if (item.type === 'LIST') {
-                                /* Flatten list. */
-                                for (let j = 0; j < item.list.length; j++) {
-                                    const sub = item.list[j];
-                                    if (sub.type === 'VOID') continue;
-                                    /* PHASE 2: Adjust evaluated node. */
-                                    item.list[j].parent = result;
-                                    item.list[j].index = n;
-                                    result.list[n] = sub;
-                                    if (tree.parent === null && !sub.omitAnswer) {
-                                        scope.defineName('ans', sub);
-                                    }
-                                    n++;
-                                }
-                            } else {
-                                if (item.type === 'VOID') {
-                                    const placeholder = tree.list[i];
-                                    placeholder.omitAnswer = true;
-                                    placeholder.omitOutput = true;
-                                    placeholder.parent = result;
-                                    placeholder.index = n;
-                                    result.list[n] = placeholder;
-                                    n++;
-                                } else {
-                                    /* PHASE 2: Adjust evaluated node. */
-                                    item.parent = result;
-                                    item.index = n;
-                                    result.list[n] = item;
-                                    if (tree.parent === null && !item.omitAnswer) {
-                                        scope.defineName('ans', item);
-                                    }
-                                    n++;
-                                }
+                                next = execution.next(this.evaluatedExecutionResult(next.value, scope));
+                            } catch (error) {
+                                next = execution.throw(error);
                             }
                         }
-                        result.list.length = n;
-                        if (stoppedByTopLevelReturn && n === 0) {
-                            return AST.nodeVoid();
-                        }
-                        const visible = result.list.filter((node: NodeInput) => !node.omitOutput);
-                        if (visible.length > 0 && visible.length < result.list.length) {
-                            result.list = visible;
-                            result.list.forEach((node: NodeInput, index: number) => {
-                                node.parent = result;
-                                node.index = index;
-                            });
-                        }
-                        return result;
+                        return next.value;
                     }
                     case 'RANGE': {
                         const startValue = this.runtimeExpressionValue(this.evaluatedExpressionValue(tree.start_, scope, 'range start'), 'range start');
@@ -11378,7 +12311,7 @@ class Interpreter implements InterpreterInterface {
                             parent = parent.parent;
                         }
                         if (AST.isNodeIndexExpr(parent)) {
-                            const expr = this.evaluatedExpressionBoundaryValue(parent.expr, scope, 'indexed expression');
+                            const expr = parent.exprEvaluated ?? this.evaluatedExpressionBoundaryValue(parent.expr, scope, 'indexed expression');
                             if (ClassInstance.isInstanceOf(expr)) {
                                 const customEnd = this.callClassEnd(expr, index + 1, parent.args.length, parent);
                                 if (typeof customEnd !== 'undefined') {
@@ -11398,7 +12331,7 @@ class Interpreter implements InterpreterInterface {
                     }
                     case ':':
                         if (AST.isNodeIndexExpr(tree.parent)) {
-                            const expr = this.evaluatedExpressionBoundaryValue(tree.parent.expr, scope, 'indexed expression');
+                            const expr = tree.parent.exprEvaluated ?? this.evaluatedExpressionBoundaryValue(tree.parent.expr, scope, 'indexed expression');
                             if (MultiArray.isInstanceOf(expr)) {
                                 return tree.parent.args.length === 1
                                     ? MultiArray.expandColon(MultiArray.linearLength(expr))
@@ -11466,189 +12399,17 @@ class Interpreter implements InterpreterInterface {
                         const result = this.commandWordListResult(entry.func(...tree.args.map((word: CharString) => word.str)));
                         return typeof result !== 'undefined' ? result : tree;
                     }
-                    case 'IF': {
-                        for (let ifTest = 0; ifTest < tree.expression.length; ifTest++) {
-                            if (this.evaluatedCondition(tree.expression[ifTest], scope, 'if condition')) {
-                                return this.evaluatedExecutionResult(tree.then[ifTest], scope);
-                            }
-                        }
-                        /* No one `then` clause. */
-                        if (tree.else) {
-                            return this.evaluatedExecutionResult(tree.else, scope);
-                        }
-                        /* Return null NodeList. */
-                        return {
-                            type: 'LIST',
-                            list: [],
-                            parent: tree,
-                        };
-                    }
-                    case 'SWITCH': {
-                        const switchValue = this.evaluatedExpressionValue(tree.expression, scope, 'switch expression');
-                        for (const switchCase of tree.cases) {
-                            const caseValue = this.evaluatedExpressionValue(switchCase.expression, scope, 'switch case');
-                            if (this.switchCaseMatches(switchValue, caseValue)) {
-                                return this.evaluatedExecutionResult(switchCase.then, scope);
-                            }
-                        }
-                        if (tree.otherwise) {
-                            return this.evaluatedExecutionResult(tree.otherwise, scope);
-                        }
-                        return {
-                            type: 'LIST',
-                            list: [],
-                            parent: tree,
-                        };
-                    }
-                    case 'WHILE': {
-                        let result: NodeInput = {
-                            type: 'LIST',
-                            list: [],
-                            parent: tree,
-                        };
-                        while (true) {
-                            if (!this.evaluatedCondition(tree.expression, scope, 'while condition')) {
-                                return result;
-                            }
-                            try {
-                                result = this.evaluatedExecutionResult(tree.body, scope);
-                            } catch (e: unknown) {
-                                if (e instanceof ContinueSignal) {
-                                    continue;
-                                }
-                                if (e instanceof BreakSignal) {
-                                    return result;
-                                }
-                                throw e;
-                            }
-                        }
-                    }
-                    case 'DO_UNTIL': {
-                        let result: NodeInput = {
-                            type: 'LIST',
-                            list: [],
-                            parent: tree,
-                        };
-                        while (true) {
-                            try {
-                                result = this.evaluatedExecutionResult(tree.body, scope);
-                            } catch (e: unknown) {
-                                if (e instanceof BreakSignal) {
-                                    return result;
-                                }
-                                if (!(e instanceof ContinueSignal)) {
-                                    throw e;
-                                }
-                            }
-                            if (this.evaluatedCondition(tree.expression, scope, 'until condition')) {
-                                return result;
-                            }
-                        }
-                    }
-                    case 'FOR': {
-                        let result: NodeInput = {
-                            type: 'LIST',
-                            list: [],
-                            parent: tree,
-                        };
-                        if (tree.workers) {
-                            this.workerCountControlArgument(this.evaluatedExpressionValue(tree.workers, scope, 'parfor workers'), 'parfor workers');
-                        }
-                        const loopExpression = this.evaluatedExpressionValue(tree.expression, scope, 'for expression');
-                        if (tree.parallel) {
-                            this.validateParforHeader(tree.target, loopExpression);
-                            this.validateParforBody(tree.body, (tree.target as NodeIdentifier).id);
-                        }
-                        const values = this.forLoopValues(loopExpression, tree.target);
-                        for (const value of values) {
-                            const assignment = AST.nodeOperation('=', this.cloneAssignmentTarget(tree.target), this.forLoopAssignmentValue(tree.target, value));
-                            this.Evaluator(assignment, scope);
-                            try {
-                                result = this.evaluatedExecutionResult(tree.body, scope);
-                            } catch (e: unknown) {
-                                if (e instanceof ContinueSignal) {
-                                    continue;
-                                }
-                                if (e instanceof BreakSignal) {
-                                    return result;
-                                }
-                                throw e;
-                            }
-                        }
-                        return result;
-                    }
-                    case 'SPMD':
-                        this.validateSpmdBody(tree.body);
-                        if (tree.workers) {
-                            const workerCounts = tree.workers.list.map((worker: NodeInput, index: number) =>
-                                this.workerCountControlArgument(
-                                    this.evaluatedExpressionValue(this.expressionValue(worker, `spmd worker ${index + 1}`), scope, `spmd worker ${index + 1}`),
-                                    `spmd worker ${index + 1}`,
-                                ),
-                            );
-                            if (workerCounts.length === 2 && workerCounts[0] > workerCounts[1]) {
-                                this.context.throwEvalError('spmd minimum worker count cannot exceed maximum worker count.');
-                            }
-                        }
-                        const localSpmdNames = ['spmdIndex', 'spmdSize'];
-                        const savedSpmdNames = new Map<string, NameEntry | undefined>();
-                        localSpmdNames.forEach((name: string) => {
-                            savedSpmdNames.set(name, scope.hasLocalName(name) ? { ...scope.nameTable[name] } : undefined);
-                        });
-                        scope.defineName('spmdIndex', Complex.one());
-                        scope.defineName('spmdSize', Complex.one());
-                        try {
-                            return this.evaluatedExecutionResult(tree.body, scope);
-                        } finally {
-                            localSpmdNames.forEach((name: string) => {
-                                const saved = savedSpmdNames.get(name);
-                                if (saved) {
-                                    scope.nameTable[name] = saved;
-                                } else {
-                                    scope.removeName(name);
-                                }
-                            });
-                        }
-                    case 'TRY': {
-                        try {
-                            return this.evaluatedExecutionResult(tree.body, scope);
-                        } catch (e: unknown) {
-                            if (e instanceof ReturnSignal || e instanceof BreakSignal || e instanceof ContinueSignal) {
-                                throw e;
-                            }
-                            const errorStruct = this.rememberLastError(e);
-                            if (tree.catchBody) {
-                                if (tree.catchIdentifier) {
-                                    scope.defineName(tree.catchIdentifier.id, errorStruct);
-                                }
-                                return this.evaluatedExecutionResult(tree.catchBody, scope);
-                            }
-                            return {
-                                type: 'LIST',
-                                list: [],
-                                parent: tree,
-                            };
-                        }
-                    }
-                    case 'UNWIND_PROTECT': {
-                        let result: NodeInput = {
-                            type: 'LIST',
-                            list: [],
-                            parent: tree,
-                        };
-                        let thrown: unknown;
-                        let didThrow = false;
-                        try {
-                            result = this.evaluatedExecutionResult(tree.body, scope);
-                        } catch (e: unknown) {
-                            thrown = e;
-                            didThrow = true;
-                        }
-                        this.evaluatedExecutionResult(tree.cleanup, scope);
-                        if (didThrow) {
-                            throw thrown;
-                        }
-                        return result;
+                    case 'IF':
+                    case 'SWITCH':
+                    case 'WHILE':
+                    case 'DO_UNTIL':
+                    case 'FOR':
+                    case 'TRY':
+                    case 'UNWIND_PROTECT':
+                    case 'SPMD': {
+                        return ExecutionMachine.sequence(
+                            this.executionNode(tree, scope, { evaluate: (operation) => operation(), frames: [], completed: 0, effectValues: new WeakSet<NodeInput>() }),
+                        ).runSynchronously();
                     }
                     default:
                         this.context.throwEvalError(`evaluating undefined type '${tree.type}'.`);
@@ -11674,7 +12435,7 @@ class Interpreter implements InterpreterInterface {
             this._exitStatus = Interpreter.response.OK;
             tree.parent = null;
             this.validateDeclarationPlacement(tree);
-            return this.Evaluator(tree);
+            return this.CreateExecutionMachine(tree).runSynchronously();
         } catch (e) {
             if (e instanceof ReturnSignal && !this.context.isInsideUserFunction() && this.scriptExecutionDepth === 0) {
                 return AST.nodeVoid();

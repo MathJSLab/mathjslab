@@ -8,14 +8,14 @@ const tsPlugin = require('@typescript-eslint/eslint-plugin');
 const tsParser = require('@typescript-eslint/parser');
 const prettierPlugin = require('eslint-plugin-prettier');
 const eslintConfigPrettier = require('eslint-config-prettier');
-const importPlugin = require('eslint-plugin-import');
+const importPlugin = require('eslint-plugin-import-x').importX;
 const js = require('@eslint/js');
 const jestPlugin = require('eslint-plugin-jest');
 
 console.log(`Running project lint (configuration: ${path.basename(__filename)}) ...`);
 
 const basePlugins = {
-    import: importPlugin,
+    'import-x': importPlugin,
     prettier: prettierPlugin,
 };
 
@@ -49,15 +49,15 @@ const esmComplyRules = {
     /* Disallows imports with require() */
     '@typescript-eslint/no-require-imports': 'error',
     /* Disallows CommonJS-style exports (module.exports / exports) */
-    'import/no-commonjs': 'error',
+    'import-x/no-commonjs': 'error',
     /* Disallows the use of dynamic 'require' (CJS) */
-    'import/no-dynamic-require': 'error',
+    'import-x/no-dynamic-require': 'error',
     /* Ensures that only ESM syntax is used for import/export. */
-    'import/export': 'error',
+    'import-x/export': 'error',
     /* Ensures import paths are correct (ESM resolves). */
-    'import/no-unresolved': ['error', { commonjs: false, caseSensitive: true }],
+    'import-x/no-unresolved': ['error', { commonjs: false, caseSensitive: true }],
     /* Disallows redundant imports and requires consistent bundling. */
-    'import/order': [
+    'import-x/order': [
         'warn',
         {
             groups: ['builtin', 'external', 'internal', ['parent', 'sibling'], 'index'],
@@ -65,11 +65,11 @@ const esmComplyRules = {
         },
     ],
     /* Disallows the use of duplicate exports. */
-    'import/no-duplicates': 'error',
+    'import-x/no-duplicates': 'error',
     /* Requires all imports to be at the top of the file. */
-    'import/first': 'error',
+    'import-x/first': 'error',
     /* Disallows importing files with incorrect .cjs or .js extensions. */
-    'import/extensions': [
+    'import-x/extensions': [
         'error',
         'ignorePackages',
         {
@@ -108,7 +108,7 @@ const esmComplyRules = {
 };
 
 const esmComplySettings = {
-    'import/resolver': {
+    'import-x/resolver': {
         /* Makes eslint-plugin-import understand tsconfig paths. */
         typescript: {
             alwaysTryTypes: true,
@@ -158,7 +158,7 @@ module.exports = [
             '@typescript-eslint/no-empty-object-type': 'off',
             '@typescript-eslint/no-unsafe-function-type': 'off',
             /* Allows imports without extension. */
-            'import/extensions': [
+            'import-x/extensions': [
                 'error',
                 'ignorePackages',
                 {
@@ -168,7 +168,7 @@ module.exports = [
                 },
             ],
             /* Disables resolution checking, useful when TS resolves paths. */
-            'import/no-unresolved': 'off',
+            'import-x/no-unresolved': 'off',
         },
     },
     /* JavaScript source code. */

@@ -2086,125 +2086,85 @@ class MultiArray<ELEMENT = Elements> {
     };
 
     /**
-     * Calls `splitLastDimension` and recursively calls `evaluate` for each
-     * result, concatenating on the last dimension, until the array is 2-D,
-     * then then concatenates the elements row by row horizontally, then
-     * concatenates the rows vertically.
-     * @param M MultiArray object.
-     * @param interpreter Runtime evaluation context.
-     * @param local Local context (function evaluation).
-     * @param fname Function name (context).
-     * @returns Evaluated MultiArray object.
+     * Shared literal construction. Drivers evaluate each requested element once
+     * and provide its expanded comma-list values. Horizontal concatenation runs
+     * before the next row, vertical concatenation after all rows; N-D inputs keep
+     * the existing page order. Numeric operations and class dispatch stay here.
+     * Syntax containers retain legitimate dynamic execution carriers.
      */
-    private static readonly evaluateRecursive = (M: MultiArray, interpreter: RuntimeEvaluationContext | null | undefined, scope?: unknown): ElementType => {
-        const evaluateElementValues = (element: ElementType): ElementType[] => {
-            if (!interpreter) {
-                return [element];
-            }
-            interpreter.context.pushCommaListExpansion();
-            try {
-                return interpreter.context.expandCommaSeparatedList(interpreter.Evaluator(element, scope)) as ElementType[];
-            } finally {
-                interpreter.context.popCommaListExpansion();
-            }
-        };
-        if (M.dimension.length > 2) {
-            return MultiArray.concatenate(
-                M.dimension.length - 1,
-                'evaluate',
-                ...MultiArray.splitLastDimension(M).map((S) => MultiArray.scalarToMultiArray(MultiArray.evaluateRecursive(S, interpreter, scope))),
-            );
-        } else {
-            const overloadedRows: ElementType[] = [];
-            const rows = M.array.map((row) => {
-                const values = row.flatMap((element) => evaluateElementValues(element));
-                const overloadedRow = values.length > 1 ? interpreter?.concatenateOverload?.('horzcat', values, M) : undefined;
-                if (typeof overloadedRow !== 'undefined') {
-                    overloadedRows.push(overloadedRow as ElementType);
-                    return MultiArray.scalarToMultiArray(overloadedRow as ElementType);
+    public static *evaluateElements(M: MultiArray, interpreter?: RuntimeEvaluationContext | null): Generator<{ readonly element: ElementType }, ElementType, ElementType[]> {
+        if (MultiArray.isEmpty(M)) return M;
+        if (M.isCell) {
+            const rows: ElementType[][] = [];
+            for (const row of M.array) {
+                const values: ElementType[] = [];
+                for (const element of row) {
+                    const expanded = yield { element };
+                    for (const value of expanded) {
+                        if (value) value.parent = M;
+                        values.push(value);
+                    }
                 }
-                overloadedRows.push(undefined);
-                if (MultiArray.isCharStringList(values) && values.every(CharString.isChar)) {
-                    const quote = values[0].quote;
-                    return MultiArray.scalarToMultiArray(CharString.fromCharacterScalars(values, quote));
-                }
-                if (values.length === 0) {
-                    return new MultiArray([1, 0]);
-                }
-                return MultiArray.concatenate(1, 'evaluate', ...values.map((value) => MultiArray.scalarToMultiArray(value)));
-            });
-            if (rows.length === 1 && typeof overloadedRows[0] !== 'undefined') {
-                return overloadedRows[0];
+                rows.push(values);
             }
-            const rowValues = rows.map((row) => MultiArray.MultiArrayToScalar(row));
-            const overloadedMatrix = interpreter?.concatenateOverload?.('vertcat', rowValues, M);
-            if (typeof overloadedMatrix !== 'undefined') {
-                return overloadedMatrix as ElementType;
-            }
-            return MultiArray.concatenate(0, 'evaluate', ...rows);
-        }
-    };
-
-    /**
-     * Wrapper to not pass the null array to `MultiArray.interpreterRecursive`.
-     * @param M MultiArray object.
-     * @param interpreter Runtime evaluation context.
-     * @param local Local context (function evaluation).
-     * @param fname Function name (context).
-     * @returns Evaluated MultiArray object.
-     */
-    public static readonly evaluate = (M: MultiArray, interpreter?: RuntimeEvaluationContext | null | undefined, scope?: unknown): ElementType => {
-        if (MultiArray.isEmpty(M)) {
-            return M;
-        } else if (M.isCell) {
-            const rows = M.array.map((row) =>
-                row.flatMap((element) => {
-                    const values = (() => {
-                        if (!interpreter) {
-                            return [element];
-                        }
-                        interpreter.context.pushCommaListExpansion();
-                        try {
-                            return interpreter.context.expandCommaSeparatedList(interpreter.Evaluator(element, scope)) as ElementType[];
-                        } finally {
-                            interpreter.context.popCommaListExpansion();
-                        }
-                    })();
-                    return values.map((value) => {
-                        if (value) {
-                            value.parent = M;
-                        }
-                        return value as ElementType;
-                    });
-                }),
-            );
-            if (rows.length > 1 && rows.some((row) => row.length !== rows[0].length)) {
-                throw new EvalError('evaluate: dimension mismatch');
-            }
+            if (rows.length > 1 && rows.some((row) => row.length !== rows[0].length)) throw new EvalError('evaluate: dimension mismatch');
             const result = new MultiArray([rows.length, rows[0]?.length ?? 0], undefined, true);
             result.array = rows;
-            result.array.forEach((row) =>
-                row.forEach((element) => {
-                    if (element) {
-                        element.parent = result;
-                    }
-                }),
-            );
-            return result;
-        } else {
-            const result = MultiArray.evaluateRecursive(M, interpreter, scope);
-            if (!MultiArray.isInstanceOf(result)) {
-                return result;
-            }
-            result.isCell = M.isCell;
-            MultiArray.setType(result);
-            if (result.dimension.length === 2 && result.dimension[0] === 1 && result.dimension[1] === 1 && CharString.isInstanceOf(result.array[0][0])) {
-                return result.array[0][0];
-            }
+            for (const row of rows) for (const element of row) if (element) element.parent = result;
             return result;
         }
-    };
+        const result = yield* MultiArray.evaluateRecursiveElements(M, interpreter);
+        if (!MultiArray.isInstanceOf(result)) return result;
+        result.isCell = M.isCell;
+        MultiArray.setType(result);
+        if (result.dimension.length === 2 && result.dimension[0] === 1 && result.dimension[1] === 1 && CharString.isInstanceOf(result.array[0][0])) return result.array[0][0];
+        return result;
+    }
 
+    private static *evaluateRecursiveElements(M: MultiArray, interpreter?: RuntimeEvaluationContext | null): Generator<{ readonly element: ElementType }, ElementType, ElementType[]> {
+        if (M.dimension.length > 2) {
+            const pages: MultiArray[] = [];
+            for (const page of MultiArray.splitLastDimension(M)) pages.push(MultiArray.scalarToMultiArray(yield* MultiArray.evaluateRecursiveElements(page, interpreter)));
+            return MultiArray.concatenate(M.dimension.length - 1, 'evaluate', ...pages);
+        }
+        const rows: MultiArray[] = [];
+        const overloadedRows: ElementType[] = [];
+        for (const row of M.array) {
+            const values: ElementType[] = [];
+            for (const element of row) values.push(...(yield { element }));
+            const overloaded = values.length > 1 ? interpreter?.concatenateOverload?.('horzcat', values, M) : undefined;
+            overloadedRows.push(overloaded as ElementType);
+            if (typeof overloaded !== 'undefined') rows.push(MultiArray.scalarToMultiArray(overloaded as ElementType));
+            else if (MultiArray.isCharStringList(values) && values.every(CharString.isChar))
+                rows.push(MultiArray.scalarToMultiArray(CharString.fromCharacterScalars(values, values[0].quote)));
+            else if (values.length === 0) rows.push(new MultiArray([1, 0]));
+            else rows.push(MultiArray.concatenate(1, 'evaluate', ...values.map(MultiArray.scalarToMultiArray)));
+        }
+        if (rows.length === 1 && typeof overloadedRows[0] !== 'undefined') return overloadedRows[0];
+        const overloaded = interpreter?.concatenateOverload?.('vertcat', rows.map(MultiArray.MultiArrayToScalar), M);
+        if (typeof overloaded !== 'undefined') return overloaded as ElementType;
+        return MultiArray.concatenate(0, 'evaluate', ...rows);
+    }
+
+    /** Synchronous driver for the same element requests used by resumable execution. */
+    public static readonly evaluate = (M: MultiArray, interpreter?: RuntimeEvaluationContext | null, scope?: unknown): ElementType => {
+        const execution = MultiArray.evaluateElements(M, interpreter);
+        let next = execution.next();
+        while (!next.done) {
+            let values: ElementType[];
+            if (!interpreter) values = [next.value.element];
+            else {
+                interpreter.context.pushCommaListExpansion();
+                try {
+                    values = interpreter.context.expandCommaSeparatedList(interpreter.Evaluator(next.value.element, scope)) as ElementType[];
+                } finally {
+                    interpreter.context.popCommaListExpansion();
+                }
+            }
+            next = execution.next(values);
+        }
+        return next.value;
+    };
     /**
      * # MATLAB/Octave Array Indexing - Complete Rules (Concise Specification)
      *

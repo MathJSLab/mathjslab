@@ -375,12 +375,28 @@ class FunctionCall {
         requestedOutputCount: number,
         callbacks: FunctionCallPreparationCallbacks,
     ): PreparedFunctionCall {
+        const execution = this.prepareFunctionCallExecution(func, args, requestedOutputCount, callbacks);
+        let next = execution.next();
+        while (!next.done) next = execution.next(callbacks.expandPositionalArguments!(next.value));
+        return next.value;
+    }
+
+    /** Shared preparation retaining each expanded argument before advancing. */
+    public static *prepareFunctionCallExecution(
+        func: NodeFunctionDefinition,
+        args: CallArgumentValue[],
+        requestedOutputCount: number,
+        callbacks: FunctionCallPreparationCallbacks,
+    ): Generator<CallArgumentValue[], PreparedFunctionCall, CallArgumentValue[]> {
         const inputLayout = this.inputLayout(func, callbacks.nameValueParameters(func));
         const returnLayout = this.returnLayout(func, callbacks.outputRepeatingName?.(func));
         let callArguments = callbacks.splitCallArguments(func, args);
         callArguments.rawPositionalCount = callArguments.positional.length;
         if (callbacks.expandPositionalArguments) {
-            const expandedPositional = callArguments.positional.flatMap((arg) => (this.callArgumentRequestsDefault(arg) ? [arg] : callbacks.expandPositionalArguments!([arg])));
+            const expandedPositional: CallArgumentValue[] = [];
+            for (const arg of callArguments.positional) {
+                expandedPositional.push(...(this.callArgumentRequestsDefault(arg) ? [arg] : yield [arg]));
+            }
             const expandedSplit = callbacks.splitCallArguments(func, expandedPositional);
             const named = new Map(expandedSplit.named);
             for (const [name, value] of callArguments.named) {
@@ -515,6 +531,20 @@ class FunctionCall {
         evaluateDefault: EvaluateDefault,
         throwEvalError: ThrowEvalError,
     ): void {
+        const execution = this.bindPositionalInputsExecution(func, inputLayout, evaluatedArgs, inputDefaults, defineName, throwEvalError);
+        let next = execution.next();
+        while (!next.done) next = execution.next(evaluateDefault(next.value.name, next.value.expression));
+    }
+
+    /** Shared input binding retaining completed bindings across default waits. */
+    public static *bindPositionalInputsExecution(
+        func: NodeFunctionDefinition,
+        inputLayout: FunctionInputLayout,
+        evaluatedArgs: EvaluatedArgumentValue[],
+        inputDefaults: Map<string, StrictNodeExpr>,
+        defineName: DefineName,
+        throwEvalError: ThrowEvalError,
+    ): Generator<{ name: string; expression: StrictNodeExpr }, void, NodeInput> {
         for (let i = 0; i < inputLayout.positionalParamCount; i++) {
             const param = inputLayout.positionalParams[i];
             const paramName = this.parameterName(param);
@@ -528,7 +558,7 @@ class FunctionCall {
                     if (!defaultValue) {
                         throwEvalError(`invalid use of default argument marker ':' in function ${func.id}`);
                     }
-                    defineName(paramName, this.evaluatedArgument(evaluateDefault(paramName, defaultValue), paramName, throwEvalError));
+                    defineName(paramName, this.evaluatedArgument(yield { name: paramName, expression: defaultValue }, paramName, throwEvalError));
                 } else {
                     defineName(paramName, evaluatedArg);
                 }
@@ -540,7 +570,7 @@ class FunctionCall {
                 if (!defaultValue) {
                     throwEvalError(`invalid number of arguments in function ${func.id}`);
                 }
-                defineName(paramName, this.evaluatedArgument(evaluateDefault(paramName, defaultValue), paramName, throwEvalError));
+                defineName(paramName, this.evaluatedArgument(yield { name: paramName, expression: defaultValue }, paramName, throwEvalError));
             }
         }
         if (evaluatedArgs.slice(inputLayout.positionalParamCount).some((value) => this.isDefaultArgumentMarker(value))) {

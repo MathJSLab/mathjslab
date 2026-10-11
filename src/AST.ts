@@ -261,7 +261,8 @@ interface NodeBase {
     /** Node discriminant. */
     type: NodeType | number;
     /** Parent AST node or runtime wrapper, when known. */
-    parent?: NodeBase;
+    /** null marks an execution root; undefined marks an unattached node. */
+    parent?: NodeBase | null;
     /** Index inside a parent list, when the node belongs to a list. */
     index?: number;
     /** Whether evaluation output should be suppressed. */

@@ -9,7 +9,7 @@ describe('Architecture', () => {
             const contextSource = readFileSync(join(process.cwd(), 'src', 'Context.ts'), 'utf8');
             const reductionPattern = /AST\.reduceToFirstIfReturnList\(/g;
 
-            expect([...interpreterSource.matchAll(reductionPattern)]).toHaveLength(7);
+            expect([...interpreterSource.matchAll(reductionPattern)]).toHaveLength(8);
             expect([...contextSource.matchAll(reductionPattern)]).toHaveLength(3);
             [
                 'private evaluatedExpressionValue(tree: ExpressionBoundaryValue, scope: Scope, name: string): StrictNodeExpr',
@@ -19,6 +19,7 @@ describe('Architecture', () => {
                 'private reducedClassMethodResultWithOutputCount(',
                 'args: ExpressionBoundaryValue[],',
                 'private reducedAssignmentValue(value: NodeInput): NodeInput',
+                'private reducedExecutionValue(value: NodeInput): NodeInput',
                 'private reducedIndexingResult(value: NodeInput): NodeInput',
             ].forEach((signature) => expect(interpreterSource).toContain(signature));
             [
@@ -49,7 +50,10 @@ describe('Architecture', () => {
                 'private linearExpressionValues(value: unknown, prefix: string): StrictNodeExpr[]',
                 'private forLoopValues(value: NodeInput, target: NodeAssignmentTarget): StrictNodeExpr[]',
                 'private cloneAssignmentTarget(target: unknown): StrictNodeExpr',
-                'private validateAssignment(tree: StrictNodeExpr, shallow: boolean, scope: Scope = this.context.currentScope): AssignmentTarget[]',
+                'private *validateAssignment(tree: StrictNodeExpr, shallow: boolean, scope: Scope): Generator<AssignmentExecutionRequest, AssignmentTarget[], AssignmentExecutionValue>',
+                'private *collectSubsasgnAssignmentTarget(node: StrictNodeExpr, scope: Scope): Generator<AssignmentExecutionRequest, AssignmentTarget | undefined, AssignmentExecutionValue>',
+                'private *assignmentWriter(tree: NodeInput, scope: Scope): Generator<AssignmentExecutionRequest, NodeInput, AssignmentExecutionValue>',
+                'private *assignmentIndexRequest(index: ExpressionBoundaryValue[], scope: Scope): Generator<AssignmentExecutionRequest, IndexArgument[], AssignmentExecutionValue>',
             ].forEach((signature) => expect(source).toContain(signature));
         });
 
@@ -65,11 +69,11 @@ describe('Architecture', () => {
                 'private evaluatedDynamicFieldName(field: StrictNodeExpr, scope: Scope, message: string): string',
                 'private evaluatedCommaSeparatedReceiver(expr: StrictNodeExpr, scope: Scope): NodeInput[] | undefined',
                 'private collectClassSubsrefChain(node: StrictNodeExpr, scope: Scope)',
-                'private collectSubsasgnAssignmentTarget(node: StrictNodeExpr, scope: Scope)',
+                'private *collectSubsasgnAssignmentTarget(node: StrictNodeExpr, scope: Scope)',
             ].forEach((signature) => expect(interpreterSource).toContain(signature));
             [
                 'public resolveCallDispatch(expr: StrictNodeExpr, parent: NodeInput, args: CallArgumentValue[] = []): CallDispatch',
-                'private applyNativeIndexing(expr: StrictNodeExpr, args: CallArgumentValue[], parent: NodeInput): StrictNodeExpr',
+                'private applyNativeIndexing(expr: StrictNodeExpr, args: CallArgumentValue[], parent: NodeInput, evaluated?: ExpressionBoundaryValue[], prepared?: NativeIndexReceiver): StrictNodeExpr',
                 'apply(expr: StrictNodeExpr, args: CallArgumentValue[], parent: NodeInput): ExpressionBoundaryValue',
             ].forEach((signature) => expect(contextSource).toContain(signature));
         });
@@ -113,7 +117,9 @@ describe('Architecture', () => {
                 'callCallable(callable: Callable, args: CallArgumentValue[], parent: NodeInput): ExpressionBoundaryValue',
                 'private applyCallDispatch(dispatch: CallDispatch, args: CallArgumentValue[], parent: NodeInput): ExpressionBoundaryValue | undefined',
             ].forEach((signature) => expect(contextSource).toContain(signature));
-            expect(interpreterSource).toContain('public callFunctionalOperatorOverload(node: NodeBuiltInFunction, args: CallArgumentValue[], parent: NodeInput): StrictNodeExpr | undefined');
+            expect(interpreterSource).toContain(
+                'public callFunctionalOperatorOverload(node: NodeBuiltInFunction, args: CallArgumentValue[], parent: NodeInput, evaluated?: ExpressionBoundaryValue[]): StrictNodeExpr | undefined',
+            );
         });
 
         it('Should keep context-owned interpreter evaluation inside named boundary helpers.', () => {

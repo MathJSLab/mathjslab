@@ -36,3 +36,6 @@ export * from './runtime-contracts';
 export * from './InProcessRuntime';
 export * from './ExecutionMachine';
 export * from './ParforAnalyzer';
+
+export { createPlotFunctionTable } from './PlotFunctions';
+export type { PlotOutputRequest, PlotTrace, PlotInterpreter } from './PlotFunctions';

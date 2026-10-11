@@ -12,3 +12,8 @@ directory.
 7. [Function Signatures](doc/function-signature.md)
 8. [Householder Reflectors](doc/householder-reflectors.md)
 9. [Parser and AST Compatibility](doc/parser-ast-compatibility.md)
+10. [Asynchronous Runtime Lifecycle](doc/async-runtime-lifecycle.md)
+11. [Resumable Execution](doc/resumable-execution.md)
+12. [Native Plotting](doc/plotting.md)
+13. [Dispatch Precedence](doc/dispatch-precedence.md)
+14. [Architecture Boundary Audit](doc/architecture-boundary-audit.md)

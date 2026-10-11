@@ -212,7 +212,12 @@ export const WebpackConfiguration: webpack.Configuration[] = [
         entry: path.join(__dirname, 'src', 'runtime-browser.ts'),
         target: ['web', 'es2022'],
         output: { library: { type: 'module' } },
-        module: { rules: [{ use: { options: { configFile: 'tsconfig.esm.es2022.json' } }, exclude: [/.*\.es2015\.ts$/, /^lib\-node.*/] }] },
+        module: {
+            rules: [
+                { use: { options: { configFile: 'tsconfig.esm.es2022.json' } }, exclude: [/.*\.es2015\.ts$/, /^lib\-node.*/] },
+                { test: /BrowserRuntime\.ts$/, parser: { importMeta: false } },
+            ],
+        },
     },
     /* 9. Node worker_threads runtime. */
     {
@@ -291,6 +296,14 @@ export default (env: any, argv: any): webpack.Configuration[] => {
     return bundlesConfiguration.map((config, index) => {
         console.log(`${index + 1}. ${config.name}`);
         config.mode = mode;
+        if (config.name!.startsWith('runtime')) {
+            // Keep runtime callbacks and values in the same core module instance
+            // as consumers importing mathjslab or mathjslab/core.
+            config.externalsType = 'module';
+            const coreModule =
+                config.name === 'runtime-worker.esm2022' ? './mathjslab.web.esm2022.js' : config.name === 'runtime-node-worker.esm2022' ? './mathjslab.node.esm2022.js' : 'mathjslab/core';
+            config.externals = { './lib-core': coreModule };
+        }
         config.output!.path = path.join(__dirname, 'lib');
         const extension = config.name!.startsWith('node.cjs') ? 'cjs' : 'js';
         config.output!.filename = `mathjslab.${config.name}.${extension}`;

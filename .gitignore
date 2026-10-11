@@ -66,3 +66,9 @@ package-lock.json
 # OpenAI Codex Agent
 .agents/
 .codex/
+
+coverage/
+test-results/
+playwright-report/
+*.tsbuildinfo
+test/markdown/chunk-baseline.json

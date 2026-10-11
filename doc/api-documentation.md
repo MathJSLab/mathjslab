@@ -3,16 +3,17 @@
 MathJSLab keeps public API documentation close to the TypeScript source by
 using JSDoc comments as the primary source of truth.
 
-The generated API reference uses `src/lib.ts` and `src/lib-core.ts` as public
-entry points. This keeps internal implementation modules out of the default API
-surface unless they are explicitly exported by the package.
+The generated API reference uses `src/lib.ts`, `src/lib-core.ts` and
+`src/runtime-contracts.ts` as public entry points. This keeps internal
+implementation modules out of the default API surface unless they are
+explicitly exported by the package.
 
 ## Generating the Reference
 
 Run:
 
 ```sh
-npm run docs:api
+npm run docs
 ```
 
 The current generator writes Markdown to `doc/api-reference.md` and uses the

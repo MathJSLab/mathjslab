@@ -1,4 +1,4 @@
-import { createInProcessMathJSLabRuntime } from './InProcessRuntime';
+import { createInProcessMathJSLabRuntime, RuntimeValueCodec } from './lib-core';
 import {
     runtimeProtocolVersion,
     serializeRuntimeError,
@@ -9,7 +9,6 @@ import {
     type RuntimeResponseValue,
 } from './runtime-protocol';
 import type { HostEffectResult, MathJSLabRuntime, RuntimeHost, RuntimeSession } from './runtime-contracts';
-import { RuntimeValueCodec } from './RuntimeValueCodec';
 
 export interface RuntimeWorkerServerScope {
     postMessage(message: RuntimeOutboundMessage, transfer?: ArrayBuffer[]): void;
@@ -32,7 +31,16 @@ export class RuntimeWorkerServer {
                 new Promise((resolve, reject) => {
                     const effectId = `effect-${++this.nextEffect}`;
                     this.pendingEffects.set(effectId, { resolve, reject });
-                    this.scope.postMessage({ protocol: runtimeProtocolVersion, type: 'effect-request', effectId, effect, context });
+                    // AbortSignal belongs to this realm and cannot cross a browser
+                    // structured-clone boundary. RemoteRuntime supplies its own
+                    // per-effect signal and aborts it when the Worker terminates.
+                    const { signal: _signal, ...cloneableContext } = context;
+                    try {
+                        this.scope.postMessage({ protocol: runtimeProtocolVersion, type: 'effect-request', effectId, effect, context: cloneableContext });
+                    } catch (error) {
+                        this.pendingEffects.delete(effectId);
+                        reject(error);
+                    }
                 }),
         };
         this.runtime = typeof runtime === 'function' ? runtime(host) : (runtime ?? createInProcessMathJSLabRuntime({ host }));

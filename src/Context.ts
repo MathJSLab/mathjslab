@@ -10,6 +10,7 @@ import type {
     NodeInput,
     NodeIdentifier,
     NodeFunctionDefinition,
+    NodeIndexExpr,
     NodeReturnList,
     ReturnHandlerResult,
     RuntimeExpressionValue,
@@ -31,15 +32,24 @@ import { ClassEventListener } from './ClassEventListener';
 import type { BinaryMathOperation, KeyOfTypeOfMathOperation, UnaryMathOperation } from './MathOperation';
 import { Scope, type ImportedNameCandidateKind } from './Scope';
 import { CallFrame } from './CallFrame';
-import { Callables, type Callable, type FunctionDefinitionCallable } from './Callable';
+import { Callables, type Callable, type FunctionDefinitionCallable, type LambdaCallable, type BuiltinCallable } from './Callable';
 import { FunctionSignature } from './FunctionSignature';
-import type { CallArgumentValue, FunctionParameter } from './FunctionCall';
+import type { CallArgumentValue } from './FunctionCall';
 import { FunctionCall } from './FunctionCall';
 import { FunctionStack } from './FunctionStack';
 import { FunctionWorkspace } from './FunctionWorkspace';
 import { CircularReferenceError, EvalError, ReferenceError, SyntaxError, UndefinedReferenceError } from './InterpreterError';
 import { expressionValue, expressionValues, runtimeExpressionValue } from './ExpressionValue';
 import { RuntimeValue } from './RuntimeValue';
+
+/** Evaluator-owned request within shared call and native index execution. */
+type FunctionExecutionRequest =
+    | { readonly kind: 'argument'; readonly tree: NodeInput; readonly scope: Scope; readonly commaList?: boolean; readonly frame?: never }
+    | { readonly kind: 'operation'; readonly tree: NodeInput; readonly scope: Scope; readonly operation: () => NodeInput; readonly frame?: never; readonly commaList?: never }
+    | { readonly kind: 'default'; readonly tree: StrictNodeExpr; readonly scope: Scope; readonly commaList?: never; readonly frame?: never }
+    | { readonly kind: 'body' | 'expression'; readonly tree: NodeInput; readonly scope: Scope; readonly frame: CallFrame; readonly commaList?: never };
+
+type NativeIndexReceiver = { readonly array: MultiArray; readonly text?: CharString };
 
 type ClassMethodDefinition = ClassMethodDefinitionBase<ClassDefinition>;
 
@@ -68,6 +78,8 @@ interface ContextInterpreter {
     getFunctionOutputRepeatingName(func: NodeFunctionDefinition): string | undefined;
     /** Bind evaluated name-value arguments into a function call scope. */
     bindFunctionNameValueArguments(func: NodeFunctionDefinition, scope: Scope, values: Map<string, ExpressionBoundaryValue>): void;
+    /** Shared binding that requests evaluation of name-value defaults. */
+    executeFunctionNameValueArguments(func: NodeFunctionDefinition, scope: Scope, values: Map<string, ExpressionBoundaryValue>): Generator<StrictNodeExpr, void, NodeInput>;
     /** Preprocess imports that apply to an entire script/function scope. */
     applyScopedImports(tree: NodeInput, scope: Scope): void;
     /** Register nested functions visible from a function body. */
@@ -91,7 +103,7 @@ interface ContextInterpreter {
     /** Resolve a static class method selected by qualified name or visible imports. */
     resolveStaticMethod(name: string, scope: Scope): ClassStaticMethod | undefined;
     /** Dispatch a functional operator call through class overload semantics, when applicable. */
-    callFunctionalOperatorOverload(node: NodeBuiltInFunction, args: CallArgumentValue[], parent: NodeInput): StrictNodeExpr | undefined;
+    callFunctionalOperatorOverload(node: NodeBuiltInFunction, args: CallArgumentValue[], parent: NodeInput, evaluated?: ExpressionBoundaryValue[]): StrictNodeExpr | undefined;
     /** Convert object values used as native array indices through `subsindex`. */
     convertIndexArgument(value: NodeInput, parent: NodeInput): NodeInput;
 }
@@ -243,6 +255,8 @@ class ContinueSignal extends Error {
  * share one consistent state model.
  */
 class Context {
+    /** Optional driver capability, invoked only after normal built-in dispatch and argument validation. */
+    public hostEffectDispatch?: (node: NodeBuiltInFunction, args: ExpressionBoundaryValue[], parent: NodeInput) => StrictNodeExpr | undefined;
     /** Built-ins that MATLAB/Octave users commonly invoke without parentheses. */
     private static readonly bareZeroArgumentBuiltins = new Set(['lastwarn', 'lasterr', 'lasterror', 'localfunctions', 'mfilename']);
 
@@ -1271,23 +1285,39 @@ class Context {
      * @returns Evaluated argument values.
      */
     public evaluateBuiltInArgs(node: NodeBuiltInFunction, args: CallArgumentValue[], parent: NodeInput): ExpressionBoundaryValue[] {
-        if (node.id === 'feval' || node.id === 'builtin') {
-            return args.length > 0 ? [this.evaluateArgs([args[0]], parent, 'all')[0], ...args.slice(1)] : [];
-        }
-        const alias = this.aliasNameFunction(node.id);
-        if (alias !== 'set') {
-            return this.evaluateArgs(args, parent, node.ev);
-        }
-        const evaluated: ExpressionBoundaryValue[] = [];
-        args.forEach((arg, index) => {
-            if (index > 0 && AST.isNodeBinaryOperation(arg) && arg.type === '=' && AST.isNodeIdentifier(arg.left)) {
-                evaluated.push(new CharString(arg.left.id));
-                evaluated.push(...this.evaluateArgs([arg.right], parent, node.ev));
-                return;
+        return this.driveFunctionExecution(this.executeBuiltInArguments(node, args, parent));
+    }
+
+    /** Shared selective evaluation and comma expansion; raw arguments stay raw. */
+    private *executeBuiltInArguments(node: NodeBuiltInFunction, args: CallArgumentValue[], parent: NodeInput): Generator<FunctionExecutionRequest, ExpressionBoundaryValue[], NodeInput> {
+        const values: ExpressionBoundaryValue[] = [];
+        const indirect = node.id === 'feval' || node.id === 'builtin';
+        const set = this.aliasNameFunction(node.id) === 'set';
+        for (let index = 0; index < args.length; index++) {
+            let arg = args[index];
+            if (indirect && index > 0) {
+                values.push(arg);
+                continue;
             }
-            evaluated.push(...this.evaluateArgs([arg], parent, node.ev));
-        });
-        return evaluated;
+            if (set && index > 0 && AST.isNodeBinaryOperation(arg) && arg.type === '=' && AST.isNodeIdentifier(arg.left)) {
+                values.push(new CharString(arg.left.id));
+                arg = arg.right;
+            }
+            const evaluationIndex = set ? 0 : index;
+            if (!indirect && node.ev.length > evaluationIndex && !node.ev[evaluationIndex]) {
+                values.push(arg);
+                continue;
+            }
+            if (AST.isNodeBase(arg)) {
+                arg.parent = parent;
+                arg.index = index;
+            }
+            const result = yield { kind: 'argument', tree: arg, scope: this.currentScope, commaList: true };
+            const expanded = this.expressionValues(this.expandCommaSeparatedList(result), 'arg');
+            if (indirect) values.push(expanded[0]);
+            else values.push(...expanded);
+        }
+        return values;
     }
 
     /**
@@ -1694,8 +1724,52 @@ class Context {
     }
 
     private callFunctionDefinition(callable: FunctionDefinitionCallable, args: CallArgumentValue[], parent: NodeInput, requestedOutputCount: number): StrictNodeExpr {
+        return this.driveFunctionExecution(this.executeFunctionDefinition(callable, args, parent, requestedOutputCount));
+    }
+
+    /** Drain the same call requests without introducing asynchronous waits. */
+    private driveFunctionExecution<T>(execution: Generator<FunctionExecutionRequest, T, NodeInput>): T {
+        let next = execution.next();
+        while (!next.done) {
+            try {
+                const request = next.value;
+                let value: NodeInput;
+                if (request.kind === 'operation') value = request.operation();
+                else if (request.kind === 'body') value = this.evaluatedExecutionResult(request.tree, request.scope);
+                else if (request.kind === 'expression') value = this.rawEvaluationResult(request.tree, request.scope);
+                else {
+                    if (request.kind === 'default') this.pushCallStackFrame(new CallFrame(request.scope));
+                    this.pushRequestedOutputCount(1);
+                    this.pushRequestedOutputMask([true]);
+                    if (request.commaList) this.pushCommaListExpansion();
+                    try {
+                        value = request.commaList ? this.rawEvaluationResult(request.tree, request.scope) : this.evaluatedExpressionValue(request.tree, request.scope, request.kind);
+                    } finally {
+                        if (request.commaList) this.popCommaListExpansion();
+                        this.popRequestedOutputMask();
+                        this.popRequestedOutputCount();
+                        if (request.kind === 'default') this.popCallStackFrame();
+                    }
+                }
+                next = execution.next(value);
+            } catch (error) {
+                next = execution.throw(error);
+            }
+        }
+        return next.value;
+    }
+
+    /** Shared call lifecycle. The driver executes the body in the retained scope. */
+    public *executeFunctionDefinition(
+        callable: FunctionDefinitionCallable,
+        args: CallArgumentValue[],
+        parent: NodeInput,
+        requestedOutputCount: number,
+    ): Generator<FunctionExecutionRequest, StrictNodeExpr, NodeInput> {
         const func = callable.node;
-        const { inputLayout, returnLayout, callArguments, inputDefaults } = FunctionCall.prepareFunctionCall(func, args, requestedOutputCount, {
+        const callerScope = this.currentScope;
+        const outputMask = this.requestedOutputMask(requestedOutputCount);
+        const preparation = FunctionCall.prepareFunctionCallExecution(func, args, requestedOutputCount, {
             nameValueParameters: (item) => this.interpreter!.getFunctionNameValueParameters(item),
             splitCallArguments: (item, itemArgs) => this.interpreter!.splitFunctionCallNameValueArguments(item, itemArgs),
             expandPositionalArguments: (itemArgs) => this.expandCommaListArguments(itemArgs),
@@ -1703,46 +1777,69 @@ class Context {
             outputRepeatingName: (item) => this.interpreter!.getFunctionOutputRepeatingName(item),
             throwEvalError: (message) => this.throwEvalError(message),
         });
+        let prepared = preparation.next();
+        let argumentIndex = 0;
+        while (!prepared.done) {
+            const arg = prepared.value[0];
+            if (AST.isNodeBase(arg)) {
+                arg.parent = parent;
+                arg.index = argumentIndex;
+            }
+            argumentIndex++;
+            const value = yield { kind: 'argument', tree: arg, scope: callerScope, commaList: true };
+            prepared = preparation.next(this.expressionValues(this.expandCommaSeparatedList(value), 'arg'));
+        }
+        const { inputLayout, returnLayout, callArguments, inputDefaults } = prepared.value;
         /* Create a function scope, preserving the definition scope when available. */
         const functionScope = Scope.create((func.definingScope as Scope | undefined) ?? this.currentScope);
         functionScope.assignExistingParentNames = Boolean(func.attributes?.nested);
         this.interpreter!.configureFunctionWorkspace(func, functionScope);
         FunctionCall.initializeFixedReturnSlots(returnLayout.returnNames, functionScope.nameTable);
         /* Bind evaluated arguments to formal parameter names. */
-        const evaluateCallArgument = (arg: CallArgumentValue): NodeInput => {
-            this.pushRequestedOutputCount(1);
-            try {
-                return this.evaluatedExpressionValue(arg, this.currentScope, 'argument');
-            } finally {
-                this.popRequestedOutputCount();
-            }
-        };
-        const evaluatedArgs = FunctionCall.evaluateCallArguments(callArguments.positional, parent, evaluateCallArgument, (message) => this.throwEvalError(message), 0, true);
-        const evaluatedNameValueArgs = FunctionCall.evaluateNameValueArguments(callArguments.named, parent, evaluateCallArgument, (message) => this.throwEvalError(message));
-        FunctionCall.bindPositionalInputs(
+        const evaluatedArgs = FunctionCall.evaluateCallArguments(
+            callArguments.positional,
+            parent,
+            (arg) => arg,
+            (message) => this.throwEvalError(message),
+            0,
+            true,
+        );
+        const namedValues = new Map<string, CallArgumentValue>();
+        for (const [name, arg] of callArguments.named) {
+            arg.parent = parent;
+            const value = yield { kind: 'argument', tree: arg, scope: callerScope };
+            namedValues.set(
+                name,
+                expressionValue(value, name, 'Argument value', (message) => this.throwEvalError(message)),
+            );
+        }
+        const evaluatedNameValueArgs = FunctionCall.evaluateNameValueArguments(
+            namedValues,
+            parent,
+            (arg) => arg,
+            (message) => this.throwEvalError(message),
+        );
+        const binding = FunctionCall.bindPositionalInputsExecution(
             func,
             inputLayout,
             evaluatedArgs,
             inputDefaults,
             (name, value) => functionScope.defineName(name, value),
-            (_name, defaultValue) => {
-                this.pushRequestedOutputCount(1);
-                try {
-                    return this.evaluatedExpressionValue(defaultValue, functionScope, 'default argument');
-                } finally {
-                    this.popRequestedOutputCount();
-                }
-            },
             (message) => this.throwEvalError(message),
         );
-        this.interpreter!.bindFunctionNameValueArguments(func, functionScope, evaluatedNameValueArgs);
+        let bound = binding.next();
+        while (!bound.done) {
+            const value = yield { kind: 'default', tree: bound.value.expression, scope: functionScope };
+            bound = binding.next(value);
+        }
+        const namedBinding = this.interpreter!.executeFunctionNameValueArguments(func, functionScope, evaluatedNameValueArgs);
+        let namedBound = namedBinding.next();
+        while (!namedBound.done) namedBound = namedBinding.next(yield { kind: 'default', tree: namedBound.value, scope: functionScope });
         FunctionCall.bindVarargin(inputLayout, evaluatedArgs, (name, value) => functionScope.defineName(name, value));
         FunctionCall.bindVarargout(returnLayout, requestedOutputCount, (name, value) => functionScope.defineName(name, value));
         /* Push the user-defined function frame for stack trace reporting. */
         const inputCount = callArguments.positional.length + args.length - (callArguments.rawPositionalCount ?? callArguments.positional.length);
-        this.pushCallStackFrame(
-            new CallFrame(functionScope, callable, this.resolveCallSite(parent), func.id, inputCount, requestedOutputCount, args, undefined, this.requestedOutputMask(requestedOutputCount)),
-        );
+        this.pushCallStackFrame(new CallFrame(functionScope, callable, this.resolveCallSite(parent), func.id, inputCount, requestedOutputCount, args, undefined, outputMask));
         this.loadPersistentVariables(func, functionScope);
         let result: StrictNodeExpr;
         try {
@@ -1757,14 +1854,13 @@ class Context {
             /* Execute the function body. */
             try {
                 if (func.statements.list.length > 0) {
-                    this.evaluatedExecutionResult(func.statements, functionScope);
+                    yield { kind: 'body', tree: func.statements, scope: functionScope, frame: this.currentFrame! };
                 }
             } catch (e: unknown) {
                 if (!(e instanceof ReturnSignal)) {
                     throw e;
                 }
             }
-            const outputMask = this.requestedOutputMask(requestedOutputCount);
             this.interpreter!.validateFunctionOutputArguments(func, functionScope, requestedOutputCount, outputMask);
             /* Build a lazy return list backed by the function scope. */
             result = FunctionCall.createReturnList(returnLayout, functionScope.nameTable, (message) => this.throwEvalError(message), outputMask);
@@ -2308,81 +2404,10 @@ class Context {
     callCallable(callable: Callable, args: CallArgumentValue[], parent: NodeInput): ExpressionBoundaryValue {
         const requestedOutputCount = this.requestedOutputCount;
         switch (callable.type) {
-            case 'BUILTIN': {
-                const node = callable.node;
-                const alias = this.aliasNameFunction(node.id);
-                const operatorOverload = this.callCallableFunctionalOperatorOverload(node, args, parent);
-                if (operatorOverload) {
-                    return operatorOverload;
-                }
-                const evaluatedArgs = this.evaluateBuiltInArgs(node, args, parent);
-                this.validateBuiltInInputArity(node, evaluatedArgs.length);
-                /* Push a frame before entering the built-in so errors can capture this call. */
-                this.pushCallStackFrame(new CallFrame(this.currentScope, callable, this.resolveCallSite(parent), node.id, evaluatedArgs.length, requestedOutputCount, args));
-                try {
-                    const classMethodResult = this.callClassBuiltinMethod(node, evaluatedArgs, parent);
-                    if (typeof classMethodResult !== 'undefined') {
-                        return classMethodResult;
-                    }
-                    this.validateBuiltInInputParameters(node, evaluatedArgs);
-                    if (node.mapper && evaluatedArgs.length !== 1) {
-                        this.throwEvalError(`Invalid call to ${alias}.`);
-                    }
-                    if (alias === 'size' && evaluatedArgs.length === 1 && requestedOutputCount > 1) {
-                        return this.sizeReturnList(evaluatedArgs[0]);
-                    }
-                    const result =
-                        node.mapper && evaluatedArgs.length === 1 && MultiArray.isInstanceOf(evaluatedArgs[0]) ? MultiArray.rawMap(evaluatedArgs[0], node.func) : node.func(...evaluatedArgs);
-                    return expressionValue(result, `${alias} result`, 'Return value', (message) => this.throwEvalError(message));
-                } finally {
-                    /* Always restore the caller frame, even when the built-in throws. */
-                    this.popCallStackFrame();
-                }
-            }
-            case 'LAMBDA': {
-                const lambda = callable.node;
-                const params = lambda.parameter as FunctionParameter[];
-                const { hasVarargin, fixedParamCount } = FunctionCall.lambdaInputLayout(params);
-                const callArgs = this.expandCommaListArguments(args);
-                FunctionCall.validateLambdaInputArity(callArgs.length, hasVarargin, fixedParamCount, (message) => this.throwEvalError(message));
-                const lambdaScope = Scope.create((lambda.closure as Scope | undefined) ?? this.currentScope);
-                this.configureAnonymousFunctionWorkspace(lambda, lambdaScope);
-                FunctionCall.bindLambdaInputs(
-                    params,
-                    callArgs,
-                    parent,
-                    hasVarargin,
-                    fixedParamCount,
-                    (name, value) => lambdaScope.defineName(name, value),
-                    (arg) => {
-                        this.pushRequestedOutputCount(1);
-                        try {
-                            return this.evaluatedExpressionValue(arg, this.currentScope, 'argument');
-                        } finally {
-                            this.popRequestedOutputCount();
-                        }
-                    },
-                    (message) => this.throwEvalError(message),
-                );
-                this.pushCallStackFrame(
-                    new CallFrame(
-                        lambdaScope,
-                        callable,
-                        this.resolveCallSite(parent),
-                        FunctionHandle.toString(lambda),
-                        callArgs.length,
-                        requestedOutputCount,
-                        args,
-                        undefined,
-                        this.requestedOutputMask(requestedOutputCount),
-                    ),
-                );
-                try {
-                    return expressionValue(this.rawEvaluationResult(lambda.expression, lambdaScope), 'anonymous function result', 'Return value', (message) => this.throwEvalError(message));
-                } finally {
-                    this.popCallStackFrame();
-                }
-            }
+            case 'BUILTIN':
+                return this.driveFunctionExecution(this.executeBuiltInFunction(callable, args, parent, requestedOutputCount));
+            case 'LAMBDA':
+                return this.driveFunctionExecution(this.executeAnonymousFunction(callable, args, parent, requestedOutputCount));
             case 'FCNDEF': {
                 return this.callFunctionDefinition(callable, args, parent, requestedOutputCount);
             }
@@ -2391,6 +2416,110 @@ class Context {
             }
             default:
                 throw new Error('Invalid callable.');
+        }
+    }
+
+    /** Bind builtin inputs once, then request indivisible dispatch through the evaluator. */
+    public *executeBuiltInFunction(
+        callable: BuiltinCallable,
+        args: CallArgumentValue[],
+        parent: NodeInput,
+        requestedOutputCount: number,
+    ): Generator<FunctionExecutionRequest, ExpressionBoundaryValue, NodeInput> {
+        const evaluatedArgs = yield* this.executeBuiltInArguments(callable.node, args, parent);
+        const value = yield {
+            kind: 'operation',
+            tree: parent,
+            scope: this.currentScope,
+            operation: () => this.callEvaluatedBuiltInFunction(callable, args, evaluatedArgs, parent, requestedOutputCount),
+        };
+        return expressionValue(value, 'builtin result', 'Return value', (message) => this.throwEvalError(message));
+    }
+
+    private callEvaluatedBuiltInFunction(
+        callable: BuiltinCallable,
+        args: CallArgumentValue[],
+        evaluatedArgs: ExpressionBoundaryValue[],
+        parent: NodeInput,
+        requestedOutputCount: number,
+    ): ExpressionBoundaryValue {
+        const node = callable.node;
+        const alias = this.aliasNameFunction(node.id);
+        const operatorOverload = this.callCallableFunctionalOperatorOverload(node, args, parent, evaluatedArgs);
+        if (operatorOverload) return operatorOverload;
+        this.validateBuiltInInputArity(node, evaluatedArgs.length);
+        /* Push a frame before entering the built-in so errors can capture this call. */
+        this.pushCallStackFrame(new CallFrame(this.currentScope, callable, this.resolveCallSite(parent), node.id, evaluatedArgs.length, requestedOutputCount, args));
+        try {
+            const classMethodResult = this.callClassBuiltinMethod(node, evaluatedArgs, parent);
+            if (typeof classMethodResult !== 'undefined') {
+                return classMethodResult;
+            }
+            this.validateBuiltInInputParameters(node, evaluatedArgs);
+            const effectResult = this.hostEffectDispatch?.(node, evaluatedArgs, parent);
+            if (effectResult !== undefined) return effectResult;
+            if (node.mapper && evaluatedArgs.length !== 1) {
+                this.throwEvalError(`Invalid call to ${alias}.`);
+            }
+            if (alias === 'size' && evaluatedArgs.length === 1 && requestedOutputCount > 1) {
+                return this.sizeReturnList(evaluatedArgs[0]);
+            }
+            const result =
+                node.mapper && evaluatedArgs.length === 1 && MultiArray.isInstanceOf(evaluatedArgs[0]) ? MultiArray.rawMap(evaluatedArgs[0], node.func) : node.func(...evaluatedArgs);
+            return expressionValue(result, `${alias} result`, 'Return value', (message) => this.throwEvalError(message));
+        } finally {
+            /* Always restore the caller frame, even when the built-in throws. */
+            this.popCallStackFrame();
+        }
+    }
+
+    /** Shared anonymous-call binding, closure and raw expression return lifecycle. */
+    public *executeAnonymousFunction(
+        callable: LambdaCallable,
+        args: CallArgumentValue[],
+        parent: NodeInput,
+        requestedOutputCount: number,
+    ): Generator<FunctionExecutionRequest, ExpressionBoundaryValue, NodeInput> {
+        const lambda = callable.node;
+        const callerScope = this.currentScope;
+        const outputMask = this.requestedOutputMask(requestedOutputCount);
+        const params = lambda.parameter.map((param) => {
+            if (!AST.isNodeFunctionParameter(param)) this.throwEvalError('invalid anonymous function parameter.');
+            return param;
+        });
+        const { hasVarargin, fixedParamCount } = FunctionCall.lambdaInputLayout(params);
+        const callArgs: CallArgumentValue[] = [];
+        for (let index = 0; index < args.length; index++) {
+            const arg = args[index];
+            if (AST.isNodeBase(arg)) {
+                arg.parent = parent;
+                arg.index = index;
+            }
+            const value = yield { kind: 'argument', tree: arg, scope: callerScope, commaList: true };
+            callArgs.push(...this.expressionValues(this.expandCommaSeparatedList(value), 'arg'));
+        }
+        FunctionCall.validateLambdaInputArity(callArgs.length, hasVarargin, fixedParamCount, (message) => this.throwEvalError(message));
+        const lambdaScope = Scope.create((lambda.closure as Scope | undefined) ?? callerScope);
+        this.configureAnonymousFunctionWorkspace(lambda, lambdaScope);
+        FunctionCall.bindLambdaInputs(
+            params,
+            callArgs,
+            parent,
+            hasVarargin,
+            fixedParamCount,
+            (name, value) => lambdaScope.defineName(name, value),
+            (arg) => arg,
+            (message) => this.throwEvalError(message),
+        );
+        this.pushCallStackFrame(
+            new CallFrame(lambdaScope, callable, this.resolveCallSite(parent), FunctionHandle.toString(lambda), callArgs.length, requestedOutputCount, args, undefined, outputMask),
+        );
+        try {
+            if (!AST.isStrictNodeExpr(lambda.expression) && !AST.isNodeList(lambda.expression)) this.throwEvalError('invalid anonymous function expression.');
+            const result = yield { kind: 'expression', tree: lambda.expression, scope: lambdaScope, frame: this.currentFrame! };
+            return expressionValue(result, 'anonymous function result', 'Return value', (message) => this.throwEvalError(message));
+        } finally {
+            this.popCallStackFrame();
         }
     }
 
@@ -2475,11 +2604,16 @@ class Context {
      * Dispatch built-in operator functions reached without an index-expression
      * wrapper, such as `feval('plus', obj, obj)`.
      */
-    private callCallableFunctionalOperatorOverload(node: NodeBuiltInFunction, args: CallArgumentValue[], parent: NodeInput): StrictNodeExpr | undefined {
+    private callCallableFunctionalOperatorOverload(
+        node: NodeBuiltInFunction,
+        args: CallArgumentValue[],
+        parent: NodeInput,
+        evaluated?: ExpressionBoundaryValue[],
+    ): StrictNodeExpr | undefined {
         if ((AST.isNodeIdentifier(parent) && parent.id === 'builtin') || !Context.operatorFunctionNames.has(node.id)) {
             return undefined;
         }
-        return this.interpreter?.callFunctionalOperatorOverload(node, args, parent);
+        return this.interpreter?.callFunctionalOperatorOverload(node, args, parent, evaluated);
     }
 
     /**
@@ -2566,43 +2700,45 @@ class Context {
      * @param parent Index expression node carrying delimiter metadata.
      * @returns Indexed value or comma-separated return list.
      */
-    private applyNativeIndexing(expr: StrictNodeExpr, args: CallArgumentValue[], parent: NodeInput): StrictNodeExpr {
-        const evaluatedIndexArguments = (): ReturnType<typeof MultiArray.indexArguments> => {
-            const values = this.evaluateArgs(args, parent, 'all').map((value) => this.interpreter?.convertIndexArgument(value, parent) ?? value);
-            return MultiArray.indexArguments(values);
-        };
-        const runtimeExpr = this.runtimeExpressionValue(expr, 'indexed expression');
-        if (CharString.isInstanceOf(runtimeExpr)) {
-            if (parent.delim === '{}') {
-                this.throwEvalError('matrix cannot be indexed with {');
-            }
-            const array = MultiArray.characterVectorFromCharString(runtimeExpr);
-            const evaluatedArgs = evaluatedIndexArguments();
-            const result = MultiArray.getElements(array, parent.expr.id, [], evaluatedArgs);
-            result!.parent = parent;
-            return MultiArray.charStringFromCharacterVectorResult(result, runtimeExpr.quote);
-        }
-        if (parent.delim === '{}' && !(MultiArray.isInstanceOf(runtimeExpr) && runtimeExpr.isCell)) {
-            this.throwEvalError('matrix cannot be indexed with {');
-        }
-        const array = MultiArray.scalarOrCellToMultiArray(runtimeExpr);
-        const evaluatedArgs = evaluatedIndexArguments();
-        const result = MultiArray.getElements(array, parent.expr.id, [], evaluatedArgs);
+    private prepareNativeIndexReceiver(expr: StrictNodeExpr, parent: NodeInput): NativeIndexReceiver {
+        const receiver = this.runtimeExpressionValue(expr, 'indexed expression');
+        if (parent.delim === '{}' && !(MultiArray.isInstanceOf(receiver) && receiver.isCell)) this.throwEvalError('matrix cannot be indexed with {');
+        return CharString.isInstanceOf(receiver) ? { array: MultiArray.characterVectorFromCharString(receiver), text: receiver } : { array: MultiArray.scalarOrCellToMultiArray(receiver) };
+    }
+
+    private applyNativeIndexing(expr: StrictNodeExpr, args: CallArgumentValue[], parent: NodeInput, evaluated?: ExpressionBoundaryValue[], prepared?: NativeIndexReceiver): StrictNodeExpr {
+        const { array, text } = prepared ?? this.prepareNativeIndexReceiver(expr, parent);
+        const values = (evaluated ?? this.evaluateArgs(args, parent, 'all')).map((value) => this.interpreter?.convertIndexArgument(value, parent) ?? value);
+        const result = MultiArray.getElements(array, parent.expr.id, [], MultiArray.indexArguments(values));
         result!.parent = parent;
+        if (text) return MultiArray.charStringFromCharacterVectorResult(result, text.quote);
         if (array.isCell && parent.delim === '()') {
-            if (!MultiArray.isInstanceOf(result)) {
-                this.throwEvalError('internal error: cell parenthesis indexing did not produce a cell array.');
-            }
+            if (!MultiArray.isInstanceOf(result)) this.throwEvalError('internal error: cell parenthesis indexing did not produce a cell array.');
             result.isCell = true;
             return result;
         }
         if (array.isCell && parent.delim === '{}' && (this.requestedOutputCount > 1 || this.commaListExpansionEnabled)) {
             const values = MultiArray.linearize(result);
-            if (values.length > 1) {
-                return this.valueReturnList(this.returnExpressions(values, 'out'));
-            }
+            if (values.length > 1) return this.valueReturnList(this.returnExpressions(values, 'out'));
         }
         return this.returnExpression(MultiArray.MultiArrayToScalar(result), 'indexed output');
+    }
+
+    /** Native indexing retains its validated receiver, including the value used by end/colon. */
+    public *executeNativeIndexing(expr: StrictNodeExpr, args: CallArgumentValue[], parent: NodeIndexExpr): Generator<FunctionExecutionRequest, StrictNodeExpr, NodeInput> {
+        const prepared = this.prepareNativeIndexReceiver(expr, parent);
+        const retainedParent: NodeIndexExpr = { ...parent, exprEvaluated: expr };
+        const values: ExpressionBoundaryValue[] = [];
+        for (let index = 0; index < args.length; index++) {
+            const arg = args[index];
+            if (AST.isNodeBase(arg)) {
+                arg.parent = retainedParent;
+                arg.index = index;
+            }
+            const result = yield { kind: 'argument', tree: arg, scope: this.currentScope, commaList: true };
+            values.push(...this.expressionValues(this.expandCommaSeparatedList(result), 'index'));
+        }
+        return this.applyNativeIndexing(expr, args, parent, values, prepared);
     }
 
     /**

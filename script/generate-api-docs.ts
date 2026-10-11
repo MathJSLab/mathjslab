@@ -18,7 +18,8 @@ type PublicSource = {
 const rootDir = process.cwd();
 const sourceDir = path.join(rootDir, 'src');
 const outputFile = path.join(rootDir, 'doc', 'api-reference.md');
-const publicModules = ['lib-core.ts', 'lib.ts'];
+// Runtime contracts re-export the host-independent execution contracts.
+const publicModules = ['lib-core.ts', 'lib.ts', 'runtime-contracts.ts'];
 
 /**
  * Converts a source file path into a stable repository-relative path.

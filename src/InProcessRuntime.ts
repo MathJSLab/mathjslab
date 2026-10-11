@@ -1,9 +1,8 @@
 import { AST, type NodeInput } from './AST';
-import { CharString } from './CharString';
 import { Interpreter } from './Interpreter';
+import { ExecutionCancellation, type ExecutionMachineStep } from './ExecutionMachine';
 import { RuntimeValueCodec } from './RuntimeValueCodec';
 import { RuntimeEnvironment } from './RuntimeEnvironment';
-import { ExecutionMachine } from './ExecutionMachine';
 import type {
     ExecutionOptions,
     ExecutionResult,
@@ -114,6 +113,7 @@ class InProcessSession implements RuntimeSession {
             const deadline = options.timeoutMs === undefined ? undefined : started + options.timeoutMs;
             const extraOutputs: RuntimeOutput[] = [];
             const evaluated = await this.evaluateWithEffects(parsed, options, deadline, 0, extraOutputs);
+            if (controller.signal.aborted) return abortResult(timedOut, controller.signal.reason);
             const rendered = this.environment.run(() => {
                 return {
                     text: `${this.interpreter.Unparse(evaluated)}\n`,
@@ -147,6 +147,7 @@ class InProcessSession implements RuntimeSession {
                         : [],
             };
         } catch (error) {
+            if (error instanceof ExecutionCancellation) return abortResult(timedOut || (options.timeoutMs !== undefined && Date.now() - started >= options.timeoutMs), error.reason);
             if (controller.signal.aborted) return abortResult(timedOut, controller.signal.reason ?? error);
             return { status: 'error', outputs: [], diagnostics: [diagnostic(error)] };
         } finally {
@@ -158,56 +159,73 @@ class InProcessSession implements RuntimeSession {
 
     private async evaluateWithEffects(tree: NodeInput, options: ExecutionOptions, deadline: number | undefined, depth = 0, outputs: RuntimeOutput[] = []): Promise<NodeInput> {
         if (depth > 16) throw new Error('Runtime resource loading exceeded the maximum nesting depth (16).');
-        const statements = tree.type === 'LIST' ? tree.list : [tree];
-        let evaluated: NodeInput = AST.nodeVoid();
-        for (const statement of statements) {
-            if (options.signal?.aborted) throw options.signal.reason ?? new Error('Execution cancelled');
-            if (deadline !== undefined && Date.now() > deadline) throw new Error(`Execution exceeded ${options.timeoutMs} ms`);
-            const expression = statement.type === 'IDX' ? statement : statement.type === '=' && statement.right.type === 'IDX' ? statement.right : undefined;
-            const functionName = expression?.expr.type === 'IDENT' ? expression.expr.id.toLowerCase() : undefined;
-            const loadReference = functionName === 'load' && expression?.args.length === 1 && CharString.isInstanceOf(expression.args[0]) ? expression.args[0].str : undefined;
-            if (loadReference !== undefined && this.host) {
-                const machine = ExecutionMachine.effect({ type: 'read-text', reference: loadReference }, (result) => result);
-                const step = machine.runUntilYield();
-                if (step.state !== 'effect') throw new Error('Runtime effect machine did not yield.');
-                const hostResult = await this.host.request(step.effect, {
-                    sessionId: this.options.id ?? 'in-process',
-                    ...(options.signal ? { signal: options.signal } : {}),
-                    ...(deadline !== undefined ? { deadline } : {}),
-                });
-                if (options.signal?.aborted) throw options.signal.reason ?? new Error('Execution cancelled');
-                const resumed = step.resume(hostResult);
-                if (resumed.state !== 'completed') throw new Error(resumed.state === 'error' ? resumed.diagnostics[0]?.message : 'Runtime effect did not complete.');
-                const result = resumed.value;
-                if (typeof result.value !== 'string') throw new Error(`Host returned a non-text value for ${loadReference}.`);
-                const loaded = this.environment.run(() => this.interpreter.Parse(result.value as string));
-                await this.evaluateWithEffects(loaded, options, deadline, depth + 1, outputs);
-                outputs.push({ type: 'text', text: `Loaded script from ${loadReference}` });
-                evaluated = AST.nodeVoid();
+        let cancelling = false;
+        const cancel = (continuation: { cancel(reason?: unknown): ExecutionMachineStep<NodeInput> }): ExecutionMachineStep<NodeInput> => {
+            cancelling = true;
+            return continuation.cancel(options.signal?.reason);
+        };
+        const machine = this.environment.run(() =>
+            this.interpreter.CreateExecutionMachine(
+                tree,
+                (operation) => {
+                    if (!cancelling && (options.signal?.aborted || (deadline !== undefined && Date.now() > deadline))) {
+                        cancelling = true;
+                        throw new ExecutionCancellation(options.signal?.reason ?? new Error(`Execution exceeded ${options.timeoutMs} ms`));
+                    }
+                    const result = this.interpreter.withPlotOutput(
+                        (request) => outputs.push({ type: 'visualization', renderer: 'plotly', request }),
+                        () => (this.evaluateHook ? this.evaluateHook(this.interpreter, operation) : { value: operation() }),
+                    );
+                    if (result.outputs) outputs.push(...result.outputs);
+                    return result.value;
+                },
+                false,
+            ),
+        );
+        let step = this.environment.run(() => machine.runUntilYield());
+        while (step.state === 'effect' || step.state === 'progress') {
+            if (step.state === 'progress') {
+                const checkpoint = step;
+                await new Promise<void>((resolve) => setTimeout(resolve, 0));
+                step = this.environment.run(() => (options.signal?.aborted ? cancel(checkpoint) : checkpoint.continue()));
                 continue;
             }
-            if (functionName === 'pause' && expression?.args.length === 1 && this.host) {
-                const milliseconds = Number(this.environment.run(() => this.interpreter.Unparse(this.interpreter.Evaluator(expression.args[0])))) * 1000;
-                if (!Number.isFinite(milliseconds) || milliseconds < 0) throw new Error('pause duration must be a finite nonnegative scalar.');
-                const machine = ExecutionMachine.effect({ type: 'delay', milliseconds }, () => undefined);
-                const step = machine.runUntilYield();
-                if (step.state !== 'effect') throw new Error('Runtime delay machine did not yield.');
-                const hostResult = await this.host.request(step.effect, {
-                    sessionId: this.options.id ?? 'in-process',
-                    ...(options.signal ? { signal: options.signal } : {}),
-                    ...(deadline !== undefined ? { deadline } : {}),
+            const suspended = step;
+            try {
+                if (!this.host) throw Object.assign(new Error('Host effect requires an asynchronous host adapter.'), { code: 'MATHJSLAB_EFFECT_REQUIRES_ASYNC' });
+                const signal = options.signal;
+                const result = await new Promise<import('./runtime-contracts').HostEffectResult>((resolve, reject) => {
+                    const abort = (): void => reject(signal?.reason ?? new Error('Execution cancelled'));
+                    if (signal?.aborted) {
+                        abort();
+                        return;
+                    }
+                    signal?.addEventListener('abort', abort, { once: true });
+                    this.host!.request(suspended.effect, {
+                        sessionId: this.options.id ?? 'in-process',
+                        ...(signal ? { signal } : {}),
+                        ...(deadline !== undefined ? { deadline } : {}),
+                    })
+                        .then(resolve, reject)
+                        .finally(() => signal?.removeEventListener('abort', abort));
                 });
-                if (options.signal?.aborted) throw options.signal.reason ?? new Error('Execution cancelled');
-                step.resume(hostResult);
-                continue;
+                if (signal?.aborted) throw signal.reason;
+                if (suspended.effect.type === 'read-text') {
+                    if (typeof result.value !== 'string') throw new Error(`Host returned a non-text value for ${suspended.effect.reference}.`);
+                    const loaded = this.environment.run(() => this.interpreter.Parse(result.value as string));
+                    await this.evaluateWithEffects(loaded, options, deadline, depth + 1, outputs);
+                    outputs.push({ type: 'text', text: `Loaded script from ${suspended.effect.reference}` });
+                }
+                step = this.environment.run(() => suspended.resume(result));
+            } catch (error) {
+                step = this.environment.run(() => (options.signal?.aborted ? cancel(suspended) : suspended.fail(error)));
             }
-            const result = this.environment.run(() =>
-                this.evaluateHook ? this.evaluateHook(this.interpreter, () => this.interpreter.Evaluator(statement)) : { value: this.interpreter.Evaluator(statement) },
-            );
-            evaluated = result.value;
-            if (result.outputs) outputs.push(...result.outputs);
         }
-        return evaluated;
+        if (step.state === 'completed') return step.value;
+        if (step.state === 'error') throw step.diagnostics[0]?.cause ?? new Error(step.diagnostics[0]?.message);
+        if (step.state === 'control') throw new Error(`${step.transfer.kind} escaped its valid execution context.`);
+        if (step.state === 'cancelled') throw new ExecutionCancellation(step.reason);
+        throw new Error('Unsupported execution state.');
     }
 
     public async interrupt(reason: unknown = 'Execution interrupted'): Promise<void> {

@@ -3,6 +3,47 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 2.8.0
+
+- Register native, session-owned `plot`, `plot3`, `surf`, `plot2d` and
+  `histogram` functions. Emit serializable visualization requests without DOM
+  or Plotly dependencies; hosts own rendering and resource cleanup. Scoped
+  output capture restores the previous sink after nested operations and errors.
+- Fix histogram AST construction when the optional domain is omitted.
+- Share synchronous and resumable execution machinery for external instruction
+  sequences, conditionals, loops, try/catch, unwind cleanup and sequential
+  SPMD, with cooperative checkpoints and bounded cancellation unwind.
+- Dispatch `pause` and `load` through ordinary name resolution and single-use
+  host-effect continuations. Retain user-function call frames, argument
+  expansion, positional/name-value defaults and anonymous function expressions
+  across supported waits without replaying completed inputs or effects.
+- Resume binary, unary and range expressions, predicates, switch tests and loop
+  headers. Preserve requested output counts, ignored-output masks, closure
+  scopes and cleanup through supported multi-output assignments.
+- Retain native index reads, direct indexed writes, compound assignments,
+  dotted/chained assignment preparation and dynamic field names. Preserve
+  receiver evaluation, end/colon semantics, comma-list expansion and mutation
+  order across waits; skip pending writes on failure or cancellation.
+- Resume matrix/cell literal elements through shared construction requests,
+  preserving completed values, concatenation order and dynamic execution
+  carriers without changing array storage or numerical backends.
+- Retain receivers returned by normally dispatched calls across native
+  indexing, structure access and returned handles. Preserve existing
+  synchronous class dispatch and output metadata.
+- Share the public core across runtime ESM distributions, preserving
+  interpreter and numeric identity for external callbacks, platform imports and
+  the public browser Worker URL. Strip realm-owned AbortSignal objects at
+  Worker effect boundaries and release pending requests when message posting
+  fails.
+- Normalize generated relative declaration imports for NodeNext consumers and
+  expose runtime, execution and plot contracts through the public API.
+- Expand source and distribution regressions for resumable execution, plotting,
+  Worker effects, shared core identity and package declarations. Document the
+  supported subset and remaining synchronous class/script, validation,
+  indirect-forwarding, indexed multiple-output and script-loading boundaries.
+- Declare public npm publication settings and conservative sideEffects metadata
+  to preserve module initialization.
+
 ## 2.7.0
 
 - Tightened AST expression, assignment-target, control-flow, call/index, and

@@ -516,6 +516,13 @@ implementation stay synchronized.
 
 No JSDoc documentation is available yet.
 
+## createPlotFunctionTable
+
+- Kind: `constant`
+- Source: `src/PlotFunctions.ts`
+
+Create native plotting functions bound to one interpreter workspace.
+
 ## doubleQuoteCharacter
 
 - Kind: `constant`
@@ -548,6 +555,34 @@ omitted values.
 
 No JSDoc documentation is available yet.
 
+## ExecutionCancellation
+
+- Kind: `class`
+- Source: `src/ExecutionMachine.ts`
+
+Cancellation is a driver transfer, not a catchable language exception.
+
+## ExecutionControlTransfer
+
+- Kind: `interface`
+- Source: `src/ExecutionMachine.ts`
+
+No JSDoc documentation is available yet.
+
+## ExecutionEffectRequest
+
+- Kind: `interface`
+- Source: `src/ExecutionMachine.ts`
+
+No JSDoc documentation is available yet.
+
+## ExecutionFrame
+
+- Kind: `interface`
+- Source: `src/ExecutionMachine.ts`
+
+The machine keeps scope and values opaque; evaluator-owned frames expose progress.
+
 ## ExecutionMachine
 
 - Kind: `class`
@@ -575,6 +610,20 @@ No JSDoc documentation is available yet.
 
 - Kind: `type`
 - Source: `src/runtime-contracts.ts`
+
+No JSDoc documentation is available yet.
+
+## ExecutionSequenceFrame
+
+- Kind: `interface`
+- Source: `src/ExecutionMachine.ts`
+
+Values are opaque to the driver. The cursor points at the next instruction.
+
+## ExecutionYieldRequest
+
+- Kind: `type`
+- Source: `src/ExecutionMachine.ts`
 
 No JSDoc documentation is available yet.
 
@@ -751,21 +800,21 @@ User-defined function table keyed by function name.
 ## HostEffect
 
 - Kind: `type`
-- Source: `src/runtime-contracts.ts`
+- Source: `src/execution-contracts.ts`
 
 No JSDoc documentation is available yet.
 
 ## HostEffectContext
 
 - Kind: `type`
-- Source: `src/runtime-contracts.ts`
+- Source: `src/execution-contracts.ts`
 
 No JSDoc documentation is available yet.
 
 ## HostEffectResult
 
 - Kind: `type`
-- Source: `src/runtime-contracts.ts`
+- Source: `src/execution-contracts.ts`
 
 No JSDoc documentation is available yet.
 
@@ -1481,6 +1530,27 @@ No JSDoc documentation is available yet.
 
 No JSDoc documentation is available yet.
 
+## PlotInterpreter
+
+- Kind: `type`
+- Source: `src/PlotFunctions.ts`
+
+No JSDoc documentation is available yet.
+
+## PlotOutputRequest
+
+- Kind: `type`
+- Source: `src/PlotFunctions.ts`
+
+Serializable visualization payload; hosts interpret trace, layout and config records.
+
+## PlotTrace
+
+- Kind: `type`
+- Source: `src/PlotFunctions.ts`
+
+Serializable host-neutral plot preparation. Renderer adapters own materialization.
+
 ## PostfixOperatorType
 
 - Kind: `type`
@@ -1549,7 +1619,7 @@ Select a single output from a realized return handler result.
 ## RuntimeDiagnostic
 
 - Kind: `type`
-- Source: `src/runtime-contracts.ts`
+- Source: `src/execution-contracts.ts`
 
 No JSDoc documentation is available yet.
 
@@ -1610,7 +1680,7 @@ into parser-created AST containers.
 ## RuntimeHost
 
 - Kind: `interface`
-- Source: `src/runtime-contracts.ts`
+- Source: `src/execution-contracts.ts`
 
 No JSDoc documentation is available yet.
 
@@ -1624,7 +1694,7 @@ No JSDoc documentation is available yet.
 ## RuntimeOutput
 
 - Kind: `type`
-- Source: `src/runtime-contracts.ts`
+- Source: `src/execution-contracts.ts`
 
 No JSDoc documentation is available yet.
 

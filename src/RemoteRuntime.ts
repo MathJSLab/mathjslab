@@ -1,5 +1,5 @@
 import { runtimeProtocolVersion, serializeRuntimeError, type RuntimeCommand, type RuntimeInboundMessage, type RuntimeOutboundMessage, type RuntimeResponseValue } from './runtime-protocol';
-import { ParforAnalyzer } from './ParforAnalyzer';
+import { ParforAnalyzer } from './lib-core';
 import type {
     ExecutionOptions,
     ExecutionResult,
