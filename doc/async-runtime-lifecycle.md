@@ -17,6 +17,17 @@ adapters.
 - A remote session owns its Worker. Disposal terminates that Worker immediately
   so an executing or unresponsive Worker cannot make disposal hang.
 
+A session permits one active execution. Concurrent execute returns an error
+result with MATHJSLAB_SESSION_BUSY; concurrent parse rejects with that code.
+Reset cancels execution and awaits cleanup before replacing the workspace.
+Local disposal also awaits cleanup. Operations during reset reject as busy;
+operations after disposal reject as disposed. Await reset before new work.
+Separate sessions remain independent.
+
+Local and remote clients share the abortable host-wait helper. Reset releases
+Worker effect records and aborts outstanding remote host contexts. Late effect
+replies cannot resume the cancelled continuation.
+
 ## Cancellation and recovery
 
 | Event                           | Result of active execution                                                               | Following operation                                                   |
@@ -37,9 +48,11 @@ by terminating the dedicated Worker.
 
 The external-sequence migration and its typed execution boundaries are recorded
 in [Resumable execution](resumable-execution.md). Control-flow blocks, ordinary
-and anonymous calls in the documented subset now suspend; class/script frames
-and remaining receiver/output patterns still require migration. Cancellation of
-a host wait does not depend on the host honoring its signal.
+anonymous/indirect calls, run/source scripts and scalar methods/constructor
+bodies, including explicit scalar superclass calls, now suspend. Class
+callbacks, arrays and remaining receiver/output patterns still require
+migration. Cancellation of a host wait does not depend on the host honoring its
+signal.
 
 Every in-process host effect receives the execution signal and optional
 deadline. An active `interrupt`, timeout, external abort, or disposal aborts
@@ -85,15 +98,16 @@ Anonymous function arguments and expression bodies now share the call request
 driver with ordinary functions. Unary/range operands, conditional predicates,
 switch selectors/case tests and loop headers retain their evaluated state
 across waits. Existing closure, output-mask, numerical dispatch and condition
-short-circuit rules are preserved. Class calls and dynamic script frames remain
-outside this subset; see [resumable execution](resumable-execution.md).
+short-circuit rules are preserved. Scalar class calls and run/source script
+frames have since been migrated; see
+[resumable execution](resumable-execution.md).
 
 Builtin inputs now use shared selective argument requests, followed by an
 indivisible `operation` request for existing dispatch and validation. Native
 index reads from simple named receivers retain their receiver and evaluated
-indices, including the receiver used by `end`/colon. Classes and raw indirect
-forwarding remain separate boundaries. No matrix storage or numerical/backend
-implementation changes are included. See
+indices, including the receiver used by `end`/colon. Scalar class calls and
+supported feval/builtin forwarding have since been migrated. No matrix storage
+or numerical/backend implementation changes are included. See
 [resumable execution](resumable-execution.md) for the integrated subset.
 
 Assignment normalization and the original writer now serve both drivers through
@@ -104,11 +118,11 @@ string, cell and structure read chains retain intermediate receivers and expand
 comma-separated lists once, applying each subsequent index once per item.
 Metadata and call scopes are restored before waits and exceptional exits.
 Pending writes are skipped on failure/cancellation; completed workspace effects
-persist. Classes, scripts and indexed multi-target output destinations remain
-migration boundaries. See [resumable execution](resumable-execution.md) for
-evaluation order and limits. Local application and browser Worker integration
-use the public runtime and core contracts; no publication is needed for
-sibling-checkout validation.
+persist. Property/event callbacks, object arrays, overloaded indexing and
+indexed multi-target output destinations remain migration boundaries. See
+[resumable execution](resumable-execution.md) for evaluation order and limits.
+Local application and browser Worker integration use the public runtime and
+core contracts; no publication is needed for sibling-checkout validation.
 
 ## Public ESM and native browser distribution
 
@@ -173,3 +187,16 @@ and uses the owning session workspace; no resumable boundary is broadened.
 
 An omitted histogram domain is not added to the AST argument list; only
 supplied arguments are retained.
+
+Remote runtimes apply sessionDefaults.parfor with per-session overrides.
+Interpreter configuration and evaluate hooks must be installed inside a custom
+Worker server; passing local callbacks or default interpreter configuration to
+the remote factory is rejected explicitly instead of silently ignored.
+
+Remote ownership covers the complete parfor coordinator operation, not just
+individual Worker commands. Reset/interrupt/disposal propagate cancellation to
+child sessions. Remote reset waits for operation/child shutdown and recreates
+the Worker; it uses hard preemption and does not execute language cleanup in
+the terminated Worker. Local reset performs the retained-machine unwind before
+replacing the interpreter. Neither cancellation mode rolls back completed host
+effects.

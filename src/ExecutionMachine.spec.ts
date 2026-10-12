@@ -1,7 +1,136 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Interpreter } from './Interpreter';
 import { ExecutionMachine } from './ExecutionMachine';
 
 describe('ExecutionMachine', () => {
+    test('synchronous superclass calls reject waits and restore caller metadata', () => {
+        const interpreter = Interpreter.Create();
+        interpreter.Execute(
+            readFileSync(join(process.cwd(), 'test/node/fixtures/resumable-superclass.m'), 'utf8') + '\nglobal trace receivers; trace=0; receivers=0; obj=ResumeLeaf(); destination=99;',
+        );
+        const scope = interpreter.context.currentScope;
+        expect(() => interpreter.Execute('destination=obj.collect(1);')).toThrow('requires an asynchronous driver');
+        expect(interpreter.context.currentScope).toBe(scope);
+        expect(interpreter.context.isInsideUserFunction()).toBe(false);
+        expect(interpreter.context.requestedOutputCount).toBe(1);
+        expect(interpreter.Unparse(interpreter.Execute('destination'))).toBe('99\n');
+    });
+
+    test.each([
+        ['constructor', 'destination=ResumeLeaf(3)', 1],
+        ['method', 'destination=obj.collect(3)', 4],
+    ] as const)('unwinds explicit superclass %s on host failure and cancellation', (_kind, source, trace) => {
+        for (const action of ['fail', 'cancel'] as const) {
+            const interpreter = Interpreter.Create();
+            interpreter.Execute(
+                readFileSync(join(process.cwd(), 'test/node/fixtures/resumable-superclass.m'), 'utf8') +
+                    '\nglobal trace receivers; trace=0; receivers=0; obj=ResumeLeaf(); trace=0; destination=99;',
+            );
+            const scope = interpreter.context.currentScope;
+            let step = interpreter.CreateExecutionMachine(interpreter.Parse(`${source}; trace=999;`)).runUntilYield();
+            while (step.state === 'progress') step = step.continue();
+            if (_kind === 'method' && step.state === 'effect') {
+                step = step.resume({});
+                while (step.state === 'progress') step = step.continue();
+            }
+            if (step.state !== 'effect') throw new Error('Expected superclass suspension');
+            expect(step.effect).toMatchObject({ type: 'delay', milliseconds: _kind === 'method' ? 2 : 1 });
+            expect((step.frames ?? []).filter((frame) => frame.kind === 'call').length).toBeGreaterThanOrEqual(3);
+            expect(interpreter.context.isInsideUserFunction()).toBe(false);
+            for (const name of ['ResumeRoot', 'ResumeMiddle', 'ResumeLeaf']) {
+                const definition = interpreter.context.resolveClassDefinition(name)!;
+                expect(interpreter.context.canAccessClassMember(definition, 'private')).toBe(false);
+                expect(interpreter.context.canAccessClassMember(definition, 'protected')).toBe(false);
+            }
+            step = action === 'fail' ? step.fail(new Error('host stopped')) : step.cancel('stop');
+            expect(step.state).toBe(action === 'fail' ? 'error' : 'cancelled');
+            expect(interpreter.context.currentScope).toBe(scope);
+            expect(interpreter.context.isInsideUserFunction()).toBe(false);
+            expect(interpreter.context.requestedOutputCount).toBe(1);
+            expect(interpreter.context.requestedOutputMask()).toEqual([true]);
+            expect(interpreter.Unparse(interpreter.Execute('[destination,trace]'))).toBe(`[99,${trace}]\n`);
+        }
+    });
+
+    test.each([
+        ['constructor', 'destination=RetainedClass(3)', 'fail'],
+        ['constructor', 'destination=RetainedClass(3)', 'cancel'],
+        ['method', 'obj=RetainedClass(); destination=obj.read(3)', 'fail'],
+        ['method', 'obj=RetainedClass(); destination=read(obj,3)', 'cancel'],
+        ['overload', 'obj=RetainedClass(); destination=feval("plus",obj,3)', 'fail'],
+        ['static', 'destination=feval("RetainedClass.twice",3)', 'cancel'],
+    ] as const)('unwinds retained %s on %s', (_kind, source, action) => {
+        const interpreter = Interpreter.Create();
+        const definition =
+            'classdef RetainedClass < handle; properties (Access=private); secret=7; end; methods; function obj=RetainedClass(v=0), if nargin>0, global trace; trace+=1; pause(0.001); obj.secret=v; end; end; function y=read(obj,v), global trace; trace+=1; pause(0.001); y=obj.secret+v; end; function y=plus(obj,v), global trace; trace+=1; pause(0.001); y=obj.secret+v; end; end; methods (Static); function y=twice(v), global trace; trace+=1; pause(0.001); y=2*v; end; end; end;';
+        let step = interpreter.CreateExecutionMachine(interpreter.Parse(`${definition} global trace; trace=0; destination=99; ${source}; trace+=100`)).runUntilYield();
+        while (step.state === 'progress') step = step.continue();
+        expect(step.state).toBe('effect');
+        expect(interpreter.context.isInsideUserFunction()).toBe(false);
+        const definitionValue = interpreter.context.resolveSymbol('RetainedClass')?.classDefinition;
+        if (!definitionValue) throw new Error('Missing class');
+        expect(interpreter.context.canAccessClassMember(definitionValue, 'private')).toBe(false);
+        if (step.state !== 'effect') throw new Error('Expected method suspension');
+        step = action === 'fail' ? step.fail(new Error('host stopped')) : step.cancel('stop');
+        expect(step.state).toBe(action === 'fail' ? 'error' : 'cancelled');
+        expect(interpreter.Unparse(interpreter.Execute('destination'))).toBe('99\n');
+        expect(interpreter.Unparse(interpreter.Execute('global trace; trace'))).toBe('1\n');
+        expect(interpreter.context.isInsideUserFunction()).toBe(false);
+        expect(interpreter.context.canAccessClassMember(definitionValue, 'private')).toBe(false);
+        expect(interpreter.context.requestedOutputCount).toBe(1);
+        expect(interpreter.context.requestedOutputMask()).toEqual([true]);
+    });
+
+    test.each(['fail', 'cancel'] as const)('restores shadowed script functions and imports on %s', (action) => {
+        const interpreter = Interpreter.Create({
+            scriptSourceTable: {
+                outer: 'import pkg.*; run("inner"); late=1; function y=helper(), y=42; end',
+                inner: 'pause(1); late=2; function y=helper(), y=99; end',
+            },
+        });
+        interpreter.Execute('function y=helper(), y=7; end');
+        const scope = interpreter.context.currentScope;
+        const previous = scope.functionTable.helper;
+        const imports = scope.importSnapshot();
+        let step = interpreter.CreateExecutionMachine(interpreter.Parse('run("outer")')).runUntilYield();
+        while (step.state === 'progress') step = step.continue();
+        if (step.state !== 'effect') throw new Error('Expected nested script wait');
+        expect(scope.functionTable.helper).not.toBe(previous);
+        step = action === 'fail' ? step.fail(new Error('host failed')) : step.cancel('stop');
+        expect(step.state).toBe(action === 'fail' ? 'error' : 'cancelled');
+        expect(scope.functionTable.helper).toBe(previous);
+        expect(scope.importSnapshot()).toEqual(imports);
+        expect(scope.resolveName('late')).toBeUndefined();
+        expect(interpreter.Unparse(interpreter.Execute('helper()'))).toBe('7\n');
+        expect(interpreter.context.isInsideUserFunction()).toBe(false);
+    });
+
+    test('retains script-local bindings, source identity and imports until completion', () => {
+        const interpreter = Interpreter.Create({
+            scriptSourceTable: {
+                outer: 'import pkg.*; before=mfilename(); run("inner"); after=mfilename(); value=helper(); function y=helper(), y=42; end',
+                inner: 'inside=mfilename(); pause(1);',
+            },
+        });
+        const scope = interpreter.context.currentScope;
+        const imports = scope.importSnapshot();
+        let step = interpreter.CreateExecutionMachine(interpreter.Parse('run("outer")')).runUntilYield();
+        while (step.state === 'progress') step = step.continue();
+        expect(step.state).toBe('effect');
+        expect(scope.functionTable.helper).toBeDefined();
+        if (step.state !== 'effect') throw new Error('Expected script suspension');
+        step = step.resume({});
+        while (step.state === 'progress') step = step.continue();
+        expect(step.state).toBe('completed');
+        expect(scope.functionTable.helper).toBeUndefined();
+        expect(scope.importSnapshot()).toEqual(imports);
+        expect(interpreter.Unparse(interpreter.Execute('before'))).toBe('outer\n');
+        expect(interpreter.Unparse(interpreter.Execute('after'))).toBe('outer\n');
+        expect(interpreter.Unparse(interpreter.Execute('inside'))).toBe('inner\n');
+        expect(interpreter.Unparse(interpreter.Execute('value'))).toBe('42\n');
+    });
+
     test.each(['fail', 'cancel'] as const)('retains a returned receiver and unwinds a waiting index on %s', (action) => {
         const interpreter = Interpreter.Create();
         const source =

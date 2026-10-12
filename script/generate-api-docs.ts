@@ -38,16 +38,17 @@ function resolveExportModule(moduleSpecifier: string): string | undefined {
 }
 
 /**
- * Reads the first JSDoc block attached to a declaration.
+ * Reads the last JSDoc block attached to a declaration.
  */
 function getDocumentation(node: ts.Node, sourceFile: ts.SourceFile): string {
     const jsDocs = (node as ts.Node & { jsDoc?: ts.JSDoc[] }).jsDoc;
-    const comment = jsDocs?.at(-1)?.comment;
+    const comment = jsDocs?.[jsDocs.length - 1]?.comment;
     if (typeof comment === 'string' && comment.trim().length > 0) return comment.trim();
 
     const ranges = ts.getLeadingCommentRanges(sourceFile.getFullText(), node.getFullStart())?.filter((range) => sourceFile.getFullText().slice(range.pos, range.pos + 3) === '/**');
     if (!ranges || ranges.length === 0) return 'No JSDoc documentation is available yet.';
-    const block = sourceFile.getFullText().slice(ranges.at(-1)!.pos, ranges.at(-1)!.end);
+    const lastRange = ranges[ranges.length - 1];
+    const block = sourceFile.getFullText().slice(lastRange.pos, lastRange.end);
     const documentation = block
         .replace(/^\/\*\*|\*\/$/g, '')
         .split(/\r?\n/)
@@ -150,7 +151,7 @@ function collectPublicSourceFiles(): PublicSource[] {
         const existing = files.get(fileName);
         if (!existing) return;
         if (!names) {
-            files.set(fileName);
+            files.set(fileName, undefined);
             return;
         }
         for (const name of names) existing.add(name);

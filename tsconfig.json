@@ -100,5 +100,5 @@
         // "skipLibCheck": true                              /* Skip type checking all .d.ts files. */
         // "ignoreDeprecations": "6.0"
     },
-    "exclude": ["**/*.spec.ts", "test", "lib", "report", "res", "node_modules"]
+    "exclude": ["test-results", "**/*.spec.ts", "test", "lib", "report", "res", "node_modules"]
 }

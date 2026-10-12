@@ -33,7 +33,8 @@ export class RuntimeValueCodecError extends TypeError {
 }
 
 const numericPart = (value: unknown): string => {
-    if (value && typeof value === 'object' && typeof Reflect.get(value, 'toString') === 'function') return String(Reflect.apply(Reflect.get(value, 'toString'), value, []));
+    if (typeof value === 'number' && Object.is(value, -0)) return '-0';
+    if (value && typeof value === 'object' && typeof Reflect.get(value, 'valueOf') === 'function') return String(Reflect.apply(Reflect.get(value, 'valueOf'), value, []));
     return String(value);
 };
 
@@ -55,7 +56,14 @@ const encodeValue = (value: ElementType, active: Set<object>): EncodedRuntimeVal
         if (active.has(value)) throw new RuntimeValueCodecError('Cyclic arrays cannot cross a runtime boundary.');
         active.add(value);
         const flat = value.array.flat();
-        const numeric = !value.isCell && flat.every(Complex.isInstanceOf);
+        // Pack only values whose textual numeric identity survives the Float64
+        // round trip. Decimal arrays otherwise use the existing lossless variant.
+        const numeric =
+            !value.isCell &&
+            flat.every((item) => {
+                if (!Complex.isInstanceOf(item)) return false;
+                return numericPart(item.re) === numericPart(Complex.realToNumber(item)) && numericPart(item.im) === numericPart(Complex.imagToNumber(item));
+            });
         const packed = numeric
             ? {
                   real: Float64Array.from(flat as ComplexType[], (item) => Complex.realToNumber(item)),
@@ -106,6 +114,12 @@ const decodeValue = (value: EncodedRuntimeValue): ElementType => {
     }
 };
 
+/**
+ * Encode supported values without changing source storage. Numeric arrays use
+ * transferable Float64 buffers only when textual numeric identity survives the
+ * conversion; other decimal arrays retain string components. Decode uses the
+ * receiving realm's configured numeric backend, not backend negotiation.
+ */
 export const RuntimeValueCodec = {
     encode: (value: ElementType): EncodedRuntimeValue => encodeValue(value, new Set()),
     decode: (value: EncodedRuntimeValue): ElementType => decodeValue(value),

@@ -47,6 +47,78 @@ class LoopbackWorker implements RuntimeWorkerEndpoint {
 }
 
 describe('RemoteMathJSLabRuntime', () => {
+    test('owns the complete parallel operation and resets only after child cancellation', async () => {
+        const workers: LoopbackWorker[] = [];
+        const runtime = new RemoteMathJSLabRuntime(
+            () => {
+                const worker = new LoopbackWorker(40);
+                workers.push(worker);
+                return worker;
+            },
+            { maxWorkers: 2 },
+        );
+        const session = await runtime.createSession();
+        try {
+            const active = session.execute('parfor i=1:4; A(i)=i*2; end; A');
+            for (let attempt = 0; attempt < 100 && workers.length < 3; attempt++) await new Promise((resolve) => setTimeout(resolve, 1));
+            expect(workers).toHaveLength(3);
+            expect((await session.execute('A=99')).diagnostics[0].code).toBe('MATHJSLAB_SESSION_BUSY');
+            await session.reset();
+            expect((await active).status).toBe('cancelled');
+            expect(workers.slice(1, 3).every((worker) => worker.terminated)).toBe(true);
+            expect((await session.execute('exist("A","var")')).outputs[0]).toMatchObject({ text: '0\n' });
+        } finally {
+            await runtime.dispose();
+        }
+    });
+
+    test('applies the default parfor policy and permits per-session override', async () => {
+        const runtime = new RemoteMathJSLabRuntime(() => new LoopbackWorker(), { maxWorkers: 1, sessionDefaults: { parfor: 'strict' } });
+        try {
+            const strict = await runtime.createSession();
+            const fallback = await runtime.createSession({ parfor: 'off' });
+            expect((await strict.execute('parfor i=1:2, x=i; end')).diagnostics[0].code).toBe('MATHJSLAB_PARFOR_NOT_ELIGIBLE');
+            expect((await fallback.execute('parfor i=1:2, x=i; end; x')).status).toBe('success');
+        } finally {
+            await runtime.dispose();
+        }
+    });
+
+    test('rejects local-only configuration instead of silently ignoring it', () => {
+        const factory = jest.fn(() => new LoopbackWorker());
+        expect(() => new RemoteMathJSLabRuntime(factory, { evaluate: (_interpreter, operation) => ({ value: operation() }) })).toThrow('serializable');
+        expect(() => new RemoteMathJSLabRuntime(factory, { sessionDefaults: { interpreter: {} } })).toThrow('serializable');
+        expect(factory).not.toHaveBeenCalled();
+    });
+
+    test('reset unwinds an active wait and aborts a host that never settles', async () => {
+        let entered!: () => void;
+        const waiting = new Promise<void>((resolve) => (entered = resolve));
+        let signal: AbortSignal | undefined;
+        const runtime = new RemoteMathJSLabRuntime(() => new LoopbackWorker(), {
+            host: {
+                request: (_effect, context) => {
+                    signal = context.signal;
+                    entered();
+                    return new Promise(() => {});
+                },
+            },
+        });
+        const session = await runtime.createSession();
+        try {
+            const active = session.execute('x=1; pause(1); x=99;');
+            await waiting;
+            expect((await session.execute('x=42')).diagnostics[0].code).toBe('MATHJSLAB_SESSION_BUSY');
+            await expect(session.parse('x')).rejects.toMatchObject({ code: 'MATHJSLAB_SESSION_BUSY' });
+            await session.reset();
+            expect((await active).status).toBe('cancelled');
+            expect(signal?.aborted).toBe(true);
+            expect((await session.execute('exist("x","var")')).outputs[0]).toMatchObject({ text: '0\n' });
+        } finally {
+            await runtime.dispose();
+        }
+    });
+
     test('keeps a session workspace in its worker', async () => {
         const workers: LoopbackWorker[] = [];
         const runtime = new RemoteMathJSLabRuntime(() => {

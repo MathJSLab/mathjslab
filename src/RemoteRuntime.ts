@@ -1,3 +1,4 @@
+import { requestHostEffect } from './RuntimeHostEffect';
 import { runtimeProtocolVersion, serializeRuntimeError, type RuntimeCommand, type RuntimeInboundMessage, type RuntimeOutboundMessage, type RuntimeResponseValue } from './runtime-protocol';
 import { ParforAnalyzer } from './lib-core';
 import type {
@@ -34,6 +35,8 @@ class RemoteRuntimeSession implements RuntimeSession {
     private creating: Promise<void> | undefined;
     private disposing: Promise<void> | undefined;
     private disposed = false;
+    private resetting = false;
+    private activeExecution: { controller: AbortController; completed: Promise<void> } | undefined;
 
     public constructor(
         private readonly factory: RuntimeWorkerFactory,
@@ -49,12 +52,36 @@ class RemoteRuntimeSession implements RuntimeSession {
     }
 
     public async parse(source: string): Promise<ParseResult> {
+        if (this.disposed) throw new Error('MathJSLab runtime session is disposed.');
+        if (this.activeExecution || this.resetting) throw this.busyError();
         const result = await this.request({ type: 'parse', sessionId: this.sessionId, source });
         if (result.type !== 'parsed') throw new Error(`Unexpected runtime response: ${result.type}`);
         return result.result;
     }
 
+    private busyError(): Error {
+        return Object.assign(new Error('MathJSLab runtime session is busy.'), { code: 'MATHJSLAB_SESSION_BUSY' });
+    }
+
     public async execute(source: string, options: ExecutionOptions = {}): Promise<ExecutionResult> {
+        if (this.disposed) throw new Error('MathJSLab runtime session is disposed.');
+        if (this.activeExecution || this.resetting) return { status: 'error', outputs: [], diagnostics: [errorDiagnostic('MATHJSLAB_SESSION_BUSY', this.busyError().message)] };
+        const controller = new AbortController();
+        const abort = (): void => controller.abort(options.signal?.reason);
+        if (options.signal?.aborted) abort();
+        else options.signal?.addEventListener('abort', abort, { once: true });
+        let complete!: () => void;
+        this.activeExecution = { controller, completed: new Promise<void>((resolve) => (complete = resolve)) };
+        try {
+            return await this.executeOwned(source, { ...options, signal: controller.signal });
+        } finally {
+            options.signal?.removeEventListener('abort', abort);
+            this.activeExecution = undefined;
+            complete();
+        }
+    }
+
+    private async executeOwned(source: string, options: ExecutionOptions): Promise<ExecutionResult> {
         if (this.disposed) throw new Error('MathJSLab runtime session is disposed.');
         if (options.signal?.aborted) return { status: 'cancelled', outputs: [], diagnostics: [errorDiagnostic('MATHJSLAB_ABORTED', String(options.signal.reason ?? 'Execution cancelled'))] };
         if (/\bparfor\b/i.test(source)) {
@@ -114,7 +141,17 @@ class RemoteRuntimeSession implements RuntimeSession {
             }
         });
         try {
-            await Promise.all(runners);
+            let failure: { reason: unknown } | undefined;
+            // Keep ownership until every runner has released its child, also
+            // when one iteration fails before its siblings finish.
+            await Promise.all(
+                runners.map((runner) =>
+                    runner.catch((reason: unknown) => {
+                        failure ??= { reason };
+                    }),
+                ),
+            );
+            if (failure) throw failure.reason;
             for (const value of values) {
                 const assignment =
                     plan.output.kind === 'sliced' ? `${plan.output.name}(${value})=(${results.get(value)!});` : `${plan.output.name}${plan.output.operator}(${results.get(value)!});`;
@@ -186,20 +223,35 @@ class RemoteRuntimeSession implements RuntimeSession {
     }
 
     public async interrupt(reason: unknown = 'Execution interrupted'): Promise<void> {
+        this.activeExecution?.controller.abort(reason);
         this.destroyWorker(new Error(String(reason)));
     }
 
     public async reset(): Promise<void> {
-        const result = await this.request({ type: 'reset', sessionId: this.sessionId });
-        if (result.type !== 'reset') throw new Error(`Unexpected runtime response: ${result.type}`);
+        if (this.disposed) throw new Error('MathJSLab runtime session is disposed.');
+        if (this.resetting) throw this.busyError();
+        this.resetting = true;
+        try {
+            const active = this.activeExecution;
+            active?.controller.abort('Session reset');
+            await active?.completed;
+            const result = await this.request({ type: 'reset', sessionId: this.sessionId });
+            if (result.type !== 'reset') throw new Error(`Unexpected runtime response: ${result.type}`);
+            for (const controller of this.effectControllers.values()) controller.abort('Session reset');
+        } finally {
+            this.resetting = false;
+        }
     }
 
     public async dispose(): Promise<void> {
-        if (this.disposed) return;
+        if (this.disposing) return this.disposing;
         if (!this.disposing) {
             this.disposing = (async () => {
                 this.disposed = true;
+                const active = this.activeExecution;
+                active?.controller.abort('MathJSLab runtime session is disposed.');
                 this.destroyWorker(new Error('MathJSLab runtime session is disposed.'));
+                await active?.completed;
                 this.onDispose?.(this);
             })();
         }
@@ -261,6 +313,7 @@ class RemoteRuntimeSession implements RuntimeSession {
         else {
             const error = new Error(response.error.message);
             error.name = response.error.name;
+            if (response.error.code) Object.assign(error, { code: response.error.code });
             if (response.error.stack) error.stack = response.error.stack;
             pending.reject(error);
         }
@@ -273,7 +326,7 @@ class RemoteRuntimeSession implements RuntimeSession {
         this.effectControllers.set(effectId, controller);
         try {
             if (!this.host) throw new Error(`No RuntimeHost is configured for effect '${effect.type}'.`);
-            const result = await this.host.request(effect, { ...context, signal: controller.signal });
+            const result = await requestHostEffect(this.host, effect, { ...context, signal: controller.signal });
             if (worker === this.worker) worker.postMessage({ protocol: runtimeProtocolVersion, type: 'effect-result', effectId, ok: true, result });
         } catch (error) {
             if (worker === this.worker) worker.postMessage({ protocol: runtimeProtocolVersion, type: 'effect-result', effectId, ok: false, error: serializeRuntimeError(error) });
@@ -312,10 +365,13 @@ export class RemoteMathJSLabRuntime implements MathJSLabRuntime {
     public constructor(
         private readonly workerFactory: RuntimeWorkerFactory,
         private readonly options: RuntimeOptions = {},
-    ) {}
+    ) {
+        if (options.evaluate || options.sessionDefaults?.interpreter) throw new Error('Remote runtime sessions require serializable package-level configuration.');
+    }
 
     public async createSession(options: SessionOptions = {}): Promise<RuntimeSession> {
         if (this.disposed) throw new Error('MathJSLab runtime is disposed.');
+        options = { ...this.options.sessionDefaults, ...options };
         if (options.interpreter) throw new Error('Remote runtime sessions require serializable package-level configuration.');
         const suggested = typeof navigator === 'undefined' ? 2 : Math.max(1, (navigator.hardwareConcurrency || 2) - 1);
         const session = new RemoteRuntimeSession(

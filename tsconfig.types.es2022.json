@@ -13,5 +13,5 @@
         "allowJs": false /* Allow JavaScript files to be a part of your program. Use the 'checkJS' option to get errors from these files. */,
         "skipLibCheck": true /* Skip type checking all .d.ts files. */
     },
-    "exclude": ["node_modules", "eslint.config.*", "jest.config.*", "webpack.config.*", "**/*spec.*", "lib", "report", "res", "script", "test"]
+    "exclude": ["test-results", "node_modules", "eslint.config.*", "jest.config.*", "webpack.config.*", "**/*spec.*", "lib", "report", "res", "script", "test"]
 }

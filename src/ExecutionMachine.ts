@@ -60,9 +60,9 @@ export interface ExecutionEffectRequest {
 }
 
 /**
- * Host-independent execution boundary. The initial implementation adapts a
- * synchronous operation; evaluator subsystems can replace individual frames
- * with effect/progress steps without changing RuntimeSession.
+ * Host-independent execution boundary for synchronous operations and retained
+ * evaluator generators. Drivers consume single-use progress/effect steps;
+ * cancellation unwinds retained frames without replaying completed work.
  */
 export class ExecutionMachine<T> {
     private finished = false;

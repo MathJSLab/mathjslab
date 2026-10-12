@@ -2,7 +2,7 @@
  * Browser-friendly virtual source resolution for MATLAB/Octave-like `.m`
  * files.
  *
- * The interpreter remains synchronous, so network-backed resolvers prefetch
+ * Source lookup remains synchronous for resumable execution, so resolvers prefetch
  * their manifest entries and then expose a synchronous lookup interface.
  */
 

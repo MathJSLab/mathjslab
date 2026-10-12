@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Interpreter } from './Interpreter';
 import { createInProcessMathJSLabRuntime } from './InProcessRuntime';
 
@@ -17,6 +19,419 @@ const abortableDelayHost = {
 };
 
 describe('InProcessMathJSLabRuntime', () => {
+    test('rejects overlapping operations without changing a suspended workspace', async () => {
+        let entered!: () => void;
+        const waiting = new Promise<void>((resolve) => (entered = resolve));
+        let resume!: (_value: import('./execution-contracts').HostEffectResult) => void;
+        const runtime = createInProcessMathJSLabRuntime({
+            host: {
+                request: () => {
+                    entered();
+                    return new Promise((resolve) => (resume = resolve));
+                },
+            },
+        });
+        const session = await runtime.createSession();
+        try {
+            const active = session.execute('x=1; pause(1); x+=1; x');
+            await waiting;
+            const concurrent = await session.execute('x=99');
+            expect(concurrent.status).toBe('error');
+            expect(concurrent.diagnostics[0].code).toBe('MATHJSLAB_SESSION_BUSY');
+            await expect(session.parse('x')).rejects.toMatchObject({ code: 'MATHJSLAB_SESSION_BUSY' });
+            resume({});
+            expect((await active).outputs[0]).toMatchObject({ text: '2\n' });
+            expect((await session.execute('x')).outputs[0]).toMatchObject({ text: '2\n' });
+        } finally {
+            await runtime.dispose();
+        }
+    });
+
+    test.each(['reset', 'dispose'] as const)('%s waits for cancellation unwind even when the host never settles', async (action) => {
+        let entered!: () => void;
+        const waiting = new Promise<void>((resolve) => (entered = resolve));
+        const runtime = createInProcessMathJSLabRuntime({
+            host: {
+                request: () => {
+                    entered();
+                    return new Promise(() => {});
+                },
+            },
+        });
+        const session = await runtime.createSession();
+        const other = await runtime.createSession();
+        try {
+            const active = session.execute('function y=f(), unwind_protect, pause(1); unwind_protect_cleanup, marker=7; end_unwind_protect; y=1; end; x=f();');
+            await waiting;
+            await session[action]();
+            expect((await active).status).toBe('cancelled');
+            const following = await session.execute('exist("x","var")').catch((error: Error) => error.message);
+            expect(typeof following === 'string' ? following : following.outputs[0]).toEqual(action === 'reset' ? { type: 'text', text: '0\n' } : 'MathJSLab runtime session is disposed.');
+            await session.dispose();
+            await session.dispose();
+            expect((await other.execute('3')).status).toBe('success');
+        } finally {
+            await runtime.dispose();
+        }
+    });
+
+    test.each(['obj.read(obj.secret)', 'AccessResume(obj.secret)'])('keeps caller arguments outside class private access: %s', async (expression) => {
+        const request = jest.fn(async () => ({}));
+        const runtime = createInProcessMathJSLabRuntime({ host: { request } });
+        const session = await runtime.createSession();
+        try {
+            const definition =
+                'classdef AccessResume; properties (Access=private); secret=3; end; methods; function obj=AccessResume(v), end; function y=read(obj,v), pause(0.001); y=v; end; end; end;';
+            const result = await session.execute(`${definition} obj=AccessResume(0); ${expression}`);
+            expect(result.status).toBe('error');
+            expect(result.diagnostics[0].message).toContain('private');
+            expect(request).not.toHaveBeenCalled();
+        } finally {
+            await runtime.dispose();
+        }
+    });
+
+    test.each([
+        ['', '[2,8]'],
+        [' < handle', '[8,8]'],
+    ] as const)('preserves value/handle receiver behavior across a wait: %s', async (base, expected) => {
+        const request = jest.fn(async () => ({}));
+        const runtime = createInProcessMathJSLabRuntime({ host: { request } });
+        const session = await runtime.createSession();
+        try {
+            const result = await session.execute(
+                `classdef MutableResume${base}; properties; value=2; end; methods; function [obj,out]=bump(obj,v), obj.value=obj.value+v; pause(0.001); obj.value=obj.value+v; out=obj.value; end; end; end; original=MutableResume(); [updated,~]=original.bump(3); [original.value,updated.value]`,
+            );
+            expect(result.status).toBe('success');
+            expect(result.outputs[0]).toMatchObject({ text: `${expected}\n` });
+            expect(request).toHaveBeenCalledTimes(1);
+        } finally {
+            await runtime.dispose();
+        }
+    });
+
+    const superclassSource = readFileSync(join(process.cwd(), 'test/node/fixtures/resumable-superclass.m'), 'utf8');
+
+    test.each(['handle', 'value'] as const)(
+        'retains three-level superclass calls, argument order, outputs and access: %s',
+        async (semantics) => {
+            const delays: number[] = [];
+            const runtime = createInProcessMathJSLabRuntime({
+                host: {
+                    request: async (effect) => {
+                        if (effect.type === 'delay') delays.push(effect.milliseconds);
+                        return {};
+                    },
+                },
+            });
+            const session = await runtime.createSession();
+            const result = await session.execute(
+                `function y=seed(), global defaults; defaults+=1; y=0; end; function y=ancestorArg(v), global ancestorArguments; ancestorArguments+=1; pause(0.004); y=v; end; ${(semantics === 'value' ? superclassSource.replace(' < handle', '') : superclassSource).replace('marker=0;', 'marker=seed();').replace('obj=obj@ResumeRoot(v);', 'obj=obj@ResumeRoot(ancestorArg(v));')}\nglobal trace receivers defaults ancestorArguments; trace=0; receivers=0; defaults=0; ancestorArguments=0; inputs=0; obj=ResumeLeaf(2+ ++inputs); [a,~]=obj.collect(++inputs); [a,inputs,receivers,trace,obj.marker,defaults,ancestorArguments]`,
+            );
+            expect(result.diagnostics).toEqual([]);
+            expect(result.status).toBe('success');
+            expect(result.outputs.filter((output) => output.type === 'text')).toEqual([expect.objectContaining({ text: '[115,2,1,1234,3,1,1]\n' })]);
+            expect(delays).toEqual([4, 1, 3, 2]);
+            expect((await session.execute('obj.secret')).status).toBe('error');
+            expect((await session.execute('obj.value')).status).toBe('error');
+            expect((await session.execute('obj.denied()')).status).toBe('error');
+            expect((await session.execute('read@ResumeRoot(obj, ++inputs)')).status).toBe('error');
+            expect((await session.execute('obj@ResumeRoot(++inputs)')).status).toBe('error');
+            expect((await session.execute('inputs')).outputs[0]).toMatchObject({ text: '2\n' });
+            await runtime.dispose();
+        },
+        15000,
+    );
+
+    test('restores superclass context after a resumed language error', async () => {
+        const request = jest.fn(async () => ({}));
+        const runtime = createInProcessMathJSLabRuntime({ host: { request } });
+        const session = await runtime.createSession();
+        expect((await session.execute(`${superclassSource}\nglobal trace receivers; trace=0; receivers=0; obj=ResumeLeaf(); destination=99; destination=obj.collect(-1);`)).status).toBe(
+            'error',
+        );
+        expect(request).toHaveBeenCalledTimes(2);
+        expect((await session.execute('[destination,trace,receivers]')).outputs[0]).toMatchObject({ text: '[99,1234,1]\n' });
+        expect((await session.execute('obj.secret')).status).toBe('error');
+        expect((await session.execute('obj.collect(1)')).status).toBe('success');
+        await runtime.dispose();
+    });
+
+    test.each([
+        ['constructor', 'destination=ResumeLeaf(3)', 1, '[99,1,0]'],
+        ['method', 'destination=obj.collect(3)', 2, '[99,4,1]'],
+    ] as const)('cancels a suspended superclass %s through the public runtime', async (_kind, source, delay, expected) => {
+        let entered!: () => void;
+        const waiting = new Promise<void>((resolve) => {
+            entered = resolve;
+        });
+        const runtime = createInProcessMathJSLabRuntime({
+            host: {
+                request: async (effect, context) => {
+                    if (effect.type !== 'delay' || effect.milliseconds !== delay) return {};
+                    return new Promise((_resolve, reject) => {
+                        context.signal?.addEventListener('abort', () => reject(context.signal?.reason), { once: true });
+                        entered();
+                    });
+                },
+            },
+        });
+        const session = await runtime.createSession();
+        expect((await session.execute(`${superclassSource}\nglobal trace receivers; trace=0; receivers=0; obj=ResumeLeaf(); trace=0; destination=99;`)).status).toBe('success');
+        const execution = session.execute(`${source}; trace=999;`);
+        await waiting;
+        await session.interrupt('stop superclass');
+        expect((await execution).status).toBe('cancelled');
+        expect((await session.execute('[destination,trace,receivers]')).outputs[0]).toMatchObject({ text: `${expected}\n` });
+        expect((await session.execute('obj.value')).status).toBe('error');
+        expect((await session.execute('2+2')).outputs[0]).toMatchObject({ text: '4\n' });
+        await runtime.dispose();
+    });
+    test('isolates superclass definitions while a constructor is suspended', async () => {
+        let release!: (_value: { value?: unknown }) => void;
+        const runtime = createInProcessMathJSLabRuntime({
+            host: {
+                request: () =>
+                    new Promise((resolve) => {
+                        release = resolve;
+                    }),
+            },
+        });
+        const first = await runtime.createSession();
+        const second = await runtime.createSession();
+        await first.execute(`${superclassSource}\nglobal trace receivers; trace=0; receivers=0; destination=99;`);
+        const execution = first.execute('obj=ResumeLeaf(3); obj.marker');
+        await second.execute(`${superclassSource}\nglobal trace receivers; trace=0; receivers=0; obj=ResumeLeaf();`);
+        expect((await second.execute('[obj.marker,trace]')).outputs[0]).toMatchObject({ text: '[0,123]\n' });
+        expect((await second.execute('obj.value')).status).toBe('error');
+        release({});
+        expect((await execution).outputs[0]).toMatchObject({ text: '3\n' });
+        expect((await first.execute('trace')).outputs[0]).toMatchObject({ text: '123\n' });
+        await runtime.dispose();
+    });
+    test('constructs defaults once while retaining an argument and constructor body', async () => {
+        const request = jest.fn(async () => ({}));
+        const runtime = createInProcessMathJSLabRuntime({ host: { request } });
+        const session = await runtime.createSession();
+        try {
+            const result = await session.execute(
+                'function y=seed(), global seeds; seeds+=1; y=7; end; function y=inputvalue(), global inputs; inputs+=1; pause(0.001); y=3; end; classdef SeededResume; properties; value=seed(); end; methods; function obj=SeededResume(v), pause(0.002); obj.value=obj.value+v; end; end; end; global seeds inputs; seeds=0; inputs=0; obj=SeededResume(inputvalue()); [seeds,inputs,obj.value]',
+            );
+            expect(result.diagnostics).toEqual([]);
+            expect(result.outputs[0]).toMatchObject({ text: '[1,1,10]\n' });
+            expect(request).toHaveBeenCalledTimes(2);
+        } finally {
+            await runtime.dispose();
+        }
+    });
+
+    test('retains an indirect target selector and ignored outputs across waits', async () => {
+        const request = jest.fn(async () => ({}));
+        const runtime = createInProcessMathJSLabRuntime({ host: { request } });
+        const session = await runtime.createSession();
+        try {
+            const result = await session.execute(
+                'function h=select(), global chosen; chosen+=1; pause(0.001); h=@pair; end; function [a,b]=pair(v), pause(0.002); a=v; b=v+10; end; global chosen; chosen=0; inputs=0; [~,answer]=feval(select(),++inputs); [chosen,inputs,answer]',
+            );
+            expect(result.diagnostics).toEqual([]);
+            expect(result.outputs[0]).toMatchObject({ text: '[1,1,11]\n' });
+            expect(request).toHaveBeenCalledTimes(2);
+        } finally {
+            await runtime.dispose();
+        }
+    });
+
+    test.each([
+        ['feval("f",++count)', 2],
+        ['feval(@f,++count)', 2],
+        ['feval("builtin","plus",f(++count),f(++count))', 6],
+        ['builtin("sum",[f(++count),f(++count)])', 6],
+    ] as const)('resumes indirect targets and forwarded arguments once: %s', async (expression, expected) => {
+        const request = jest.fn(async () => ({}));
+        const runtime = createInProcessMathJSLabRuntime({ host: { request } });
+        const session = await runtime.createSession();
+        try {
+            const result = await session.execute(`function y=f(v), pause(0.001); y=2*v; end; count=0; ${expression}`);
+            expect(result.status).toBe('success');
+            expect(result.outputs[0]).toMatchObject({ text: `${expected}\n` });
+            expect(request).toHaveBeenCalledTimes(expected === 2 ? 1 : 2);
+            expect((await session.execute('count')).outputs[0]).toMatchObject({ text: `${expected === 2 ? 1 : 2}\n` });
+        } finally {
+            await runtime.dispose();
+        }
+    });
+
+    test.each([
+        ['[a,b]=obj.read(4); a+b+ResumeBox.twice(2)', 14, [1, 2, 5]],
+        ['[a,b]=read(obj,4); a+b', 10, [1, 2]],
+        ['feval("ResumeBox.twice",obj+4)', 14, [1, 3, 5]],
+        ['feval("plus",obj,4)', 7, [1, 3]],
+        ['-obj', -3, [1, 4]],
+    ] as const)('resumes constructor, methods and scalar overloads: %s', async (expression, expected, effects) => {
+        const delays: number[] = [];
+        const runtime = createInProcessMathJSLabRuntime({
+            host: {
+                request: async (effect) => {
+                    if (effect.type === 'delay') delays.push(effect.milliseconds);
+                    return {};
+                },
+            },
+        });
+        const session = await runtime.createSession();
+        const definition =
+            'classdef ResumeBox < handle; properties (Access=private); secret=0; end; properties; value=0; end; methods; function obj=ResumeBox(v), pause(0.001); obj.secret=v; obj.value=v; end; function [a,b]=read(obj,v), pause(0.002); a=obj.secret+v; b=obj.value; end; function y=plus(obj,b), pause(0.003); y=obj.secret+b; end; function y=uminus(obj), pause(0.004); y=-obj.secret; end; end; methods (Static); function y=twice(v), pause(0.005); y=2*v; end; end; end;';
+        try {
+            const result = await session.execute(`${definition} obj=ResumeBox(3); ${expression}`);
+            expect(result.diagnostics).toEqual([]);
+            expect(result.outputs[0]).toMatchObject({ text: `${expected}\n` });
+            expect(delays).toEqual(effects);
+            expect((await session.execute('obj.secret')).status).toBe('error');
+        } finally {
+            await runtime.dispose();
+        }
+    });
+
+    test.each(['feval("run","probe")', 'builtin("source","probe")'])('resumes indirect script forwarding: %s', async (source) => {
+        const request = jest.fn(async () => ({}));
+        const runtime = createInProcessMathJSLabRuntime({ host: { request } });
+        const session = await runtime.createSession({ interpreter: { scriptSourceTable: { probe: 'pause(0.001);' } } });
+        try {
+            expect((await session.execute(source)).status).toBe('success');
+            expect(request).toHaveBeenCalledTimes(1);
+            expect((await session.execute('mfilename()')).outputs[0]).toMatchObject({ text: '\n' });
+        } finally {
+            await runtime.dispose();
+        }
+    });
+
+    test('retains local functions when a caller function runs a waiting script', async () => {
+        const request = jest.fn(async () => ({}));
+        const runtime = createInProcessMathJSLabRuntime({ host: { request } });
+        const session = await runtime.createSession({
+            interpreter: {
+                scriptSourceTable: {
+                    probe: 'x=10; pause(0.001); y=helper(x); function z=helper(v), z=v+2; end',
+                },
+            },
+        });
+        try {
+            const result = await session.execute('function y=f(), run("probe"); y=x+y; end; f()');
+            expect(result.status).toBe('success');
+            expect(result.outputs[0]).toMatchObject({ text: '22\n' });
+            expect(request).toHaveBeenCalledTimes(1);
+            expect((await session.execute('helper(1)')).status).toBe('error');
+        } finally {
+            await runtime.dispose();
+        }
+    });
+
+    test.each(['run probe', 'source probe', 'source("probe", "base")'])('resumes direct script command %s with source lookup and local calls', async (command) => {
+        const request = jest.fn(async () => ({}));
+        const provider = jest.fn(() => ({ sourceName: 'scripts/probe.m', source: 'count+=1; pause(0.001); count+=10; count' }));
+        const runtime = createInProcessMathJSLabRuntime({ host: { request } });
+        const session = await runtime.createSession({ interpreter: { scriptSourceProvider: provider } });
+        try {
+            const result = await session.execute(`count=0; ${command}`);
+            expect(result.status).toBe('success');
+            const synchronous = Interpreter.Create({
+                scriptSourceProvider: () => ({ ...provider.mock.results[0].value, source: provider.mock.results[0].value.source.replace('pause(0.001);', '') }),
+            });
+            synchronous.Execute('count=0;');
+            const expected = synchronous.Unparse(synchronous.RunScriptFile('probe')) + '\n';
+            expect(result.outputs[0]).toMatchObject({ text: expected });
+            expect(request).toHaveBeenCalledTimes(1);
+            expect(provider).toHaveBeenCalledTimes(1);
+        } finally {
+            await runtime.dispose();
+        }
+    });
+
+    test('retains source base-workspace selection inside a suspended user function', async () => {
+        const request = jest.fn(async () => ({}));
+        const runtime = createInProcessMathJSLabRuntime({ host: { request } });
+        const session = await runtime.createSession({ interpreter: { scriptSourceTable: { probe: 'count=count+1; pause(0.001); count=count+10;' } } });
+        try {
+            const result = await session.execute('function y=f(), count=99; source("probe","base"); y=count; end; count=0; answer=f(); [count,answer]');
+            expect(result.status).toBe('success');
+            expect(result.outputs[0]).toMatchObject({ text: '[11,99]\n' });
+            expect(request).toHaveBeenCalledTimes(1);
+        } finally {
+            await runtime.dispose();
+        }
+    });
+
+    test.each(['run', 'source'])('resumes nested scripts through %s without replay and restores local functions', async (command) => {
+        const request = jest.fn(async () => ({}));
+        const runtime = createInProcessMathJSLabRuntime({ host: { request } });
+        const session = await runtime.createSession({
+            interpreter: {
+                scriptSourceTable: {
+                    outer: 'count+=1; before=mfilename(); run("inner"); count+=10; after=mfilename(); answer=helper(); function y=helper(), y=42; end',
+                    inner: 'count+=100; pause(0.001); count+=1000;',
+                },
+            },
+        });
+        try {
+            const result = await session.execute(`count=0; ${command}("outer"); [count,answer]`);
+            expect(result.diagnostics).toEqual([]);
+            expect(result.outputs[0]).toMatchObject({ text: '[1111,42]\n' });
+            expect(request).toHaveBeenCalledTimes(1);
+            expect((await session.execute('isequal(before,after)')).outputs[0]).toMatchObject({ text: 'true\n' });
+            expect((await session.execute('helper()')).status).toBe('error');
+        } finally {
+            await runtime.dispose();
+        }
+    });
+
+    test.each(['error', 'return', 'host-failure'])('restores script context after %s following a wait', async (ending) => {
+        const request = jest.fn(async () => {
+            if (ending === 'host-failure') throw new Error('host stopped');
+            return {};
+        });
+        const runtime = createInProcessMathJSLabRuntime({ host: { request } });
+        const session = await runtime.createSession({
+            interpreter: {
+                scriptSourceTable: {
+                    probe: `count+=1; pause(0.001); ${ending === 'return' ? 'return;' : 'error("stopped");'} count+=10; function y=helper(), y=42; end`,
+                },
+            },
+        });
+        try {
+            expect((await session.execute('count=0; run("probe")')).status).toBe(ending === 'return' ? 'success' : 'error');
+            expect(request).toHaveBeenCalledTimes(1);
+            expect((await session.execute('count')).outputs[0]).toMatchObject({ text: '1\n' });
+            expect((await session.execute('helper()')).status).toBe('error');
+            expect((await session.execute('mfilename()')).outputs[0]).toMatchObject({ text: '\n' });
+        } finally {
+            await runtime.dispose();
+        }
+    });
+
+    test('cancels suspended nested scripts and isolates session workspaces', async () => {
+        const controller = new AbortController();
+        const runtime = createInProcessMathJSLabRuntime({
+            host: {
+                request: async () => {
+                    controller.abort('stop');
+                    return {};
+                },
+            },
+        });
+        const options = { interpreter: { scriptSourceTable: { outer: 'count+=1; source("inner"); count+=10;', inner: 'pause(1); count+=100; function y=helper(), y=42; end' } } };
+        const session = await runtime.createSession(options);
+        const other = await runtime.createSession(options);
+        try {
+            expect((await other.execute('count=50;')).status).toBe('success');
+            expect((await session.execute('count=0; run("outer")', { signal: controller.signal })).status).toBe('cancelled');
+            expect((await session.execute('count')).outputs[0]).toMatchObject({ text: '1\n' });
+            expect((await other.execute('count')).outputs[0]).toMatchObject({ text: '50\n' });
+            expect((await session.execute('helper()')).status).toBe('error');
+            expect((await session.execute('mfilename()')).outputs[0]).toMatchObject({ text: '\n' });
+        } finally {
+            await runtime.dispose();
+        }
+    });
+
     test.each(['make()(2)', 'make().virtual'])('preserves synchronous class dispatch on a retained return: %s', async (expression) => {
         const request = jest.fn(async () => ({}));
         const runtime = createInProcessMathJSLabRuntime({ host: { request } });
@@ -371,12 +786,14 @@ describe('InProcessMathJSLabRuntime', () => {
         await runtime.dispose();
     });
 
-    test.each(["feval('sum',g())", "builtin('sum',g())"])('rejects waits in raw forwarded inputs before requesting the host: %s', async (call) => {
+    test.each(["feval('sum',g())", "builtin('sum',g())"])('retains waits in raw forwarded inputs: %s', async (call) => {
         const request = jest.fn(async () => ({}));
         const runtime = createInProcessMathJSLabRuntime({ host: { request } });
         const session = await runtime.createSession();
-        expect((await session.execute('function y=g(), pause(0); y=1; end; ' + call)).status).toBe('error');
-        expect(request).not.toHaveBeenCalled();
+        const result = await session.execute('function y=g(), pause(0); y=1; end; ' + call);
+        expect(result.status).toBe('success');
+        expect(result.outputs[0]).toMatchObject({ text: '1\n' });
+        expect(request).toHaveBeenCalledTimes(1);
         expect((await session.execute('1+1')).outputs[0]).toMatchObject({ text: '2\n' });
         await runtime.dispose();
     });
@@ -839,6 +1256,39 @@ describe('InProcessMathJSLabRuntime', () => {
         await runtime.dispose();
     });
 
+    test('isolates same-named classes while an indirect method is suspended', async () => {
+        let release!: (_value: { value?: unknown }) => void;
+        const request = jest.fn(
+            () =>
+                new Promise<{ value?: unknown }>((resolve) => {
+                    release = resolve;
+                }),
+        );
+        const runtime = createInProcessMathJSLabRuntime({ host: { request } });
+        const first = await runtime.createSession();
+        const second = await runtime.createSession();
+        const definition = (value: number, waiting: boolean) => `classdef SessionClass
+properties (Access=private)
+secret=${value};
+end
+methods
+function y=read(obj)
+${waiting ? 'pause(0);' : ''}
+y=obj.secret;
+end
+end
+end
+obj=SessionClass();`;
+        expect((await first.execute(definition(11, true))).status).toBe('success');
+        const execution = first.execute('result=feval(@()obj.read()); result');
+        expect((await second.execute(definition(22, false))).status).toBe('success');
+        expect((await second.execute('obj.secret')).status).toBe('error');
+        expect((await second.execute('obj.read()')).outputs[0]).toMatchObject({ text: '22\n' });
+        release({});
+        expect((await execution).outputs[0]).toMatchObject({ text: '11\n' });
+        expect(request).toHaveBeenCalledTimes(1);
+        await runtime.dispose();
+    });
     test('never parallelizes parfor silently', async () => {
         const runtime = createInProcessMathJSLabRuntime();
         const fallback = await runtime.createSession({ parfor: 'fallback' });

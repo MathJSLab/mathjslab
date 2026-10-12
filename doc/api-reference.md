@@ -588,9 +588,9 @@ The machine keeps scope and values opaque; evaluator-owned frames expose progres
 - Kind: `class`
 - Source: `src/ExecutionMachine.ts`
 
-Host-independent execution boundary. The initial implementation adapts a
-synchronous operation; evaluator subsystems can replace individual frames
-with effect/progress steps without changing RuntimeSession.
+Host-independent execution boundary for synchronous operations and retained
+evaluator generators. Drivers consume single-use progress/effect steps;
+cancellation unwinds retained frames without replaying completed work.
 
 ## ExecutionMachineStep
 
@@ -1689,7 +1689,7 @@ No JSDoc documentation is available yet.
 - Kind: `type`
 - Source: `src/runtime-contracts.ts`
 
-No JSDoc documentation is available yet.
+Host integration options; local evaluator hooks cannot cross a Worker boundary.
 
 ## RuntimeOutput
 
@@ -1703,7 +1703,7 @@ No JSDoc documentation is available yet.
 - Kind: `interface`
 - Source: `src/runtime-contracts.ts`
 
-No JSDoc documentation is available yet.
+One active execution owns the session workspace, including remote parfor coordination.
 
 ## RuntimeStatus
 
@@ -1717,7 +1717,10 @@ No JSDoc documentation is available yet.
 - Kind: `constant`
 - Source: `src/RuntimeValueCodec.ts`
 
-No JSDoc documentation is available yet.
+Encode supported values without changing source storage. Numeric arrays use
+transferable Float64 buffers only when textual numeric identity survives the
+conversion; other decimal arrays retain string components. Decode uses the
+receiving realm's configured numeric backend, not backend negotiation.
 
 ## RuntimeValueCodecError
 

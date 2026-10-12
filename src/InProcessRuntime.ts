@@ -1,3 +1,4 @@
+import { requestHostEffect } from './RuntimeHostEffect';
 import { AST, type NodeInput } from './AST';
 import { Interpreter } from './Interpreter';
 import { ExecutionCancellation, type ExecutionMachineStep } from './ExecutionMachine';
@@ -55,6 +56,9 @@ class InProcessSession implements RuntimeSession {
     private readonly activeExecutions = new Set<AbortController>();
     private disposed = false;
     private interrupted: unknown;
+    private resetting = false;
+    private readonly idleWaiters = new Set<() => void>();
+    private disposal: Promise<void> | undefined;
 
     public constructor(
         private readonly options: SessionOptions,
@@ -66,7 +70,7 @@ class InProcessSession implements RuntimeSession {
     }
 
     public async parse(source: string): Promise<ParseResult> {
-        this.assertActive();
+        this.assertAvailable();
         try {
             return this.environment.run(() => {
                 const tree = this.interpreter.Parse(source);
@@ -79,6 +83,7 @@ class InProcessSession implements RuntimeSession {
 
     public async execute(source: string, options: ExecutionOptions = {}): Promise<ExecutionResult> {
         this.assertActive();
+        if (this.resetting || this.activeExecutions.size > 0) return { status: 'error', outputs: [], diagnostics: [diagnostic(this.busyError())] };
         if (options.signal?.aborted) return abortResult(false, options.signal.reason);
         if (this.interrupted !== undefined) {
             const reason = this.interrupted;
@@ -154,6 +159,10 @@ class InProcessSession implements RuntimeSession {
             if (timeout !== undefined) clearTimeout(timeout);
             externalSignal?.removeEventListener('abort', abort);
             this.activeExecutions.delete(controller);
+            if (this.activeExecutions.size === 0) {
+                for (const resolve of this.idleWaiters) resolve();
+                this.idleWaiters.clear();
+            }
         }
     }
 
@@ -194,20 +203,10 @@ class InProcessSession implements RuntimeSession {
             try {
                 if (!this.host) throw Object.assign(new Error('Host effect requires an asynchronous host adapter.'), { code: 'MATHJSLAB_EFFECT_REQUIRES_ASYNC' });
                 const signal = options.signal;
-                const result = await new Promise<import('./runtime-contracts').HostEffectResult>((resolve, reject) => {
-                    const abort = (): void => reject(signal?.reason ?? new Error('Execution cancelled'));
-                    if (signal?.aborted) {
-                        abort();
-                        return;
-                    }
-                    signal?.addEventListener('abort', abort, { once: true });
-                    this.host!.request(suspended.effect, {
-                        sessionId: this.options.id ?? 'in-process',
-                        ...(signal ? { signal } : {}),
-                        ...(deadline !== undefined ? { deadline } : {}),
-                    })
-                        .then(resolve, reject)
-                        .finally(() => signal?.removeEventListener('abort', abort));
+                const result = await requestHostEffect(this.host, suspended.effect, {
+                    sessionId: this.options.id ?? 'in-process',
+                    ...(signal ? { signal } : {}),
+                    ...(deadline !== undefined ? { deadline } : {}),
                 });
                 if (signal?.aborted) throw signal.reason;
                 if (suspended.effect.type === 'read-text') {
@@ -235,18 +234,45 @@ class InProcessSession implements RuntimeSession {
 
     public async reset(): Promise<void> {
         this.assertActive();
-        this.interpreter = Interpreter.Create(this.options.interpreter);
-        this.environment = new RuntimeEnvironment();
-        this.interrupted = undefined;
+        if (this.resetting) throw this.busyError();
+        this.resetting = true;
+        try {
+            for (const controller of this.activeExecutions) controller.abort('Session reset');
+            await this.waitUntilIdle();
+            this.assertActive();
+            this.interpreter = Interpreter.Create(this.options.interpreter);
+            this.environment = new RuntimeEnvironment();
+            this.interrupted = undefined;
+        } finally {
+            this.resetting = false;
+        }
     }
 
     public async dispose(): Promise<void> {
-        if (this.disposed) return;
+        if (this.disposal) return this.disposal;
         this.disposed = true;
-        const reason = Object.assign(new Error('MathJSLab runtime session is disposed.'), { code: 'MATHJSLAB_DISPOSED' });
-        for (const controller of this.activeExecutions) controller.abort(reason);
-        this.interpreter.Clear('all');
-        this.onDispose?.(this);
+        this.disposal = (async () => {
+            const reason = Object.assign(new Error('MathJSLab runtime session is disposed.'), { code: 'MATHJSLAB_DISPOSED' });
+            for (const controller of this.activeExecutions) controller.abort(reason);
+            await this.waitUntilIdle();
+            this.interpreter.Clear('all');
+            this.onDispose?.(this);
+        })();
+        return this.disposal;
+    }
+
+    private waitUntilIdle(): Promise<void> {
+        if (this.activeExecutions.size === 0) return Promise.resolve();
+        return new Promise((resolve) => this.idleWaiters.add(resolve));
+    }
+
+    private busyError(): Error {
+        return Object.assign(new Error('MathJSLab runtime session is busy.'), { code: 'MATHJSLAB_SESSION_BUSY' });
+    }
+
+    private assertAvailable(): void {
+        this.assertActive();
+        if (this.resetting || this.activeExecutions.size > 0) throw this.busyError();
     }
 
     private assertActive(): void {

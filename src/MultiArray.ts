@@ -1400,7 +1400,7 @@ class MultiArray<ELEMENT = Elements> {
             }
         }
         let result: MultiArray;
-        if (M.dimension[1] === dimension[1]) {
+        if (M.dimension[0] === dimension[0] && M.dimension[1] === dimension[1]) {
             result = MultiArray.copy(M);
             result.dimension = dimension;
         } else {

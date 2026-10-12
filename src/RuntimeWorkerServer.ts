@@ -30,7 +30,26 @@ export class RuntimeWorkerServer {
             request: (effect, context) =>
                 new Promise((resolve, reject) => {
                     const effectId = `effect-${++this.nextEffect}`;
-                    this.pendingEffects.set(effectId, { resolve, reject });
+                    const abort = (): void => {
+                        this.pendingEffects.delete(effectId);
+                        reject(context.signal?.reason ?? new Error('Execution cancelled'));
+                    };
+                    const cleanup = (): void => context.signal?.removeEventListener('abort', abort);
+                    if (context.signal?.aborted) {
+                        abort();
+                        return;
+                    }
+                    context.signal?.addEventListener('abort', abort, { once: true });
+                    this.pendingEffects.set(effectId, {
+                        resolve: (value) => {
+                            cleanup();
+                            resolve(value);
+                        },
+                        reject: (error) => {
+                            cleanup();
+                            reject(error);
+                        },
+                    });
                     // AbortSignal belongs to this realm and cannot cross a browser
                     // structured-clone boundary. RemoteRuntime supplies its own
                     // per-effect signal and aborts it when the Worker terminates.
@@ -39,6 +58,7 @@ export class RuntimeWorkerServer {
                         this.scope.postMessage({ protocol: runtimeProtocolVersion, type: 'effect-request', effectId, effect, context: cloneableContext });
                     } catch (error) {
                         this.pendingEffects.delete(effectId);
+                        cleanup();
                         reject(error);
                     }
                 }),

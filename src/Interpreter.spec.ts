@@ -9390,7 +9390,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                 localInterpreter.Unparse(
                     localInterpreter.Execute('nargin("all"); nargin("sum"); nargin("cumsum"); nargin("min"); nargin("max"); nargin("mean"); nargin("var"); nargin("std")'),
                 ),
-            ).toBe('-2\n-2\n-2\n-3\n-3\n-2\n-3\n-3\n');
+            ).toBe('-2\n-3\n-4\n-3\n-3\n-3\n-4\n-4\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('nargout("all"); nargout("sum"); nargout("min"); nargout("max"); nargout("cummin"); nargout("cummax")'))).toBe(
                 '1\n1\n-2\n-2\n-2\n-2\n',
             );
@@ -9499,6 +9499,12 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => localInterpreter.Execute('eig([1], 2)')).toThrow('Invalid call to eig.');
             expect(() => localInterpreter.Execute('configure(1, 2, 3)')).toThrow('Invalid call to configure.');
             expect(() => localInterpreter.Execute('getconfig(1, 2)')).toThrow('Invalid call to getconfig.');
+        });
+
+        it('Should materialize named callback results before spfun storage.', () => {
+            const interpreter = Interpreter.Create();
+            interpreter.Execute('function y=twice(x), global calls; calls+=1; y=2*x; end; global calls; calls=0; A=spfun(@twice,[0,2;3,0]);');
+            expect(interpreter.Unparse(interpreter.Execute('[sum(A(:)),calls]'))).toBe('[10,2]\n');
         });
 
         it('Should validate built-in input parameter classes from signatures.', () => {
@@ -9623,7 +9629,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => localInterpreter.Execute('all([1, 2], 0)')).toThrow('Invalid call to all.');
             expect(() => localInterpreter.Execute('any([1, 2], -1)')).toThrow('Invalid call to any.');
             expect(() => localInterpreter.Execute('sum([1, 2], 1.5)')).toThrow('Invalid call to sum.');
-            expect(() => localInterpreter.Execute('prod([1, 2], [1, 2])')).toThrow('Invalid call to prod.');
+            expect(localInterpreter.Unparse(localInterpreter.Execute('prod([1, 2], [1, 2])'))).toBe('2\n');
+            expect(() => localInterpreter.Execute('prod([1, 2], [1, 1])')).toThrow('repeated dimensions');
             expect(() => localInterpreter.Execute('sumsq([1, 2], [])')).toThrow('Invalid call to sumsq.');
             expect(() => localInterpreter.Execute('cumsum([1, 2], "2")')).toThrow('Invalid call to cumsum.');
             expect(() => localInterpreter.Execute('cumprod([1, 2], 0)')).toThrow('Invalid call to cumprod.');
@@ -9637,7 +9644,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(() => localInterpreter.Execute('mean([1, 2], 0)')).toThrow('Invalid call to mean.');
             expect(() => localInterpreter.Execute('mean([1, 2], 1.5)')).toThrow('Invalid call to mean.');
             expect(() => localInterpreter.Execute('var([1, 2], "0")')).toThrow('Invalid call to var.');
-            expect(() => localInterpreter.Execute('var([1, 2], 0.5)')).toThrow('Invalid call to var.');
+            expect(() => localInterpreter.Execute('var([1, 2], 0.5)')).toThrow('var: W must be an integer scalar.');
             expect(() => localInterpreter.Execute('var([1, 2], 0, 0)')).toThrow('Invalid call to var.');
             expect(() => localInterpreter.Execute('var([1, 2], 0, 1.5)')).toThrow('Invalid call to var.');
             expect(() => localInterpreter.Execute('std([1, 2], 0, "2")')).toThrow('Invalid call to std.');
@@ -9787,7 +9794,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                 localInterpreter.Unparse(
                     localInterpreter.Execute('C = reshape({1, 2}, [1, 1, 2]); S = squeeze(C); size(S); S; S{2}; D = reshape({1, 2, 3, 4}, [1, 2, 2]); T = squeeze(D); size(T); T; T{2, 2}'),
                 ),
-            ).toBe('C={1} (:,:,1)\n{2} (:,:,2)\n\nS={1;\n2}\n[2,1]\n{1;\n2}\n2\nD={1,2} (:,:,1)\n{3,4} (:,:,2)\n\nT={1,2;\n3,4}\n[2,2]\n{1,2;\n3,4}\n4\n');
+            ).toBe('C={1} (:,:,1)\n{2} (:,:,2)\n\nS={1;\n2}\n[2,1]\n{1;\n2}\n2\nD={1,2} (:,:,1)\n{3,4} (:,:,2)\n\nT={1,3;\n2,4}\n[2,2]\n{1,3;\n2,4}\n4\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('A = reshape(1:6, [1, 2, 3]); B = permute(A, [2, 1, 3]); size(B); B; C = ipermute(B, [2, 1, 3]); size(C); C'))).toBe(
                 'A=[1,2] (:,:,1)\n[3,4] (:,:,2)\n[5,6] (:,:,3)\n\nB=[1;\n2] (:,:,1)\n[3;\n4] (:,:,2)\n[5;\n6] (:,:,3)\n\n[2,1,3]\n[1;\n2] (:,:,1)\n[3;\n4] (:,:,2)\n[5;\n6] (:,:,3)\n\nC=[1,2] (:,:,1)\n[3,4] (:,:,2)\n[5,6] (:,:,3)\n\n[1,2,3]\n[1,2] (:,:,1)\n[3,4] (:,:,2)\n[5,6] (:,:,3)\n\n',
             );
@@ -9813,14 +9820,14 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                         'A = reshape(1:4, [1, 2, 2]); [B, n] = shiftdim(A); size(B); n; B; E = shiftdim([1, 2; 3, 4], -1); size(E); F = shiftdim(reshape(1:6, [1, 2, 3]), 1); size(F); F',
                     ),
                 ),
-            ).toBe('A=[1,2] (:,:,1)\n[3,4] (:,:,2)\n\nB=[1,2;\n3,4]\nn=1\n[2,2]\n1\n[1,2;\n3,4]\nE=[1,2] (:,:,1)\n[3,4] (:,:,2)\n\n[1,2,2]\nF=[1,3,5;\n2,4,6]\n[2,3]\n[1,3,5;\n2,4,6]\n');
+            ).toBe('A=[1,2] (:,:,1)\n[3,4] (:,:,2)\n\nB=[1,3;\n2,4]\nn=1\n[2,2]\n1\n[1,3;\n2,4]\nE=[1,3] (:,:,1)\n[2,4] (:,:,2)\n\n[1,2,2]\nF=[1,3,5;\n2,4,6]\n[2,3]\n[1,3,5;\n2,4,6]\n');
             expect(
                 localInterpreter.Unparse(
                     localInterpreter.Execute(
                         'C = reshape({1, 2, 3, 4}, [1, 2, 2]); [D, n] = shiftdim(C); size(D); n; D; D{2, 2}; nargin("circshift"); nargout("circshift"); nargin("shiftdim"); nargout("shiftdim")',
                     ),
                 ),
-            ).toBe('C={1,2} (:,:,1)\n{3,4} (:,:,2)\n\nD={1,2;\n3,4}\nn=1\n[2,2]\n1\n{1,2;\n3,4}\n4\n-3\n1\n-2\n-2\n');
+            ).toBe('C={1,2} (:,:,1)\n{3,4} (:,:,2)\n\nD={1,3;\n2,4}\nn=1\n[2,2]\n1\n{1,3;\n2,4}\n4\n-3\n1\n-2\n-2\n');
             expect(
                 localInterpreter.Unparse(
                     localInterpreter.Execute(
@@ -9901,7 +9908,7 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                 localInterpreter.Unparse(localInterpreter.Execute('A = [3, 1; 2, 4]; max(A, [], 2); min(A, [2, 2; 2, 2]); [v, idx] = cummin(A); v; idx; [w, j] = cummax(A, 2); w; j')),
             ).toBe('A=[3,1;\n2,4]\n[3;\n4]\n[2,1;\n2,2]\nv=[3,1;\n2,1]\nidx=[1,1;\n2,1]\n[3,1;\n2,1]\n[1,1;\n2,1]\nw=[3,3;\n2,4]\nj=[1,1;\n1,2]\n[3,3;\n2,4]\n[1,1;\n1,2]\n');
             expect(localInterpreter.Unparse(localInterpreter.Execute('A = [1, 2; 3, 4]; mean(A); mean(A, 2); var([1, 2, 3]); std([1, 2, 3])'))).toBe(
-                'A=[1,2;\n3,4]\n[2,3]\n[1.5;\n3.5]\n[1]\n[1]\n',
+                'A=[1,2;\n3,4]\n[2,3]\n[1.5;\n3.5]\n1\n1\n',
             );
         });
 

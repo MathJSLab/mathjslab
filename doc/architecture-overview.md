@@ -50,11 +50,12 @@ configuration to synchronous steps, restoring it before waits.
 
 Continuations are single-use in-memory objects, not persisted or transferable
 snapshots. Cancellation bypasses language catch and performs bounded cleanup;
-it does not roll back completed workspace effects. Class/script lifecycles,
-validation callbacks, raw indirect forwarding, indexed multiple-output targets
-and other preparation boundaries remain synchronous. Long numerical operations
-are indivisible. The current inventory and detailed evaluation order live in
-[resumable execution](resumable-execution.md).
+it does not roll back completed workspace effects. Scalar class calls,
+superclass calls, run/source scripts and supported feval/builtin forwarding
+retain their frames. Property/event callbacks, object arrays, overloaded
+indexing and remaining preparation boundaries are synchronous. Long numerical
+operations are indivisible. The current inventory and detailed evaluation order
+live in [resumable execution](resumable-execution.md).
 
 `InProcessRuntime`, `BrowserRuntime` and `NodeRuntime` implement the same
 session contract. Remote sessions use dedicated Workers, versioned protocols

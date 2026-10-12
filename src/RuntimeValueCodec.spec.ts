@@ -6,6 +6,23 @@ import { RuntimeValueCodec, RuntimeValueCodecError } from './RuntimeValueCodec';
 import { Structure } from './Structure';
 
 describe('RuntimeValueCodec', () => {
+    test('preserves decimal precision, exponents and signed zero without lossy packing', () => {
+        const previous = Complex.engine;
+        try {
+            Complex.engine = 'decimal';
+            const input = new MultiArray([1, 3], [[Complex.create('1.00000000000000000001'), Complex.create('1e-999', '-1e999'), Complex.create('-0')]]);
+            const encoded = RuntimeValueCodec.encode(input);
+            expect(encoded.type).toBe('array');
+            if (encoded.type !== 'array') throw new Error('Expected array');
+            expect(encoded.packed).toBeUndefined();
+            expect(RuntimeValueCodec.transferables(encoded)).toEqual([]);
+            expect(RuntimeValueCodec.encode(RuntimeValueCodec.decode(encoded))).toEqual(encoded);
+            expect(encoded.values?.[2]).toMatchObject({ real: '-0' });
+        } finally {
+            Complex.engine = previous;
+        }
+    });
+
     test('round-trips complex scalars, strings, arrays, cells, and structures', () => {
         const value = new MultiArray(
             [1, 4],

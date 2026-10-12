@@ -14,7 +14,7 @@ values survive waits without replay. Progress checkpoints enable cooperative
 cancellation. Continuations are single-use, in-memory state; no public session
 API serializes a suspension or exposes a manual pause/resume handle.
 
-Class/script frames, validation callbacks, raw `feval`/`builtin` forwarding,
+Class callbacks/array dispatch, dynamic eval scripts, validation callbacks,
 indexed multiple-output destinations, synthetic loop destinations, SPMD count
 preparation and `load` inside user functions remain synchronous boundaries.
 Direct `pause`/`load` value operands are unsupported; numerical operations are
@@ -26,6 +26,101 @@ increments. Earlier increment limits are superseded where later sections
 explicitly integrate the same path.
 
 ## Shared sequence driver
+
+### Explicit scalar superclass calls
+
+`obj@Base(args)` and `method@Base(obj, args)` now use
+`Context.executeSuperclass` in both drivers. Selection preserves existing
+syntax/name precedence: an identifier already bound to a scalar instance is a
+constructor target; otherwise the first argument is the method receiver. The
+receiver is retained once, superclass membership and protected/private access
+are checked before remaining inputs, and normal function requests bind those
+inputs. Qualified superclass names keep the existing hierarchy lookup.
+
+Superclass constructors reuse the allocated derived instance and its return
+slot, without instantiating property defaults again. Assigning their result
+preserves value-class behavior; handle instances preserve identity. Multi-level
+constructor and method delegation retains each scope/frame across waits.
+Explicit calls also participate in assignment and expression preparation, so
+outputs, ignored destinations and semicolon suppression follow ordinary calls.
+
+The declaring class owns each method's private access. Caller expressions keep
+caller permissions, while every suspended frame/access grant is removed from
+active Context and restored only while advancing the corresponding work.
+Success, language/host error and cancellation use the same function cleanup;
+completed writes survive and unfinished output assignments are skipped. The
+synchronous driver rejects a host wait and unwinds, as for other retained
+calls.
+
+Remote cancellation retains the existing hard-preemption policy: terminate the
+Worker and recreate a clean workspace. No protocol changes are introduced.
+
+Scalar constructor/method calls are integrated; class arrays, property defaults
+and validation, property/event callbacks, `subsref`/`subsasgn`, dynamic eval,
+variadic/concatenation overloads and `load` inside user functions remain the
+previous separate boundaries. Runtime regressions cover three-level value and
+handle inheritance, argument/receiver effects, access checks, resumed failure,
+cancellation and session isolation; distribution tests exercise a real Worker.
+
+### Indirect and scalar class calls
+
+The original `feval` and `builtin` entries now resolve their target once and
+forward raw arguments through `Context.executeCallable`. Target selectors and
+forwarded inputs can suspend without replay. Selective builtin evaluation,
+comma expansion, name-value/default binding, requested output counts and
+ignored outputs remain owned by the target. `builtin` retains explicit builtin
+lookup and operator-overload bypass. Host replacements remain ordinary
+callbacks. Indirect `run`/`source` calls also use the script lifecycle below;
+dynamic `eval`/`evalin` execution itself remains synchronous.
+
+Scalar instance methods (ordinary `obj.method` lookup without `subsref`
+overrides, stored bound methods and functional syntax), static methods
+(`Class.method` calls or `feval`) and direct constructor bodies now share
+function binding, retained scopes, persistent storage and output validation.
+Constructor return slots are seeded with the allocated instance; property
+defaults are instantiated once before inputs, with existing value and handle
+behavior. Symbolic scalar unary/binary overloads and arithmetic function forms
+with one/two operands use these same method requests.
+
+`executeWithClassAccess` carries class access on executable requests and clears
+it before yielding. Caller argument expressions do not receive the callee's
+private access. Drivers reinstall the capability only while advancing method
+work; a suspended call also removes its active CallFrame. Failure/cancellation
+restores both, skips pending output assignments and preserves completed
+effects.
+
+Remaining boundaries include property defaults/validation and accessors, event
+callbacks, `subsref`/`subsasgn`, class arrays, variadic operator folds,
+concatenation and non-arithmetic builtin overload callbacks. `feval` target
+resolution still accepts callable functions and static methods; this does not
+introduce class-constructor or unbound instance-method targets. Indexed
+multiple-output destinations and `load` inside user functions remain unchanged.
+Earlier class/indirect boundary notes below are superseded only for the paths
+listed here.
+
+### Direct script lifecycle
+
+Direct `run` and `source` calls, including `run file` and `source file` command
+forms, now execute resolved scripts through the retained sequence driver.
+Nested scripts can suspend at supported `pause` instructions without replaying
+source lookup, arguments, completed statements or host effects. Resolver lookup
+and parsing remain synchronous; this adds no filesystem or network capability.
+`source` retains its existing base/caller workspace choice.
+
+Both drivers share `executeScriptLifecycle`, which owns temporary local
+functions, imports, dynamic-name guards, script depth and source identity. Its
+`finally` restores these on completion, script return, error, host failure or
+cancellation. Completed workspace writes persist. A script return stops that
+script, allowing its caller to continue. Existing sequence reduction retains
+result flattening, `ans` and semicolon suppression. Suspended nested sequence
+frames expose their retained scope and instruction cursors.
+
+Only the original builtins and command entries participate; host replacements
+and ordinary name/overload precedence are preserved. Direct and indirect
+`run`/`source` use this lifecycle; dynamic eval script paths, class callbacks
+validation callbacks, indexed multiple-output destinations and `load` within
+user functions remain outside this increment. Earlier references below to
+synchronous script frames are superseded only for these `run`/`source` paths.
 
 `Interpreter.CreateExecutionMachine` drives the same `executionList` reduction
 used by recursive evaluation. It retains script-local function registration,
@@ -397,16 +492,16 @@ cannot suspend until their class call lifecycle is migrated.
 
 ### Audited remaining frontiers
 
-| Frontier                                           | Current code boundary                                                           | Status/order                                                                                                  |
-| -------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Matrix/cell element expressions                    | MultiArray.evaluateElements + Interpreter.executionNode                         | Integrated in this increment for existing resumable call forms                                                |
-| Function-returned receivers                        | executionNode IDX eligibility / isNativeExecutionChain                          | Normally dispatched returning calls retain their receiver before native indexing                              |
-| Indexed multiple-output destinations               | isExecutionWriteTarget / assignmentWriter                                       | Separate descriptor/output-selection migration; simple and already documented chained writes remain supported |
-| Indirect forwarding                                | Context.executeBuiltInArguments and synchronous feval/builtin callCallable      | Raw forwarded arguments still synchronous                                                                     |
-| Class/script frames                                | Context class method/constructor lifecycles; Interpreter.executeScriptTree      | Still synchronous, including overload callbacks                                                               |
-| Validation expressions                             | FunctionArguments validation callbacks / Interpreter.validateArgumentValidation | Still synchronous; not covered by literal-element support                                                     |
-| load in user functions                             | executionLeaf effect dispatch guard                                             | Explicitly rejected; needs script/source workspace lifecycle                                                  |
-| Synthetic loop destinations and SPMD worker counts | binding/header operation requests                                               | Previous restrictions unchanged                                                                               |
+| Frontier                                           | Current code boundary                                                           | Status/order                                                                                                     |
+| -------------------------------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Matrix/cell element expressions                    | MultiArray.evaluateElements + Interpreter.executionNode                         | Integrated in this increment for existing resumable call forms                                                   |
+| Function-returned receivers                        | executionNode IDX eligibility / isNativeExecutionChain                          | Normally dispatched returning calls retain their receiver before native indexing                                 |
+| Indexed multiple-output destinations               | isExecutionWriteTarget / assignmentWriter                                       | Separate descriptor/output-selection migration; simple and already documented chained writes remain supported    |
+| Indirect dynamic callbacks                         | Context.executeBuiltInArguments and synchronous feval/builtin callCallable      | Original feval/builtin targets and inputs are retained; dynamic eval callbacks remain synchronous                |
+| Class callbacks/dynamic scripts                    | Property/index/event callbacks, class arrays and dynamic eval                   | Scalar methods, constructors, explicit superclass calls and arithmetic overloads retained; callbacks synchronous |
+| Validation expressions                             | FunctionArguments validation callbacks / Interpreter.validateArgumentValidation | Still synchronous; not covered by literal-element support                                                        |
+| load in user functions                             | executionLeaf effect dispatch guard                                             | Explicitly rejected by the effect-position guard; resource-loaded code is not integrated                         |
+| Synthetic loop destinations and SPMD worker counts | binding/header operation requests                                               | Previous restrictions unchanged                                                                                  |
 
 ## Receivers returned by calls
 
@@ -428,20 +523,24 @@ MATHJSLAB_EFFECT_REQUIRES_ASYNC at the first wait and unwinds call metadata.
 
 Class subsref/field access and other synchronous dispatch use the retained
 receiver in the original evaluator rather than replaying its producing call.
-This does not introduce resumable class methods, constructors or script frames.
-Class dispatch operations remain indivisible. Qualified-name resolution and
-variable/user-function precedence continue through the original dispatch.
+Returned-receiver support does not introduce resumable class methods or
+constructors. Direct run/source scripts are supported by the script lifecycle
+increments above. Class callback and array dispatch operations remain
+indivisible. Qualified-name resolution and variable/user-function precedence
+continue through the original dispatch.
 
 The audited remaining boundaries are:
 
-- Class/script frames: Context class calls and Interpreter.executeScriptTree.
+- Class callbacks/dynamic scripts: property/index/event callbacks, class arrays
+  and dynamic eval remain synchronous. Scalar methods, direct and superclass
+  constructors/methods, and run/source scripts are retained.
 - Indexed multiple-output destinations: assignmentWriter and
   isExecutionWriteTarget; this increment changes reads only.
-- Raw indirect forwarding: Context built-in argument preparation and
-  feval/builtin's synchronous callCallable forwarding.
+- Indirect dynamic callbacks: feval/builtin target and argument forwarding are
+  retained, while dynamic eval and excluded class callbacks remain synchronous.
 - Validation expressions: FunctionArguments/Interpreter validation callbacks.
 - load inside user functions: the effect-position guard still rejects it;
-  source/workspace lifecycle must be retained before enabling this case.
+  resource-loaded code and its workspace lifecycle still need integration.
 - Synthetic loop destinations and SPMD worker-count expressions retain the
   documented synchronous preparation boundaries.
 - Direct pause/load operands still do not produce values; long numeric/backend

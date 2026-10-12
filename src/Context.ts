@@ -5,13 +5,13 @@ import type {
     ExpressionBoundaryValue,
     NameEntry,
     NodeBuiltInFunction,
-    NodeExpr,
     NodeBase,
     NodeInput,
     NodeIdentifier,
     NodeFunctionDefinition,
     NodeIndexExpr,
     NodeReturnList,
+    NodeSuperclassConstructor,
     ReturnHandlerResult,
     RuntimeExpressionValue,
     StrictNodeExpr,
@@ -43,11 +43,12 @@ import { expressionValue, expressionValues, runtimeExpressionValue } from './Exp
 import { RuntimeValue } from './RuntimeValue';
 
 /** Evaluator-owned request within shared call and native index execution. */
-type FunctionExecutionRequest =
+type FunctionExecutionRequest = { readonly classAccess?: ClassDefinition } & (
     | { readonly kind: 'argument'; readonly tree: NodeInput; readonly scope: Scope; readonly commaList?: boolean; readonly frame?: never }
     | { readonly kind: 'operation'; readonly tree: NodeInput; readonly scope: Scope; readonly operation: () => NodeInput; readonly frame?: never; readonly commaList?: never }
     | { readonly kind: 'default'; readonly tree: StrictNodeExpr; readonly scope: Scope; readonly commaList?: never; readonly frame?: never }
-    | { readonly kind: 'body' | 'expression'; readonly tree: NodeInput; readonly scope: Scope; readonly frame: CallFrame; readonly commaList?: never };
+    | { readonly kind: 'body' | 'expression'; readonly tree: NodeInput; readonly scope: Scope; readonly frame: CallFrame; readonly commaList?: never }
+);
 
 type NativeIndexReceiver = { readonly array: MultiArray; readonly text?: CharString };
 
@@ -64,6 +65,8 @@ type ResolvedNameEntry = NameEntry & { node: NodeInput };
  * the context call back into parsing/evaluation-sensitive operations.
  */
 interface ContextInterpreter {
+    resolveResumableOperatorCall(node: NodeBuiltInFunction, values: ExpressionBoundaryValue[], parent: NodeInput): Generator<FunctionExecutionRequest, StrictNodeExpr, NodeInput> | undefined;
+    resolveIndirectCallable(node: NodeBuiltInFunction, args: ExpressionBoundaryValue[]): Callable | undefined;
     /** Whether debug tracing is enabled for call/index dispatch. */
     debug: boolean;
     /** Evaluate one AST/runtime node in a scope. */
@@ -974,7 +977,7 @@ class Context {
         return '';
     }
 
-    private withClassAccess<T>(classDefinition: ClassDefinition, callback: () => T): T {
+    public withClassAccess<T>(classDefinition: ClassDefinition, callback: () => T): T {
         this.classAccessStack.push(classDefinition);
         try {
             return callback();
@@ -1083,7 +1086,7 @@ class Context {
      * @param expr Evaluated expression that may be a function handle.
      * @returns Callable wrapper for function handles, or `undefined`.
      */
-    public resolveCallable(expr: NodeExpr): Callable | undefined {
+    public resolveCallable(expr: unknown): Callable | undefined {
         /* Function handles may point to named functions or inline lambda bodies. */
         if (FunctionHandle.isInstanceOf(expr)) {
             /* Named handle, for example `@sin`. */
@@ -1124,7 +1127,7 @@ class Context {
      * @param scope Scope used for lookup.
      * @returns Resolved runtime value or callable placeholder.
      */
-    public resolveIdentifier(tree: NodeInput, scope: Scope): NodeExpr {
+    public resolveIdentifier(tree: NodeInput, scope: Scope): ExpressionBoundaryValue {
         const name = tree.id;
         /* 1. Variable lookup. */
         const variable = this.resolveSymbol(name, scope, { classes: false, functions: false, imports: false });
@@ -1733,30 +1736,35 @@ class Context {
         while (!next.done) {
             try {
                 const request = next.value;
-                let value: NodeInput;
-                if (request.kind === 'operation') value = request.operation();
-                else if (request.kind === 'body') value = this.evaluatedExecutionResult(request.tree, request.scope);
-                else if (request.kind === 'expression') value = this.rawEvaluationResult(request.tree, request.scope);
-                else {
-                    if (request.kind === 'default') this.pushCallStackFrame(new CallFrame(request.scope));
-                    this.pushRequestedOutputCount(1);
-                    this.pushRequestedOutputMask([true]);
-                    if (request.commaList) this.pushCommaListExpansion();
-                    try {
-                        value = request.commaList ? this.rawEvaluationResult(request.tree, request.scope) : this.evaluatedExpressionValue(request.tree, request.scope, request.kind);
-                    } finally {
-                        if (request.commaList) this.popCommaListExpansion();
-                        this.popRequestedOutputMask();
-                        this.popRequestedOutputCount();
-                        if (request.kind === 'default') this.popCallStackFrame();
-                    }
-                }
-                next = execution.next(value);
+                const evaluate = (): NodeInput => this.evaluateFunctionRequest(request);
+                next = execution.next(request.classAccess ? this.withClassAccess(request.classAccess, evaluate) : evaluate());
             } catch (error) {
                 next = execution.throw(error);
             }
         }
         return next.value;
+    }
+
+    private evaluateFunctionRequest(request: FunctionExecutionRequest): NodeInput {
+        let value: NodeInput;
+        if (request.kind === 'operation') value = request.operation();
+        else if (request.kind === 'body') value = this.evaluatedExecutionResult(request.tree, request.scope);
+        else if (request.kind === 'expression') value = this.rawEvaluationResult(request.tree, request.scope);
+        else {
+            if (request.kind === 'default') this.pushCallStackFrame(new CallFrame(request.scope));
+            this.pushRequestedOutputCount(1);
+            this.pushRequestedOutputMask([true]);
+            if (request.commaList) this.pushCommaListExpansion();
+            try {
+                value = request.commaList ? this.rawEvaluationResult(request.tree, request.scope) : this.evaluatedExpressionValue(request.tree, request.scope, request.kind);
+            } finally {
+                if (request.commaList) this.popCommaListExpansion();
+                this.popRequestedOutputMask();
+                this.popRequestedOutputCount();
+                if (request.kind === 'default') this.popCallStackFrame();
+            }
+        }
+        return value;
     }
 
     /** Shared call lifecycle. The driver executes the body in the retained scope. */
@@ -1765,6 +1773,8 @@ class Context {
         args: CallArgumentValue[],
         parent: NodeInput,
         requestedOutputCount: number,
+        constructorInstance?: ClassInstance,
+        constructorClass = constructorInstance?.classDefinition,
     ): Generator<FunctionExecutionRequest, StrictNodeExpr, NodeInput> {
         const func = callable.node;
         const callerScope = this.currentScope;
@@ -1795,6 +1805,7 @@ class Context {
         functionScope.assignExistingParentNames = Boolean(func.attributes?.nested);
         this.interpreter!.configureFunctionWorkspace(func, functionScope);
         FunctionCall.initializeFixedReturnSlots(returnLayout.returnNames, functionScope.nameTable);
+        if (constructorInstance && returnLayout.returnNames[0]?.type === 'IDENT') functionScope.defineName(returnLayout.returnNames[0].id, constructorInstance);
         /* Bind evaluated arguments to formal parameter names. */
         const evaluatedArgs = FunctionCall.evaluateCallArguments(
             callArguments.positional,
@@ -1863,7 +1874,13 @@ class Context {
             }
             this.interpreter!.validateFunctionOutputArguments(func, functionScope, requestedOutputCount, outputMask);
             /* Build a lazy return list backed by the function scope. */
-            result = FunctionCall.createReturnList(returnLayout, functionScope.nameTable, (message) => this.throwEvalError(message), outputMask);
+            if (constructorInstance) {
+                const firstReturn = returnLayout.returnNames[0];
+                const constructed = !firstReturn || firstReturn.type === '<~>' ? constructorInstance : functionScope.nameTable[firstReturn.id]?.node;
+                if (!ClassInstance.isInstanceOf(constructed) || (constructed.classDefinition !== constructorClass && !constructed.classDefinition.isSubclassOf(constructorClass!)))
+                    this.throwEvalError(`constructor for class ${constructorClass!.name} must return an object of class ${constructorClass!.name}.`);
+                result = constructed;
+            } else result = FunctionCall.createReturnList(returnLayout, functionScope.nameTable, (message) => this.throwEvalError(message), outputMask);
         } finally {
             this.storePersistentVariables(func, functionScope);
             this.popCallStackFrame();
@@ -1884,7 +1901,7 @@ class Context {
         return instance;
     }
 
-    private constructClassInstance(classDefinition: ClassDefinition, args: CallArgumentValue[], parent: NodeInput): ClassInstance {
+    private assertConstructible(classDefinition: ClassDefinition): void {
         if (classDefinition.isEffectivelyAbstract()) {
             const abstractMethods = classDefinition.unresolvedAbstractMethods().map((method) => method.name);
             const abstractProperties = classDefinition.unresolvedAbstractProperties().map((property) => property.name);
@@ -1895,6 +1912,10 @@ class Context {
                     : `cannot instantiate abstract class ${classDefinition.name}.`,
             );
         }
+    }
+
+    private constructClassInstance(classDefinition: ClassDefinition, args: CallArgumentValue[], parent: NodeInput): ClassInstance {
+        this.assertConstructible(classDefinition);
         const instance = this.instantiateClassDefaults(classDefinition);
         return this.constructClassInstanceWithInstance(classDefinition, instance, args, parent);
     }
@@ -1906,104 +1927,47 @@ class Context {
         return this.constructClassInstanceWithInstance(superclassDefinition, instance, args, parent);
     }
 
-    private constructClassInstanceWithInstance(classDefinition: ClassDefinition, instance: ClassInstance, args: CallArgumentValue[], parent: NodeInput): ClassInstance {
-        const constructorMethod = classDefinition.findConstructor();
-        if (!constructorMethod) {
-            if (args.length > 0) {
-                this.throwEvalError(`constructor for class ${classDefinition.name} accepts no input arguments.`);
-            }
-            return instance;
-        }
-
-        this.ensureConcreteClassMethod(constructorMethod);
-        const func = constructorMethod.node;
-        const requestedOutputCount = 1;
-        const { inputLayout, returnLayout, callArguments, inputDefaults } = FunctionCall.prepareFunctionCall(func, args, requestedOutputCount, {
-            nameValueParameters: (item) => this.interpreter!.getFunctionNameValueParameters(item),
-            splitCallArguments: (item, itemArgs) => this.interpreter!.splitFunctionCallNameValueArguments(item, itemArgs),
-            expandPositionalArguments: (itemArgs) => this.expandCommaListArguments(itemArgs),
-            inputDefaults: (item) => this.interpreter!.getFunctionInputArgumentDefaults(item),
-            outputRepeatingName: (item) => this.interpreter!.getFunctionOutputRepeatingName(item),
-            throwEvalError: (message) => this.throwEvalError(message),
-        });
-        const functionScope = Scope.create((func.definingScope as Scope | undefined) ?? this.currentScope);
-        this.interpreter!.configureFunctionWorkspace(func, functionScope);
-        FunctionCall.initializeFixedReturnSlots(returnLayout.returnNames, functionScope.nameTable);
-        const firstReturn = returnLayout.returnNames[0];
-        if (firstReturn && firstReturn.type !== '<~>') {
-            functionScope.defineName(firstReturn.id, instance);
-        }
-
-        const evaluateCallArgument = (arg: CallArgumentValue): NodeInput => {
-            this.pushRequestedOutputCount(1);
-            try {
-                return this.evaluatedExpressionValue(arg, this.currentScope, 'argument');
-            } finally {
-                this.popRequestedOutputCount();
-            }
-        };
-        const evaluatedArgs = FunctionCall.evaluateCallArguments(callArguments.positional, parent, evaluateCallArgument, (message) => this.throwEvalError(message), 0, true);
-        const evaluatedNameValueArgs = FunctionCall.evaluateNameValueArguments(callArguments.named, parent, evaluateCallArgument, (message) => this.throwEvalError(message));
-        FunctionCall.bindPositionalInputs(
-            func,
-            inputLayout,
-            evaluatedArgs,
-            inputDefaults,
-            (name, value) => functionScope.defineName(name, value),
-            (_name, defaultValue) => {
-                this.pushRequestedOutputCount(1);
-                try {
-                    return this.evaluatedExpressionValue(defaultValue, functionScope, 'default argument');
-                } finally {
-                    this.popRequestedOutputCount();
-                }
-            },
-            (message) => this.throwEvalError(message),
-        );
-        this.interpreter!.bindFunctionNameValueArguments(func, functionScope, evaluatedNameValueArgs);
-        FunctionCall.bindVarargin(inputLayout, evaluatedArgs, (name, value) => functionScope.defineName(name, value));
-        FunctionCall.bindVarargout(returnLayout, requestedOutputCount, (name, value) => functionScope.defineName(name, value));
-
-        const callable = Callables.fromFunctionNode(func);
-        const inputCount = callArguments.positional.length + args.length - (callArguments.rawPositionalCount ?? callArguments.positional.length);
-        this.pushCallStackFrame(new CallFrame(functionScope, callable, this.resolveCallSite(parent), func.id, inputCount, requestedOutputCount, args));
-        this.loadPersistentVariables(func, functionScope);
-        this.classAccessStack.push(classDefinition);
-        try {
-            this.interpreter!.applyScopedImports(func.statements, functionScope);
-            this.interpreter!.registerNestedFunctions(func, functionScope);
-            this.interpreter!.validateFunctionInputArguments(func, functionScope);
-            this.interpreter!.validateFunctionRepeatingArguments(
-                func,
-                functionScope,
-                FunctionCall.expressionArgumentValues(evaluatedArgs.slice(inputLayout.positionalParamCount), 'repeating argument', (message) => this.throwEvalError(message)),
-            );
-            try {
-                if (func.statements.list.length > 0) {
-                    this.evaluatedExecutionResult(func.statements, functionScope);
-                }
-            } catch (e: unknown) {
-                if (!(e instanceof ReturnSignal)) {
-                    throw e;
-                }
-            }
-            this.interpreter!.validateFunctionOutputArguments(func, functionScope, requestedOutputCount);
-        } finally {
-            this.classAccessStack.pop();
-            this.storePersistentVariables(func, functionScope);
-            this.popCallStackFrame();
-        }
-
-        if (!firstReturn || firstReturn.type === '<~>') {
-            return instance;
-        }
-        const constructed = functionScope.nameTable[firstReturn.id]?.node;
-        if (!ClassInstance.isInstanceOf(constructed) || (constructed.classDefinition !== classDefinition && !constructed.classDefinition.isSubclassOf(classDefinition))) {
-            this.throwEvalError(`constructor for class ${classDefinition.name} must return an object of class ${classDefinition.name}.`);
-        }
-        return constructed;
+    /** Share explicit superclass selection and invocation between execution drivers. */
+    public callSuperclass(node: NodeSuperclassConstructor, scope: Scope): StrictNodeExpr {
+        return this.driveFunctionExecution(this.executeSuperclass(node, scope));
     }
 
+    public *executeSuperclass(node: NodeSuperclassConstructor, scope: Scope): Generator<FunctionExecutionRequest, StrictNodeExpr, NodeInput> {
+        const methodName = AST.isNodeIdentifier(node.instance) ? node.instance.id : '';
+        const directTarget = AST.isNodeIdentifier(node.instance) ? scope.resolveName(node.instance.id)?.node : undefined;
+        const methodCall = AST.isNodeIdentifier(node.instance) && !ClassInstance.isInstanceOf(directTarget);
+        if (methodCall && node.args.length === 0) this.throwEvalError(`superclass method '${methodName}' requires an object argument.`);
+        const receiver = ClassInstance.isInstanceOf(directTarget)
+            ? directTarget
+            : this.reducedCommaListScalar(
+                  yield {
+                      kind: 'argument',
+                      tree: methodCall ? node.args[0] : node.instance,
+                      scope,
+                  },
+              );
+        if (!ClassInstance.isInstanceOf(receiver)) {
+            this.throwEvalError(methodCall ? `superclass method '${methodName}' requires a class instance.` : 'superclass constructor target must be a class instance.');
+        }
+        const superclass = receiver.classDefinition.findSuperclass(node.superclass.id);
+        if (!superclass) this.throwEvalError(`class ${node.superclass.id} is not a superclass of class ${receiver.classDefinition.name}.`);
+        if (!this.canAccessClassMember(superclass, 'protected')) {
+            this.throwEvalError(
+                methodCall
+                    ? `superclass method '${methodName}' is only accessible from class methods.`
+                    : `superclass constructor '${node.superclass.id}' is only accessible from class methods.`,
+            );
+        }
+        if (!methodCall) return yield* this.executeConstructor(superclass, receiver, node.args, node);
+        const method = superclass.findMethod(methodName, (item) => !item.isStatic);
+        if (!method) this.throwEvalError(`unknown superclass method '${methodName}' for class ${superclass.name}.`);
+        if (!this.canAccessClassMember(method.classDefinition, method.access))
+            this.throwEvalError(`method '${methodName}' has ${method.access} access for class ${receiver.classDefinition.name}.`);
+        return yield* this.executeClassInstanceMethod(receiver, method, node.args.slice(1), node);
+    }
+    private constructClassInstanceWithInstance(classDefinition: ClassDefinition, instance: ClassInstance, args: CallArgumentValue[], parent: NodeInput): ClassInstance {
+        return this.driveFunctionExecution(this.executeConstructor(classDefinition, instance, args, parent));
+    }
     /**
      * Call an instance method with class access and value/handle receiver rules.
      *
@@ -2014,18 +1978,7 @@ class Context {
      * @returns Method return expression or return list.
      */
     public callClassInstanceMethod(instance: ClassInstance, method: ClassMethodDefinition, args: CallArgumentValue[], parent: NodeInput): StrictNodeExpr {
-        if (method.isAbstract) {
-            this.throwEvalError(`cannot call abstract method '${method.name}' for class ${method.classDefinition.name}.`);
-        }
-        this.ensureConcreteClassMethod(method);
-        try {
-            ClassInstance.throwIfDeleted(instance);
-        } catch (e: unknown) {
-            this.throwEvalError((e as Error).message);
-        }
-        return this.withClassAccess(method.classDefinition, () =>
-            this.callFunctionDefinition(Callables.functionDefinition(method.node), [this.classMethodReceiverArgument(instance), ...args], parent, this.requestedOutputCount),
-        );
+        return this.driveFunctionExecution(this.executeClassInstanceMethod(instance, method, args, parent));
     }
 
     /**
@@ -2044,11 +1997,7 @@ class Context {
      * @returns Method return expression or return list.
      */
     public callClassStaticMethod(method: ClassMethodDefinition, args: CallArgumentValue[], parent: NodeInput): StrictNodeExpr {
-        if (method.isAbstract) {
-            this.throwEvalError(`cannot call abstract method '${method.name}' for class ${method.classDefinition.name}.`);
-        }
-        this.ensureConcreteClassMethod(method);
-        return this.withClassAccess(method.classDefinition, () => this.callFunctionDefinition(Callables.functionDefinition(method.node), args, parent, this.requestedOutputCount));
+        return this.driveFunctionExecution(this.executeClassStaticMethod(method, args, parent));
     }
 
     /**
@@ -2402,21 +2351,114 @@ class Context {
      * @returns Call result.
      */
     callCallable(callable: Callable, args: CallArgumentValue[], parent: NodeInput): ExpressionBoundaryValue {
-        const requestedOutputCount = this.requestedOutputCount;
+        return this.driveFunctionExecution(this.executeCallable(callable, args, parent, this.requestedOutputCount));
+    }
+
+    public *executeCallable(
+        callable: Callable,
+        args: CallArgumentValue[],
+        parent: NodeInput,
+        requestedOutputCount: number,
+    ): Generator<FunctionExecutionRequest, ExpressionBoundaryValue, NodeInput> {
         switch (callable.type) {
             case 'BUILTIN':
-                return this.driveFunctionExecution(this.executeBuiltInFunction(callable, args, parent, requestedOutputCount));
+                return yield* this.executeBuiltInFunction(callable, args, parent, requestedOutputCount);
             case 'LAMBDA':
-                return this.driveFunctionExecution(this.executeAnonymousFunction(callable, args, parent, requestedOutputCount));
+                return yield* this.executeAnonymousFunction(callable, args, parent, requestedOutputCount);
             case 'FCNDEF': {
-                return this.callFunctionDefinition(callable, args, parent, requestedOutputCount);
+                return yield* this.executeFunctionDefinition(callable, args, parent, requestedOutputCount);
             }
             case 'STATIC_METHOD': {
-                return this.callClassStaticMethod(callable.node.method, args, parent);
+                return yield* this.executeClassStaticMethod(callable.node.method, args, parent);
             }
             default:
                 throw new Error('Invalid callable.');
         }
+    }
+
+    /** Install class access only while advancing; suspended requests carry the capability. */
+    private *executeWithClassAccess<T>(definition: ClassDefinition, execution: Generator<FunctionExecutionRequest, T, NodeInput>): Generator<FunctionExecutionRequest, T, NodeInput> {
+        let next = this.withClassAccess(definition, () => execution.next());
+        while (!next.done) {
+            let value: NodeInput;
+            try {
+                value = yield { ...next.value, classAccess: next.value.kind === 'argument' ? undefined : definition };
+            } catch (error) {
+                next = this.withClassAccess(definition, () => execution.throw(error));
+                continue;
+            }
+            next = this.withClassAccess(definition, () => execution.next(value));
+        }
+        return next.value;
+    }
+
+    public *executeClassInstanceMethod(
+        instance: ClassInstance,
+        method: ClassMethodDefinition,
+        args: CallArgumentValue[],
+        parent: NodeInput,
+    ): Generator<FunctionExecutionRequest, StrictNodeExpr, NodeInput> {
+        if (method.isAbstract) this.throwEvalError(`cannot call abstract method '${method.name}' for class ${method.classDefinition.name}.`);
+        this.ensureConcreteClassMethod(method);
+        try {
+            ClassInstance.throwIfDeleted(instance);
+        } catch (error) {
+            this.throwEvalError((error as Error).message);
+        }
+        return yield* this.executeWithClassAccess(
+            method.classDefinition,
+            this.executeFunctionDefinition(Callables.functionDefinition(method.node), [this.classMethodReceiverArgument(instance), ...args], parent, this.requestedOutputCount),
+        );
+    }
+
+    public *executeClassStaticMethod(method: ClassMethodDefinition, args: CallArgumentValue[], parent: NodeInput): Generator<FunctionExecutionRequest, StrictNodeExpr, NodeInput> {
+        if (method.isAbstract) this.throwEvalError(`cannot call abstract method '${method.name}' for class ${method.classDefinition.name}.`);
+        this.ensureConcreteClassMethod(method);
+        return yield* this.executeWithClassAccess(method.classDefinition, this.executeFunctionDefinition(Callables.functionDefinition(method.node), args, parent, this.requestedOutputCount));
+    }
+
+    public *executeFunctionalClassMethod(name: string, args: CallArgumentValue[], parent: NodeInput): Generator<FunctionExecutionRequest, StrictNodeExpr, NodeInput> {
+        if (!args.length) this.throwUndefinedReferenceError(name);
+        const receiver = this.reducedCommaListScalar(yield { kind: 'argument', tree: args[0], scope: this.currentScope });
+        if (ClassInstance.isInstanceOf(receiver) && name !== 'delete') {
+            const method = receiver.classDefinition.findMethod(name, (item) => !item.isStatic);
+            if (!method) this.throwEvalError(`unknown method '${name}' for class ${receiver.classDefinition.name}.`);
+            if (!this.canAccessClassMember(method.classDefinition, method.access))
+                this.throwEvalError(`method '${name}' has ${method.access} access for class ${receiver.classDefinition.name}.`);
+            return yield* this.executeClassInstanceMethod(receiver, method, args.slice(1), parent);
+        }
+        return this.returnExpression(
+            yield { kind: 'operation', tree: parent, scope: this.currentScope, operation: () => this.callFunctionalClassMethod(name, args, parent, receiver) },
+            'method result',
+        );
+    }
+    public *executeClassInvocation(
+        expr: ClassBoundMethod | ClassStaticMethod | ClassDefinition,
+        args: CallArgumentValue[],
+        parent: NodeInput,
+    ): Generator<FunctionExecutionRequest, StrictNodeExpr, NodeInput> {
+        if (ClassBoundMethod.isInstanceOf(expr)) return yield* this.executeClassInstanceMethod(expr.instance, expr.method, args, parent);
+        if (ClassStaticMethod.isInstanceOf(expr)) return yield* this.executeClassStaticMethod(expr.method, args, parent);
+        this.assertConstructible(expr);
+        const instance = this.instantiateClassDefaults(expr);
+        return yield* this.executeConstructor(expr, instance, args, parent);
+    }
+
+    private *executeConstructor(
+        definition: ClassDefinition,
+        instance: ClassInstance,
+        args: CallArgumentValue[],
+        parent: NodeInput,
+    ): Generator<FunctionExecutionRequest, ClassInstance, NodeInput> {
+        const method = definition.findConstructor();
+        if (!method) {
+            if (args.length) this.throwEvalError(`constructor for class ${definition.name} accepts no input arguments.`);
+            return instance;
+        }
+        this.ensureConcreteClassMethod(method);
+        const result = yield* this.executeWithClassAccess(definition, this.executeFunctionDefinition(Callables.functionDefinition(method.node), args, parent, 1, instance, definition));
+        if (!ClassInstance.isInstanceOf(result)) this.throwEvalError('Invalid constructor result.');
+        return result;
     }
 
     /** Bind builtin inputs once, then request indivisible dispatch through the evaluator. */
@@ -2427,6 +2469,14 @@ class Context {
         requestedOutputCount: number,
     ): Generator<FunctionExecutionRequest, ExpressionBoundaryValue, NodeInput> {
         const evaluatedArgs = yield* this.executeBuiltInArguments(callable.node, args, parent);
+        const indirect = this.interpreter?.resolveIndirectCallable(callable.node, evaluatedArgs);
+        if (indirect) {
+            this.validateBuiltInInputArity(callable.node, evaluatedArgs.length);
+            this.validateBuiltInInputParameters(callable.node, evaluatedArgs);
+            return yield* this.executeCallable(indirect, evaluatedArgs.slice(1), AST.nodeIdentifier(callable.node.id), requestedOutputCount);
+        }
+        const operator = this.interpreter?.resolveResumableOperatorCall(callable.node, evaluatedArgs, parent);
+        if (operator) return yield* operator;
         const value = yield {
             kind: 'operation',
             tree: parent,
@@ -2919,6 +2969,6 @@ class Context {
     }
 }
 
-export type { CallDispatch, CallDispatchKind, SymbolResolution, SymbolResolutionKind, SymbolResolutionOptions, SymbolResolutionSource, SymbolResolutionTier };
+export type { FunctionExecutionRequest, CallDispatch, CallDispatchKind, SymbolResolution, SymbolResolutionKind, SymbolResolutionOptions, SymbolResolutionSource, SymbolResolutionTier };
 export { callDispatchPrecedence, Context, symbolResolutionPrecedence, ReturnSignal, BreakSignal, ContinueSignal };
 export default Context;

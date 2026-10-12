@@ -6,6 +6,61 @@ asynchronous-runtime increments.
 
 ## Hardened in this increment
 
+### Explicit scalar superclass execution
+
+`Context.executeSuperclass` now shares target/receiver selection, ancestry and
+access checks, and constructor/method requests between drivers.
+`Interpreter.executionNode` retains `SUPERCLASS_CTOR` nodes; call discovery
+includes them in assignment and native returned-value preparation. The direct
+evaluator drains the same requests through `Context.callSuperclass`. Superclass
+construction retains the derived instance, without allocating its defaults
+again, and uses the existing constructor return contract.
+
+Private/protected grants and all nested CallFrames remain scoped to
+advancement. Success, resumed error and cancellation share cleanup, output
+masks and value/ handle receiver semantics. Arrays and property/index/event
+callbacks remain outside this scalar increment; class/source lookup remains
+synchronous.
+
+### Retained indirect and scalar class calls
+
+`Context.executeCallable` shares ordinary, anonymous, builtin and static-method
+requests between drivers. Original `feval`/`builtin` targets are resolved once;
+forwarded inputs keep the target's evaluation policy. Scalar instance/static
+methods and direct constructor bodies now share `executeFunctionDefinition`.
+Constructor instances seed return slots; no second binding implementation is
+needed. `Interpreter.executionFunctionCall` drives the same requests for scalar
+arithmetic overloads.
+
+Class access is explicit request metadata, installed only while advancing
+method work and removed before a yield. Caller inputs keep caller access.
+Error/cancellation restores access, frames, output metadata and persistent
+storage. Property defaults remain synchronous and run once before inputs. Class
+property/index/event callbacks, arrays, variadic/concatenation operators,
+dynamic eval and load inside functions remain separate boundaries. These
+current paths supersede historical class/forwarding limits below; no Worker
+protocol or session configuration change is required.
+
+Validation for these retained calls passed the interpreter/class/function/
+compatibility/architecture suites, machine and public runtime regressions, `.m`
+fixtures, all 11 production builds and distribution tests including a real Node
+Worker. `tsc --noEmit --project tsconfig.build.json` and `build:types` passed.
+The six historical root type-check failures have since been corrected. Root,
+production and ES2015 checks are required gates for the current working tree.
+
+### Direct script execution
+
+`executeScriptLifecycle` shares script-local function/import restoration,
+dynamic-name guards and source identity between synchronous evaluation and the
+resumable driver. Direct `run`/`source` builtin and command dispatch retains
+resolved source trees and evaluates their sequences through `executionNode`.
+Nested waits preserve completed effects and workspace mutations; failure and
+cancellation unwind the same lifecycle. Source resolution remains synchronous.
+Historical script-boundary notes below now apply to dynamic eval and class
+callback paths. Direct and indirect `run`/`source` are retained. Property and
+index/event callbacks, validation and `load` inside user functions remain
+separate boundaries. See the current inventory in the execution guide.
+
 ### Runtime validation
 
 `validateattributes` no longer coerces arbitrary `NodeInput` values to
@@ -145,8 +200,8 @@ helpers and comma-list evaluation accept `ExpressionBoundaryValue` instead of
 the legacy alias. `FunctionCall.createReturnList` returns `StrictNodeExpr`
 (void or a lazy return list).
 
-The current hand-written production inventory contains 17 operational
-`NodeExpr` annotations: 15 in `Interpreter` and 2 in `Context`. This count
+The current hand-written production inventory contains ten operational
+`NodeExpr` annotations in `Interpreter` and none in `Context`. This count
 excludes imports, comments, the alias/root-list definitions in `AST`, tests,
 and generated parser files. The remaining sites cover increment/decrement,
 assignment/indexing helpers, declaration/reference collection, a lazy selector,
@@ -232,15 +287,16 @@ Anonymous function arguments and expression bodies now share the call request
 driver with ordinary functions. Unary/range operands, conditional predicates,
 switch selectors/case tests and loop headers retain their evaluated state
 across waits. Existing closure, output-mask, numerical dispatch and condition
-short-circuit rules are preserved. Class calls and dynamic script frames remain
-outside this subset; see [resumable execution](resumable-execution.md).
+short-circuit rules are preserved. Scalar class calls and run/source script
+frames have since been migrated; see
+[resumable execution](resumable-execution.md).
 
 Builtin inputs now use shared selective argument requests, followed by an
 indivisible `operation` request for existing dispatch and validation. Native
 index reads from simple named receivers retain their receiver and evaluated
-indices, including the receiver used by `end`/colon. Classes and raw indirect
-forwarding remain separate boundaries. No matrix storage or numerical/backend
-implementation changes are included. See
+indices, including the receiver used by `end`/colon. Scalar class calls and
+supported feval/builtin forwarding have since been migrated. No matrix storage
+or numerical/backend implementation changes are included. See
 [resumable execution](resumable-execution.md) for the integrated subset.
 
 Assignment normalization and the original writer now serve both drivers through
@@ -251,11 +307,11 @@ string, cell and structure read chains retain intermediate receivers and expand
 comma-separated lists once, applying each subsequent index once per item.
 Metadata and call scopes are restored before waits and exceptional exits.
 Pending writes are skipped on failure/cancellation; completed workspace effects
-persist. Classes, scripts and indexed multi-target output destinations remain
-migration boundaries. See [resumable execution](resumable-execution.md) for
-evaluation order and limits. Local application and browser Worker integration
-can be validated against public runtime contracts without publishing sibling
-checkouts.
+persist. Property/event callbacks, object arrays, overloaded indexing and
+indexed multi-target output destinations remain migration boundaries. See
+[resumable execution](resumable-execution.md) for evaluation order and limits.
+Local application and browser Worker integration can be validated against
+public runtime contracts without publishing sibling checkouts.
 
 ## Consumer distribution boundary
 
@@ -265,8 +321,9 @@ did not recognize. Sharing the exported core fixes that boundary; no runtime
 guard is relaxed and no numeric value is coerced by the app. Dedicated Worker
 effect transport also removes non-cloneable AbortSignal objects in
 RuntimeWorkerServer, where the protocol boundary belongs. Browser and Node
-Worker artifacts retain relative platform-core imports. Class/script frames and
-remaining receiver/output migrations are still separate work.
+Worker artifacts retain relative platform-core imports. Scalar class/script
+frames have since been migrated; remaining receiver/output boundaries are
+listed in resumable-execution.md.
 
 ## Resumable literal construction
 

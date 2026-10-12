@@ -1,6 +1,7 @@
 {
     "extends": "./tsconfig.json",
     "exclude": [
+        "test-results",
         "node_modules",
         "eslint.config.*",
         "jest.config.*",

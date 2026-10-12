@@ -18,6 +18,8 @@ can suspend.
   dispatch.
 - [Numeric array model](numeric-array-model.md): numeric backends, logical
   column-major semantics, indexing and storage.
+- [Numeric sequence compatibility](numeric-sequence-compatibility.md): discrete
+  differences, forward/reverse accumulation and explicit MATLAB/Octave choices.
 - [Plotting](plotting.md): capturing visualization descriptions and host
   rendering.
 
@@ -52,3 +54,5 @@ but not this `doc` directory; use the repository for these guides.
 
 The separate [demo application](https://github.com/MathJSLab/mathjslab-app)
 maintains multilingual command help and application-specific documentation.
+
+- [Architecture review before publication](architecture-review.md).

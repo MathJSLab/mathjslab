@@ -3,6 +3,150 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 2.9.0
+
+- Contract changes: var/std use normalization-before-selection syntax
+  F(A,W,dim), replacing the former dimension shorthand, and accept bounded
+  paired outputs; nargin reports -4 and nargout -2. Overlapping execute calls
+  return MATHJSLAB_SESSION_BUSY; overlapping parse calls reject. Local-only
+  hooks/configuration passed to remote runtime factories are rejected
+  explicitly.
+
+- Audit architecture and protect session ownership: reject overlapping
+  evaluation, cancel and await cleanup before reset/disposal, share abortable
+  host waits and release cancelled Worker effects. Preserve remote error codes,
+  narrow guarded expression contracts and transport decimal arrays without
+  Float64 precision loss. Add lifecycle, transport and real Worker regressions;
+  record remaining architecture boundaries and publication gates. Apply remote
+  session defaults, reject unsupported local-only configuration, retain parfor
+  ownership until child shutdown, and materialize named spfun callback outputs
+  once per nonzero element.
+
+- Add vector weights to var/std along one scalar dimension, with paired
+  weighted means and all existing missing flags. Preserve scalar 0/1
+  normalization and unweighted selectors. Validate lengths and nonnegative real
+  weights, omit missing data/weight pairs together and define zero/infinite
+  mass. Share line kernels, normalize weights by their maximum and keep shifted
+  complex dispersion stable. Add fixtures, public runtime and native Worker
+  regressions; document remaining array/global weight boundaries.
+
+- Add bounded paired outputs [V,M] from var and [S,M] from std for every
+  supported selector, normalization and missing flag. Group original
+  observations once, return the paired mean from the shifted dispersion kernel
+  and preserve direct numeric CoreFunctions APIs. nargout now reports -2;
+  excess outputs are rejected. Add numerical, public-runtime and native Worker
+  regressions.
+
+- Add numeric includemissing/omitmissing aliases to sum, prod, cumsum, cumprod,
+  mean, var and std through shared option validation and existing kernels.
+  Reject duplicate/mixed flags. Add public runtime and Worker regressions and
+  record versioned Octave Online differential checks. Remote CI is optional;
+  retain local release gates.
+
+- Add a release validation gate for installed npm tarballs: check every export
+  target, compile public declarations with strict checking, execute a real Node
+  Worker and run statistics fixtures in a native Chromium module Worker. Add
+  optional, manually triggered Windows/Linux CI validation. Complete the local
+  unit and integration suites; broader native dialect parity remains
+  unverified. Remote CI is optional.
+
+- Add "all" and distinct row/column vector dimensions to mean, var and std,
+  preserving existing NaN flags and scalar 0/1 normalization. Share complete
+  slice grouping with sum/prod, count original valid observations and keep
+  stable complex dispersion without sequential partial statistics. Preserve
+  shapes, column-major order, empty/singleton behavior, backend precision and
+  input storage. Add page/global fixtures and public-runtime/real-Worker
+  regressions; document canonical normalization-before-selection syntax,
+  dialect restrictions, numerical limits and remaining publication checks.
+
+- Add explicit includenan/omitnan to var and std, with scalar 0/1 normalization
+  and an optional scalar dimension. Share shifted two-pass dispersion and the
+  numeric line-sum machinery; count valid whole-complex observations per slice,
+  compute real squared-magnitude complex variance and preserve shapes,
+  promotion and input storage. Define empty/all-missing/nonfinite slices as NaN
+  and finite singleton slices as zero. Replace the old dimension shorthand with
+  canonical F(A,0,dim); bounded nargin is now -4. Add small fixtures, numerical
+  stability and runtime regressions, including a real Worker, and document
+  dialect boundaries.
+
+- Add explicit `includenan`/`omitnan` to arithmetic `mean`, with an optional
+  scalar dimension. Reuse shared line sums and whole-complex NaN
+  classification, count valid original values independently per line and return
+  NaN for empty/all-missing lines. Preserve shapes, logical promotion, complex
+  singleton infinities and input storage; fix above-rank means and define
+  empty-axis behavior. Cover small fixtures through public APIs and a real
+  Worker; document remaining dialect boundaries. The bounded signature now
+  reports `nargin("mean")` -3.
+
+- Add nonempty unique row/column dimension vectors to numeric/logical
+  `sum`/`prod`, with optional NaN flags. Group slices in source column-major
+  order and reuse the scalar-axis line kernel; preserve unselected shapes,
+  empty/all-missing identities, logical promotion and input storage. Ignore
+  axes beyond the input rank and reject repeated/invalid selectors. Cover page,
+  cross-page and empty/missing fixtures through public APIs and a real Worker;
+  document deterministic accumulation and remaining dialect boundaries. Fix
+  reused permutation indexing for normalized trailing singleton axes and
+  reshape page ordering when row counts change without changing columns.
+
+- Add numeric/logical `sum(A,"all")` and `prod(A,"all")`, optionally followed
+  by a NaN flag, using the existing column-major reduction kernel. Return
+  scalar 0/1 identities for every empty shape; preserve input storage, logical
+  promotion and complex singleton values. Cover small measurement, page-product
+  and missing-data fixtures through public APIs and a real Worker; document the
+  remaining dialect boundaries and Octave manual discrepancy.
+
+- Add explicit `includenan`/`omitnan` to numeric `sum`/`prod`, sharing complex
+  NaN accumulation rules with cumulative operations. Handle empty reduction
+  axes and all-missing lines with independent 0/1 identities; preserve shape,
+  logical promotion and input storage, including axes above the rank. Cover
+  matrix/page fixtures, both backends, resumed arguments, public runtimes and a
+  real Worker; document remaining dialect boundaries.
+
+- Restore the general strict type check without skipping dependency
+  declarations. Declare a compatible development-only `type-fest` dependency
+  for ESLint's undeclared type imports; fix ES2015-compatible JSDoc indexing
+  and explicit whole-module export-map values in the documentation generator.
+  Add `npm run check:types` as the reproducible general check.
+
+- Support explicit `includenan`/`omitnan` in `cumsum` and `cumprod`, with
+  optional dimension and direction. Skip whole complex NaN inputs, retain
+  output positions and use 0/1 for all-missing lines. Preserve logical
+  promotion, empty shapes and input storage through the shared core machinery.
+  Document dialect boundaries and the Octave manual/source discrepancy; add
+  fixtures, both numeric backends, runtime and real Worker verification.
+
+- Add numeric/logical `diff` and forward/reverse `cumsum`/`cumprod`, with
+  explicit axes, complex values, preserved empty shapes and logical promotion.
+  Document high-order MATLAB R2025a+ semantics and Octave differences; add
+  portable fixtures and synchronous, public runtime and Worker regressions.
+
+- Resume explicit scalar superclass constructors and methods through shared
+  execution requests. Preserve the derived instance, multi-level scopes,
+  argument order, output masks and class access; unwind on errors/cancellation.
+  Add value/handle, session isolation and real Worker regressions.
+
+- Resume original `feval`/`builtin` target selection and raw argument
+  forwarding through shared callable requests, retaining evaluation policy,
+  output counts, ignored outputs and indirect script execution.
+- Share scalar instance/static method and direct constructor execution with
+  ordinary function binding. Retain scalar arithmetic overloads across waits;
+  scope private access to method work and remove it with active frames while
+  suspended. Keep property/index/event callbacks, class arrays, dynamic eval as
+  documented boundaries.
+- Cover class/indirect waits, value/handle receivers, constructor defaults,
+  failure/cancellation and private access in runtime and real Worker
+  regressions.
+
+- Resume scripts invoked directly through `run` and `source`, including command
+  forms and nested virtual sources. Share script workspace lifecycle with the
+  synchronous API, retain completed statements across host waits, and restore
+  script-local functions, imports and source identity on completion, failure,
+  return or cancellation.
+- Add runtime and real Node Worker regressions for script suspension, source
+  lookup, workspace selection, session isolation and cleanup. Excluded class
+  callbacks and `load` inside user functions remain separate execution
+  boundaries.
+
 ## 2.8.1
 
 - Refresh the README feature inventory to reflect the implemented parser,

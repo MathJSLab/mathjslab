@@ -1,0 +1,27 @@
+name: Release validation
+on:
+    workflow_dispatch:
+permissions:
+    contents: read
+jobs:
+    validate:
+        strategy:
+            fail-fast: false
+            matrix:
+                os: [ubuntu-latest, windows-latest]
+        runs-on: ${{ matrix.os }}
+        timeout-minutes: 45
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 22
+            - run: npm install
+            - run: npm run check:types
+            - run: npx tsc --project tsconfig.esm.es2015.json --noEmit
+            - run: npx eslint script/validate-release.mjs script/validate-installed-package.mjs
+            - run: npm run test:circ:unit:integration
+            - run: npm run build:types
+            - run: npm run build
+            - run: npm run test:bundle
+            - run: npm run test:release

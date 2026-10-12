@@ -102,8 +102,12 @@ generated Markdown API reference.
   decimal complex backends, N-D arrays, column-major logical indexing
   semantics, broadcasting, growth and deletion, cells and structure arrays.
   Numerical routines include BLAS/LAPACK-based linear algebra, matrix division
-  and page-wise division. See the
-  [numeric array model](doc/numeric-array-model.md).
+  and page-wise division, discrete `diff` and forward/reverse
+  `cumsum`/`cumprod`, plus `sum`/`prod` with explicit NaN handling, dimension
+  vectors and global `"all"` reductions, and `mean`/`var`/`std` with explicit
+  NaN handling and global/vector-dimension grouping. See
+  [numeric sequence compatibility](doc/numeric-sequence-compatibility.md) and
+  the [numeric array model](doc/numeric-array-model.md).
 - **Functions and workspaces.** User, local and nested functions; named and
   anonymous handles; multiple and ignored outputs; local, global, persistent,
   caller and base workspaces. Declarative built-in signatures and `arguments`
@@ -126,8 +130,8 @@ generated Markdown API reference.
   native indexing/assignments and matrix/cell literal elements across host
   waits without replaying completed work. `pause` and `load` request explicit
   host capabilities; cooperative checkpoints allow cancellation. Continuations
-  are single-use in-memory objects. Class/script frames and other synchronous
-  boundaries remain documented in the
+  are single-use in-memory objects. Class callbacks, dynamic scripts and other
+  synchronous boundaries remain documented in the
   [execution guide](doc/resumable-execution.md).
 - **Parallel loop subset.** Remote runtimes distribute statically proven sliced
   assignments and associative reductions in `parfor` across Workers. `strict`,
@@ -396,9 +400,11 @@ and `load` inside user functions remain unsupported.
 Suspension is internal to `execute`; sessions expose interruption and reset,
 while `CreateExecutionMachine` provides the lower-level continuation contract.
 Continuations cannot be serialized or persisted. Supported calls, expressions,
-indexing, assignments and literals retain completed values; class/script
-frames, validation, indirect forwarding and some output/preparation paths
-remain synchronous. Long numerical operations are indivisible. See
+indexing, assignments, literals, run/source scripts, indirect feval/builtin
+targets, scalar methods/constructors (including explicit superclass calls) and
+arithmetic overloads retain completed values. Class property/index/event
+callbacks, class arrays, validation and some output/preparation paths remain
+synchronous. Long numerical operations are indivisible. See
 [resumable execution](doc/resumable-execution.md) for the exact supported
 subset.
 

@@ -493,8 +493,8 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(squeezedMatrix.isCell).toBe(true);
             expect(squeezedMatrix.dimension).toEqual([2, 2]);
             expect(squeezedMatrix.array.map((row) => row.map(realNumber))).toEqual([
-                [1, 2],
-                [3, 4],
+                [1, 3],
+                [2, 4],
             ]);
             expect(squeezedScalar.isCell).toBe(true);
             expect(squeezedScalar.dimension).toEqual([1, 1]);
@@ -661,16 +661,16 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
             expect(CoreFunctions.functions.shiftdim.signature).toBe(CoreFunctions.shiftdimSignature);
             expect(numericLeft.dimension).toEqual([2, 2]);
             expect(numericLeft.array.map((line) => line.map(realNumber))).toEqual([
-                [1, 2],
-                [3, 4],
+                [1, 3],
+                [2, 4],
             ]);
             expect(numericRight.dimension).toEqual([1, 1, 4]);
             expect(MultiArray.linearize(numericRight).map(realNumber)).toEqual([1, 2, 3, 4]);
             expect(cellLeft.isCell).toBe(true);
             expect(cellLeft.dimension).toEqual([2, 2]);
             expect(cellLeft.array.map((line) => line.map(realNumber))).toEqual([
-                [1, 2],
-                [3, 4],
+                [1, 3],
+                [2, 4],
             ]);
             expect(() => CoreFunctions.shiftdim(numericPages, Complex.create(1.5))).toThrow('shiftdim: N must be an integer scalar.');
         });

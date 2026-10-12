@@ -2321,7 +2321,7 @@ abstract class CoreFunctions {
             const resultSubscript = MultiArray.linearIndexToSubscript(result.dimension, resultIndex);
             const sourceSubscript = new Array<number>(rank).fill(1);
             effectiveOrder.forEach((axis, resultAxis) => {
-                sourceSubscript[axis - 1] = resultSubscript[resultAxis];
+                sourceSubscript[axis - 1] = resultSubscript[resultAxis] ?? 1;
             });
             const sourceLinear = MultiArray.subscriptToLinearIndex(sourceDimensions, sourceSubscript);
             const [sourceRow, sourceColumn] = MultiArray.linearIndexToMultiArrayRowColumn(source.dimension[0], source.dimension[1], sourceLinear);
@@ -3134,31 +3134,232 @@ abstract class CoreFunctions {
         outputs: { arity: 1 },
     };
     public static readonly any = MultiArray.reduceFactory((p, c) => Complex.or(p as ComplexType, c as ComplexType), 'reduce', Complex.zero());
-    public static readonly sumSignature: BuiltInFunctionSignature = {
-        inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
+    /** Numeric missing flags: MATLAB aliases have exactly the existing NaN semantics. */
+    private static readonly numericMissingFlags = ['includenan', 'omitnan', 'includemissing', 'omitmissing'];
+    private static readonly omitsNumericMissing = (flag: string): boolean => flag === 'omitnan' || flag === 'omitmissing';
+    private static readonly numericReductionSignature: BuiltInFunctionSignature = {
+        inputs: {
+            arity: -1,
+            min: 1,
+            max: 3,
+            parameters: [
+                { name: 'value' },
+                {
+                    name: 'dimensionsOrAllOrNanflag',
+                    optional: true,
+                    alternatives: [
+                        { name: 'dimensions', classes: ['double'], validators: ['numeric', 'real', 'finite', 'integer', 'positive'] },
+                        { name: 'all', classes: ['char', 'string'], allowedStrings: ['all'] },
+                        { name: 'nanflag', classes: ['char', 'string'], allowedStrings: CoreFunctions.numericMissingFlags },
+                    ],
+                },
+                { name: 'nanflag', optional: true, classes: ['char', 'string'], allowedStrings: CoreFunctions.numericMissingFlags },
+            ],
+        },
         outputs: { arity: 1 },
     };
-    public static readonly sum = MultiArray.reduceFactory((p, c) => Complex.add(p as ComplexType, c as ComplexType), 'reduce', Complex.zero());
-    public static readonly prodSignature: BuiltInFunctionSignature = {
-        inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
-        outputs: { arity: 1 },
+    private static readonly numericValueIsNaN = (value: ComplexType): boolean => Complex.realIsNaN(value) || Complex.imagIsNaN(value);
+    private static readonly numericAccumulator =
+        (name: 'sum' | 'prod' | 'cumsum' | 'cumprod', omitNaN: boolean) =>
+        (acc: ElementType, element: ElementType): ElementType => {
+            if (!Complex.isInstanceOf(acc) || !Complex.isInstanceOf(element)) throw new EvalError(`${name}: input must be numeric or logical.`);
+            if (omitNaN && CoreFunctions.numericValueIsNaN(element)) return Complex.copy(acc);
+            return name === 'sum' || name === 'cumsum' ? Complex.add(acc, element) : Complex.mul(acc, element);
+        };
+    /** One line kernel for scalar-axis, global and grouped multidimensional reductions. */
+    private static readonly numericReductionLine = (name: 'sum' | 'prod', source: MultiArray, axis: number, omitNaN: boolean): ElementType => {
+        const initial = name === 'sum' ? Complex.zero() : Complex.one();
+        const callback = CoreFunctions.numericAccumulator(name, omitNaN);
+        if (MultiArray.linearLength(source) === 0) {
+            const shape = source.dimension.slice();
+            if (axis < shape.length) shape[axis] = 1;
+            return MultiArray.MultiArrayToScalar(new MultiArray(shape, () => Complex.copy(initial)));
+        }
+        if ((source.dimension[axis] ?? 1) === 1) {
+            const singleton = MultiArray.alongDimensionMap(axis, source, (element) => {
+                if (!Complex.isInstanceOf(element)) throw new EvalError(`${name}: input must be numeric or logical.`);
+                if (omitNaN && CoreFunctions.numericValueIsNaN(element)) return Complex.copy(initial);
+                const value = Complex.copy(element);
+                if (value.type === Complex.LOGICAL) value.type = Complex.REAL;
+                return value;
+            });
+            return MultiArray.MultiArrayToScalar(singleton);
+        }
+        const result = MultiArray.reduceFactory(callback, 'reduce', initial)(source, Complex.create(axis + 1));
+        if (!Complex.isInstanceOf(result) && !MultiArray.isInstanceOf(result)) throw new EvalError('Invalid reduction result.');
+        return result;
     };
-    public static readonly prod = MultiArray.reduceFactory((p, c) => Complex.mul(p as ComplexType, c as ComplexType), 'reduce', Complex.one());
+    private static readonly reductionDimensions = (value: ElementType, name: string): number[] => {
+        const vector = CoreFunctions.numericArrayArgument(value, name, 2);
+        if (!MultiArray.isVector(vector) || MultiArray.linearLength(vector) === 0) throw new EvalError(`${name}: DIM/VECDIM must be a nonempty scalar or row/column vector.`);
+        const dimensions = MultiArray.linearize(vector).map((element) => CoreFunctions.positiveIntegerScalar(element, name, 'DIM/VECDIM') - 1);
+        if (new Set(dimensions).size !== dimensions.length) throw new EvalError(`${name}: VECDIM must not contain repeated dimensions.`);
+        return dimensions.sort((left, right) => left - right);
+    };
+    private static readonly numericReduction = (name: 'sum' | 'prod', args: ElementType[]): ElementType => {
+        AST.throwInvalidCallError(name, args.length < 1 || args.length > 3);
+        const input = CoreFunctions.numericArrayArgument(args[0], name, 1);
+        if (input.type > Complex.COMPLEX) throw new EvalError(`${name}: input must be numeric or logical.`);
+        const all = CharString.isInstanceOf(args[1]) && args[1].str === 'all';
+        const hasDimension = args.length > 1 && !CharString.isInstanceOf(args[1]);
+        const dimensions = hasDimension ? CoreFunctions.reductionDimensions(args[1], name) : [];
+        const cursor = hasDimension || all ? 2 : 1;
+        const nanflag = args[cursor];
+        if (args.length > cursor + 1 || (args.length > cursor && (!CharString.isInstanceOf(nanflag) || !CoreFunctions.numericMissingFlags.includes(nanflag.str))))
+            throw new EvalError(`${name}: expected DIM/VECDIM or 'all' followed by one missing flag ('includenan', 'omitnan', 'includemissing' or 'omitmissing').`);
+        const omitNaN = CharString.isInstanceOf(nanflag) && CoreFunctions.omitsNumericMissing(nanflag.str);
+        if (all) return CoreFunctions.numericReductionLine(name, MultiArray.reshape(input, [MultiArray.linearLength(input), 1]), 0, omitNaN);
+        if (!hasDimension) {
+            if (input.dimension.length === 2 && input.dimension.every((size) => size === 0)) return name === 'sum' ? Complex.zero() : Complex.one();
+            return CoreFunctions.numericReductionLine(
+                name,
+                input,
+                Math.max(
+                    0,
+                    input.dimension.findIndex((size) => size !== 1),
+                ),
+                omitNaN,
+            );
+        }
+        return CoreFunctions.groupedNumericReduction(input, dimensions, (source, axis) => CoreFunctions.numericReductionLine(name, source, axis, omitNaN));
+    };
+    /** Group complete slices once, preserving original column-major observation order. */
+    private static readonly groupedNumericReduction = (input: MultiArray, dimensions: number[], reduce: (source: MultiArray, axis: number) => ElementType): ElementType => {
+        return CoreFunctions.groupedNumericReductions(input, dimensions, (source, axis) => [reduce(source, axis)])[0];
+    };
+    /** Apply one complete-slice grouping and restore every paired result. */
+    private static readonly groupedNumericReductions = (input: MultiArray, dimensions: number[], reduce: (source: MultiArray, axis: number) => ElementType[]): ElementType[] => {
+        const selected = dimensions.filter((axis) => axis < input.dimension.length);
+        if (selected.length <= 1) return reduce(input, selected[0] ?? input.dimension.length);
+        // Group each slice into one column; sorted axes preserve source column-major
+        // order and avoid sequential reductions that could omit generated NaNs.
+        const remaining = input.dimension.map((_, axis) => axis).filter((axis) => !selected.includes(axis));
+        const order = MultiArray.toRowVector([...selected, ...remaining].map((axis) => Complex.create(axis + 1)));
+        const permuted = MultiArray.scalarToMultiArray(CoreFunctions.permuteArray(input, order, false, 'permute'));
+        const lineLength = selected.reduce((length, axis) => length * input.dimension[axis], 1);
+        const lineCount = remaining.reduce((length, axis) => length * input.dimension[axis], 1);
+        const lines = MultiArray.reshape(permuted, [lineLength, lineCount]);
+        const reduced = reduce(lines, 0);
+        const groupedShape = [...selected.map(() => 1), ...remaining.map((axis) => input.dimension[axis])];
+        return reduced.map((value) => {
+            const grouped = MultiArray.reshape(MultiArray.scalarToMultiArray(value), groupedShape);
+            return CoreFunctions.permuteArray(grouped, order, true, 'ipermute');
+        });
+    };
+    public static readonly sumSignature = CoreFunctions.numericReductionSignature;
+    /** Numeric/logical sum: A, optional scalar/vector dimension or "all", then a missing flag. */
+    public static readonly sum = (...args: ElementType[]): ElementType => CoreFunctions.numericReduction('sum', args);
+    public static readonly prodSignature = CoreFunctions.numericReductionSignature;
+    /** Numeric/logical product with the same selectors and missing flags as sum. */
+    public static readonly prod = (...args: ElementType[]): ElementType => CoreFunctions.numericReduction('prod', args);
     public static readonly sumsqSignature: BuiltInFunctionSignature = {
         inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
         outputs: { arity: 1 },
     };
     public static readonly sumsq = MultiArray.reduceFactory((p, c) => Complex.add(p as ComplexType, Complex.mul(c as ComplexType, c as ComplexType)), 'reduce', Complex.zero());
-    public static readonly cumsumSignature: BuiltInFunctionSignature = {
-        inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
+    /** Numeric discrete differences; high orders stay on the selected axis (MATLAB R2025a+). */
+    public static readonly diffSignature: BuiltInFunctionSignature = {
+        inputs: { arity: -1, min: 1, max: 3, parameters: [{ name: 'value' }, { name: 'order', optional: true }, { name: 'dimension', optional: true }] },
         outputs: { arity: 1 },
     };
-    public static readonly cumsum = MultiArray.reduceFactory((acc, element) => Complex.add(acc as ComplexType, element as ComplexType), 'cumulative');
-    public static readonly cumprodSignature: BuiltInFunctionSignature = {
-        inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
+    /** Numeric/logical differences: A, optional nonnegative order, then a positive scalar dimension. */
+    public static readonly diff = (...args: ElementType[]): ElementType => {
+        AST.throwInvalidCallError('diff', args.length < 1 || args.length > 3);
+        let source = CoreFunctions.numericArrayArgument(args[0], 'diff', 1);
+        if (source.type > Complex.COMPLEX) throw new EvalError('diff: input must be numeric or logical.');
+        const defaultOrder = args.length < 2 || (MultiArray.isInstanceOf(args[1]) && !args[1].isCell && args[1].type <= Complex.COMPLEX && MultiArray.linearLength(args[1]) === 0);
+        const order = defaultOrder ? 1 : CoreFunctions.integerScalar(args[1], 'diff', 'N');
+        if (order < 0) throw new EvalError('diff: N must be a nonnegative integer scalar.');
+        const axis =
+            args.length === 3
+                ? CoreFunctions.positiveIntegerScalar(args[2], 'diff', 'DIM') - 1
+                : Math.max(
+                      0,
+                      source.dimension.findIndex((size) => size !== 1),
+                  );
+        if (order === 0) return RuntimeValue.copy(args[0]);
+        const dimensions = source.dimension.slice();
+        MultiArray.appendSingletonTail(dimensions, axis + 1);
+        if (order >= dimensions[axis] || MultiArray.linearLength(source) === 0) {
+            dimensions[axis] = Math.max(0, dimensions[axis] - order);
+            return new MultiArray(dimensions);
+        }
+        for (let iteration = 0; iteration < order; iteration++) {
+            const shape = source.dimension.slice();
+            shape[axis]--;
+            const result = new MultiArray(shape);
+            for (let index = 0; index < MultiArray.linearLength(result); index++) {
+                const left = MultiArray.linearIndexToSubscript(shape, index);
+                const right = left.slice();
+                right[axis]++;
+                const [li, lj] = MultiArray.subscriptToMultiArrayRowColumn(source.dimension, left);
+                const [ri, rj] = MultiArray.subscriptToMultiArrayRowColumn(source.dimension, right);
+                const a = source.array[li][lj],
+                    b = source.array[ri][rj];
+                if (!Complex.isInstanceOf(a) || !Complex.isInstanceOf(b)) throw new EvalError('diff: input must be numeric or logical.');
+                const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(shape[0], shape[1], index);
+                result.array[i][j] = Complex.sub(b, a);
+            }
+            MultiArray.setType(result);
+            source = result;
+        }
+        return MultiArray.MultiArrayToScalar(source);
+    };
+
+    private static readonly cumulativeSignature: BuiltInFunctionSignature = {
+        inputs: {
+            arity: -1,
+            min: 1,
+            max: 4,
+            parameters: [
+                { name: 'value' },
+                {
+                    name: 'dimensionOrOption',
+                    optional: true,
+                    alternatives: [
+                        { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
+                        { name: 'option', classes: ['char', 'string'], allowedStrings: ['forward', 'reverse', ...CoreFunctions.numericMissingFlags] },
+                    ],
+                },
+                { name: 'option', classes: ['char', 'string'], allowedStrings: ['forward', 'reverse', ...CoreFunctions.numericMissingFlags], optional: true },
+                { name: 'nanflag', classes: ['char', 'string'], allowedStrings: CoreFunctions.numericMissingFlags, optional: true },
+            ],
+        },
         outputs: { arity: 1 },
     };
-    public static readonly cumprod = MultiArray.reduceFactory((acc, element) => Complex.mul(acc as ComplexType, element as ComplexType), 'cumulative');
+    private static readonly cumulative = (name: 'cumsum' | 'cumprod', args: ElementType[]): ElementType => {
+        AST.throwInvalidCallError(name, args.length < 1 || args.length > 4);
+        const source = CoreFunctions.numericArrayArgument(args[0], name, 1);
+        if (source.type > Complex.COMPLEX) throw new EvalError(`${name}: input must be numeric or logical.`);
+        const hasDimension = args.length > 1 && !CharString.isInstanceOf(args[1]);
+        const dimension = hasDimension ? CoreFunctions.positiveIntegerScalar(args[1], name, 'DIM') : MultiArray.firstNonSingleDimension(source) + 1;
+        let cursor = hasDimension ? 2 : 1;
+        let reverse = false;
+        const direction = args[cursor];
+        if (CharString.isInstanceOf(direction) && ['forward', 'reverse'].includes(direction.str)) {
+            reverse = direction.str === 'reverse';
+            cursor++;
+        }
+        let omitNaN = false;
+        const nanflag = args[cursor];
+        if (CharString.isInstanceOf(nanflag) && CoreFunctions.numericMissingFlags.includes(nanflag.str)) {
+            omitNaN = CoreFunctions.omitsNumericMissing(nanflag.str);
+            cursor++;
+        }
+        if (cursor !== args.length) throw new EvalError(`${name}: expected DIM, direction, then nanflag; options must not repeat.`);
+        const callback = CoreFunctions.numericAccumulator(name, omitNaN);
+        const forward = MultiArray.reduceFactory(callback, 'cumulative', name === 'cumsum' ? Complex.zero() : Complex.one());
+        const input = reverse ? CoreFunctions.flipArray(source, dimension) : source;
+        const result = forward(input, Complex.create(dimension));
+        if (!Complex.isInstanceOf(result) && !MultiArray.isInstanceOf(result)) throw new EvalError('Invalid cumulative result.');
+        return reverse ? CoreFunctions.flipArray(MultiArray.scalarToMultiArray(result), dimension) : result;
+    };
+    public static readonly cumsumSignature = CoreFunctions.cumulativeSignature;
+    /** Cumulative sum: A, optional scalar dimension, forward/reverse direction, then a missing flag. */
+    public static readonly cumsum = (...args: ElementType[]): ElementType => CoreFunctions.cumulative('cumsum', args);
+    public static readonly cumprodSignature = CoreFunctions.cumulativeSignature;
+    /** Cumulative product with the same ordered controls and missing flags as cumsum. */
+    public static readonly cumprod = (...args: ElementType[]): ElementType => CoreFunctions.cumulative('cumprod', args);
     public static readonly minSignature: BuiltInFunctionSignature = {
         inputs: [
             { arity: 1, parameters: [{ name: 'value' }] },
@@ -3208,36 +3409,64 @@ abstract class CoreFunctions {
     };
     public static readonly cummax = MultiArray.reduceFactory('gt', 'cumcomparison');
 
-    public static readonly meanSignature: BuiltInFunctionSignature = {
-        inputs: { arity: -2, min: 1, max: 2, parameters: [{ name: 'value' }, { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'], optional: true }] },
-        outputs: { arity: 1 },
-    };
-    /**
-     *
-     * @param M
-     * @param DIM
-     * @returns
-     */
-    public static readonly mean = (M: ElementType, DIM?: ElementType): ElementType => {
-        const MA = MultiArray.scalarToMultiArray(M);
-        const dim = typeof DIM !== 'undefined' ? Complex.realToNumber(MultiArray.firstElement(DIM as ElementType) as ComplexType) - 1 : MultiArray.firstNonSingleDimension(MA);
-        const sumM = CoreFunctions.sum(MA, Complex.create(dim + 1));
-        const sizeAlongDim = Complex.create(MA.dimension[dim]);
-        return MultiArray.divideElementByScalar(sumM as ElementType, sizeAlongDim);
+    public static readonly meanSignature = CoreFunctions.numericReductionSignature;
+    /** Arithmetic mean of a complete group, with original valid counts. */
+    private static readonly meanLineReduction = (source: MultiArray, axis: number, omitNaN: boolean): ElementType => {
+        const totals = MultiArray.scalarToMultiArray(CoreFunctions.numericReductionLine('sum', source, axis, omitNaN));
+        // Count original input values, never partial sums: generated NaNs remain.
+        const valid = MultiArray.rawMap(source, (element: ElementType) => {
+            if (!Complex.isInstanceOf(element)) throw new EvalError('mean: input must be numeric or logical.');
+            return Complex.create(omitNaN && CoreFunctions.numericValueIsNaN(element) ? 0 : 1);
+        });
+        const counts = MultiArray.scalarToMultiArray(CoreFunctions.numericReductionLine('sum', valid, axis, false));
+        const result = MultiArray.rawMapLinearIndex(totals, (total, index) => {
+            const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(totals.dimension[0], totals.dimension[1], index);
+            const count = counts.array[i][j];
+            if (!Complex.isInstanceOf(total) || !Complex.isInstanceOf(count)) throw new EvalError('Invalid mean reduction result.');
+            return Complex.realIsZero(count) ? Complex.NaN_0() : Complex.rdiv(total, count);
+        });
+        return MultiArray.MultiArrayToScalar(result);
     };
 
+    /** Arithmetic mean over original observations, with sum selectors and optional missing omission. */
+    public static readonly mean = (...args: ElementType[]): ElementType => {
+        AST.throwInvalidCallError('mean', args.length < 1 || args.length > 3);
+        const source = CoreFunctions.numericArrayArgument(args[0], 'mean', 1);
+        if (source.type > Complex.COMPLEX) throw new EvalError('mean: input must be numeric or logical.');
+        const all = CharString.isInstanceOf(args[1]) && args[1].str === 'all';
+        const hasDimension = args.length > 1 && !CharString.isInstanceOf(args[1]);
+        const dimensions = all
+            ? source.dimension.map((_, axis) => axis)
+            : hasDimension
+              ? CoreFunctions.reductionDimensions(args[1], 'mean')
+              : [
+                    Math.max(
+                        0,
+                        source.dimension.findIndex((size) => size !== 1),
+                    ),
+                ];
+        const cursor = hasDimension || all ? 2 : 1;
+        const nanflag = args[cursor];
+        if (args.length > cursor + 1 || (args.length > cursor && (!CharString.isInstanceOf(nanflag) || !CoreFunctions.numericMissingFlags.includes(nanflag.str))))
+            throw new EvalError("mean: expected DIM/VECDIM or 'all' followed by one missing flag ('includenan', 'omitnan', 'includemissing' or 'omitmissing').");
+        const omitNaN = CharString.isInstanceOf(nanflag) && CoreFunctions.omitsNumericMissing(nanflag.str);
+        if (!hasDimension && !all && source.dimension.length === 2 && source.dimension.every((size) => size === 0)) return Complex.NaN_0();
+        return CoreFunctions.groupedNumericReduction(source, dimensions, (input, axis) => CoreFunctions.meanLineReduction(input, axis, omitNaN));
+    };
     public static readonly varianceSignature: BuiltInFunctionSignature = {
         inputs: [
             { arity: 1, parameters: [{ name: 'value' }] },
+            { arity: 2, parameters: [{ name: 'value' }, { name: 'nanflag', classes: ['char', 'string'], allowedStrings: CoreFunctions.numericMissingFlags }] },
             {
                 arity: 2,
                 parameters: [
                     { name: 'value' },
                     {
-                        name: 'flagOrDimension',
-                        classes: ['double'],
-                        validators: ['numeric', 'scalar', 'real', 'finite', 'zeroOrOne'],
-                        alternatives: [{ name: 'dimension', validators: ['dimensionGreaterThanOne'] }],
+                        name: 'normalizationOrWeights',
+                        alternatives: [
+                            { name: 'normalization', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'zeroOrOne'] },
+                            { name: 'weights', classes: ['double'], validators: ['numeric', 'real', 'vector'] },
+                        ],
                     },
                 ],
             },
@@ -3245,118 +3474,19 @@ abstract class CoreFunctions {
                 arity: 3,
                 parameters: [
                     { name: 'value' },
-                    { name: 'flag', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'zeroOrOne'] },
-                    { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
-                ],
-            },
-        ],
-        outputs: { arity: 1 },
-    };
-    /**
-     * Variance compatible with Octave var(A [, FLAG [, DIM]])
-     * @param M
-     * @param FLAG
-     * @param DIM
-     * @returns
-     */
-    public static readonly variance = (M: ElementType, FLAG?: ElementType, DIM?: ElementType): ElementType => {
-        /* 1) Convert to MultiArray */
-        const MA = MultiArray.scalarToMultiArray(M);
-        /* 2) Interpret FLAG and DIM */
-        let flag = 0; /* 0 = sample (N-1), 1 = population (N) */
-        let dim: number;
-        if (typeof FLAG !== 'undefined') {
-            const firstFlag = MultiArray.firstElement(FLAG) as ComplexType;
-            if (typeof DIM === 'undefined' && Complex.realIsInteger(firstFlag) && Complex.realToNumber(firstFlag) > 1) {
-                dim = Complex.realToNumber(firstFlag) - 1;
-            } else if (typeof DIM !== 'undefined') {
-                flag = Complex.realToNumber(firstFlag) === 1 ? 1 : 0;
-                const dimElem = MultiArray.firstElement(DIM) as ComplexType;
-                dim = MultiArray.testInteger(dimElem, 'var', 'DIM', [1, Infinity]) - 1;
-            } else {
-                flag = Complex.realToNumber(firstFlag) === 1 ? 1 : 0;
-                dim = MultiArray.firstNonSingleDimension(MA);
-            }
-        } else {
-            /* FLAG undefined */
-            if (typeof DIM !== 'undefined') {
-                const dimElem = MultiArray.firstElement(DIM) as ComplexType;
-                dim = MultiArray.testInteger(dimElem, 'var', 'DIM', [1, Infinity]) - 1;
-            } else {
-                dim = MultiArray.firstNonSingleDimension(MA);
-            }
-        }
-        /* 3) Number of elements along chosen dimension */
-        const N = MA.dimension[dim];
-        if (N <= 1) {
-            return Complex.zero();
-        }
-        /* 4) Sum along dim (possibly scalar) */
-        const sumAlong = MultiArray.reduce(dim, MA, (p, c) => Complex.add(p as ComplexType, c as ComplexType), Complex.zero());
-        const meanElem = MultiArray.divideElementByScalar(sumAlong, Complex.create(N));
-        /* 5) Compute squared diffs */
-        let outDim: number[];
-        if (MultiArray.isInstanceOf(sumAlong)) {
-            outDim = (sumAlong as MultiArray).dimension.slice();
-        } else {
-            outDim = MA.dimension.slice();
-            outDim[dim] = 1;
-        }
-        const result = new MultiArray(outDim);
-        const tailProd = outDim.length > 2 ? outDim.slice(2).reduce((p, c) => p * c, 1) : 1;
-        const resultPhysicalRows = outDim[0] * Math.max(1, tailProd);
-        const resultPhysicalCols = outDim[1] ?? 1;
-        result.array = new Array(resultPhysicalRows);
-        for (let r = 0; r < resultPhysicalRows; r++) {
-            result.array[r] = new Array(resultPhysicalCols);
-        }
-        const totalElements = MA.dimension.reduce((p, c) => p * c, 1);
-        for (let linIdx = 0; linIdx < totalElements; linIdx++) {
-            const subs = MultiArray.linearIndexToSubscript(MA.dimension, linIdx);
-            const meanSub = subs.slice();
-            meanSub[dim] = 1;
-
-            let meanVal: ComplexType;
-            if (MultiArray.isInstanceOf(meanElem)) {
-                const meanMA = meanElem as MultiArray;
-                const meanLinear = MultiArray.subscriptToLinearIndex(meanMA.dimension, meanSub);
-                const [mr, mc] = MultiArray.linearIndexToMultiArrayRowColumn(meanMA.dimension[0], meanMA.dimension[1], meanLinear);
-                meanVal = meanMA.array[mr][mc] as ComplexType;
-            } else {
-                meanVal = meanElem as ComplexType;
-            }
-            const [ar, ac] = MultiArray.linearIndexToMultiArrayRowColumn(MA.dimension[0], MA.dimension[1], linIdx);
-            const curVal = MA.array[ar][ac] as ComplexType;
-            const diff = Complex.sub(curVal, meanVal);
-            const sq = Complex.mul(diff, diff);
-            const outLinear = MultiArray.subscriptToLinearIndex(outDim, meanSub);
-            const [orow, ocol] = MultiArray.linearIndexToMultiArrayRowColumn(outDim[0], outDim[1], outLinear);
-            const prev = result.array[orow][ocol];
-            if (typeof prev === 'undefined' || prev === null) {
-                result.array[orow][ocol] = Complex.copy(sq);
-            } else {
-                result.array[orow][ocol] = Complex.add(prev as ComplexType, sq);
-            }
-        }
-        /* 6) Divide by (N - (1 - flag)) */
-        const divisor = Complex.create(N - (flag === 0 ? 1 : 0));
-        const varianceElem = MultiArray.divideElementByScalar(result, divisor);
-        if (MultiArray.isInstanceOf(varianceElem)) MultiArray.setType(varianceElem);
-        return varianceElem;
-    };
-
-    public static readonly stdSignature: BuiltInFunctionSignature = {
-        inputs: [
-            { arity: 1, parameters: [{ name: 'value' }] },
-            {
-                arity: 2,
-                parameters: [
-                    { name: 'value' },
                     {
-                        name: 'flagOrDimension',
-                        classes: ['double'],
-                        validators: ['numeric', 'scalar', 'real', 'finite', 'zeroOrOne'],
-                        alternatives: [{ name: 'dimension', validators: ['dimensionGreaterThanOne'] }],
+                        name: 'normalizationOrWeights',
+                        alternatives: [
+                            { name: 'normalization', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'zeroOrOne'] },
+                            { name: 'weights', classes: ['double'], validators: ['numeric', 'real', 'vector'] },
+                        ],
+                    },
+                    {
+                        name: 'dimensionsOrAll',
+                        alternatives: [
+                            { name: 'dimensions', classes: ['double'], validators: ['numeric', 'real', 'finite', 'integer', 'positive'] },
+                            { name: 'all', classes: ['char', 'string'], allowedStrings: ['all'] },
+                        ],
                     },
                 ],
             },
@@ -3364,35 +3494,184 @@ abstract class CoreFunctions {
                 arity: 3,
                 parameters: [
                     { name: 'value' },
-                    { name: 'flag', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'zeroOrOne'] },
-                    { name: 'dimension', classes: ['double'], validators: ['dimension', 'positive'] },
+                    {
+                        name: 'normalizationOrWeights',
+                        alternatives: [
+                            { name: 'normalization', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'zeroOrOne'] },
+                            { name: 'weights', classes: ['double'], validators: ['numeric', 'real', 'vector'] },
+                        ],
+                    },
+                    { name: 'nanflag', classes: ['char', 'string'], allowedStrings: CoreFunctions.numericMissingFlags },
+                ],
+            },
+            {
+                arity: 4,
+                parameters: [
+                    { name: 'value' },
+                    {
+                        name: 'normalizationOrWeights',
+                        alternatives: [
+                            { name: 'normalization', classes: ['double'], validators: ['numeric', 'scalar', 'real', 'finite', 'zeroOrOne'] },
+                            { name: 'weights', classes: ['double'], validators: ['numeric', 'real', 'vector'] },
+                        ],
+                    },
+                    {
+                        name: 'dimensionsOrAll',
+                        alternatives: [
+                            { name: 'dimensions', classes: ['double'], validators: ['numeric', 'real', 'finite', 'integer', 'positive'] },
+                            { name: 'all', classes: ['char', 'string'], allowedStrings: ['all'] },
+                        ],
+                    },
+                    { name: 'nanflag', classes: ['char', 'string'], allowedStrings: CoreFunctions.numericMissingFlags },
                 ],
             },
         ],
-        outputs: { arity: 1 },
+        outputs: { arity: -2 },
+    };
+    private static readonly dispersionSumLine = (line: ComplexType[]): ComplexType => {
+        const sum = CoreFunctions.numericReductionLine('sum', MultiArray.toColumnVector(line), 0, false);
+        if (!Complex.isInstanceOf(sum)) throw new EvalError('Invalid dispersion line sum.');
+        return sum;
+    };
+    /** Shifted two-pass dispersion and mean from the same original observations. */
+    private static readonly dispersionLine = (values: ComplexType[], population: boolean, omitNaN: boolean): [ComplexType, ComplexType] => {
+        const valid = omitNaN ? values.filter((value) => !CoreFunctions.numericValueIsNaN(value)) : values;
+        if (valid.length === 0) return [Complex.NaN_0(), Complex.NaN_0()];
+        const sumLine = CoreFunctions.dispersionSumLine;
+        const count = Complex.create(valid.length);
+        // Nonfinite observations still contribute to the mean; dispersion is undefined.
+        if (valid.some((value) => !Complex.realIsFinite(value) || !Complex.imagIsFinite(value))) return [Complex.NaN_0(), Complex.rdiv(sumLine(valid), count)];
+        const origin = valid[0];
+        if (valid.length === 1) {
+            const mean = Complex.copy(origin);
+            if (mean.type === Complex.LOGICAL) mean.type = Complex.REAL;
+            return [Complex.zero(), mean];
+        }
+        const offsets = valid.map((value) => Complex.sub(value, origin));
+        const offsetMean = Complex.rdiv(sumLine(offsets), count);
+        const squares = sumLine(offsets.map((offset) => Complex.abs2(Complex.sub(offset, offsetMean))));
+        return [Complex.rdiv(squares, Complex.create(valid.length - (population ? 0 : 1))), Complex.add(origin, offsetMean)];
+    };
+    /** Population weighted dispersion; pairwise omissions and zero mass are slice-local. */
+    private static readonly weightedDispersionLine = (values: ComplexType[], weights: ComplexType[], omitNaN: boolean): [ComplexType, ComplexType] => {
+        const pairs = values
+            .map((value, index) => ({ value, weight: weights[index] }))
+            .filter((pair) => !omitNaN || (!CoreFunctions.numericValueIsNaN(pair.value) && !CoreFunctions.numericValueIsNaN(pair.weight)));
+        if (pairs.length === 0 || pairs.some((pair) => !Complex.realIsFinite(pair.weight))) return [Complex.NaN_0(), Complex.NaN_0()];
+        let dominant = 0;
+        for (let index = 1; index < pairs.length; index++) if (Complex.realGreaterThan(pairs[index].weight, pairs[dominant].weight.re)) dominant = index;
+        const maximum = pairs[dominant].weight;
+        if (Complex.realIsZero(maximum)) return [Complex.NaN_0(), Complex.NaN_0()];
+        const scaled = pairs.map((pair) => Complex.rdiv(pair.weight, maximum));
+        const mass = CoreFunctions.dispersionSumLine(scaled);
+        const weightedSum = (line: ComplexType[]): ComplexType => CoreFunctions.dispersionSumLine(line.map((value, index) => Complex.mul(scaled[index], value)));
+        // Even a zero weight cannot hide a retained NaN or infinity (0*NaN/Inf).
+        if (pairs.some((pair) => !Complex.realIsFinite(pair.value) || !Complex.imagIsFinite(pair.value)))
+            return [Complex.NaN_0(), Complex.rdiv(weightedSum(pairs.map((pair) => pair.value)), mass)];
+        const origin = pairs[dominant].value;
+        const offsets = pairs.map((pair) => (Complex.realIsZero(pair.weight) ? Complex.zero() : Complex.sub(pair.value, origin)));
+        const offsetMean = Complex.rdiv(weightedSum(offsets), mass);
+        const squares = pairs.map((pair, index) => (Complex.realIsZero(pair.weight) ? Complex.zero() : Complex.abs2(Complex.sub(offsets[index], offsetMean))));
+        return [Complex.rdiv(weightedSum(squares), mass), Complex.add(origin, offsetMean)];
+    };
+    /** Shared grouped-slice driver for variance/std, with vector weights on a scalar axis. */
+    private static readonly numericDispersion = (name: 'var' | 'std', args: ElementType[]): ElementType[] => {
+        AST.throwInvalidCallError(name, args.length < 1 || args.length > 4);
+        const source = CoreFunctions.numericArrayArgument(args[0], name, 1);
+        if (source.type > Complex.COMPLEX) throw new EvalError(`${name}: input must be numeric or logical.`);
+        let cursor = 1;
+        let population = false;
+        let weights: ComplexType[] | undefined;
+        if (cursor < args.length && !CharString.isInstanceOf(args[cursor])) {
+            const weight = CoreFunctions.numericArrayArgument(args[cursor++], name, 2);
+            if (MultiArray.linearLength(weight) === 1) {
+                const normalization = CoreFunctions.integerScalar(MultiArray.firstElement(weight), name, 'W');
+                if (normalization !== 0 && normalization !== 1) throw new EvalError(name + ': scalar W must be 0 or 1.');
+                population = normalization === 1;
+            } else {
+                if (!MultiArray.isVector(weight) || MultiArray.linearLength(weight) === 0 || weight.type === Complex.LOGICAL)
+                    throw new EvalError(name + ': W must be a nonempty numeric row/column vector.');
+                weights = MultiArray.linearize(weight).map((value) => {
+                    if (!Complex.isInstanceOf(value) || !Complex.imagIsZero(value) || Complex.realLessThan(value, 0)) throw new EvalError(name + ': weights must be real and nonnegative.');
+                    return value;
+                });
+            }
+        }
+        const selection = args[cursor];
+        const all = CharString.isInstanceOf(selection) && selection.str === 'all';
+        const hasDimension = cursor < args.length && !CharString.isInstanceOf(args[cursor]);
+        const dimensions = all
+            ? source.dimension.map((_, axis) => axis)
+            : hasDimension
+              ? CoreFunctions.reductionDimensions(args[cursor], name)
+              : [
+                    Math.max(
+                        0,
+                        source.dimension.findIndex((size) => size !== 1),
+                    ),
+                ];
+        if (all && cursor === 1) throw new EvalError(`${name}: specify scalar W before 'all'.`);
+        if (hasDimension || all) cursor++;
+        const nanflag = args[cursor];
+        if (args.length > cursor + 1 || (cursor < args.length && (!CharString.isInstanceOf(nanflag) || !CoreFunctions.numericMissingFlags.includes(nanflag.str))))
+            throw new EvalError(`${name}: expected W, DIM/VECDIM or all and one final missing flag ('includenan', 'omitnan', 'includemissing' or 'omitmissing').`);
+        const omitNaN = CharString.isInstanceOf(nanflag) && CoreFunctions.omitsNumericMissing(nanflag.str);
+        if (weights) {
+            if (all || dimensions.length !== 1) throw new EvalError(name + ': vector weights require one scalar dimension; all/VECDIM weights are unsupported.');
+            if (weights.length !== (source.dimension[dimensions[0]] ?? 1)) throw new EvalError(name + ': weight length must match the operating dimension.');
+        }
+        if (!hasDimension && !all && source.dimension.length === 2 && source.dimension.every((size) => size === 0)) return [Complex.NaN_0(), Complex.NaN_0()];
+        return CoreFunctions.groupedNumericReductions(source, dimensions, (input, axis) => CoreFunctions.dispersionLineReduction(name, input, axis, population, omitNaN, weights));
+    };
+    private static readonly dispersionLineReduction = (
+        name: 'var' | 'std',
+        source: MultiArray,
+        axis: number,
+        population: boolean,
+        omitNaN: boolean,
+        weights?: ComplexType[],
+    ): ElementType[] => {
+        const shape = source.dimension.slice();
+        if (axis < shape.length) shape[axis] = 1;
+        const means = new MultiArray(shape);
+        const result = MultiArray.rawMapLinearIndex(new MultiArray(shape), (_, index) => {
+            const subs = MultiArray.linearIndexToSubscript(shape, index);
+            const values: ComplexType[] = [];
+            for (let k = 0; k < (source.dimension[axis] ?? 1); k++) {
+                if (axis < source.dimension.length) subs[axis] = k + 1;
+                const linear = MultiArray.subscriptToLinearIndex(source.dimension, subs);
+                const [row, column] = MultiArray.linearIndexToMultiArrayRowColumn(source.dimension[0], source.dimension[1], linear);
+                const value = source.array[row][column];
+                if (!Complex.isInstanceOf(value)) throw new EvalError(`${name}: input must be numeric or logical.`);
+                values.push(value);
+            }
+            const [variance, mean] = weights ? CoreFunctions.weightedDispersionLine(values, weights, omitNaN) : CoreFunctions.dispersionLine(values, population, omitNaN);
+            const [row, column] = MultiArray.linearIndexToMultiArrayRowColumn(shape[0], shape[1], index);
+            means.array[row][column] = mean;
+            return name === 'std' && !Complex.realIsNaN(variance) ? Complex.sqrt(variance) : variance;
+        });
+        MultiArray.setType(result);
+        MultiArray.setType(means);
+        return [MultiArray.MultiArrayToScalar(result), MultiArray.MultiArrayToScalar(means)];
     };
     /**
-     * Compute the standard deviation along the selected dimension.
-     *
-     * This is implemented as `sqrt(var(...))`, preserving the same flag and
-     * dimension semantics as the shared variance helper.
-     *
-     * @param M Input scalar or array.
-     * @param FLAG Normalization flag, dimension shorthand, or omitted.
-     * @param DIM Explicit one-based dimension.
-     * @returns Standard deviation scalar or array.
+     * Variance for A, optional W, selector, then missing flag. Explicit selectors
+     * follow W (0/1 or scalar-axis vector weights). Complex dispersion uses
+     * squared magnitudes. This direct API returns only variance; language calls
+     * may additionally request the paired mean.
      */
-    public static readonly std = (M: ElementType, FLAG?: ElementType, DIM?: ElementType): ElementType => {
-        const varElem = CoreFunctions.variance(M, FLAG, DIM);
-        if (MultiArray.isInstanceOf(varElem)) {
-            const stdMA = MultiArray.rawMap(varElem as MultiArray, (el: ComplexType) => Complex.sqrt(el));
-            MultiArray.setType(stdMA);
-            return stdMA;
-        } else {
-            return Complex.sqrt(varElem as ComplexType);
-        }
+    public static readonly variance = (...args: ElementType[]): ElementType => CoreFunctions.numericDispersion('var', args)[0];
+    public static readonly stdSignature = CoreFunctions.varianceSignature;
+    /**
+     * Standard deviation for A, optional W, selector, then missing flag. Explicit
+     * selectors follow W (0/1 or scalar-axis vector weights). This direct API
+     * returns only std; language calls may additionally request the paired mean.
+     */
+    public static readonly std = (...args: ElementType[]): ElementType => CoreFunctions.numericDispersion('std', args)[0];
+    private static readonly dispersionOutputs = (name: 'var' | 'std', args: ElementType[]): NodeReturnList => {
+        const values = CoreFunctions.numericDispersion(name, args);
+        return AST.nodeBoundedReturnList(2, (_evaluated, index) => AST.requireStrictNodeExpr(values[index], name + ' output'));
     };
-
     public static readonly structSignature: BuiltInFunctionSignature = {
         inputs: [
             {
@@ -3781,12 +4060,13 @@ abstract class CoreFunctions {
         max: { func: CoreFunctions.max, signature: CoreFunctions.maxSignature },
         min: { func: CoreFunctions.min, signature: CoreFunctions.minSignature },
         mean: { func: CoreFunctions.mean, signature: CoreFunctions.meanSignature },
+        diff: { func: CoreFunctions.diff, signature: CoreFunctions.diffSignature },
         cumsum: { func: CoreFunctions.cumsum, signature: CoreFunctions.cumsumSignature },
         cumprod: { func: CoreFunctions.cumprod, signature: CoreFunctions.cumprodSignature },
         cummin: { func: CoreFunctions.cummin, signature: CoreFunctions.cumminSignature },
         cummax: { func: CoreFunctions.cummax, signature: CoreFunctions.cummaxSignature },
-        var: { func: CoreFunctions.variance, signature: CoreFunctions.varianceSignature },
-        std: { func: CoreFunctions.std, signature: CoreFunctions.stdSignature },
+        var: { func: (...args: ElementType[]) => CoreFunctions.dispersionOutputs('var', args), signature: CoreFunctions.varianceSignature },
+        std: { func: (...args: ElementType[]) => CoreFunctions.dispersionOutputs('std', args), signature: CoreFunctions.stdSignature },
         struct: { func: CoreFunctions.struct, signature: CoreFunctions.structSignature },
         getfield: { func: CoreFunctions.getfield, signature: CoreFunctions.getfieldSignature },
         setfield: { func: CoreFunctions.setfield, signature: CoreFunctions.setfieldSignature },
