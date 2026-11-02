@@ -8,6 +8,7 @@ import { createServer } from 'node:http';
 const consumer = path.resolve(process.argv[2] ?? 'test-results/release-gate/consumer');
 const installed = path.join(consumer, 'node_modules/mathjslab');
 const manifest = JSON.parse(await readFile(path.join(installed, 'package.json'), 'utf8'));
+const consumerGate = process.argv.includes('--consumers') ? await (await import('./prepare-consumer-gate.mjs')).prepareConsumerGate(consumer) : undefined;
 async function verifyTargets(value) {
     if (typeof value === 'string') await access(path.join(installed, value));
     else for (const target of Object.values(value)) await verifyTargets(target);
@@ -35,8 +36,10 @@ assert.equal(Complex.realToNumber(CoreFunctions.variance(values,tiny)),0);
 `;
 execFileSync(process.execPath, ['--input-type=module', '-e', decimalWeightProbe], { cwd: consumer, stdio: 'inherit' });
 const imports = entries.map(([name], index) => `import * as entry${index} from '${name === '.' ? 'mathjslab' : 'mathjslab' + name.slice(1)}'; void entry${index};`).join('\n');
+const numericProbe =
+    'import type { NumericEnvironmentOptions } from "mathjslab/core"; import {createNodeMathJSLabRuntime} from "mathjslab/runtime/node"; const numeric:NumericEnvironmentOptions={engine:"number",complex:{precision:40}}; void createNodeMathJSLabRuntime({sessionDefaults:{numeric}});';
 const typeProbe = path.join(consumer, 'consumer.mts');
-await writeFile(typeProbe, imports);
+await writeFile(typeProbe, imports + '\n' + numericProbe);
 execFileSync(
     process.execPath,
     [
@@ -65,6 +68,8 @@ execFileSync(
     ],
     { cwd: consumer, stdio: 'inherit' },
 );
+execFileSync(process.execPath, ['script/validate-runtime-cycle.mjs', installed], { stdio: 'inherit', timeout: 30000 });
+execFileSync(process.execPath, ['script/validate-numeric-sessions.mjs', installed], { stdio: 'inherit', timeout: 30000 });
 const browserCandidates = [
     process.env.MATHJSLAB_BROWSER_EXECUTABLE,
     'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -83,11 +88,11 @@ for (const candidate of browserCandidates) {
     }
 }
 assert.ok(executable, 'Set MATHJSLAB_BROWSER_EXECUTABLE to a Chromium browser');
-const page = `<!doctype html><script type="importmap">{"imports":{"mathjslab/core":"/lib/mathjslab.web.esm2022.js"}}</script><script type="module">
+const page = `<!doctype html><script type="importmap">{"imports":{"mathjslab":"/lib/mathjslab.web.esm2022.js","mathjslab/core":"/lib/mathjslab.web.esm2022.js","mathjslab/runtime":"/lib/mathjslab.runtime.esm2022.js"}}</script><script type="module">
 import {createBrowserMathJSLabRuntime} from '/lib/mathjslab.runtime-browser.esm2022.js';
 globalThis.gatePromise=(async()=>{
  const delays=[]; let workers=0;
- const runtime=createBrowserMathJSLabRuntime({workerFactory:()=>{workers++; return new Worker('/lib/mathjslab.runtime-worker.esm2022.js',{type:'module'});},host:{request:async effect=>{if(effect.type==='delay') delays.push(effect.milliseconds); return {};}}});
+ const runtime=createBrowserMathJSLabRuntime({workerFactory:()=>{workers++; return new Worker('/lib/mathjslab.runtime-worker.esm2022.js',{type:'module'});},host:{request:async effect=>{if(effect.type==='delay') delays.push(effect.milliseconds); if(effect.type==='read-text'){const response=await fetch('/fixture/'+effect.reference);if(!response.ok)throw Error('Missing script resource');return {value:await response.text()};} return {};}}});
  const check=(condition,message)=>{if(!condition)throw Error(message);};
  try {
   const session=await runtime.createSession();
@@ -115,6 +120,34 @@ globalThis.gatePromise=(async()=>{
   check((await session.execute('mean([1,2],[1,1]);')).status==='error','invalid dimensions accepted');
   check((await session.execute('a')).outputs[0]?.text==='2\\n','workspace recovery');
   const isolated=await runtime.createSession(); check((await isolated.execute('exist("a","var")')).outputs[0]?.text==='0\\n','session leak');
+  const cycle=await session.execute(await (await fetch('/fixture/core-cycle.m')).text());
+  check(cycle.status==='success'&&cycle.outputs[0]?.text==='true\\n','retained cycle failed: '+JSON.stringify(cycle.diagnostics));
+  check((await session.execute('eig([0,-1;1,0])')).status==='error','non-Hermitian eig accepted');
+  const validationSource=await (await fetch('/fixture/resumable-validation.m')).text()+await (await fetch('/fixture/validation-cycle.m')).text();
+  const validated=await session.execute(validationSource);
+  check(validated.status==='success'&&validated.outputs[0]?.text==='true\\n','validation cycle failed: '+JSON.stringify(validated.diagnostics));
+  const dynamicSource=await (await fetch('/fixture/resumable-dynamic.m')).text()+await (await fetch('/fixture/dynamic-cycle.m')).text();
+  const dynamicResult=await session.execute(dynamicSource);
+  check(dynamicResult.status==='success'&&dynamicResult.outputs[0]?.text==='true\\n','dynamic cycle failed: '+JSON.stringify(dynamicResult.diagnostics));
+  const classesSource=await (await fetch('/fixture/resumable-classes.m')).text()+await (await fetch('/fixture/classes-cycle.m')).text();
+  const classesResult=await session.execute(classesSource);
+  check(classesResult.status==='success'&&classesResult.outputs[0]?.text==='true\\n','classes cycle failed: '+JSON.stringify(classesResult.diagnostics));
+  const protocolsSource=await (await fetch('/fixture/resumable-protocols.m')).text()+await (await fetch('/fixture/protocols-cycle.m')).text();
+  const protocolsResult=await session.execute(protocolsSource);
+  check(protocolsResult.status==='success'&&protocolsResult.outputs[0]?.text==='true\\n','protocol cycle failed: '+JSON.stringify(protocolsResult.diagnostics));
+  const randomResult=await session.execute(await (await fetch('/fixture/random-cycle.m')).text());
+  check(randomResult.status==='success'&&randomResult.outputs[0]?.text==='true\\n','random/precision cycle failed: '+JSON.stringify(randomResult.diagnostics));
+  const educationalResult=await session.execute(await (await fetch('/fixture/educational-math-cycle.m')).text());
+  check(educationalResult.status==='success'&&educationalResult.outputs[0]?.text==='true\\n','educational math cycle failed: '+JSON.stringify(educationalResult.diagnostics));
+  const numericWorker=await runtime.createSession({numeric:{engine:'number'}});
+  check((await numericWorker.execute('1+1')).outputs[0]?.text==='2\\n','number Worker literal factory');
+  check((await session.execute('1+1')).outputs[0]?.text==='2\\n','decimal Worker literal factory');
+  check((await numericWorker.execute('configure("real","decimal"); retained=7; configure("real","number"); retained+1')).outputs[0]?.text==='8\\n','backend switch retains workspace');
+  await numericWorker.reset();check((await numericWorker.execute('getconfig("real")')).outputs[0]?.text==='{real,number}\\n','numeric Worker reset options');
+  await numericWorker.dispose();
+  const rejectedValidation=await session.execute('value=validated(-1);');
+  check(rejectedValidation.status==='error'&&rejectedValidation.diagnostics[0]?.message.includes('validation rejected value'),'resumed validation diagnostic lost');
+  ${consumerGate?.browserChecks ?? ''}
   await session.reset(); check((await session.execute('exist("a","var")')).outputs[0]?.text==='0\\n','reset failed');
   check(workers>=1,'no native Worker'); return {workers,delays:delays.length,userAgent:navigator.userAgent};
  } finally {await runtime.dispose();}
@@ -127,8 +160,19 @@ const server = createServer(async (request, response) => {
             response.end(page);
             return;
         }
-        const base = url.pathname.startsWith('/lib/') ? installed : path.resolve('test/compatibility/fixtures');
-        const relative = url.pathname.startsWith('/lib/') ? url.pathname.slice(1) : url.pathname.replace('/fixture/', '');
+        const validationFixture = ['/fixture/resumable-validation.m', '/fixture/resumable-dynamic.m', '/fixture/resumable-classes.m', '/fixture/resumable-protocols.m'].includes(
+            url.pathname,
+        );
+        const base = validationFixture
+            ? path.resolve('test/node/fixtures')
+            : url.pathname.startsWith('/lib/')
+              ? installed
+              : url.pathname.startsWith('/consumer/') && consumerGate
+                ? consumerGate.artifacts
+                : url.pathname.startsWith('/example/') && consumerGate
+                  ? consumerGate.exampleRoot
+                  : path.resolve('test/compatibility/fixtures');
+        const relative = url.pathname.startsWith('/lib/') ? url.pathname.slice(1) : url.pathname.replace(/^\/(?:fixture|consumer|example)\//u, '');
         const file = path.resolve(base, relative);
         assert.ok(file.startsWith(base + path.sep));
         response.setHeader('Content-Type', file.endsWith('.js') ? 'text/javascript' : 'text/plain');

@@ -1679,6 +1679,22 @@ class MultiArray<ELEMENT = Elements> {
      * @returns Broadcasted mapping result.
      */
     public static readonly mapBroadcasted = (left: MultiArray, right: MultiArray, diagnosticName: string, callback: (left: ElementType, right: ElementType) => ElementType): MultiArray => {
+        const execution = MultiArray.mapBroadcastedElements(left, right, diagnosticName);
+        let next = execution.next();
+        while (!next.done) {
+            let value: ElementType;
+            try {
+                value = callback(next.value.left, next.value.right);
+            } catch (error) {
+                next = execution.throw(error);
+                continue;
+            }
+            next = execution.next(value);
+        }
+        return next.value;
+    };
+    /** @internal Retain native broadcasting order without replaying mapped callbacks. */
+    public static *mapBroadcastedElements(left: MultiArray, right: MultiArray, diagnosticName: string): Generator<{ left: ElementType; right: ElementType }, MultiArray, ElementType> {
         const leftDim = left.dimension.slice();
         const rightDim = right.dimension.slice();
         const maxDim = Math.max(leftDim.length, rightDim.length);
@@ -1749,11 +1765,11 @@ class MultiArray<ELEMENT = Elements> {
             const o = pageO * rowsO + (indexPageO % rowsO);
             const p = Math.floor(indexPageO / rowsO);
 
-            result.array[o][p] = callback(left.array[i][j], right.array[k][l]);
+            result.array[o][p] = yield { left: left.array[i][j], right: right.array[k][l] };
         }
         MultiArray.setType(result);
         return result;
-    };
+    }
 
     /**
      * Calls a defined callback function on each element of an MultiArray,
@@ -2093,6 +2109,33 @@ class MultiArray<ELEMENT = Elements> {
      * Syntax containers retain legitimate dynamic execution carriers.
      */
     public static *evaluateElements(M: MultiArray, interpreter?: RuntimeEvaluationContext | null): Generator<{ readonly element: ElementType }, ElementType, ElementType[]> {
+        const execution = MultiArray.evaluateElementsRetained(M, interpreter);
+        let next = execution.next();
+        while (!next.done) {
+            let values: ElementType[];
+            try {
+                const request = next.value;
+                if ('concatenation' in request) {
+                    const value = interpreter?.concatenateOverload?.(request.concatenation, request.values, request.parent);
+                    values = value === undefined ? [] : [value as ElementType];
+                } else values = yield request;
+            } catch (error) {
+                next = execution.throw(error);
+                continue;
+            }
+            next = execution.next(values);
+        }
+        return next.value;
+    }
+    /** @internal Shared element/concatenation requests for the retained interpreter driver. */
+    public static *evaluateElementsRetained(
+        M: MultiArray,
+        interpreter?: RuntimeEvaluationContext | null,
+    ): Generator<
+        { readonly element: ElementType } | { readonly concatenation: 'horzcat' | 'vertcat'; readonly values: ElementType[]; readonly parent: MultiArray },
+        ElementType,
+        ElementType[]
+    > {
         if (MultiArray.isEmpty(M)) return M;
         if (M.isCell) {
             const rows: ElementType[][] = [];
@@ -2121,7 +2164,14 @@ class MultiArray<ELEMENT = Elements> {
         return result;
     }
 
-    private static *evaluateRecursiveElements(M: MultiArray, interpreter?: RuntimeEvaluationContext | null): Generator<{ readonly element: ElementType }, ElementType, ElementType[]> {
+    private static *evaluateRecursiveElements(
+        M: MultiArray,
+        interpreter?: RuntimeEvaluationContext | null,
+    ): Generator<
+        { readonly element: ElementType } | { readonly concatenation: 'horzcat' | 'vertcat'; readonly values: ElementType[]; readonly parent: MultiArray },
+        ElementType,
+        ElementType[]
+    > {
         if (M.dimension.length > 2) {
             const pages: MultiArray[] = [];
             for (const page of MultiArray.splitLastDimension(M)) pages.push(MultiArray.scalarToMultiArray(yield* MultiArray.evaluateRecursiveElements(page, interpreter)));
@@ -2132,7 +2182,7 @@ class MultiArray<ELEMENT = Elements> {
         for (const row of M.array) {
             const values: ElementType[] = [];
             for (const element of row) values.push(...(yield { element }));
-            const overloaded = values.length > 1 ? interpreter?.concatenateOverload?.('horzcat', values, M) : undefined;
+            const overloaded = values.length > 1 && interpreter?.concatenateOverload ? (yield { concatenation: 'horzcat', values, parent: M })[0] : undefined;
             overloadedRows.push(overloaded as ElementType);
             if (typeof overloaded !== 'undefined') rows.push(MultiArray.scalarToMultiArray(overloaded as ElementType));
             else if (MultiArray.isCharStringList(values) && values.every(CharString.isChar))
@@ -2141,7 +2191,7 @@ class MultiArray<ELEMENT = Elements> {
             else rows.push(MultiArray.concatenate(1, 'evaluate', ...values.map(MultiArray.scalarToMultiArray)));
         }
         if (rows.length === 1 && typeof overloadedRows[0] !== 'undefined') return overloadedRows[0];
-        const overloaded = interpreter?.concatenateOverload?.('vertcat', rows.map(MultiArray.MultiArrayToScalar), M);
+        const overloaded = interpreter?.concatenateOverload ? (yield { concatenation: 'vertcat', values: rows.map(MultiArray.MultiArrayToScalar), parent: M })[0] : undefined;
         if (typeof overloaded !== 'undefined') return overloaded as ElementType;
         return MultiArray.concatenate(0, 'evaluate', ...rows);
     }

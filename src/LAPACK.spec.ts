@@ -652,7 +652,6 @@ describe(`${unitName} unit test (.${testExtension} test file).`, () => {
                 interpreter.Execute('clear');
                 /* General Hermitian matrix */
                 interpreter.Execute(`A = ${matrixSample['complex_hermitian_4x4_01']}`);
-                interpreter.Execute(`A = ${matrixSample['real_symmetric_rational_4x4_01']}`); // TODO: remove when test pass.
                 const A0 = interpreter.Execute('A').list[0] as MultiArray;
                 /* EIG (Hermitian) */
                 const { V, D } = LAPACK.eig_hermitian(A0, true);

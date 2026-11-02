@@ -35,6 +35,16 @@ unless the distribution contract changes.
 
 ## Organization
 
+`ResumableValidation.spec.ts` adds retained validation order, grouping, scope,
+failure and cancellation checks, also exercised by the installed Worker cycle.
+
+The current cycle adds `HermitianEigen.spec.ts` and
+`RetainedAssignmentsAndLoad.spec.ts` for mathematical invariants and retained
+workspace/assignment behavior. `npm run test:release` also runs those workflows
+through an installed tarball and real Node/browser Workers. Use
+`npm run test:consumers` for the optional sibling application/Markdown gate;
+see [consumer contracts](consumer-contracts.md) for prerequisites and mappings.
+
 Each `.spec.ts` file should have a single top-level `describe` for the file and
 nested `describe` blocks for related behavior. `src/LAPACK.spec.ts` is the
 informal reference for this organization.
@@ -76,3 +86,35 @@ Public APIs should have tests for:
 - non-mutation or intentional mutation;
 - scalar, vector, matrix, and multidimensional behavior where relevant;
 - compatibility behavior that differs from plain JavaScript expectations.
+
+## Dynamic execution milestone
+
+Dynamic eval/evalin/evalc, native for binding and ordered SPMD count
+expressions now share retained execution with synchronous evaluation.
+Cancellation bypasses eval catch code and restores active frames; completed
+mutations remain. ResumableDynamic.spec.ts protects the core contract. The
+dynamic-cycle fixture runs against the installed package in Node/browser
+Workers and both consumer adapters through npm run test:consumers. Class
+callback/array dispatch remains the next migration; SPMD still executes
+sequentially. See [current capabilities](capabilities.md) for the supported
+subset.
+
+## Retained class callback contract
+
+Property/accessor and descriptor traversals now request retained calls, with
+explicit output selection and class access installed only while advancing.
+Notification guards clear on failure/cancellation; completed handle mutations
+remain. Concatenation uses requests from the shared array evaluator.
+ResumableClasses.spec.ts and classes-cycle.m cover source and installed
+Node/browser/app/Markdown execution. See
+[current capabilities](capabilities.md) for supported paths and remaining
+callback audits.
+
+## Coercion and native callback audit
+
+ResumableProtocols.spec.ts and protocols-cycle.m extend the retained contract
+to conditions, subsindex, native class overloads, descriptor method calls,
+broadcast/compound operators, nthargout and spfun. Original dispatch, helper
+output masks, index validation and native copy/write order remain observable.
+The installed consumer gate runs these cases in Node/browser Workers and both
+adapters; see [current capabilities](capabilities.md) for boundaries.

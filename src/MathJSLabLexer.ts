@@ -1587,6 +1587,7 @@ export default class MathJSLabLexer extends Lexer {
         switch (actionIndex) {
             case 54:
                 this._input.seek(this._input.index - 2); // Unput two characters.
+                this.column -= 2; // The operator will be consumed again by the simulator.
                 this._type = this.previousTokenType = MathJSLabLexer.FLOAT_NUMBER;
 
                 break;

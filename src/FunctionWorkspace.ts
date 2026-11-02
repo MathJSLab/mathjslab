@@ -1,4 +1,4 @@
-import type { ExpressionBoundaryValue, FunctionTable, NameEntry, NameTable, NodeExpr, NodeFunctionDefinition, NodeInput, RuntimeExpressionValue } from './AST';
+import type { ExpressionBoundaryValue, FunctionTable, NameEntry, NameTable, NodeFunctionDefinition, NodeInput, RuntimeExpressionValue } from './AST';
 import { AST } from './AST';
 import { CharString } from './CharString';
 import { Complex } from './Complex';
@@ -157,14 +157,32 @@ class FunctionWorkspace {
         isCatchableError: IsCatchableError = () => true,
         onCatchError?: OnCatchError,
     ): NodeInput {
-        try {
-            return evaluate(source, scope);
-        } catch (e: unknown) {
-            if (typeof catchSource === 'undefined' || !isCatchableError(e)) {
-                throw e;
+        const execution = this.executeWithCatch(scope, source, catchSource, isCatchableError, onCatchError);
+        let next = execution.next();
+        while (!next.done) {
+            try {
+                next = execution.next(evaluate(next.value.source, next.value.scope));
+            } catch (error) {
+                next = execution.throw(error);
             }
-            onCatchError?.(e);
-            return evaluate(catchSource, scope);
+        }
+        return next.value;
+    }
+
+    /** Share catch-string selection without replaying partially executed source. */
+    public static *executeWithCatch(
+        scope: WorkspaceScope,
+        source: string,
+        catchSource: string | undefined,
+        isCatchableError: IsCatchableError = () => true,
+        onCatchError?: OnCatchError,
+    ): Generator<{ source: string; scope: WorkspaceScope }, NodeInput, NodeInput> {
+        try {
+            return yield { source, scope };
+        } catch (error) {
+            if (typeof catchSource === 'undefined' || !isCatchableError(error)) throw error;
+            onCatchError?.(error);
+            return yield { source: catchSource, scope };
         }
     }
 

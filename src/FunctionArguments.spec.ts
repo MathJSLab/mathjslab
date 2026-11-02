@@ -57,6 +57,23 @@ const functionDefinition = (parameterNames: string[], returnNames: string[], val
 
 describe(`${unitName} unit test (.${testExtension} test file).`, () => {
     describe('Behavior', () => {
+        it('Should preserve the receiver of host evaluation callbacks through both synchronous validation APIs.', () => {
+            const validation = argValidation({ functions: [AST.nodeIndexExpr(AST.nodeIdentifier('customValidator'), AST.nodeList([AST.nodeIdentifier('x')]))] });
+            const callbacks = {
+                calls: 0,
+                resolveEntry: () => ({ node: Complex.one() }),
+                evaluate(_expression: NodeInput): NodeInput {
+                    this.calls++;
+                    return Complex.one();
+                },
+                throwEvalError,
+                throwSyntaxError,
+            };
+            FunctionArguments.validateArgumentValidation(validation, new Map(), callbacks);
+            FunctionArguments.validateFunctionArguments(functionDefinition(['x'], ['y'], [validation]), 'Input', callbacks);
+            expect(callbacks.calls).toBe(2);
+        });
+
         it(`${unitName} and its methods should be defined.`, () => {
             expect(FunctionArguments).toBeDefined();
             expect(FunctionArguments.validateBlocks).toBeDefined();

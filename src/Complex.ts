@@ -13,10 +13,15 @@ import type { RuntimeDisplay } from './RuntimeDisplay';
  */
 
 type RealType = number | Decimal;
+/** Numeric facade input, including decimal and native-number compatible values. */
 type NumLikeType = TypeOfComplex.NumLike<RealType>;
+/** Native number representation used for facade metadata and numeric conversions. */
 type NumberObjectType = number;
+/** Selects native floating-point or arbitrary-precision decimal arithmetic. */
 type RealTypeDescriptor = 'number' | 'decimal';
+/** Backend-neutral complex value used by interpreter arithmetic. */
 type ComplexType = TypeOfComplex.ComplexHandlerType<RealType, TypeOfComplex.ComplexInterface<RealType>>;
+/** Converts a facade input to a native number, accepting native precision and range limits. */
 const toNumber = (value: NumLikeType): number => (value instanceof Decimal ? value.toNumber() : Number(value));
 
 /**
@@ -88,6 +93,8 @@ abstract class Complex implements ComplexInterfaceBase {
      * Complex backend engine switcher.
      */
     public static set engine(engine: RealTypeDescriptor) {
+        if (engine !== 'number' && engine !== 'decimal') throw new Error(`invalid complex backend engine: '${engine}'.`);
+        if (engine === this._engine) return;
         this._engine = engine;
         switch (engine) {
             case 'number':
@@ -102,10 +109,52 @@ abstract class Complex implements ComplexInterfaceBase {
         TypeOfComplex.ComplexInterfaceStaticKeyTable.forEach((prop: ComplexStaticKey) => {
             const facade = this as unknown as Record<ComplexStaticKey, unknown>;
             const backend = this._engineBackend as unknown as Record<ComplexStaticKey, unknown>;
-            facade[prop] = backend[prop];
+            const entry = backend[prop];
+            // Function references remain stable across session environment changes.
+            if (typeof entry === 'function' && typeof facade[prop] === 'function') return;
+            if ((prop === 'mapFunction' || prop === 'twoArgFunction' || prop === 'applyFunction') && facade[prop] !== undefined) return;
+            facade[prop] =
+                prop === 'isInstanceOf'
+                    ? (value: unknown) => {
+                          if (!(value instanceof ComplexNumber || value instanceof ComplexDecimal)) return false;
+                          Complex.adopt(value);
+                          return true;
+                      }
+                    : typeof entry === 'function'
+                      ? (...args: unknown[]) => {
+                            for (const argument of args) Complex.adoptArgument(argument);
+                            const current = this._engineBackend as unknown as Record<ComplexStaticKey, (...values: unknown[]) => unknown>;
+                            return Reflect.apply(current[prop], this._engineBackend, args);
+                        }
+                      : prop === 'mapFunction' || prop === 'twoArgFunction' || prop === 'applyFunction'
+                        ? Object.fromEntries(
+                              Object.keys(entry as object).map((name) => [
+                                  name,
+                                  (...args: unknown[]) => {
+                                      for (const argument of args) Complex.adoptArgument(argument);
+                                      const table = (this._engineBackend as unknown as Record<string, Record<string, (...values: unknown[]) => unknown>>)[prop];
+                                      return table[name](...args);
+                                  },
+                              ]),
+                          )
+                        : entry;
         });
         this.set(this.defaultSettings);
     }
+    /** @internal Preserve numeric identity when a retained execution temporary crosses a backend switch. */
+    public static adopt(value: ComplexNumber | ComplexDecimal): void {
+        const backend = Complex._engineBackend;
+        if (value instanceof backend) return;
+        const converted = Complex.create(value.re, value.im, value.type);
+        Object.setPrototypeOf(value, backend.prototype);
+        Object.assign(value, { re: converted.re, im: converted.im });
+    }
+
+    private static adoptArgument(value: unknown): void {
+        if (value instanceof ComplexNumber || value instanceof ComplexDecimal) Complex.adopt(value);
+        else if (Array.isArray(value)) for (const item of value) Complex.adoptArgument(item);
+    }
+
     public static readonly LOGICAL: number;
     public static readonly REAL: number;
     public static readonly COMPLEX: number;

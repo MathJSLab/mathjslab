@@ -3,6 +3,83 @@
 All notable changes to this project will be documented in this file. This
 project adheres to [Semantic Versioning](http://semver.org/).
 
+## 2.10.0
+
+- Fix source coordinates after numeric elementwise operators and transpose:
+  NUMBER_DOT_OP now rewinds both the character stream and lexer column, so
+  following command names are not truncated when consumers recover source text.
+  Define statement ranges with one-based lines, zero-based columns and finite
+  inclusive endpoints, ending at the last consumed token or the first external
+  output-suppressing semicolon. Exclude trailing whitespace and other list
+  separators. Update the canonical grammars, regenerate the ANTLR lexer and
+  parser, and add regressions for same-line commands, multiline matrices,
+  elementwise operators, transpose, EOF, LF and CRLF.
+
+- Update development dependencies, including Node typings, ESLint and its
+  TypeScript/Jest/Prettier integrations, globals, jsdom, node-html-parser,
+  ts-jest and the webpack toolchain.
+
+- Refresh package documentation and public runtime JSDocs, regenerate the API
+  reference, and record the pre-publication checks and organization mirror
+  audit.
+
+- Add serializable numeric session creation options for local/browser/Node
+  drivers and restore initial numeric configuration on reset. Allow user
+  `configure` to switch live backends while preserving workspace, aliases and
+  retained execution values; keep numeric function dispatch backend-neutral.
+- Fix the shared AST numeric factory across interleaved backends, isolate
+  arithmetic defaults from settings, validate decimal setup atomically, and add
+  Worker numeric-option acknowledgement.
+- Add the complete non-rewriting test:candidate gate, docs:check and
+  application/publication handoff.
+
+- Add isolated distributed-package benchmarks for parsing, preparsed
+  evaluation, direct/blocked matrices, N-D reductions, codecs and native Node
+  Workers, with verified results and versioned JSON comparisons.
+
+- Add polyval, single-polynomial polyder, vector conv, trapz and cumtrapz using
+  backend arithmetic, with N-D sampled integration and installed educational
+  example regressions.
+
+- Add interpreter-owned versioned rng state for reproducible rand/randi; fix
+  integer endpoint bias and support singleton bounds.
+- Normalize Hermitian eig and rank/condition estimation, correct complex Gram
+  eigenvalues, and publish algorithm precision limits in
+  doc/numerical-reliability.md.
+
+- Retain class coercion/condition, subsindex and built-in overload callbacks,
+  native descriptor reads/writes, broadcast and compound operators, nthargout
+  and spfun. Preserve dispatch, output masks, native iteration/copy order and
+  failure cleanup; validate source and installed consumers.
+
+- Retain class property accessors, subscript overloads, observable/event
+  callbacks, SetGet access, object-array methods, destruction and concatenation
+  across host waits. Preserve output selection, class access, listener guards
+  and completed mutations; add source and installed-consumer regressions.
+
+- Retain eval/evalin/evalc scripts, native for binding and SPMD count
+  preparation across host waits, preserving catch, workspace and output-mask
+  semantics; verify installed Node/browser and consumer adapters.
+
+- Retain input/output, name-value and repeating validator calls and bounds
+  through shared generators. Preserve symbolic grouping, ignored outputs,
+  validation ordering, temporary scopes and function-frame cleanup. Suspend
+  property defaults before constructor inputs and named scalar stored-property
+  validation before writes; retain documented class callback/array boundaries.
+  Add source and installed Node/browser/app/Markdown regressions.
+
+- Correct Hermitian eigenvectors by adapting lower reduction diagonals to the
+  upper-diagonal solver contract. Validate finite exact symmetric/Hermitian
+  inputs, reject general matrices explicitly, support scalars and empty shapes,
+  and repair the diagnostic third output. Restore complex reconstruction tests.
+- Resume native indexed multiple-output assignments through the shared writer,
+  preserving output masks, evaluation order and completed writes on failure.
+- Execute resource-loaded scripts within retained function workspaces,
+  including nested loads, source identity, script locals, cancellation and
+  bounded depth.
+- Add current capability and consumer-contract guides plus installed-package
+  Node/browser Worker and optional app/Markdown consumer regressions.
+
 ## 2.9.0
 
 - Contract changes: var/std use normalization-before-selection syntax

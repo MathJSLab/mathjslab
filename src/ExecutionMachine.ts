@@ -1,5 +1,6 @@
 import type { HostEffect, HostEffectResult, RuntimeDiagnostic, RuntimeOutput } from './execution-contracts';
 
+/** Terminal result or single-use continuation exposed to a host-independent runtime driver. */
 export type ExecutionMachineStep<T = unknown> =
     | { readonly state: 'completed'; readonly value: T; readonly outputs: readonly RuntimeOutput[] }
     | {
@@ -23,6 +24,7 @@ export type ExecutionMachineStep<T = unknown> =
     | { readonly state: 'control'; readonly transfer: ExecutionControlTransfer }
     | { readonly state: 'error'; readonly diagnostics: readonly RuntimeDiagnostic[] };
 
+/** Evaluator-owned return, break or continue signal crossing a retained execution boundary. */
 export interface ExecutionControlTransfer {
     readonly kind: 'return' | 'break' | 'continue';
     readonly signal: unknown;
@@ -51,8 +53,10 @@ export class ExecutionCancellation extends Error {
     }
 }
 
+/** Generator yield containing either a host effect or a cooperative progress checkpoint. */
 export type ExecutionYieldRequest = ExecutionEffectRequest | { readonly checkpoint: true; readonly completed: number; readonly frames: readonly ExecutionFrame[] };
 
+/** Host effect and opaque evaluator frames retained until the request settles. */
 export interface ExecutionEffectRequest {
     readonly effect: HostEffect;
     readonly frame: ExecutionSequenceFrame;
@@ -76,6 +80,7 @@ export class ExecutionMachine<T> {
         this.initialStep = initialStep;
     }
 
+    /** Drives a retained generator with single-use continuations and cancellation through its cleanup frames. */
     public static sequence<T>(
         execution: Generator<ExecutionYieldRequest, T, HostEffectResult>,
         outputs: (value: T) => readonly RuntimeOutput[] = () => [],

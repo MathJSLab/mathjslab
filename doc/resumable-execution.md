@@ -8,18 +8,44 @@ binding; supported unary/binary/range expressions; native numeric/string/cell/
 structure receiver chains and assignment preparation; matrix/cell literal
 elements; and native receivers returned by normally dispatched calls.
 
-`pause` and top-level `load` use explicit host effects in supported statement
-positions. Arguments, selected branches, loop cursors and completed expression
-values survive waits without replay. Progress checkpoints enable cooperative
-cancellation. Continuations are single-use, in-memory state; no public session
-API serializes a suspension or exposes a manual pause/resume handle.
+`pause` and `load` (including inside user functions) use explicit host effects
+in supported statement positions. Arguments, selected branches, loop cursors
+and completed expression values survive waits without replay. Progress
+checkpoints enable cooperative cancellation. Continuations are single-use,
+in-memory state; no public session API serializes a suspension or exposes a
+manual pause/resume handle.
 
-Class callbacks/array dispatch, dynamic eval scripts, validation callbacks,
-indexed multiple-output destinations, synthetic loop destinations, SPMD count
-preparation and `load` inside user functions remain synchronous boundaries.
-Direct `pause`/`load` value operands are unsupported; numerical operations are
-indivisible. See [audited frontiers](#audited-remaining-frontiers) and
+Native indexed multiple-output destinations retain their descriptors, output
+masks and write order through the shared assignment writer. Loaded scripts run
+in the same retained machine and caller workspace, restoring script locals,
+imports and source identity. See [current capabilities](capabilities.md) and
+[consumer contracts](consumer-contracts.md) for tests and precise semantics.
+
+Dynamic eval/evalin/evalc, native loop binding and SPMD preparation retain
+execution. Property accessors, subscript overloads, events, concatenation and
+object-array methods now use retained callback traversal; see the class
+contract in capabilities.md and ResumableClasses.spec.ts. Coercion,
+index-conversion and selected/mapped native callback paths now share retained
+traversal as well; see ResumableProtocols.spec.ts. Direct `pause`/`load` value
+operands are unsupported; numerical operations are indivisible. See
+[audited frontiers](#audited-remaining-frontiers) and
 [returned receivers](#receivers-returned-by-calls) for the precise inventory.
+
+## Retained validation
+
+Input/output, repeating and name-value declaration validators now retain their
+custom calls, explicit operands and bounds. The same generator traversal serves
+the synchronous API. Shape/class checks, symbolic dimension grouping and output
+masks keep their existing order. Validation child scopes and function frames
+are restored while advancing and removed before waits, including
+failure/unwind. Property defaults and validation also suspend before
+constructor inputs; named scalar stored-property writes validate before
+committing. Class accessors, observable callbacks, overloaded/nested/dynamic
+property writes and object arrays retain their remaining dispatch limits. See
+[current capabilities](capabilities.md) and ResumableValidation.spec.ts for the
+precise subset.
+
+## Implementation details and historical increments
 
 The sections below describe the shared contracts and their implementation
 increments. Earlier increment limits are superseded where later sections
@@ -529,7 +555,11 @@ increments above. Class callback and array dispatch operations remain
 indivisible. Qualified-name resolution and variable/user-function precedence
 continue through the original dispatch.
 
-The audited remaining boundaries are:
+The following audit records boundaries at the returned-receiver increment.
+Later validation, load, assignment and dynamic execution milestones supersede
+those entries; the current capabilities matrix is authoritative.
+
+The boundaries at that increment were:
 
 - Class callbacks/dynamic scripts: property/index/event callbacks, class arrays
   and dynamic eval remain synchronous. Scalar methods, direct and superclass

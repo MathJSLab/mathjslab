@@ -52,7 +52,7 @@ Continuations are single-use in-memory objects, not persisted or transferable
 snapshots. Cancellation bypasses language catch and performs bounded cleanup;
 it does not roll back completed workspace effects. Scalar class calls,
 superclass calls, run/source scripts and supported feval/builtin forwarding
-retain their frames. Property/event callbacks, object arrays, overloaded
+retain their frames. Class accessors/event callbacks, object arrays, overloaded
 indexing and remaining preparation boundaries are synchronous. Long numerical
 operations are indivisible. The current inventory and detailed evaluation order
 live in [resumable execution](resumable-execution.md).
@@ -67,6 +67,12 @@ In-process cancellation occurs at supported checkpoints or host waits. See the
 Eligible remote `parfor` bodies distribute proven sliced assignments and
 associative reductions to child sessions. Policies select rejection or
 sequential fallback for unsupported loops. `spmd` remains sequential.
+
+Function and name-value/repeating validators now retain their expressions and
+bounds through shared generators. Construction defaults and named stored-scalar
+property validation also suspend; accessor/event/array dispatch remains a
+separate frontier. See [current capabilities](capabilities.md) for the precise
+validation subset and the next development milestones.
 
 ## Runtime distribution identity
 
@@ -86,3 +92,35 @@ shared contracts or type-only imports to preserve subsystem boundaries.
 
 The [documentation index](README.md) links to focused subsystem guides and the
 [boundary audit](architecture-boundary-audit.md).
+
+## Dynamic execution milestone
+
+Dynamic eval/evalin/evalc, native for binding and ordered SPMD count
+expressions now share retained execution with synchronous evaluation.
+Cancellation bypasses eval catch code and restores active frames; completed
+mutations remain. ResumableDynamic.spec.ts protects the core contract. The
+dynamic-cycle fixture runs against the installed package in Node/browser
+Workers and both consumer adapters through npm run test:consumers. Class
+callback/array dispatch remains the next migration; SPMD still executes
+sequentially. See [current capabilities](capabilities.md) for the supported
+subset.
+
+## Retained class callback contract
+
+Property/accessor and descriptor traversals now request retained calls, with
+explicit output selection and class access installed only while advancing.
+Notification guards clear on failure/cancellation; completed handle mutations
+remain. Concatenation uses requests from the shared array evaluator.
+ResumableClasses.spec.ts and classes-cycle.m cover source and installed
+Node/browser/app/Markdown execution. See
+[current capabilities](capabilities.md) for supported paths and remaining
+callback audits.
+
+## Coercion and native callback audit
+
+ResumableProtocols.spec.ts and protocols-cycle.m extend the retained contract
+to conditions, subsindex, native class overloads, descriptor method calls,
+broadcast/compound operators, nthargout and spfun. Original dispatch, helper
+output masks, index validation and native copy/write order remain observable.
+The installed consumer gate runs these cases in Node/browser Workers and both
+adapters; see [current capabilities](capabilities.md) for boundaries.

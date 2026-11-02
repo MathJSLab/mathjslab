@@ -40,6 +40,7 @@ class NodeWorkerEndpoint implements RuntimeWorkerEndpoint {
     }
 }
 
+/** Node runtime configuration with an optional Worker endpoint factory. */
 export type NodeRuntimeOptions = RuntimeOptions & { readonly workerFactory?: RuntimeWorkerFactory };
 const createDefaultNodeWorker = (url: URL): RuntimeWorkerEndpoint =>
     new NodeWorkerEndpoint(new NodeWorker(url, { name: 'mathjslab-runtime', execArgv: process.execArgv.filter((argument) => !argument.startsWith('--input-type')) }));
@@ -47,5 +48,6 @@ const nodeWorkerBundle = 'mathjslab.runtime-node-worker.esm2022.js';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore import.meta is emitted only by the ESM Node runtime entrypoint.
 const resolveNodeWorkerUrl = (): URL => Reflect.construct(URL, [nodeWorkerBundle, import.meta.url]) as URL;
+/** Creates isolated worker_threads sessions using Worker assets from the same distribution. */
 export const createNodeMathJSLabRuntime = (options: NodeRuntimeOptions = {}): MathJSLabRuntime =>
     new RemoteMathJSLabRuntime(options.workerFactory ?? (() => createDefaultNodeWorker(resolveNodeWorkerUrl())), options);

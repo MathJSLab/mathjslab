@@ -655,7 +655,7 @@ describe('InProcessMathJSLabRuntime', () => {
         await runtime.dispose();
     });
 
-    test.each(['function y=f(a), y=a; end; z=f(pause(0))', 'function f(), load("x"); end; f()'])('rejects waits at remaining call boundaries: %s', async (source) => {
+    test.each(['function y=f(a), y=a; end; z=f(pause(0))'])('rejects waits at remaining call boundaries: %s', async (source) => {
         const request = jest.fn(async () => ({}));
         const runtime = createInProcessMathJSLabRuntime({ host: { request } });
         const session = await runtime.createSession();

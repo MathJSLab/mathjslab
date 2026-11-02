@@ -14,6 +14,7 @@ type ClassEventSource = {
     };
 };
 
+/** Distinguishes ordinary event listeners from observable-property listeners. */
 type ClassEventListenerKind = 'event.listener' | 'event.proplistener';
 
 /**

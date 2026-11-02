@@ -1,3 +1,4 @@
+import type { NumericEnvironmentOptions } from './RuntimeEnvironment';
 import { requestHostEffect } from './RuntimeHostEffect';
 import { runtimeProtocolVersion, serializeRuntimeError, type RuntimeCommand, type RuntimeInboundMessage, type RuntimeOutboundMessage, type RuntimeResponseValue } from './runtime-protocol';
 import { ParforAnalyzer } from './lib-core';
@@ -14,6 +15,7 @@ import type {
     SessionOptions,
 } from './runtime-contracts';
 
+/** Worker transport surface used by browser, Node and custom runtime endpoints. */
 export interface RuntimeWorkerEndpoint {
     postMessage(message: RuntimeInboundMessage, transfer?: ArrayBuffer[]): void;
     addEventListener(type: 'message', listener: (event: MessageEvent<RuntimeOutboundMessage>) => void): void;
@@ -23,6 +25,7 @@ export interface RuntimeWorkerEndpoint {
     terminate(): void | Promise<number>;
 }
 
+/** Creates a fresh endpoint for initial session creation or recovery after termination. */
 export type RuntimeWorkerFactory = () => RuntimeWorkerEndpoint;
 type Pending = { resolve(value: RuntimeResponseValue): void; reject(reason: unknown): void };
 const errorDiagnostic = (code: string, message: string): RuntimeDiagnostic => ({ code, severity: 'error', message });
@@ -45,6 +48,7 @@ class RemoteRuntimeSession implements RuntimeSession {
         private readonly host?: RuntimeHost,
         private readonly maxWorkers = 1,
         private readonly onDispose?: (session: RemoteRuntimeSession) => void,
+        private readonly numeric?: NumericEnvironmentOptions,
     ) {}
 
     public async initialize(): Promise<void> {
@@ -122,7 +126,7 @@ class RemoteRuntimeSession implements RuntimeSession {
         const results = new Map<number, string>();
         const workerCount = Math.min(this.maxWorkers, values.length);
         const runners = Array.from({ length: workerCount }, async (_, workerIndex) => {
-            const child = new RemoteRuntimeSession(this.factory, `${this.sessionId}-parfor-${workerIndex}-${Date.now()}`, 'off', this.host, 1);
+            const child = new RemoteRuntimeSession(this.factory, `${this.sessionId}-parfor-${workerIndex}-${Date.now()}`, 'off', this.host, 1, undefined, this.numeric);
             await child.initialize();
             try {
                 while (queue.length) {
@@ -268,8 +272,17 @@ class RemoteRuntimeSession implements RuntimeSession {
                 worker.addEventListener('message', this.receive);
                 worker.addEventListener('error', this.fail);
                 worker.addEventListener('messageerror', this.fail);
-                const result = await this.send({ type: 'create', sessionId: this.sessionId, ...(this.parfor ? { parfor: this.parfor } : {}) });
+                const result = await this.send({
+                    type: 'create',
+                    sessionId: this.sessionId,
+                    ...(this.parfor ? { parfor: this.parfor } : {}),
+                    ...(this.numeric ? { numeric: this.numeric } : {}),
+                });
                 if (result.type !== 'created') throw new Error(`Unexpected runtime response: ${result.type}`);
+                if (this.numeric && !result.numericConfigured)
+                    throw Object.assign(new Error('Worker does not acknowledge numeric session options; update the Worker and core bundles together.'), {
+                        code: 'MATHJSLAB_NUMERIC_CONFIGURATION_UNSUPPORTED',
+                    });
             })();
         }
         try {
@@ -357,6 +370,7 @@ class RemoteRuntimeSession implements RuntimeSession {
     }
 }
 
+/** Owns Worker sessions and parallel execution resources, forwarding host effects through the configured adapter. */
 export class RemoteMathJSLabRuntime implements MathJSLabRuntime {
     private readonly sessions = new Set<RemoteRuntimeSession>();
     private nextSession = 0;
@@ -372,6 +386,11 @@ export class RemoteMathJSLabRuntime implements MathJSLabRuntime {
     public async createSession(options: SessionOptions = {}): Promise<RuntimeSession> {
         if (this.disposed) throw new Error('MathJSLab runtime is disposed.');
         options = { ...this.options.sessionDefaults, ...options };
+        if (options.numeric !== undefined) {
+            if (!options.numeric || typeof options.numeric !== 'object' || Array.isArray(options.numeric)) throw new TypeError('numeric session options must be an object.');
+            const complex = options.numeric.complex;
+            if (complex !== undefined && (!complex || typeof complex !== 'object' || Array.isArray(complex))) throw new TypeError('numeric.complex must be a configuration object.');
+        }
         if (options.interpreter) throw new Error('Remote runtime sessions require serializable package-level configuration.');
         const suggested = typeof navigator === 'undefined' ? 2 : Math.max(1, (navigator.hardwareConcurrency || 2) - 1);
         const session = new RemoteRuntimeSession(
@@ -381,6 +400,7 @@ export class RemoteMathJSLabRuntime implements MathJSLabRuntime {
             this.options.host,
             this.options.maxWorkers ?? suggested,
             (disposed) => this.sessions.delete(disposed),
+            options.numeric ? { ...options.numeric, ...(options.numeric.complex ? { complex: { ...options.numeric.complex } } : {}) } : undefined,
         );
         this.sessions.add(session);
         try {

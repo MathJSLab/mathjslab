@@ -10,12 +10,14 @@ import {
 } from './runtime-protocol';
 import type { HostEffectResult, MathJSLabRuntime, RuntimeHost, RuntimeSession } from './runtime-contracts';
 
+/** Worker-side transport surface for receiving commands and returning responses or host effects. */
 export interface RuntimeWorkerServerScope {
     postMessage(message: RuntimeOutboundMessage, transfer?: ArrayBuffer[]): void;
     addEventListener(type: 'message', listener: (event: MessageEvent<RuntimeInboundMessage>) => void): void;
     removeEventListener(type: 'message', listener: (event: MessageEvent<RuntimeInboundMessage>) => void): void;
 }
 
+/** Dispatches versioned runtime commands to local sessions and correlates asynchronous host effect replies. */
 export class RuntimeWorkerServer {
     private readonly runtime: MathJSLabRuntime;
     private readonly sessions = new Map<string, RuntimeSession>();
@@ -108,8 +110,15 @@ export class RuntimeWorkerServer {
         const command = request.command;
         if (command.type === 'create') {
             if (this.sessions.has(command.sessionId)) throw new Error(`Runtime session already exists: ${command.sessionId}`);
-            this.sessions.set(command.sessionId, await this.runtime.createSession({ id: command.sessionId, ...(command.parfor ? { parfor: command.parfor } : {}) }));
-            return { type: 'created' };
+            this.sessions.set(
+                command.sessionId,
+                await this.runtime.createSession({
+                    id: command.sessionId,
+                    ...(command.parfor ? { parfor: command.parfor } : {}),
+                    ...(command.numeric !== undefined ? { numeric: command.numeric } : {}),
+                }),
+            );
+            return { type: 'created', ...(command.numeric !== undefined ? { numericConfigured: true as const } : {}) };
         }
         const session = this.sessions.get(command.sessionId);
         if (!session) throw new Error(`Unknown runtime session: ${command.sessionId}`);

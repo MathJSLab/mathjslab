@@ -69,7 +69,7 @@ describe('Parser AST compatibility fixtures.', () => {
         const innerSecond = binaryOperationNode(ifBlock.then[0].list[1]);
 
         expect(first.start).toEqual({ line: 1, column: 0 });
-        expect(first.stop).toEqual({ line: 1, column: 4 });
+        expect(first.stop).toEqual({ line: 1, column: 5 });
         expect(first.omitOutput).toBe(true);
         expect(second.start).toEqual({ line: 1, column: 7 });
         expect(second.stop).toEqual({ line: 1, column: 11 });
@@ -77,7 +77,7 @@ describe('Parser AST compatibility fixtures.', () => {
         expect(ifBlock.start).toEqual({ line: 2, column: 0 });
         expect(ifBlock.stop).toEqual({ line: 4, column: 2 });
         expect(innerFirst.start).toEqual({ line: 3, column: 2 });
-        expect(innerFirst.stop).toEqual({ line: 3, column: 6 });
+        expect(innerFirst.stop).toEqual({ line: 3, column: 7 });
         expect(innerFirst.omitOutput).toBe(true);
         expect(innerSecond.start).toEqual({ line: 3, column: 9 });
         expect(innerSecond.stop).toEqual({ line: 3, column: 13 });

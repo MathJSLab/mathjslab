@@ -1,5 +1,7 @@
+/** Conservative role assigned to a variable before distributing a parallel loop. */
 export type ParforVariableKind = 'loop' | 'broadcast' | 'sliced' | 'reduction' | 'temporary' | 'unsupported';
 
+/** Proven single-assignment loop plan with iteration values, broadcasts and output combination policy. */
 export type ParforPlan = {
     readonly source: string;
     readonly loopVariable: string;
@@ -10,6 +12,7 @@ export type ParforPlan = {
     readonly output: { readonly kind: 'sliced'; readonly name: string } | { readonly kind: 'reduction'; readonly name: string; readonly operator: '+=' | '*=' };
 };
 
+/** Either an eligible execution plan or an explicit reason for sequential fallback or rejection. */
 export type ParforAnalysis = { readonly eligible: true; readonly plan: ParforPlan } | { readonly eligible: false; readonly reason: string };
 
 const pureFunctions = new Set(['abs', 'acos', 'asin', 'atan', 'ceil', 'cos', 'exp', 'fix', 'floor', 'log', 'max', 'min', 'mod', 'power', 'round', 'sign', 'sin', 'sqrt', 'tan']);

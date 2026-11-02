@@ -299,6 +299,7 @@ abstract class MathML {
  * Exports.
  */
 export type { FormatArgument, FormatFunctionUnion as FormatFunction, FormatRegistryUnion as FormatRegistry, KeyOfFormatRegistryUnion as KeyOfFormatRegistry };
+/** Public alias of the MathML formatter registry used to extend mathematical rendering. */
 const format = MathML.format;
 export { format, MathML };
 /**

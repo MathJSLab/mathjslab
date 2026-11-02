@@ -41,7 +41,10 @@ abstract class Configuration {
             get: () => Complex.create(BLAS.settings.blockSize),
         },
         real: {
-            set: (engine: ElementType) => (Complex.engine = Configuration.requireCharString(engine).str as RealTypeDescriptor),
+            set: (engine: ElementType) => {
+                const selected = Configuration.requireCharString(engine).str as RealTypeDescriptor;
+                if (selected !== Complex.engine) Complex.engine = selected;
+            },
             setDefault: () => (Complex.engine = 'decimal'),
             get: () => new CharString(Complex.engine),
         },
@@ -152,19 +155,30 @@ abstract class Configuration {
     public static configure(config: CharString, value: ElementType): CharString;
     public static configure(CONFIG: MultiArray): CharString;
     public static configure(...args: ElementType[]): CharString | undefined {
+        return Configuration.configureWithBackendChange(() => {}, ...args);
+    }
+
+    /** @internal Migrate interpreter values after each backend change, including configuration lists. */
+    public static configureWithBackendChange(changed: () => void, ...args: ElementType[]): CharString | undefined {
         const setConfig = (name: ElementType, value: ElementType): void => {
             if (CharString.isInstanceOf(name)) {
                 const entry = Configuration.configurationEntry(name.str);
                 if (!entry) {
                     throw new ReferenceError(`configure: invalid configuration: '${name.str}'.`);
                 }
+                const previous = Complex.engine;
                 entry.set(value);
+                if (Complex.engine !== previous) changed();
             } else {
                 AST.throwInvalidCallError('configure');
             }
         };
         if (args.length === 0) {
             /* Set default configuration. */
+            const previous = Complex.engine;
+            Complex.engine = 'decimal';
+            if (Complex.engine !== previous) changed();
+            Complex.set(Complex.defaultSettings);
             for (const config in Configuration.configuration) {
                 Configuration.configuration[config].setDefault();
             }

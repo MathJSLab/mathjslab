@@ -5,6 +5,14 @@ the same public `MathJSLabRuntime` and `RuntimeSession` contracts. This
 document records the lifecycle guarantees that must remain equivalent across
 adapters.
 
+The [current capability matrix](capabilities.md) is authoritative for migration
+status. Native indexed multiple-output destinations and resource-loaded scripts
+inside functions now use the retained machine. Function validators, property
+construction defaults and named stored-scalar property validation also retain
+their waits. Historical boundary descriptions below refer to earlier
+increments; see [consumer contracts](consumer-contracts.md) for their current
+workspace, output and failure semantics.
+
 ## Session guarantees
 
 - Sessions owned by the same runtime have independent workspaces and numeric
@@ -200,3 +208,35 @@ the Worker; it uses hard preemption and does not execute language cleanup in
 the terminated Worker. Local reset performs the retained-machine unwind before
 replacing the interpreter. Neither cancellation mode rolls back completed host
 effects.
+
+## Dynamic execution milestone
+
+Dynamic eval/evalin/evalc, native for binding and ordered SPMD count
+expressions now share retained execution with synchronous evaluation.
+Cancellation bypasses eval catch code and restores active frames; completed
+mutations remain. ResumableDynamic.spec.ts protects the core contract. The
+dynamic-cycle fixture runs against the installed package in Node/browser
+Workers and both consumer adapters through npm run test:consumers. Class
+callback/array dispatch remains the next migration; SPMD still executes
+sequentially. See [current capabilities](capabilities.md) for the supported
+subset.
+
+## Retained class callback contract
+
+Property/accessor and descriptor traversals now request retained calls, with
+explicit output selection and class access installed only while advancing.
+Notification guards clear on failure/cancellation; completed handle mutations
+remain. Concatenation uses requests from the shared array evaluator.
+ResumableClasses.spec.ts and classes-cycle.m cover source and installed
+Node/browser/app/Markdown execution. See
+[current capabilities](capabilities.md) for supported paths and remaining
+callback audits.
+
+## Coercion and native callback audit
+
+ResumableProtocols.spec.ts and protocols-cycle.m extend the retained contract
+to conditions, subsindex, native class overloads, descriptor method calls,
+broadcast/compound operators, nthargout and spfun. Original dispatch, helper
+output masks, index validation and native copy/write order remain observable.
+The installed consumer gate runs these cases in Node/browser Workers and both
+adapters; see [current capabilities](capabilities.md) for boundaries.

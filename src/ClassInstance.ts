@@ -121,15 +121,23 @@ class ClassInstance {
      * @returns New runtime instance.
      */
     public static readonly instantiate = (classDefinition: ClassDefinition, evaluateDefault: ClassPropertyDefaultEvaluator): ClassInstance => {
+        const execution = ClassInstance.instantiateExecution(classDefinition);
+        let next = execution.next();
+        while (!next.done) next = execution.next(evaluateDefault(next.value));
+        return next.value;
+    };
+
+    /** Retain property default order and construct an instance only after all defaults finish. */
+    public static *instantiateExecution(classDefinition: ClassDefinition): Generator<NodeInput, ClassInstance, RuntimeExpressionValue> {
         const properties: ClassInstancePropertyTable = {};
         for (const property of classDefinition.allProperties()) {
             if (property.isDependent) {
                 continue;
             }
-            properties[property.name] = property.defaultValue ? evaluateDefault(property.defaultValue) : ClassInstance.implicitPropertyDefault(property);
+            properties[property.name] = property.defaultValue ? yield property.defaultValue : ClassInstance.implicitPropertyDefault(property);
         }
         return new ClassInstance(classDefinition, properties);
-    };
+    }
 
     /**
      * Throw when an instance has been deleted.

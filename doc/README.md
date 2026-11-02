@@ -8,6 +8,11 @@ can suspend.
 
 ## Language and embedding
 
+- [Current capabilities and milestones](capabilities.md): authoritative support
+  matrix, numerical eig contract and remaining development fronts.
+- [Packaged consumer contracts](consumer-contracts.md): app/Markdown mapping,
+  real Worker validation and optional sibling-checkout gate.
+
 - [Parser and AST compatibility](parser-ast-compatibility.md): supported
   syntax, strict expression boundaries and TypeScript migration.
 - [Contextual parser boundaries](parser-contextual-boundaries.md): commands,
@@ -45,6 +50,8 @@ can suspend.
 - [Generated API reference](api-reference.md): exported declarations and JSDoc.
 - [Householder reflectors](householder-reflectors.md): numerical implementation
   notes.
+- [Release preparation for 2.10.0](release-preparation.md): current review,
+  validation scope and organization mirror audit.
 - [Release notes](../CHANGES.md) and [contributing](../CONTRIBUTING.md).
 
 The generated API reference is a declaration/JSDoc inventory; consult source
@@ -56,3 +63,16 @@ The separate [demo application](https://github.com/MathJSLab/mathjslab-app)
 maintains multilingual command help and application-specific documentation.
 
 - [Architecture review before publication](architecture-review.md).
+
+Random streams, replay/reset semantics and effective numerical precision are
+specified in [numerical reliability](numerical-reliability.md).
+
+The [educational math contracts](educational-math.md) specify polynomial
+evaluation, differentiation, convolution and sampled trapezoidal integration.
+
+[Performance benchmarks](performance-benchmarks.md) describes distributed Node
+workloads, correctness checks, reports and opt-in regression comparisons.
+
+[Numeric sessions](numeric-sessions.md) defines creation options and backend
+lifetime. The [development handoff](development-handoff.md) describes the
+complete core gate and the next application/publication steps.

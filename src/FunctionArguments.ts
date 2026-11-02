@@ -57,6 +57,13 @@ type RepeatingArgumentValidationCallbacks = Omit<ArgumentValidationCallbacks, 'r
     /** Validate one repeated value with a per-group symbolic dimension map. */
     validateRepeatingValue: (validation: NodeArgumentValidation, validationName: string, value: EvaluatedArgumentValue, displayName: string, symbolicDimensions: Map<string, number>) => void;
 };
+type RepeatingValidationRequest = {
+    validation: NodeArgumentValidation;
+    validationName: string;
+    value: EvaluatedArgumentValue;
+    displayName: string;
+    symbolicDimensions: Map<string, number>;
+};
 /** One requested repeating output value and its one-based cell index. */
 type RepeatingOutputValue = { value: EvaluatedArgumentValue; index: number };
 /** Metadata for a MATLAB-style repeating output argument. */
@@ -682,6 +689,17 @@ class FunctionArguments {
         }
     }
 
+    private static driveValidation(execution: Generator<StrictNodeExpr, void, NodeInput>, callbacks: ArgumentValidationCallbacks): void {
+        let next = execution.next();
+        while (!next.done) {
+            try {
+                next = execution.next(callbacks.evaluate(next.value));
+            } catch (error) {
+                next = execution.throw(error);
+            }
+        }
+    }
+
     /**
      * Validate one declaration against the current function workspace.
      *
@@ -698,6 +716,18 @@ class FunctionArguments {
         displayName = this.validationDisplayName(validation, callbacks.throwSyntaxError),
         validationContext = 'arguments block',
     ): void {
+        this.driveValidation(this.executeArgumentValidation(validation, symbolicDimensions, callbacks, localNamesOnly, displayName, validationContext), callbacks);
+    }
+
+    /** Retain validator operands and callback progress without replaying evaluations. */
+    public static *executeArgumentValidation(
+        validation: NodeArgumentValidation,
+        symbolicDimensions: Map<string, number>,
+        callbacks: ArgumentValidationCallbacks,
+        localNamesOnly = false,
+        displayName = this.validationDisplayName(validation, callbacks.throwSyntaxError),
+        validationContext = 'arguments block',
+    ): Generator<StrictNodeExpr, void, NodeInput> {
         const expected = this.literalArgumentSize(validation, callbacks.throwSyntaxError);
         const classNames = this.argumentClassNames(validation, callbacks.throwSyntaxError);
         const validators = this.argumentValidators(validation, callbacks.throwSyntaxError);
@@ -741,18 +771,19 @@ class FunctionArguments {
         }
         for (const validator of validators) {
             if (validator.custom === 'explicit') {
-                callbacks.evaluate(validator.expression!);
+                yield validator.expression!;
                 continue;
             }
             if (validator.custom === 'implicit') {
                 if (!AST.isStrictNodeExpr(entry.node)) {
                     callbacks.throwEvalError(`${validationContext} validation failed for '${displayName}': validator input is not an expression.`);
                 }
-                callbacks.evaluate(AST.nodeIndexExpr(AST.nodeIdentifier(validator.name), AST.nodeList([entry.node])));
+                yield AST.nodeIndexExpr(AST.nodeIdentifier(validator.name), AST.nodeList([entry.node]));
                 continue;
             }
-            const value = validator.value ? this.runtimeArgumentValue(callbacks.evaluate(validator.value), displayName, callbacks.throwEvalError) : runtimeEntryValue();
-            const bounds = validator.bounds?.map((bound, index) => this.runtimeArgumentValue(callbacks.evaluate(bound), `${displayName} bound ${index + 1}`, callbacks.throwEvalError)) ?? [];
+            const value = validator.value ? this.runtimeArgumentValue(yield validator.value, displayName, callbacks.throwEvalError) : runtimeEntryValue();
+            const bounds: RuntimeArgumentValue[] = [];
+            for (const bound of validator.bounds ?? []) bounds.push(this.runtimeArgumentValue(yield bound, `${displayName} bound ${bounds.length + 1}`, callbacks.throwEvalError));
             if (validator.name === 'mustBeA') {
                 const acceptedClasses = this.classNameElements(bounds[0]);
                 const originalAcceptedClasses =
@@ -791,6 +822,17 @@ class FunctionArguments {
         namesToValidate?: Set<string>,
         localNamesOnly = false,
     ): void {
+        this.driveValidation(this.executeFunctionArguments(func, targetAttribute, callbacks, namesToValidate, localNamesOnly), callbacks);
+    }
+
+    /** Shared declaration traversal for synchronous and retained validation. */
+    public static *executeFunctionArguments(
+        func: NodeFunctionDefinition,
+        targetAttribute: 'Input' | 'Output',
+        callbacks: ArgumentValidationCallbacks,
+        namesToValidate?: Set<string>,
+        localNamesOnly = false,
+    ): Generator<StrictNodeExpr, void, NodeInput> {
         const symbolicDimensions = new Map<string, number>();
         for (const block of this.argumentBlocks(func)) {
             const attribute = this.blockKind(block, callbacks.throwSyntaxError);
@@ -804,7 +846,7 @@ class FunctionArguments {
                 if (this.nameValueTarget(validation, callbacks.throwSyntaxError) && typeof callbacks.resolveEntry(validation, localNamesOnly)?.node === 'undefined') {
                     continue;
                 }
-                this.validateArgumentValidation(validation, symbolicDimensions, callbacks, localNamesOnly);
+                yield* this.executeArgumentValidation(validation, symbolicDimensions, callbacks, localNamesOnly);
             }
         }
     }
@@ -813,6 +855,15 @@ class FunctionArguments {
      * Validate `arguments (Repeating)` values grouped across `varargin`.
      */
     public static validateRepeatingArguments(func: NodeFunctionDefinition, values: EvaluatedArgumentValue[], callbacks: RepeatingArgumentValidationCallbacks): void {
+        for (const request of this.repeatingArgumentValidations(func, values, callbacks))
+            callbacks.validateRepeatingValue(request.validation, request.validationName, request.value, request.displayName, request.symbolicDimensions);
+    }
+
+    public static *repeatingArgumentValidations(
+        func: NodeFunctionDefinition,
+        values: EvaluatedArgumentValue[],
+        callbacks: Pick<ArgumentValidationCallbacks, 'throwEvalError' | 'throwSyntaxError'>,
+    ): Generator<RepeatingValidationRequest> {
         for (const block of this.argumentBlocks(func)) {
             const attribute = this.blockKind(block, callbacks.throwSyntaxError);
             if (attribute !== 'Repeating') {
@@ -824,11 +875,12 @@ class FunctionArguments {
             }
             for (let groupIndex = 0; groupIndex < values.length / validations.length; groupIndex++) {
                 const symbolicDimensions = new Map<string, number>();
-                validations.forEach((validation, validationIndex) => {
+                for (let validationIndex = 0; validationIndex < validations.length; validationIndex++) {
+                    const validation = validations[validationIndex];
                     const value = values[groupIndex * validations.length + validationIndex];
                     const validationName = this.validationName(validation, callbacks.throwSyntaxError);
-                    callbacks.validateRepeatingValue(validation, validationName, value, `${validationName}{${groupIndex + 1}}`, symbolicDimensions);
-                });
+                    yield { validation, validationName, value, displayName: `${validationName}{${groupIndex + 1}}`, symbolicDimensions };
+                }
             }
         }
     }
@@ -882,6 +934,15 @@ class FunctionArguments {
      * Validate requested `arguments (Output,Repeating)` values.
      */
     public static validateRepeatingOutputArguments(func: NodeFunctionDefinition, values: RepeatingOutputValue[], callbacks: RepeatingArgumentValidationCallbacks): void {
+        for (const request of this.repeatingOutputValidations(func, values, callbacks))
+            callbacks.validateRepeatingValue(request.validation, request.validationName, request.value, request.displayName, request.symbolicDimensions);
+    }
+
+    public static *repeatingOutputValidations(
+        func: NodeFunctionDefinition,
+        values: RepeatingOutputValue[],
+        callbacks: Pick<ArgumentValidationCallbacks, 'throwEvalError' | 'throwSyntaxError'>,
+    ): Generator<RepeatingValidationRequest> {
         for (const block of this.argumentBlocks(func)) {
             const attribute = this.blockKind(block, callbacks.throwSyntaxError);
             if (attribute !== 'OutputRepeating') {
@@ -889,9 +950,9 @@ class FunctionArguments {
             }
             const validation = this.argumentValidations(block)[0];
             const validationName = this.validationName(validation, callbacks.throwSyntaxError);
-            values.forEach((item) => {
-                callbacks.validateRepeatingValue(validation, validationName, item.value, `${validationName}{${item.index}}`, new Map<string, number>());
-            });
+            for (const item of values) {
+                yield { validation, validationName, value: item.value, displayName: `${validationName}{${item.index}}`, symbolicDimensions: new Map<string, number>() };
+            }
         }
     }
 

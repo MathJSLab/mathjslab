@@ -1,6 +1,7 @@
 import { type ComplexType, type NumLikeType, Complex, toNumber } from './Complex';
 import { type ElementType, MultiArray } from './MultiArray';
 import { BLAS } from './BLAS';
+import { normalizeNumericMatrix } from './NumericalScale';
 
 const EXPECT_TOL = 1e-14;
 
@@ -2666,6 +2667,7 @@ abstract class LAPACK {
                 if (Complex.realIsZero(absE)) {
                     u[i + 1] = Complex.copy(u[i]);
                 } else {
+                    // This solver accepts the upper diagonal, unlike hetrd.
                     const phase = Complex.rdiv(Complex.conj(e), absE);
                     u[i + 1] = Complex.mul(u[i], phase);
                 }
@@ -2996,7 +2998,7 @@ abstract class LAPACK {
             // Reconstruct Q from the reduction vectors.
             let Q = LAPACK.ungtr(Acopy, taus);
             // Solve the tridiagonal problem. ZSTEQR semantics: Q := Q * Z.
-            const { D, V } = LAPACK.steqr_vectors(diag, offdiag);
+            const { D, V } = LAPACK.steqr_vectors(diag, offdiag.map(Complex.conj));
             // Multiply Q by the tridiagonal eigenvectors.
             const vectors = new MultiArray([V.length, V[0].length]);
             vectors.array = V;
@@ -3004,61 +3006,30 @@ abstract class LAPACK {
             return { D: MultiArray.toDiagonalMatrix(D), V: Q };
         } else {
             // Eigenvalues only.
-            return { D: MultiArray.toColumnVector(LAPACK.steqr_vectors(diag, offdiag).D) };
+            return { D: MultiArray.toColumnVector(LAPACK.steqr_vectors(diag, offdiag.map(Complex.conj)).D) };
         }
     };
 
-    public static readonly eig_hermitian = (
-        A: MultiArray,
-        computeVectors = false,
-    ): {
-        D: MultiArray;
-        V?: MultiArray;
-    } => {
+    /** Hermitian reduction: A = Q*T*Qᴴ; returned vectors satisfy A*V = V*D. */
+    public static readonly eig_hermitian = (A: MultiArray, computeVectors = false): { D: MultiArray; V?: MultiArray; T: MultiArray } => {
         const n = A.dimension[0];
-        const Acopy = MultiArray.copy(A);
-        // Detect whether the matrix has any nonzero imaginary part.
-        let isComplex = false;
-        for (let i = 0; i < n && !isComplex; i++) {
-            for (let j = 0; j < n; j++) {
-                const aij = Acopy.array[i][j] as ComplexType;
-                if (!Complex.imagIsZero(aij)) {
-                    isComplex = true;
-                    break;
-                }
-            }
-        }
-        if (isComplex) {
-            // Case 1: complex Hermitian matrix, ZHETRD-style.
-            const { diag, offdiag, taus } = LAPACK.hetrd(Acopy);
-            if (!computeVectors) {
-                const { D } = LAPACK.steqr_vectors(diag, offdiag);
-                return { D: MultiArray.toColumnVector(D) };
-            }
-            // Reconstruct complex Q.
-            let Q = LAPACK.ungtr(Acopy, taus);
-            console.log('Q =', Q);
-            // Solve the real tridiagonal problem.
-            const { D, V } = LAPACK.steqr_vectors(diag, offdiag);
-            // Multiply Q by the tridiagonal eigenvectors.
-            const Z = new MultiArray([n, n]);
-            Z.array = V;
-            Q = LAPACK.mtimes(Q, Z);
-            return { D: MultiArray.toDiagonalMatrix(D), V: Q };
-        } else {
-            // Case 2: real symmetric matrix.
-            const { diag, offdiag, taus } = LAPACK.hetrd(Acopy);
-            if (!computeVectors) {
-                const { D } = LAPACK.steqr_vectors(diag, offdiag);
-                return { D: MultiArray.toColumnVector(D) };
-            }
-            let Q = LAPACK.ungtr(Acopy, taus); // taus are not used in the real case.
-            const { D, V } = LAPACK.steqr_vectors(diag, offdiag);
-            const Z = new MultiArray([n, n]);
-            Z.array = V;
-            Q = LAPACK.mtimes(Q, Z);
-            return { D: MultiArray.toDiagonalMatrix(D), V: Q };
-        }
+        if (n === 0) return { D: new MultiArray(computeVectors ? [0, 0] : [0, 1]), ...(computeVectors ? { V: new MultiArray([0, 0]) } : {}), T: new MultiArray([0, 0]) };
+        const { matrix: Acopy, scale } = normalizeNumericMatrix(A);
+        const { diag, offdiag, taus } = LAPACK.hetrd(Acopy);
+        // hetrd retains the LOWER diagonal; dense construction and steqr use UPPER.
+        const upper = offdiag.map(Complex.conj);
+        const T = new MultiArray([n, n]);
+        T.array = LAPACK.tridiagonal_hermitian_to_dense(diag, upper);
+        MultiArray.setType(T);
+        const { D, V } = LAPACK.steqr_vectors(diag, upper);
+        T.array = T.array.map((row) => row.map((value) => Complex.mul(value as ComplexType, scale)));
+        const scaledD = D.map((value) => Complex.mul(value, scale));
+        if (!computeVectors) return { D: MultiArray.toColumnVector(scaledD), T };
+        const Z = new MultiArray([n, n]);
+        Z.array = V;
+        const vectors = LAPACK.mtimes(LAPACK.ungtr(Acopy, taus), Z);
+        MultiArray.setType(vectors);
+        return { D: MultiArray.toDiagonalMatrix(scaledD), V: vectors, T };
     };
 
     public static readonly functions: { [F in keyof LAPACK]: Function } = {

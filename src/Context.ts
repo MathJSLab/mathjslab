@@ -42,10 +42,13 @@ import { CircularReferenceError, EvalError, ReferenceError, SyntaxError, Undefin
 import { expressionValue, expressionValues, runtimeExpressionValue } from './ExpressionValue';
 import { RuntimeValue } from './RuntimeValue';
 
+type ValidationExecutionRequest = { readonly tree: StrictNodeExpr; readonly scope: Scope };
+
 /** Evaluator-owned request within shared call and native index execution. */
 type FunctionExecutionRequest = { readonly classAccess?: ClassDefinition } & (
     | { readonly kind: 'argument'; readonly tree: NodeInput; readonly scope: Scope; readonly commaList?: boolean; readonly frame?: never }
     | { readonly kind: 'operation'; readonly tree: NodeInput; readonly scope: Scope; readonly operation: () => NodeInput; readonly frame?: never; readonly commaList?: never }
+    | { readonly kind: 'validation'; readonly tree: StrictNodeExpr; readonly scope: Scope; readonly commaList?: never; readonly frame?: CallFrame }
     | { readonly kind: 'default'; readonly tree: StrictNodeExpr; readonly scope: Scope; readonly commaList?: never; readonly frame?: never }
     | { readonly kind: 'body' | 'expression'; readonly tree: NodeInput; readonly scope: Scope; readonly frame: CallFrame; readonly commaList?: never }
 );
@@ -89,12 +92,15 @@ interface ContextInterpreter {
     registerNestedFunctions(func: NodeFunctionDefinition, scope: Scope): void;
     /** Configure static-workspace metadata for nested-function-compatible calls. */
     configureFunctionWorkspace(func: NodeFunctionDefinition, scope: Scope): void;
+    executeFunctionInputValidation(func: NodeFunctionDefinition, scope: Scope, values: ExpressionBoundaryValue[]): Generator<ValidationExecutionRequest, void, NodeInput>;
+    executeFunctionOutputValidation(func: NodeFunctionDefinition, scope: Scope, requestedOutputCount: number, outputMask?: boolean[]): Generator<ValidationExecutionRequest, void, NodeInput>;
     /** Validate input `arguments` blocks after inputs are bound. */
     validateFunctionInputArguments(func: NodeFunctionDefinition, scope: Scope): void;
     /** Validate `arguments (Repeating)` declarations against `varargin`. */
     validateFunctionRepeatingArguments(func: NodeFunctionDefinition, scope: Scope, values: ExpressionBoundaryValue[]): void;
     /** Validate output `arguments` blocks after the body executes. */
     validateFunctionOutputArguments(func: NodeFunctionDefinition, scope: Scope, requestedOutputCount: number, outputMask?: boolean[]): void;
+    executeClassInstancePropertyValidation(instance: ClassInstance, scope: Scope): Generator<ValidationExecutionRequest, void, NodeInput>;
     /** Validate property defaults for a newly instantiated class object. */
     validateClassInstancePropertyDefaults(instance: ClassInstance, scope: Scope): void;
     /** Resolve a function source through the configured function provider API. */
@@ -109,6 +115,7 @@ interface ContextInterpreter {
     callFunctionalOperatorOverload(node: NodeBuiltInFunction, args: CallArgumentValue[], parent: NodeInput, evaluated?: ExpressionBoundaryValue[]): StrictNodeExpr | undefined;
     /** Convert object values used as native array indices through `subsindex`. */
     convertIndexArgument(value: NodeInput, parent: NodeInput): NodeInput;
+    executeIndexArgument(value: NodeInput, parent: NodeInput): Generator<FunctionExecutionRequest, StrictNodeExpr, NodeInput>;
 }
 
 /** Structural shape for debug output that only needs an optional identifier. */
@@ -259,6 +266,8 @@ class ContinueSignal extends Error {
  */
 class Context {
     /** Optional driver capability, invoked only after normal built-in dispatch and argument validation. */
+    /** Internal retained interception at the original checked class-builtin boundary. */
+    public classMethodDispatch?: (node: NodeBuiltInFunction, args: ExpressionBoundaryValue[], parent: NodeInput) => StrictNodeExpr | undefined;
     public hostEffectDispatch?: (node: NodeBuiltInFunction, args: ExpressionBoundaryValue[], parent: NodeInput) => StrictNodeExpr | undefined;
     /** Built-ins that MATLAB/Octave users commonly invoke without parentheses. */
     private static readonly bareZeroArgumentBuiltins = new Set(['lastwarn', 'lasterr', 'lasterror', 'localfunctions', 'mfilename']);
@@ -1703,7 +1712,16 @@ class Context {
      * @param parent Call-site node used for diagnostics.
      * @returns Class method result when an accessible overload exists.
      */
-    private callClassBuiltinMethod(node: NodeBuiltInFunction, evaluatedArgs: ExpressionBoundaryValue[], parent: NodeInput): StrictNodeExpr | undefined {
+    private callClassBuiltinMethod(node: NodeBuiltInFunction, args: ExpressionBoundaryValue[], parent: NodeInput): StrictNodeExpr | undefined {
+        const selected = this.resolveClassBuiltinMethod(node, args, parent);
+        return selected ? this.callClassInstanceMethod(selected.receiver, selected.method, selected.args, parent) : undefined;
+    }
+
+    public resolveClassBuiltinMethod(
+        node: NodeBuiltInFunction,
+        evaluatedArgs: ExpressionBoundaryValue[],
+        parent: NodeInput,
+    ): { receiver: ClassInstance; method: ClassMethodDefinition; args: CallArgumentValue[] } | undefined {
         const name = this.aliasNameFunction(node.id);
         if (AST.isNodeIdentifier(parent) && parent.id === 'builtin') {
             return undefined;
@@ -1723,7 +1741,7 @@ class Context {
             this.throwEvalError(`method '${name}' has ${method.access} access for class ${receiver.classDefinition.name}.`);
         }
         const methodArgs = evaluatedArgs.slice(1).map((arg, index) => expressionValue(arg, `argument ${index + 2}`, 'Argument value', (message) => this.throwEvalError(message)));
-        return this.callClassInstanceMethod(receiver, method, methodArgs, parent);
+        return { receiver, method, args: methodArgs };
     }
 
     private callFunctionDefinition(callable: FunctionDefinitionCallable, args: CallArgumentValue[], parent: NodeInput, requestedOutputCount: number): StrictNodeExpr {
@@ -1751,7 +1769,8 @@ class Context {
         else if (request.kind === 'body') value = this.evaluatedExecutionResult(request.tree, request.scope);
         else if (request.kind === 'expression') value = this.rawEvaluationResult(request.tree, request.scope);
         else {
-            if (request.kind === 'default') this.pushCallStackFrame(new CallFrame(request.scope));
+            const scopeFrame = request.kind === 'default' || (request.kind === 'validation' && this.currentScope !== request.scope);
+            if (scopeFrame) this.pushCallStackFrame(new CallFrame(request.scope));
             this.pushRequestedOutputCount(1);
             this.pushRequestedOutputMask([true]);
             if (request.commaList) this.pushCommaListExpansion();
@@ -1761,7 +1780,7 @@ class Context {
                 if (request.commaList) this.popCommaListExpansion();
                 this.popRequestedOutputMask();
                 this.popRequestedOutputCount();
-                if (request.kind === 'default') this.popCallStackFrame();
+                if (scopeFrame) this.popCallStackFrame();
             }
         }
         return value;
@@ -1856,11 +1875,13 @@ class Context {
         try {
             this.interpreter!.applyScopedImports(func.statements, functionScope);
             this.interpreter!.registerNestedFunctions(func, functionScope);
-            this.interpreter!.validateFunctionInputArguments(func, functionScope);
-            this.interpreter!.validateFunctionRepeatingArguments(
-                func,
-                functionScope,
-                FunctionCall.expressionArgumentValues(evaluatedArgs.slice(inputLayout.positionalParamCount), 'repeating argument', (message) => this.throwEvalError(message)),
+            yield* this.executeValidationRequests(
+                this.interpreter!.executeFunctionInputValidation(
+                    func,
+                    functionScope,
+                    FunctionCall.expressionArgumentValues(evaluatedArgs.slice(inputLayout.positionalParamCount), 'repeating argument', (message) => this.throwEvalError(message)),
+                ),
+                this.currentFrame!,
             );
             /* Execute the function body. */
             try {
@@ -1872,7 +1893,7 @@ class Context {
                     throw e;
                 }
             }
-            this.interpreter!.validateFunctionOutputArguments(func, functionScope, requestedOutputCount, outputMask);
+            yield* this.executeValidationRequests(this.interpreter!.executeFunctionOutputValidation(func, functionScope, requestedOutputCount, outputMask), this.currentFrame!);
             /* Build a lazy return list backed by the function scope. */
             if (constructorInstance) {
                 const firstReturn = returnLayout.returnNames[0];
@@ -1888,17 +1909,32 @@ class Context {
         return result;
     }
 
-    private instantiateClassDefaults(classDefinition: ClassDefinition): ClassInstance {
-        const instance = ClassInstance.instantiate(classDefinition, (defaultValue) => {
-            this.pushRequestedOutputCount(1);
+    public *executeValidationRequests(execution: Generator<ValidationExecutionRequest, void, NodeInput>, frame?: CallFrame): Generator<FunctionExecutionRequest, StrictNodeExpr, NodeInput> {
+        let next = execution.next();
+        while (!next.done) {
             try {
-                return this.runtimeExpressionValue(this.evaluatedExecutionResult(defaultValue, this.currentScope), 'property default');
-            } finally {
-                this.popRequestedOutputCount();
+                next = execution.next(yield { kind: 'validation', ...next.value, frame });
+            } catch (error) {
+                next = execution.throw(error);
             }
-        });
-        this.interpreter!.validateClassInstancePropertyDefaults(instance, this.currentScope);
-        return instance;
+        }
+        return AST.nodeVoid();
+    }
+
+    private instantiateClassDefaults(classDefinition: ClassDefinition): ClassInstance {
+        return this.driveFunctionExecution(this.executeInstantiateClassDefaults(classDefinition));
+    }
+
+    private *executeInstantiateClassDefaults(classDefinition: ClassDefinition): Generator<FunctionExecutionRequest, ClassInstance, NodeInput> {
+        const scope = this.currentScope;
+        const execution = ClassInstance.instantiateExecution(classDefinition);
+        let next = execution.next();
+        while (!next.done) {
+            const value = yield { kind: 'default', tree: AST.requireStrictNodeExpr(next.value, 'property default'), scope };
+            next = execution.next(this.runtimeExpressionValue(value, 'property default'));
+        }
+        yield* this.executeValidationRequests(this.interpreter!.executeClassInstancePropertyValidation(next.value, scope));
+        return next.value;
     }
 
     private assertConstructible(classDefinition: ClassDefinition): void {
@@ -2133,12 +2169,15 @@ class Context {
      * return-list carriers before storing the result in array dispatch paths.
      */
     private reducedClassMethodResult(instance: ClassInstance, method: ClassMethodDefinition, args: CallArgumentValue[], parent: NodeInput): NodeInput {
-        this.pushRequestedOutputCount(1);
-        try {
-            return AST.reduceToFirstIfReturnList(this.callClassInstanceMethod(instance, method, args, parent));
-        } finally {
-            this.popRequestedOutputCount();
-        }
+        return this.driveFunctionExecution(this.executeReducedClassMethodResult(instance, method, args, parent));
+    }
+    public *executeReducedClassMethodResult(
+        instance: ClassInstance,
+        method: ClassMethodDefinition,
+        args: CallArgumentValue[],
+        parent: NodeInput,
+    ): Generator<FunctionExecutionRequest, NodeInput, NodeInput> {
+        return AST.reduceToFirstIfReturnList(yield* this.executeWithOutputSelection(this.executeClassInstanceMethod(instance, method, args, parent), 1, [true]));
     }
 
     /**
@@ -2166,13 +2205,16 @@ class Context {
      * @returns Scalar or array expression result.
      */
     private callClassBoundMethodArray(expr: MultiArray, args: CallArgumentValue[], parent: NodeInput): StrictNodeExpr {
+        return this.driveFunctionExecution(this.executeClassBoundMethodArray(expr, args, parent));
+    }
+    public *executeClassBoundMethodArray(expr: MultiArray, args: CallArgumentValue[], parent: NodeInput): Generator<FunctionExecutionRequest, StrictNodeExpr, NodeInput> {
         const methods = MultiArray.linearize(expr);
         if (methods.length > 0 && methods.every((item) => ClassBoundMethod.isInstanceOf(item) && item.method.name === 'delete')) {
             for (const item of methods) {
                 if (!ClassBoundMethod.isInstanceOf(item)) {
                     this.throwEvalError('internal error: bound method array contains a non-method value.');
                 }
-                this.deleteClassInstance(item.instance, parent);
+                yield* this.executeDeleteClassInstance(item.instance, parent);
             }
             return AST.nodeVoid();
         }
@@ -2183,7 +2225,7 @@ class Context {
             if (!ClassBoundMethod.isInstanceOf(boundMethod)) {
                 this.throwEvalError('internal error: bound method array contains a non-method value.');
             }
-            result.array[i][j] = this.reducedClassMethodResult(boundMethod.instance, boundMethod.method, args, parent);
+            result.array[i][j] = yield* this.executeReducedClassMethodResult(boundMethod.instance, boundMethod.method, args, parent);
         }
         MultiArray.setType(result);
         if (this.allVoidArrayResults(result)) {
@@ -2216,13 +2258,21 @@ class Context {
     }
 
     private callFunctionalClassMethodArray(name: string, receiver: MultiArray, args: CallArgumentValue[], parent: NodeInput): StrictNodeExpr {
+        return this.driveFunctionExecution(this.executeFunctionalClassMethodArray(name, receiver, args, parent));
+    }
+    public *executeFunctionalClassMethodArray(
+        name: string,
+        receiver: MultiArray,
+        args: CallArgumentValue[],
+        parent: NodeInput,
+    ): Generator<FunctionExecutionRequest, StrictNodeExpr, NodeInput> {
         if (MultiArray.linearLength(receiver) === 0 || !MultiArray.linearize(receiver).every((item) => ClassInstance.isInstanceOf(item))) {
             this.throwUndefinedReferenceError(name);
         }
         if (name === 'delete') {
             for (let n = 0; n < MultiArray.linearLength(receiver); n++) {
                 const [i, j] = MultiArray.linearIndexToMultiArrayRowColumn(receiver.dimension[0], receiver.dimension[1], n);
-                this.deleteClassInstance(this.classInstanceArrayElement(receiver, i, j, name), parent);
+                yield* this.executeDeleteClassInstance(this.classInstanceArrayElement(receiver, i, j, name), parent);
             }
             return AST.nodeVoid();
         }
@@ -2237,7 +2287,7 @@ class Context {
             if (!this.canAccessClassMember(method.classDefinition, method.access)) {
                 this.throwEvalError(`method '${name}' has ${method.access} access for class ${instance.classDefinition.name}.`);
             }
-            result.array[i][j] = this.reducedClassMethodResult(instance, method, args, parent);
+            result.array[i][j] = yield* this.executeReducedClassMethodResult(instance, method, args, parent);
         }
         MultiArray.setType(result);
         if (this.allVoidArrayResults(result)) {
@@ -2258,6 +2308,9 @@ class Context {
      * @returns Void node.
      */
     public deleteClassInstance(instance: ClassInstance, parent: NodeInput): StrictNodeExpr {
+        return this.driveFunctionExecution(this.executeDeleteClassInstance(instance, parent));
+    }
+    public *executeDeleteClassInstance(instance: ClassInstance, parent: NodeInput): Generator<FunctionExecutionRequest, StrictNodeExpr, NodeInput> {
         if (!instance.classDefinition.isHandleClass()) {
             this.throwEvalError(`delete is only supported for handle class instances.`);
         }
@@ -2268,7 +2321,7 @@ class Context {
         }
         const deleteMethod = instance.classDefinition.findMethod('delete', (item) => !item.isStatic);
         if (deleteMethod) {
-            this.callClassInstanceMethod(instance, deleteMethod, [], parent);
+            yield* this.executeClassInstanceMethod(instance, deleteMethod, [], parent);
         }
         ClassInstance.delete(instance);
         return AST.nodeVoid();
@@ -2376,6 +2429,31 @@ class Context {
         }
     }
 
+    public *executeWithOutputSelection<T>(execution: Generator<FunctionExecutionRequest, T, NodeInput>, count: number, mask: boolean[]): Generator<FunctionExecutionRequest, T, NodeInput> {
+        const advance = (value?: NodeInput, failure?: { error: unknown }) => {
+            this.pushRequestedOutputCount(count);
+            this.pushRequestedOutputMask(mask);
+            try {
+                return failure ? execution.throw(failure.error) : execution.next(value);
+            } finally {
+                this.popRequestedOutputMask();
+                this.popRequestedOutputCount();
+            }
+        };
+        let next = advance();
+        while (!next.done) {
+            let value: NodeInput;
+            try {
+                value = yield next.value;
+            } catch (error) {
+                next = advance(undefined, { error });
+                continue;
+            }
+            next = advance(value);
+        }
+        return next.value;
+    }
+
     /** Install class access only while advancing; suspended requests carry the capability. */
     private *executeWithClassAccess<T>(definition: ClassDefinition, execution: Generator<FunctionExecutionRequest, T, NodeInput>): Generator<FunctionExecutionRequest, T, NodeInput> {
         let next = this.withClassAccess(definition, () => execution.next());
@@ -2420,6 +2498,9 @@ class Context {
     public *executeFunctionalClassMethod(name: string, args: CallArgumentValue[], parent: NodeInput): Generator<FunctionExecutionRequest, StrictNodeExpr, NodeInput> {
         if (!args.length) this.throwUndefinedReferenceError(name);
         const receiver = this.reducedCommaListScalar(yield { kind: 'argument', tree: args[0], scope: this.currentScope });
+        if (ClassInstance.isInstanceOf(receiver) && name === 'delete') return yield* this.executeDeleteClassInstance(receiver, parent);
+        if (MultiArray.isInstanceOf(receiver) && MultiArray.linearize(receiver).every((item) => ClassInstance.isInstanceOf(item)))
+            return yield* this.executeFunctionalClassMethodArray(name, receiver, args.slice(1), parent);
         if (ClassInstance.isInstanceOf(receiver) && name !== 'delete') {
             const method = receiver.classDefinition.findMethod(name, (item) => !item.isStatic);
             if (!method) this.throwEvalError(`unknown method '${name}' for class ${receiver.classDefinition.name}.`);
@@ -2433,14 +2514,15 @@ class Context {
         );
     }
     public *executeClassInvocation(
-        expr: ClassBoundMethod | ClassStaticMethod | ClassDefinition,
+        expr: ClassBoundMethod | ClassStaticMethod | ClassDefinition | MultiArray,
         args: CallArgumentValue[],
         parent: NodeInput,
     ): Generator<FunctionExecutionRequest, StrictNodeExpr, NodeInput> {
+        if (MultiArray.isInstanceOf(expr)) return yield* this.executeClassBoundMethodArray(expr, args, parent);
         if (ClassBoundMethod.isInstanceOf(expr)) return yield* this.executeClassInstanceMethod(expr.instance, expr.method, args, parent);
         if (ClassStaticMethod.isInstanceOf(expr)) return yield* this.executeClassStaticMethod(expr.method, args, parent);
         this.assertConstructible(expr);
-        const instance = this.instantiateClassDefaults(expr);
+        const instance = yield* this.executeInstantiateClassDefaults(expr);
         return yield* this.executeConstructor(expr, instance, args, parent);
     }
 
@@ -2501,6 +2583,8 @@ class Context {
         /* Push a frame before entering the built-in so errors can capture this call. */
         this.pushCallStackFrame(new CallFrame(this.currentScope, callable, this.resolveCallSite(parent), node.id, evaluatedArgs.length, requestedOutputCount, args));
         try {
+            const retainedClassMethod = this.classMethodDispatch?.(node, evaluatedArgs, parent);
+            if (retainedClassMethod !== undefined) return retainedClassMethod;
             const classMethodResult = this.callClassBuiltinMethod(node, evaluatedArgs, parent);
             if (typeof classMethodResult !== 'undefined') {
                 return classMethodResult;
@@ -2788,7 +2872,9 @@ class Context {
             const result = yield { kind: 'argument', tree: arg, scope: this.currentScope, commaList: true };
             values.push(...this.expressionValues(this.expandCommaSeparatedList(result), 'index'));
         }
-        return this.applyNativeIndexing(expr, args, parent, values, prepared);
+        const converted: ExpressionBoundaryValue[] = [];
+        for (let index = 0; index < values.length; index++) converted.push(this.interpreter ? yield* this.interpreter.executeIndexArgument(values[index], parent) : values[index]);
+        return this.applyNativeIndexing(expr, args, parent, converted, prepared);
     }
 
     /**
@@ -2969,6 +3055,16 @@ class Context {
     }
 }
 
-export type { FunctionExecutionRequest, CallDispatch, CallDispatchKind, SymbolResolution, SymbolResolutionKind, SymbolResolutionOptions, SymbolResolutionSource, SymbolResolutionTier };
+export type {
+    ValidationExecutionRequest,
+    FunctionExecutionRequest,
+    CallDispatch,
+    CallDispatchKind,
+    SymbolResolution,
+    SymbolResolutionKind,
+    SymbolResolutionOptions,
+    SymbolResolutionSource,
+    SymbolResolutionTier,
+};
 export { callDispatchPrecedence, Context, symbolResolutionPrecedence, ReturnSignal, BreakSignal, ContinueSignal };
 export default Context;

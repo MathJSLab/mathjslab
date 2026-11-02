@@ -26,6 +26,7 @@ type FunctionHandleClosure = {
     nameTable: Record<string, { global?: boolean; node?: unknown } | undefined>;
     resolveFunction(name: string): unknown;
 };
+/** Function handle whose absent identifier selects its captured anonymous expression. */
 type AnonymousFunctionHandle = FunctionHandle & { id: undefined };
 
 /**

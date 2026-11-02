@@ -109,9 +109,11 @@ MathJSLab includes a substantial parser, function/class runtime, numerical
 routines and asynchronous sessions. Current work should extend these contracts
 and their regression coverage. Useful fronts include:
 
-- Extend resumable execution across the remaining class/script, validation,
-  indirect-call and indexed multiple-output boundaries listed in the
-  [execution guide](doc/resumable-execution.md).
+- Extend resumable execution across remaining class callbacks, dynamic
+  execution and loop/SPMD preparation boundaries. Function validators, stored
+  scalar property validation, indexed multiple outputs and loaded function
+  scripts are now supported; consult the
+  [current capability matrix](doc/capabilities.md) before selecting a frontier.
 - Expand MATLAB/Octave library and less common class compatibility with focused
   fixtures and explicit semantics.
 - Improve numerical performance while preserving native-number and decimal
@@ -175,3 +177,20 @@ Here are some references consulted to carry out this project.
 - [Scratchapixel 3.0 - Geometry - Row Major vs Column Major Vector](https://www.scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/geometry/row-major-vs-column-major-vector.html)
 - [The R Project for Statistical Computing](https://www.r-project.org/)
 - [JS for Science](https://indico.cern.ch/event/853710/contributions/3708132/attachments/1985053/3307323/Armina_Abramyan_JS_for_Science.pdf)
+
+Retained class accessors, indexing, events, concatenation and object-array
+methods are covered by ResumableClasses.spec.ts and the installed consumer
+cycle. Use doc/capabilities.md as the current inventory.
+
+The coercion/index/native callback audit is covered by
+ResumableProtocols.spec.ts and protocols-cycle.m. Reproducible random streams
+and the effective-precision audit are covered by RandomReproducibility.spec.ts,
+NumericalPrecision.spec.ts and doc/numerical-reliability.md. Next work should
+use demonstrated mathematical examples and establish performance baselines;
+consult doc/capabilities.md for remaining numerical limits.
+
+The educational polynomial/integration subset is covered by
+EducationalMath.spec.ts and doc/educational-math.md. Repeatable performance
+baselines are available through npm run bench; see
+doc/performance-benchmarks.md. Run npm run test:bench after building bundles;
+benchmarks verify correctness but impose no automatic timing threshold.

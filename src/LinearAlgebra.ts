@@ -3,6 +3,7 @@ import { CharString } from './CharString';
 import { type ElementType, MultiArray } from './MultiArray';
 import { BLAS } from './BLAS';
 import { LAPACK } from './LAPACK';
+import { normalizeNumericMatrix } from './NumericalScale';
 import { type BuiltInFunctionSignature, type StrictNodeExpr, type NodeReturnList, AST, type FunctionSignatureEntry, ReturnHandlerResult } from './AST';
 import { RuntimeValue } from './RuntimeValue';
 
@@ -1258,8 +1259,8 @@ abstract class LinearAlgebra {
     /**
      * Numerical matrix rank estimated from singular values.
      *
-     * MATLAB defines the default tolerance as `max(size(A)) * eps(norm(A))`
-     * and counts singular values strictly larger than the tolerance.
+     * Uses a normalized number-precision tolerance based on the largest singular
+     * estimate, then counts elimination pivots. This is not a full SVD rank test.
      *
      * @param A Input matrix.
      * @param tolerance Optional singular-value tolerance.
@@ -1269,16 +1270,19 @@ abstract class LinearAlgebra {
         if (!A || A.dimension.length !== 2) {
             AST.throwInvalidCallError('rank');
         }
-        const singularValues = LinearAlgebra.singularValues(A);
+        const { matrix, scale } = normalizeNumericMatrix(A);
+        const singularValues = LinearAlgebra.singularValues(matrix);
         if (singularValues.length === 0) {
             return Complex.zero();
         }
         const tol =
-            typeof tolerance === 'undefined' ? Math.max(A.dimension[0], A.dimension[1]) * Number.EPSILON * singularValues[singularValues.length - 1] : Complex.realToNumber(tolerance);
+            typeof tolerance === 'undefined'
+                ? Math.max(A.dimension[0], A.dimension[1]) * Number.EPSILON * singularValues[singularValues.length - 1]
+                : Complex.realToNumber(Complex.rdiv(tolerance, scale));
         if (!Number.isFinite(tol) || tol < 0 || (typeof tolerance !== 'undefined' && !Complex.imagIsZero(tolerance))) {
             AST.throwInvalidCallError('rank');
         }
-        return Complex.create(LinearAlgebra.rankByElimination(A, tol));
+        return Complex.create(LinearAlgebra.rankByElimination(matrix, tol));
     };
 
     /**
@@ -1339,7 +1343,8 @@ abstract class LinearAlgebra {
      * @param A Input matrix.
      * @returns Sorted nonnegative squared singular values.
      */
-    private static readonly singularValuesSquared = (A: MultiArray): number[] => {
+    private static readonly singularValuesSquared = (input: MultiArray): number[] => {
+        const { matrix: A } = normalizeNumericMatrix(input);
         const rows = A.dimension[0];
         const columns = A.dimension[1];
         const size = Math.min(rows, columns);
@@ -1370,8 +1375,11 @@ abstract class LinearAlgebra {
                 }
             }
         }
-        const { D } = LAPACK.jacobi_symmetric_hermitian(gram, 1000, 1e-14);
-        return D.map((value) => Math.max(0, Complex.realToNumber(value))).sort((left, right) => left - right);
+        const gramMatrix = new MultiArray([size, size]);
+        gramMatrix.array = gram;
+        MultiArray.setType(gramMatrix);
+        const { D } = LAPACK.eig_hermitian(gramMatrix);
+        return (MultiArray.linearize(D) as ComplexType[]).map((value) => Math.max(0, Complex.realToNumber(value))).sort((left, right) => left - right);
     };
 
     /**
@@ -2414,40 +2422,47 @@ abstract class LinearAlgebra {
      * @param A Square Hermitian/symmetric input matrix.
      * @param result Requested output shape.
      * @param order Eigenvalue ordering policy.
-     * @param blockSize Optional block size for blocked tridiagonalization.
+     * @param blockSize Reserved compatibility argument; the reduction is unblocked.
      * @returns Decomposition result with fields determined by `result`.
      */
     public static readonly eigDecomposition = (
-        A: MultiArray,
+        A: MultiArray | ComplexType,
         result: 1 | 2 | 3,
         order: 'asc' | 'desc' | 'none' = 'asc',
         blockSize?: number,
     ): { values: MultiArray; vectors?: MultiArray; T?: MultiArray } => {
-        const maxIter = 10000;
-        const n: number = A.dimension[0];
-        const Acopy = MultiArray.copy(A);
-        const { diag, offdiag, taus } = LAPACK.sytrd(Acopy, LAPACK.larf_left);
-        if (result === 1) {
-            const { D } = LAPACK.steqr_vectors(diag, offdiag, maxIter);
-            // const Draw: ComplexType[] = new Array(n);
-            // for (let i = 0; i < n; i++) Draw[i] = D[i] as ComplexType;
-            const idx = Array.from({ length: n }, (_, i) => i).sort((a, b) => {
-                const ai = Complex.realToNumber(D[a]);
-                const bi = Complex.realToNumber(D[b]);
-                return order === 'asc' ? ai - bi : bi - ai;
-            });
-            const D_sorted_vals: ComplexType[] = idx.map((i) => D[i]);
-            const D_sorted = MultiArray.toColumnVector(D_sorted_vals);
-            MultiArray.setType(D_sorted);
-            return { values: D_sorted };
-        } else {
-            // CASE 2 or 3: need eigenvectors too
-            // const { D, V } = LAPACK.steqr_vectors(diag, offdiag, maxIter);
-            const { D, V } = LAPACK.steqr_vectors_tridiagonal(diag, offdiag, maxIter);
-            const Vresult = new MultiArray([V.length, V[0].length]);
-            Vresult.array = V;
-            return { values: MultiArray.toDiagonalMatrix(D), vectors: Vresult };
+        if (Complex.isInstanceOf(A)) A = MultiArray.scalarToMultiArray(A);
+        if (!MultiArray.isInstanceOf(A) || A.isCell || A.dimension.length !== 2 || A.dimension[0] !== A.dimension[1]) {
+            throw new EvalError('eig: input must be a square numeric matrix.');
         }
+        for (let row = 0; row < A.dimension[0]; row++) {
+            for (let column = 0; column < A.dimension[1]; column++) {
+                const value = A.array[row][column];
+                const reflected = A.array[column][row];
+                if (!Complex.isInstanceOf(value) || !Complex.isInstanceOf(reflected) || !Complex.realIsFinite(value) || !Complex.imagIsFinite(value)) {
+                    throw new EvalError('eig: input must contain finite numeric values.');
+                }
+                if (!Complex.realEquals(value, reflected.re) || !Complex.imagEquals(value, Complex.neg(reflected).im)) {
+                    throw new EvalError('eig: only symmetric or Hermitian matrices are supported.');
+                }
+            }
+        }
+        const decomposition = LAPACK.eig_hermitian(A, result !== 1);
+        const n = A.dimension[0];
+        // The solver returns ascending eigenpairs. Keep columns paired for every order.
+        if (order === 'desc') {
+            if (result === 1) decomposition.D.array.reverse();
+            else {
+                for (const row of decomposition.V!.array) row.reverse();
+                decomposition.D.array.reverse();
+                for (const row of decomposition.D.array) row.reverse();
+            }
+        }
+        return {
+            values: decomposition.D,
+            ...(result !== 1 ? { vectors: decomposition.V ?? new MultiArray([n, n]) } : {}),
+            ...(result === 3 ? { T: decomposition.T } : {}),
+        };
     };
 
     public static readonly eigSignature: BuiltInFunctionSignature = {
@@ -2463,7 +2478,7 @@ abstract class LinearAlgebra {
      * `[V, D, T]` where `T` is the tridiagonal intermediate used for
      * diagnostics.
      */
-    public static eig = (M: MultiArray): NodeReturnList => {
+    public static eig = (M: MultiArray | ComplexType): NodeReturnList => {
         return AST.nodeBoundedReturnList(
             3,
             (evaluated: ReturnHandlerResult, index: number): StrictNodeExpr => {
@@ -2489,16 +2504,8 @@ abstract class LinearAlgebra {
                 throw new RangeError(`eig output ${index + 1} is unavailable.`);
             },
             (length: number): ReturnHandlerResult => {
-                if (length === 1) {
-                    const { D } = LAPACK.eig_hermitian(M);
-                    return { length, values: D };
-                } else if (length === 2) {
-                    const { D, V } = LAPACK.eig_hermitian(M, true);
-                    return { length, values: D, vectors: V };
-                } else {
-                    const { values, vectors, T } = LinearAlgebra.eigDecomposition(M, 3);
-                    return { length, values, vectors, T };
-                }
+                const { values, vectors, T } = LinearAlgebra.eigDecomposition(M, length as 1 | 2 | 3);
+                return { length, values, ...(vectors ? { vectors } : {}), ...(T ? { T } : {}) };
             },
         );
     };

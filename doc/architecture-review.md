@@ -1,5 +1,9 @@
 # Architecture review before publication
 
+> Historical review for 2.9.0. Current 2.10.0 preparation is recorded in
+> [release preparation](release-preparation.md); test counts below belong to
+> the earlier release and do not certify the current candidate.
+
 Reviewed against the working tree based on 2.8.1, on 2026-10-12. No version
 change or publication was part of that review. The subsequent pre-publication
 preparation sets the package version to 2.9.0 without committing or publishing.

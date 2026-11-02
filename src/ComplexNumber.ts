@@ -50,7 +50,7 @@ class ComplexNumber implements TypeOfComplex.ComplexInterface<number, number, un
     public static readonly COMPLEX = TypeOfComplex.numberClass.COMPLEX;
 
     public static readonly defaultSettings: TypeOfComplex.ComplexConfig = Object.assign({}, defaultSettings as TypeOfComplex.ComplexConfig);
-    public static readonly settings: TypeOfComplex.ComplexConfig = this.defaultSettings;
+    public static readonly settings: TypeOfComplex.ComplexConfig = { ...this.defaultSettings };
 
     /**
      * Test if an object is an instance of `ComplexNumber`.

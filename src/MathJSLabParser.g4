@@ -80,27 +80,30 @@ type ParserArgumentValidationNameNode = NodeIdentifier | NodeIndirectRef;
     /**
      * Attach source coordinates to one parsed statement node.
      *
-     * ANTLR exposes the start token through each rule context, while the next
-     * token after a completed statement identifies the last consumed position
-     * used by the existing parser diagnostics.
+     * Coordinates are inclusive: one-based lines and zero-based columns.
+     * The range covers the first through last consumed statement token, plus
+     * the first external semicolon when it suppresses output. Whitespace and
+     * list separators otherwise do not belong to the statement range.
      */
     private markStatementRange(node: NodeInput, statementStart: Token): void {
-        node.start = {
-            line: statementStart.line,
-            column: statementStart.column,
-        };
+        const last = this._input.LT(-1);
+        const text = last.text ?? '';
+        const lines = text.split('\n');
+        node.start = { line: statementStart.line, column: statementStart.column };
         node.stop = {
-            line: this._input.LT(1).column > 0 ? this._input.LT(1).line : this._input.LT(1).line - 1,
-            column: this._input.LT(1).column > 0 ? this._input.LT(1).column - 1 : Infinity,
+            line: last.line + lines.length - 1,
+            column: (lines.length === 1 ? last.column : 0) + lines[lines.length - 1].length - 1,
         };
     }
 
     /**
      * Apply MATLAB/Octave semicolon output suppression to the previous list item.
      */
-    private markPreviousStatementOmitOutput(list: NodeList, separatorText?: string): void {
-        if (separatorText?.[0] === ';') {
-            list.list[list.list.length - 1].omitOutput = true;
+    private markPreviousStatementOmitOutput(list: NodeList, separator?: Token): void {
+        if (separator?.text?.[0] === ';') {
+            const previous = list.list[list.list.length - 1];
+            previous.omitOutput = true;
+            previous.stop = { line: separator.line, column: separator.column };
         }
     }
 
@@ -130,10 +133,10 @@ global_list returns [node: NodeList]
         localctx.node = AST.nodeListFirst(localctx.statement(localctx.i++).node);
     } (sep statement {
         this.markStatementRange(localctx.statement(localctx.i).node, localctx.statement(localctx.i).start);
-        this.markPreviousStatementOmitOutput(localctx.node, localctx.sep(localctx.i - 1).getText());
+        this.markPreviousStatementOmitOutput(localctx.node, localctx.sep(localctx.i - 1).start);
         localctx.node = AST.appendNodeList(localctx.node, localctx.statement(localctx.i++).node);
     } )* sep? {
-        this.markPreviousStatementOmitOutput(localctx.node, localctx.sep(localctx.i - 1)?.getText());
+        this.markPreviousStatementOmitOutput(localctx.node, localctx.sep(localctx.i - 1)?.start);
     }
     ;
 
@@ -144,10 +147,10 @@ list returns [node: NodeList]
         localctx.node = AST.nodeListFirst(localctx.statement(localctx.i++).node);
     } (sep statement {
         this.markStatementRange(localctx.statement(localctx.i).node, localctx.statement(localctx.i).start);
-        this.markPreviousStatementOmitOutput(localctx.node, localctx.sep(localctx.i - 1).getText());
+        this.markPreviousStatementOmitOutput(localctx.node, localctx.sep(localctx.i - 1).start);
         localctx.node = AST.appendNodeList(localctx.node, localctx.statement(localctx.i++).node);
     } )* sep? {
-        this.markPreviousStatementOmitOutput(localctx.node, localctx.sep(localctx.i - 1)?.getText());
+        this.markPreviousStatementOmitOutput(localctx.node, localctx.sep(localctx.i - 1)?.start);
     }
     ;
 

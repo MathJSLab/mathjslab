@@ -4,8 +4,10 @@ import { FunctionHandle } from './FunctionHandle';
 import { MultiArray, type ElementType } from './MultiArray';
 import { Structure, type StructureFieldValue } from './Structure';
 
+/** Wire format version for encoded runtime values. */
 export const runtimeValueCodecVersion = 1 as const;
 
+/** Transport-safe numeric, text, array and structure values; decimal parts retain textual precision. */
 export type EncodedRuntimeValue =
     | { readonly type: 'complex'; readonly real: string; readonly imaginary: string; readonly numericType: number }
     | { readonly type: 'char'; readonly value: string; readonly quote: "'" | '"' }
@@ -23,6 +25,7 @@ export type EncodedRuntimeValue =
       }
     | { readonly type: 'structure'; readonly fields: Readonly<Record<string, EncodedRuntimeValue>> };
 
+/** Reports unsupported or cyclic values at the runtime transport boundary. */
 export class RuntimeValueCodecError extends TypeError {
     public readonly code = 'MATHJSLAB_VALUE_NOT_SERIALIZABLE';
 

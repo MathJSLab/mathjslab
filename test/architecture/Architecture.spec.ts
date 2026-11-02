@@ -1,16 +1,41 @@
 /// <reference types="jest" />
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import * as ts from 'typescript';
+
+function reductionOwners(source: string): string[] {
+    const tree = ts.createSourceFile('boundary.ts', source, ts.ScriptTarget.Latest, true);
+    const owners = new Set<string>();
+    const visit = (node: ts.Node): void => {
+        if (ts.isCallExpression(node) && node.expression.getText(tree) === 'AST.reduceToFirstIfReturnList') {
+            let parent: ts.Node | undefined = node.parent;
+            while (parent && !ts.isMethodDeclaration(parent)) parent = parent.parent;
+            owners.add(parent && ts.isMethodDeclaration(parent) ? parent.name.getText(tree) : '<outside method>');
+        }
+        ts.forEachChild(node, visit);
+    };
+    visit(tree);
+    return [...owners].sort();
+}
 
 describe('Architecture', () => {
     describe('Interpreter evaluation boundaries', () => {
         it('Should keep all Context and Interpreter return-list reductions inside named helper boundaries.', () => {
             const interpreterSource = readFileSync(join(process.cwd(), 'src', 'Interpreter.ts'), 'utf8');
             const contextSource = readFileSync(join(process.cwd(), 'src', 'Context.ts'), 'utf8');
-            const reductionPattern = /AST\.reduceToFirstIfReturnList\(/g;
-
-            expect([...interpreterSource.matchAll(reductionPattern)]).toHaveLength(8);
-            expect([...contextSource.matchAll(reductionPattern)]).toHaveLength(3);
+            expect(reductionOwners(interpreterSource)).toEqual(
+                [
+                    'classExecutionReducedClassMethodResult',
+                    'classExecutionReducedClassMethodResultWithOutputCount',
+                    'evaluatedExecutionResult',
+                    'evaluatedExpressionBoundaryValue',
+                    'evaluatedExpressionValue',
+                    'reducedAssignmentValue',
+                    'reducedExecutionValue',
+                    'reducedIndexingResult',
+                ].sort(),
+            );
+            expect(reductionOwners(contextSource)).toEqual(['evaluatedExecutionResult', 'executeReducedClassMethodResult', 'reducedCommaListScalar'].sort());
             [
                 'private evaluatedExpressionValue(tree: ExpressionBoundaryValue, scope: Scope, name: string): StrictNodeExpr',
                 'private evaluatedExpressionBoundaryValue(tree: ExpressionBoundaryValue, scope: Scope, name: string): ExpressionBoundaryValue',
@@ -138,11 +163,11 @@ describe('Architecture', () => {
             const interpreterSource = readFileSync(join(process.cwd(), 'src', 'Interpreter.ts'), 'utf8');
             const contextSource = readFileSync(join(process.cwd(), 'src', 'Context.ts'), 'utf8');
 
-            expect([...interpreterSource.matchAll(/AST\.reduceToFirstIfReturnList\(this\.context\.callClassInstanceMethod\(/g)]).toHaveLength(1);
+            expect(reductionOwners(interpreterSource)).toContain('classExecutionReducedClassMethodResult');
             expect(interpreterSource).toContain(
                 'private reducedClassMethodResult(instance: ClassInstance, method: ClassMethodDefinition, args: ExpressionBoundaryValue[], parent: NodeInput): NodeInput',
             );
-            expect([...contextSource.matchAll(/AST\.reduceToFirstIfReturnList\(this\.callClassInstanceMethod\(/g)]).toHaveLength(1);
+            expect(reductionOwners(contextSource)).toContain('executeReducedClassMethodResult');
             expect(contextSource).toContain(
                 'private reducedClassMethodResult(instance: ClassInstance, method: ClassMethodDefinition, args: CallArgumentValue[], parent: NodeInput): NodeInput',
             );

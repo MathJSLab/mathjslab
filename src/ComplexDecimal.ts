@@ -56,7 +56,7 @@ class ComplexDecimal implements TypeOfComplex.ComplexInterface<Decimal, number, 
     public static readonly COMPLEX = TypeOfComplex.numberClass.COMPLEX;
 
     public static readonly defaultSettings: TypeOfComplex.ComplexConfig = Object.assign({ precisionCompare: 7 }, defaultSettings as TypeOfComplex.ComplexConfig);
-    public static readonly settings: TypeOfComplex.ComplexConfig = ComplexDecimal.defaultSettings;
+    public static readonly settings: TypeOfComplex.ComplexConfig = { ...ComplexDecimal.defaultSettings };
 
     /**
      * Test if an object is an instance of `ComplexDecimal`.
@@ -66,21 +66,26 @@ class ComplexDecimal implements TypeOfComplex.ComplexInterface<Decimal, number, 
     public static readonly isInstanceOf: TypeOfComplex.IsInstanceOfComplexHandler<ComplexDecimal> = (obj: unknown): obj is ComplexDecimal => obj instanceof ComplexDecimal;
 
     public static readonly set: TypeOfComplex.SetComplexHandler = (config: Partial<TypeOfComplex.ComplexConfig>): void => {
+        if ((config.precisionCompare ?? this.settings.precisionCompare) >= (config.precision ?? this.settings.precision))
+            throw new RangeError('precisionCompare must be smaller than precision.');
         const decimal: Decimal.Config = {};
         TypeOfComplex.ComplexConfigKeyTable.forEach((param) => {
             if (typeof config[param] !== 'undefined') {
                 const value = config[param];
                 if (param !== 'precisionCompare') {
-                    setComplexConfigValue(this.settings, param, value);
                     setDecimalConfigValue(decimal, param, value);
                 } else {
-                    setComplexConfigValue(this.settings, param, value);
+                    if (!Number.isSafeInteger(value) || Number(value) < 0) throw new RangeError('precisionCompare must be a nonnegative integer.');
                 }
             }
         });
-        if (Object.keys(decimal).length > 0) {
+        if (Object.entries(decimal).some(([key, value]) => Reflect.get(Decimal, key) !== value)) {
+            Decimal.clone(decimal); // Validate all keys before changing shared arithmetic state.
             Decimal.set(decimal);
         }
+        TypeOfComplex.ComplexConfigKeyTable.forEach((param) => {
+            if (config[param] !== undefined) setComplexConfigValue(this.settings, param, config[param]);
+        });
     };
 
     public re: Decimal;

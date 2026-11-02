@@ -107,7 +107,21 @@ generated Markdown API reference.
   vectors and global `"all"` reductions, and `mean`/`var`/`std` with explicit
   NaN handling and global/vector-dimension grouping. See
   [numeric sequence compatibility](doc/numeric-sequence-compatibility.md) and
-  the [numeric array model](doc/numeric-array-model.md).
+  the [numeric array model](doc/numeric-array-model.md). Finite
+  symmetric/Hermitian `eig` is supported; general non-Hermitian matrices are
+  explicitly rejected. See
+  [numerical reliability](doc/numerical-reliability.md) for algorithm limits.
+- **Reproducible randomness and educational math.** Session-owned `rng` state
+  controls `rand` and `randi` using the versioned `xoshiro128ss-v1` generator.
+  `polyval`, single-polynomial `polyder`, vector `conv`, `trapz` and `cumtrapz`
+  use the selected numeric backend. See
+  [educational math](doc/educational-math.md) for supported shapes and
+  overloads.
+- **Numeric sessions.** Select initial arithmetic through
+  `createSession({numeric})` or `sessionDefaults.numeric`. User `configure`
+  calls can switch live backends while preserving workspace and aliases;
+  conversion to native numbers can lose precision. Reset restores creation
+  settings. See [numeric sessions](doc/numeric-sessions.md).
 - **Functions and workspaces.** User, local and nested functions; named and
   anonymous handles; multiple and ignored outputs; local, global, persistent,
   caller and base workspaces. Declarative built-in signatures and `arguments`
@@ -130,9 +144,11 @@ generated Markdown API reference.
   native indexing/assignments and matrix/cell literal elements across host
   waits without replaying completed work. `pause` and `load` request explicit
   host capabilities; cooperative checkpoints allow cancellation. Continuations
-  are single-use in-memory objects. Class callbacks, dynamic scripts and other
-  synchronous boundaries remain documented in the
-  [execution guide](doc/resumable-execution.md).
+  are single-use in-memory objects. Supported validators, class accessors and
+  protocols, dynamic `eval`/`evalin`/`evalc`, and loaded function scripts also
+  retain progress. Numerical kernels remain indivisible. Consult the
+  [capability matrix](doc/capabilities.md) and
+  [execution guide](doc/resumable-execution.md) for precise boundaries.
 - **Parallel loop subset.** Remote runtimes distribute statically proven sliced
   assignments and associative reductions in `parfor` across Workers. `strict`,
   `fallback` and `off` policies control execution; synchronous execution and

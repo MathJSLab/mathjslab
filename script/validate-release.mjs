@@ -35,5 +35,5 @@ execFileSync(
         stdio: 'inherit',
     },
 );
-execFileSync(process.execPath, ['script/validate-installed-package.mjs', consumer], { stdio: 'inherit' });
+execFileSync(process.execPath, ['script/validate-installed-package.mjs', consumer, ...process.argv.slice(2)], { stdio: 'inherit' });
 console.log(`Release validation artifacts: ${directory}`);

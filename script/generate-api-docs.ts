@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import ts from 'typescript';
+import * as prettier from 'prettier';
 
 type ApiItem = {
     name: string;
@@ -191,5 +192,22 @@ const generated = [
     ...items.flatMap((item) => [`## ${item.name}`, '', `- Kind: \`${item.kind}\``, `- Source: \`${item.source}\``, '', item.documentation, '']),
 ].join('\n');
 
-fs.mkdirSync(path.dirname(outputFile), { recursive: true });
-fs.writeFileSync(outputFile, `${generated.trimEnd()}\n`);
+/** Formats and writes the reference, or verifies it without modifying the file. */
+async function updateReference(): Promise<void> {
+    // Keep generated output identical to the repository-wide Markdown formatter.
+    const formatOptions = await prettier.resolveConfig(outputFile, { editorconfig: true });
+    const formatted = await prettier.format(generated, { ...formatOptions, filepath: outputFile });
+    const expected = formatted.replace(/\r\n/g, '\n');
+    if (process.argv.includes('--check')) {
+        const actual = fs.existsSync(outputFile) ? fs.readFileSync(outputFile, 'utf8').replace(/\r\n/g, '\n') : '';
+        if (actual !== expected) throw new Error('API reference is stale; run npm run docs before validation.');
+    } else {
+        fs.mkdirSync(path.dirname(outputFile), { recursive: true });
+        fs.writeFileSync(outputFile, formatted);
+    }
+}
+
+void updateReference().catch((error: unknown) => {
+    console.error(error);
+    process.exitCode = 1;
+});

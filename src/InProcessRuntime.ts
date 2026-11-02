@@ -3,7 +3,8 @@ import { AST, type NodeInput } from './AST';
 import { Interpreter } from './Interpreter';
 import { ExecutionCancellation, type ExecutionMachineStep } from './ExecutionMachine';
 import { RuntimeValueCodec } from './RuntimeValueCodec';
-import { RuntimeEnvironment } from './RuntimeEnvironment';
+import { RuntimeEnvironment, type RuntimeEnvironmentSnapshot } from './RuntimeEnvironment';
+import { scriptLoadCompleted, type ScriptLoadResult } from './execution-resource';
 import type {
     ExecutionOptions,
     ExecutionResult,
@@ -52,7 +53,8 @@ const containsParfor = (node: unknown): boolean => {
 
 class InProcessSession implements RuntimeSession {
     private interpreter: Interpreter;
-    private environment = new RuntimeEnvironment();
+    private environment: RuntimeEnvironment;
+    private readonly initialEnvironment: RuntimeEnvironmentSnapshot;
     private readonly activeExecutions = new Set<AbortController>();
     private disposed = false;
     private interrupted: unknown;
@@ -66,7 +68,9 @@ class InProcessSession implements RuntimeSession {
         private readonly evaluateHook?: RuntimeOptions['evaluate'],
         private readonly onDispose?: (session: InProcessSession) => void,
     ) {
-        this.interpreter = Interpreter.Create(options.interpreter);
+        this.environment = new RuntimeEnvironment(undefined, options.numeric);
+        this.initialEnvironment = this.environment.settings;
+        this.interpreter = this.environment.run(() => Interpreter.Create(options.interpreter));
     }
 
     public async parse(source: string): Promise<ParseResult> {
@@ -117,7 +121,7 @@ class InProcessSession implements RuntimeSession {
             }
             const deadline = options.timeoutMs === undefined ? undefined : started + options.timeoutMs;
             const extraOutputs: RuntimeOutput[] = [];
-            const evaluated = await this.evaluateWithEffects(parsed, options, deadline, 0, extraOutputs);
+            const evaluated = await this.evaluateWithEffects(parsed, options, deadline, extraOutputs);
             if (controller.signal.aborted) return abortResult(timedOut, controller.signal.reason);
             const rendered = this.environment.run(() => {
                 return {
@@ -166,8 +170,7 @@ class InProcessSession implements RuntimeSession {
         }
     }
 
-    private async evaluateWithEffects(tree: NodeInput, options: ExecutionOptions, deadline: number | undefined, depth = 0, outputs: RuntimeOutput[] = []): Promise<NodeInput> {
-        if (depth > 16) throw new Error('Runtime resource loading exceeded the maximum nesting depth (16).');
+    private async evaluateWithEffects(tree: NodeInput, options: ExecutionOptions, deadline: number | undefined, outputs: RuntimeOutput[] = []): Promise<NodeInput> {
         let cancelling = false;
         const cancel = (continuation: { cancel(reason?: unknown): ExecutionMachineStep<NodeInput> }): ExecutionMachineStep<NodeInput> => {
             cancelling = true;
@@ -211,11 +214,12 @@ class InProcessSession implements RuntimeSession {
                 if (signal?.aborted) throw signal.reason;
                 if (suspended.effect.type === 'read-text') {
                     if (typeof result.value !== 'string') throw new Error(`Host returned a non-text value for ${suspended.effect.reference}.`);
-                    const loaded = this.environment.run(() => this.interpreter.Parse(result.value as string));
-                    await this.evaluateWithEffects(loaded, options, deadline, depth + 1, outputs);
-                    outputs.push({ type: 'text', text: `Loaded script from ${suspended.effect.reference}` });
+                    const reference = suspended.effect.reference;
+                    const response: ScriptLoadResult = { ...result, [scriptLoadCompleted]: () => outputs.push({ type: 'text', text: `Loaded script from ${reference}` }) };
+                    step = this.environment.run(() => suspended.resume(response));
+                } else {
+                    step = this.environment.run(() => suspended.resume(result));
                 }
-                step = this.environment.run(() => suspended.resume(result));
             } catch (error) {
                 step = this.environment.run(() => (options.signal?.aborted ? cancel(suspended) : suspended.fail(error)));
             }
@@ -240,8 +244,8 @@ class InProcessSession implements RuntimeSession {
             for (const controller of this.activeExecutions) controller.abort('Session reset');
             await this.waitUntilIdle();
             this.assertActive();
-            this.interpreter = Interpreter.Create(this.options.interpreter);
-            this.environment = new RuntimeEnvironment();
+            this.environment = new RuntimeEnvironment(this.initialEnvironment);
+            this.interpreter = this.environment.run(() => Interpreter.Create(this.options.interpreter));
             this.interrupted = undefined;
         } finally {
             this.resetting = false;
@@ -280,6 +284,7 @@ class InProcessSession implements RuntimeSession {
     }
 }
 
+/** Owns local sessions with isolated interpreters, cooperative cancellation and host effect adapters. */
 export class InProcessMathJSLabRuntime implements MathJSLabRuntime {
     private readonly sessions = new Set<InProcessSession>();
     private disposed = false;
@@ -302,4 +307,5 @@ export class InProcessMathJSLabRuntime implements MathJSLabRuntime {
     }
 }
 
+/** Creates a local asynchronous runtime without a Worker boundary. */
 export const createInProcessMathJSLabRuntime = (options: RuntimeOptions = {}): MathJSLabRuntime => new InProcessMathJSLabRuntime(options);

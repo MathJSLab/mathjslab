@@ -13,6 +13,23 @@ const execute = (interpreter: Interpreter, source: string): PlotOutputRequest[] 
 };
 
 describe('Session-owned plotting builtins', () => {
+    test.each(['number', 'decimal'] as const)('prepares all plot descriptors in a %s session without changing live values', async (engine) => {
+        const runtime = createInProcessMathJSLabRuntime({ host: { request: async () => ({}) } });
+        const session = await runtime.createSession({ numeric: { engine } });
+        try {
+            const result = await session.execute('a=2; plot([a,a+1]); pause(0); plot3([1,2],[3,4],[5,6]); surf([1,2;3,4]); histogram([3,4]); plot2d(a*x,x,0,1); a');
+            expect(result.status).toBe('success');
+            const plots = result.outputs.filter((output) => output.type === 'visualization');
+            expect(plots.map((output) => output.request)).toMatchObject([{ type: 'plot' }, { type: 'plot3' }, { type: 'surf' }, { type: 'histogram' }, { type: 'plot2d' }]);
+            expect((await session.execute('a+1')).outputs[0]).toMatchObject({ type: 'text', text: '3\n' });
+            const failed = await session.execute('plot2d(missing,x,0,1)');
+            expect(failed.status).toBe('error');
+            expect((await session.execute('a+1')).status).toBe('success');
+        } finally {
+            await runtime.dispose();
+        }
+    });
+
     test.each([
         ['plot([1,2],[3,4])', 'plot', 'scatter'],
         ['plot3([1,2],[3,4],[5,6])', 'plot3', 'scatter3d'],

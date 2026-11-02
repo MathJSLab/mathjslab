@@ -2572,6 +2572,9 @@ abstract class CoreFunctions {
      * @param dimension Dimensions of created MultiArray.
      * @returns MultiArray filled with `fillFunction` results for each element.
      */
+    /** @internal Shared validated random-array traversal; column-major consumption. */
+    public static readonly randomArray = (fill: (index: number) => ElementType, ...dimension: ElementType[]): ElementType => CoreFunctions.newFilledEach(fill, ...dimension);
+
     private static readonly newFilledEach = (fillFunction: (index: number) => ElementType, ...dimension: ElementType[]): ElementType => {
         let dims: number[];
         if (dimension.length === 1) {
@@ -3037,40 +3040,27 @@ abstract class CoreFunctions {
      * @returns
      */
     public static readonly randi = (range: ElementType, ...dimension: ElementType[]): ElementType => {
-        let imin: ComplexType;
-        let imax: ComplexType;
-        if (MultiArray.isInstanceOf(range)) {
-            const rangeLinearized = MultiArray.linearize(range) as ComplexType[];
-            if (rangeLinearized.length === 2) {
-                imin = rangeLinearized[0];
-                imax = rangeLinearized[1];
-            } else if (rangeLinearized.length > 0) {
-                imin = Complex.zero();
-                imax = rangeLinearized[0];
-            } else {
-                throw new Error('bounds(1): out of bound 0 (dimensions are 0x0)');
-            }
-        } else {
-            imin = Complex.zero();
-            imax = range as ComplexType;
+        const bounds = MultiArray.isInstanceOf(range) ? MultiArray.linearize(range) : [range];
+        if (!bounds.length || bounds.length > 2 || bounds.some((value) => !Complex.isInstanceOf(value) || !Complex.imagIsZero(value) || !Complex.realIsInteger(value))) {
+            throw new EvalError('randi: expected integer imax or [imin,imax].');
         }
-        if (!(Complex.realIsInteger(imin) && Complex.realIsInteger(imax))) {
-            throw new Error(`randi: must be integer bounds.`);
+        const min = bounds.length === 1 ? 1 : Complex.realToNumber(bounds[0] as ComplexType);
+        const max = Complex.realToNumber(bounds[bounds.length - 1] as ComplexType);
+        const width = max - min + 1;
+        if (!Number.isSafeInteger(min) || !Number.isSafeInteger(max) || width < 1 || width > 4294967296) {
+            throw new EvalError('randi: require safe integer bounds with inclusive width at most 2^32.');
         }
-        if (Complex.gt(imax, imin)) {
-            return CoreFunctions.newFilledEach(
-                Complex.realEquals(imin, 0)
-                    ? () => Complex.round(Complex.mul(imax, Complex.random()))
-                    : () => Complex.round(Complex.add(Complex.mul(Complex.sub(imax, imin), Complex.random()), imin)),
-                ...dimension,
-            );
-        } else {
-            if (Complex.realEquals(imin, 0)) {
-                throw new Error(`randi: require imax >= 1.`);
-            } else {
-                throw new Error(`randi: require imax > imin.`);
-            }
-        }
+        const limit = 4294967296 - (4294967296 % width);
+        return CoreFunctions.newFilledEach(
+            () => {
+                let word: number;
+                do {
+                    word = Math.floor(Complex.realToNumber(Complex.random()) * 4294967296);
+                } while (word >= limit);
+                return Complex.create(min + (word % width));
+            },
+            ...dimension,
+        );
     };
 
     public static readonly catSignature: BuiltInFunctionSignature = {

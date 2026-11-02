@@ -70,6 +70,7 @@ type OperatorType =
     | '_++'
     | '_--';
 
+/** Assignment and compound-assignment tokens accepted by the normalized AST. */
 type AssignmentOperatorType = '=' | '+=' | '-=' | '*=' | '/=' | '\\=' | '^=' | '**=' | '.*=' | './=' | '.\\=' | '.^=' | '.**=' | '&=' | '|=';
 
 /** Prefix unary operators, including parenthesized expressions. */
@@ -269,9 +270,9 @@ interface NodeBase {
     omitOutput?: boolean;
     /** Whether the result should avoid assignment to `ans`. */
     omitAnswer?: boolean;
-    /** Source start position, when supplied by the parser. */
+    /** Inclusive source start: one-based line, zero-based column, when supplied by the parser. */
     start?: { line: number; column: number };
-    /** Source stop position, when supplied by the parser. */
+    /** Inclusive, finite source end, including an output-suppressing external semicolon. */
     stop?: { line: number; column: number };
 }
 
@@ -811,6 +812,7 @@ interface BuiltInFunctionSignature {
     outputs?: BuiltInFunctionArity | BuiltInFunctionArity[];
 }
 
+/** Registered built-in implementation paired with its declarative input/output contract. */
 interface FunctionSignatureEntry {
     func: BuiltInFunctionImplementation;
     signature: BuiltInFunctionSignature;
@@ -1208,9 +1210,9 @@ abstract class AST {
      */
     public static nodeString: (str: string, quote?: StringQuoteCharacter) => CharString = CharString.create;
     /**
-     * External number factory, rebound by `reload`.
+     * External number factory delegates to the active backend at invocation.
      */
-    public static nodeNumber: (value: string) => ComplexType = Complex.parse;
+    public static nodeNumber: (value: string) => ComplexType = (value) => Complex.parse(value);
     /**
      * External first-row matrix factory, rebound by `reload`.
      */
@@ -1229,7 +1231,7 @@ abstract class AST {
      */
     public static readonly reload = (): void => {
         AST.nodeString = CharString.create;
-        AST.nodeNumber = Complex.parse;
+        AST.nodeNumber = (value) => Complex.parse(value);
         AST.firstRow = MultiArray.firstRow;
         AST.appendRow = MultiArray.appendRow;
         AST.emptyArray = MultiArray.emptyArray;

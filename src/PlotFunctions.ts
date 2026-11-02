@@ -3,7 +3,7 @@ import { Decimal } from 'decimal.js';
 import { AST, type BuiltInFunctionTable, type NodeExpr, type NodeIdentifier } from './AST';
 import { MultiArray, type ElementType } from './MultiArray';
 import { CharString } from './CharString';
-import { ComplexDecimal } from './ComplexDecimal';
+import { Complex, toNumber, type ComplexType } from './Complex';
 import { LinearAlgebra } from './LinearAlgebra';
 import { Scope } from './Scope';
 import { CallFrame } from './CallFrame';
@@ -17,6 +17,7 @@ export type PlotOutputRequest = {
     readonly layout: Record<string, unknown>;
     readonly config: Record<string, unknown>;
 };
+/** Minimal interpreter surface needed to capture plots without owning a renderer. */
 export type PlotInterpreter = {
     readonly context: { readonly currentScope: Scope; readonly callStack: CallFrame[] };
     Evaluator(expr: NodeExpr, scope?: Scope): NodeExpr;
@@ -131,14 +132,13 @@ export const createPlotFunctionTable = (interpreter: PlotInterpreter, output?: (
 
     const plotPropertyNames = new Set(['color', 'linestyle', 'linewidth', 'marker', 'markersize', 'markeredgecolor', 'markerfacecolor', 'displayname']);
 
-    const isComplexValue = (value: ElementType): value is ComplexDecimal =>
-        value instanceof ComplexDecimal || (typeof value === 'object' && value !== null && 're' in value && 'im' in value && typeof value.re === 'object' && typeof value.im === 'object');
+    const isComplexValue = (value: ElementType): value is ComplexType => Complex.isInstanceOf(value);
 
     const isMultiArrayValue = (value: ElementType): value is MultiArray =>
         value instanceof MultiArray ||
         (typeof value === 'object' && value !== null && 'array' in value && 'dimension' in value && Array.isArray(value.array) && Array.isArray(value.dimension));
 
-    const isNumericPlotValue = (value: ElementType): value is ComplexDecimal | MultiArray => isComplexValue(value) || isMultiArrayValue(value);
+    const isNumericPlotValue = (value: ElementType): value is ComplexType | MultiArray => isComplexValue(value) || isMultiArrayValue(value);
 
     const isStringPlotValue = (value: ElementType): value is CharString =>
         value instanceof CharString || (typeof value === 'object' && value !== null && 'str' in value && typeof value.str === 'string');
@@ -147,10 +147,10 @@ export const createPlotFunctionTable = (interpreter: PlotInterpreter, output?: (
         if (!isComplexValue(value)) {
             throw new Error(`${argumentName}: expected numeric scalar`);
         }
-        if (!value.im.eq(0)) {
+        if (!Complex.imagIsZero(value)) {
             throw new Error(`${argumentName}: complex values are not supported in this context`);
         }
-        const result = value.re.toNumber();
+        const result = toNumber(value.re);
         if (!Number.isFinite(result)) {
             throw new Error(`${argumentName}: value must be finite`);
         }
@@ -161,8 +161,8 @@ export const createPlotFunctionTable = (interpreter: PlotInterpreter, output?: (
         if (!isComplexValue(value)) {
             throw new Error(`${argumentName}: expected numeric scalar`);
         }
-        const re = value.re.toNumber();
-        const im = value.im.toNumber();
+        const re = toNumber(value.re);
+        const im = toNumber(value.im);
         if (!Number.isFinite(re) || !Number.isFinite(im)) {
             throw new Error(`${argumentName}: value must be finite`);
         }
@@ -600,17 +600,17 @@ export const createPlotFunctionTable = (interpreter: PlotInterpreter, output?: (
             mapper: false,
             signature: { inputs: { arity: -1, min: 0 }, outputs: { arity: -1, min: 0 } },
             ev: [false, false, true, true],
-            func: (expr: NodeExpr, variable: NodeIdentifier, minx: ComplexDecimal, maxx: ComplexDecimal): NodeExpr => {
+            func: (expr: NodeExpr, variable: NodeIdentifier, minx: ComplexType, maxx: ComplexType): NodeExpr => {
                 insertOutput.type = 'plot2d';
-                if (!minx.im.eq(0)) {
+                if (!Complex.imagIsZero(minx)) {
                     throw new Error('complex number in plot2d minimum x axis');
                 } else {
-                    plotData.MinX = minx.re.toNumber();
+                    plotData.MinX = toNumber(minx.re);
                 }
-                if (!maxx.im.eq(0)) {
+                if (!Complex.imagIsZero(maxx)) {
                     throw new Error('complex number in plot2d maximum x axis');
                 } else {
-                    plotData.MaxX = maxx.re.toNumber();
+                    plotData.MaxX = toNumber(maxx.re);
                 }
                 const deltaX = (plotData.MaxX - plotData.MinX) / plotWidth;
                 const save_precision = Decimal.precision;
@@ -626,12 +626,12 @@ export const createPlotFunctionTable = (interpreter: PlotInterpreter, output?: (
                 interpreter.context.callStack!.push(new CallFrame(plotScope));
                 try {
                     for (let i = 0; i < plotWidth; i++) {
-                        const xValue = ComplexDecimal.create(plotData.MinX + deltaX * i, 0);
+                        const xValue = Complex.create(plotData.MinX + deltaX * i, 0);
                         plotScope.defineName(variable.id, xValue);
-                        plotData.X[i] = xValue.re.toNumber();
+                        plotData.X[i] = toNumber(xValue.re);
                         const data_y = interpreter.Evaluator(expr, plotScope);
-                        if (isFinite(data_y.re.toNumber()) && isFinite(data_y.im.toNumber()) && data_y.im.eq(0)) {
-                            plotData.data[i] = data_y.re.toNumber();
+                        if (isFinite(toNumber(data_y.re)) && isFinite(toNumber(data_y.im)) && Complex.imagIsZero(data_y)) {
+                            plotData.data[i] = toNumber(data_y.re);
                         } else {
                             throw new Error('non real number in plot2d y axis');
                         }
@@ -677,7 +677,7 @@ export const createPlotFunctionTable = (interpreter: PlotInterpreter, output?: (
                     if (DOM) {
                         const domainValue = domainRow?.[i];
                         if (isComplexValue(domainValue)) {
-                            plotData.X[i] = domainValue.re.toNumber();
+                            plotData.X[i] = toNumber(domainValue.re);
                         } else if (isStringPlotValue(domainValue)) {
                             plotData.X[i] = domainValue.str;
                         }
@@ -685,8 +685,8 @@ export const createPlotFunctionTable = (interpreter: PlotInterpreter, output?: (
                         plotData.X[i] = i;
                     }
                     const value = imagRow[i];
-                    if (isComplexValue(value) && isFinite(value.re.toNumber()) && isFinite(value.im.toNumber()) && value.im.eq(0)) {
-                        plotData.data[i] = value.re.toNumber();
+                    if (isComplexValue(value) && isFinite(toNumber(value.re)) && isFinite(toNumber(value.im)) && Complex.imagIsZero(value)) {
+                        plotData.data[i] = toNumber(value.re);
                     } else {
                         throw new Error('non real number in histogram y axis');
                     }
